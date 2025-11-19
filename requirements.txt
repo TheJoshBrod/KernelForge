@@ -1,12 +1,11 @@
-regex
-
 torch
 numpy
 protobuf==5.26.1
 grpcio-status==1.59.0
 grpcio==1.59.0
 google-generativeai
-# openai==2.3.0
+openai==2.3.0
 ollama
+anthropic
 
 ninja

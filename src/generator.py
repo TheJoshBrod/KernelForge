@@ -2,6 +2,7 @@ import re
 import ollama as ol
 import google.generativeai as genai
 from openai import OpenAI
+from anthropic import Anthropic
 import src.prompts.prompts
 
 def cleanup_mkdown(input: str) -> str:
@@ -69,7 +70,6 @@ def convert_chatgpt_to_gemini(chatgpt_history: list) -> list:
 
     return gemini_history
 
-
 def gemini_generator(conversation_history: list, model: str = "gemini-2.5-flash", outputIR: str = "CUDA") -> str:
     """Initial generation of kernel/IR using Gemini.
 
@@ -116,34 +116,50 @@ def chatgpt_generator(conversation_history: list, model: str = "gpt-4o", outputI
     print("Code generated...")
     return cu_code
         
-
-def chatgpt_fixer(cu_code: str, error: str, msg: str, model: str = "gpt-4o", outputIR: str = "CUDA") -> str:
-    """Fixes the previously generated kernel using OpenAI.
-
-    Args:
-        cu_code (str): Previous version of the malformed/incorrect .cu kernel
-        error (str): Custom error message to inform what the LLM did wrong 
-        msg (str): Op details from initial run
-        model (str): OpenAI model
-        outputIR (str): what output we want
-
-    Returns:
-        str: new_kernel_code
-    """
-    client = OpenAI()
+def convert_chatgpt_to_anthropic(chatgpt_history: list) -> list:
+    anthropic_history = []
+    for msg in chatgpt_history:
+        role = msg["role"]
+        if role == "system":
+            continue  # Handle separately
+        if role == "assistant":
+            role = "assistant"
+        elif role == "user":
+            role = "user"
         
-    sys_prompt = prompts.get_fixer_sys_prompt(outputIR)
-    prompt = prompts.generate_fixer_prompt(cu_code, error, msg)
-    
-    response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": prompt}
-            ]
-        )
+        content = msg["content"]
+        anthropic_history.append({
+            "role": role,
+            "content": content
+        })
+    return anthropic_history
 
-    cu_code = cleanup_mkdown(response.choices[0].message.content)
+def anthropic_generator(conversation_history: list,
+                        model: str = "claude-sonnet-4-5-20250929",
+                        system_instruction: str = None) -> str:
+    """Initial generation of kernel/IR using Anthropic Claude API."""
+    print("Generating code with Claude...")
     
-    print("Code generated...")
-    return cu_code
+    from anthropic import Anthropic
+    
+    anthropic_history = convert_chatgpt_to_anthropic(conversation_history)
+    
+    client = Anthropic()
+    
+    # Build the request parameters
+    params = {
+        "model": model,
+        "max_tokens": 4096,
+        "messages": anthropic_history
+    }
+    
+    if system_instruction:
+        params["system"] = system_instruction
+    
+    response = client.messages.create(**params)
+    
+    # Extract the generated content
+    code = cleanup_mkdown(response.content[0].text)
+    
+    print("Code generated…")
+    return code
