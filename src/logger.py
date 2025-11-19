@@ -1,10 +1,14 @@
 """Handles all functions that log statistics"""
+import os
 import csv
+import glob
+import tempfile
 from typing import Any
 from pathlib import Path
 from statistics import mean, median
 
 import torch
+from torch.utils.cpp_extension import load
 
 def save_statistics_csv(benchmark_name: str, benchmark_stats: list[dict], OUTPUT_BASE_DIR: Path):
     """
@@ -107,17 +111,89 @@ def save_statistics_csv(benchmark_name: str, benchmark_stats: list[dict], OUTPUT
     print(f"Detailed statistics saved to: {detail_path}\n")
 
 def get_arg_types(all_args: list[list[Any]], all_kwargs: list[dict[str, Any]]):
-    
+
     print("args")
     for args in all_args:
         print([
             "tensor" if isinstance(arg, torch.Tensor) else arg
             for arg in args
         ])
-            
+
     print("kwargs")
     for kwargs in all_kwargs:
         print([
             f"{key}: tensor" if isinstance(value, torch.Tensor) else f"{key}: {value}"
             for key, value in kwargs.items()
         ])
+
+def handle_input(input_path: Path):
+    # Set up input
+    inputs = torch.load(input_path)
+    # Check if inputs contain separate args and kwargs
+    args = inputs["args"]
+    kwargs = inputs["kwargs"]
+    
+    # Move tensors to CUDA, keep scalars as-is
+    cuda_args = []
+    for item in args:
+        if torch.is_tensor(item):
+            cuda_args.append(item.cuda())
+        elif isinstance(item, (int, float, bool, str)):
+            cuda_args.append(item)
+        # Skip other types
+    
+    cuda_kwargs = {}
+    for k, v in kwargs.items():
+        if torch.is_tensor(v):
+            cuda_kwargs[k] = v.cuda()
+        elif isinstance(v, (int, float, bool, str)):
+            cuda_kwargs[k] = v
+        # Skip other types
+        
+def run_custom_kernel(module, cuda_args, cuda_kwargs):
+    for _ in range(10):
+        try:
+            module.launch(*cuda_args, **cuda_kwargs)
+        except Exception as e:
+            return 
+
+def run_pytorch_version(function_name, cuda_args, cuda_kwargs):
+    for _ in range(10):
+        # Profile PyTorch
+        context = {
+            "torch": __import__("torch"),
+            "args": cuda_args,
+            "kwargs": cuda_kwargs,
+        }
+        full_exec_string = f"{function_name}(*args, **kwargs)"
+        exec(full_exec_string, context)
+
+def compare_kernel_to_pytorch(output_dir: Path, function_name: str):
+    
+    tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
+
+    cu_path = output_dir / "kernel.cu"
+
+    # Compile
+    try:
+        module = load(
+                    name=f"generated_module_{os.path.basename(tmpdir)}",
+                    sources=[cu_path],
+                    build_directory=tmpdir,
+                    verbose=True, 
+                )
+    except Exception as e:
+        return
+    
+    input_paths = [glob.glob(output_dir / "input*.pt")]
+
+    # Run all inputs on compiled version (profile statistics during)
+    for input_path in input_paths,:
+
+        cuda_args, cuda_kwargs = handle_input(input_path)
+
+        # Profile compiled version
+        run_custom_kernel(module, cuda_args, cuda_kwargs)
+
+        # Profile pytorch version
+        run_pytorch_version(function_name, cuda_args, cuda_kwargs)
