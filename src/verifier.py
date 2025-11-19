@@ -208,7 +208,8 @@ def validate_kernel(
                     "or incorrect memory writes.\n"
                 )
 
-
+                with open(log_file_path, "w") as f:
+                    f.write(f"[Incorrect Output]:\n{log_message}")
         except Exception as e:
             exec_success = False
             log_message += f"Output Comparison Error (Exec Status=False):\n{e}"
