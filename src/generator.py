@@ -135,8 +135,7 @@ def convert_chatgpt_to_anthropic(chatgpt_history: list) -> list:
     return anthropic_history
 
 def anthropic_generator(conversation_history: list,
-                        model: str = "claude-sonnet-4-5-20250929",
-                        system_instruction: str = None) -> str:
+                        model: str = "claude-sonnet-4-5-20250929") -> str:
     """Initial generation of kernel/IR using Anthropic Claude API."""
     print("Generating code with Claude...")
     
@@ -150,11 +149,9 @@ def anthropic_generator(conversation_history: list,
     params = {
         "model": model,
         "max_tokens": 4096,
+        "system": src.prompts.prompts.aten_to_cuda,
         "messages": anthropic_history
     }
-    
-    if system_instruction:
-        params["system"] = system_instruction
     
     response = client.messages.create(**params)
     
