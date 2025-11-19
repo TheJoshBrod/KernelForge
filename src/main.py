@@ -7,15 +7,16 @@ Walks through each operation in a benchmark to:
 3. Validate correctness through iterative refinement
 """
 
+import os
 import sys
-import json
+import shutil
 import torch
+import tempfile
 from pathlib import Path
 from tqdm import tqdm
 
 import src.monitor
 import src.generator
-import src.prompts.prompts
 import src.verifier
 import src.logger
 
@@ -32,7 +33,6 @@ def validate_with_retries(output_dir: Path, validation_size: int, conversation_h
         attempts_until_success is -1 if failed
     """
 
-    
     # Try n times to go through entire test suite
     for attempt in range(MAX_ATTEMPTS + 1):
         
@@ -44,10 +44,11 @@ def validate_with_retries(output_dir: Path, validation_size: int, conversation_h
             print(f"✗ Initial generation failed: {e}")
             return False
         
-        # Save kernel
-        with open(output_dir / f"kernel{attempt}.cu", "w") as f:
-            f.write(cu_code)
+        tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
 
+        # Output newest version of kernel
+        with open(output_dir / f"kernel.cu", "w") as f:
+            f.write(cu_code)
 
         # For each generated kernel validate ALL input/output
         is_valid = True
@@ -56,16 +57,21 @@ def validate_with_retries(output_dir: Path, validation_size: int, conversation_h
             input_path = output_dir / f"input{i}.pt"      
             gold_path = output_dir / f"gold{i}.pt" 
 
+            print("validating kernel...")
             # Validate current kernel
+            log_file_loc = output_dir / f"log-{attempt}-{i}.txt"
             call_success, exec_success, feedback = src.verifier.validate_kernel(
-                cu_code, input_path, gold_path
+                cu_code, input_path, gold_path, log_file_loc, tmpdir
             )
             
-            print(feedback)
-
+            print("kernel validated...")
+            
             # If failed on a testcase regenerate
             is_valid = is_valid and call_success and exec_success
-            if not is_valid:
+            if not is_valid:        
+                # Save kernel
+                with open(output_dir / f"kernel-{attempt}-{i}.cu", "w") as f:
+                    f.write(cu_code)
                 issue = "Issue was from "
                 if not call_success:
                     issue += "compile"
@@ -74,7 +80,11 @@ def validate_with_retries(output_dir: Path, validation_size: int, conversation_h
 
                 conversation_history.append({"role": "user", "content": f"Kernel failed because...{issue}\n\n\n{feedback}"})
                 break
-
+        
+        # Delete tmp directory before next generation 
+        if os.path.exists(tmpdir):
+            shutil.rmtree(tmpdir)
+        # If all testcases passed, escape
         if is_valid:
             print(f"SUCCESSFUL on {attempt + 1}")
             return True, cu_code, attempt + 1
@@ -125,13 +135,7 @@ def process_function(function_name: str, call_list: list[dict], index: int, op_d
     all_output = [call.get("output", None) for call in call_list]
     all_iterations = [all_args, all_kwargs, all_output]
 
-    # Set first prompt:
-    prompt = src.prompts.prompts.generate_full_llm_prompt(
-        calls_dict={function_name: call_list}, 
-        function_name=function_name, 
-        profiler_output=op_details
-    )
-    print(prompt)
+    prompt = op_details
     conversation_history.append({"role": "user", "content": prompt})
     
     # Save input/output for verification
@@ -155,9 +159,14 @@ def process_function(function_name: str, call_list: list[dict], index: int, op_d
     )
 
     # Erase pt files
+    for i, _ in enumerate(all_iterations[0]):
+        input_path = op_dir / f"input{i}.pt"
+        gold_path = op_dir / f"gold{i}.pt"
 
-
-
+        if os.path.exists(input_path):
+            os.remove(input_path)
+        if os.path.exists(gold_path):
+            os.remove(gold_path)
 
 
 def main():
