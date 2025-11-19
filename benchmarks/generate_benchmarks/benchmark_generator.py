@@ -3,7 +3,9 @@ import torch.autograd.profiler as profiler
 import torch.nn.functional as F
 from functools import wraps
 from PIL import Image
+import os
 import inspect
+import requests
 
 
 # from benchmarks.generate_benchmarks.trivial import SimpleModel
@@ -94,14 +96,24 @@ for name in dir(F):
 
 
 # ****************************
-#   Initialize PyTorch Model
+#    Initialize PyTorch Model
 # ****************************
 
-model_name = "microsoft/resnet-50"
+model_name = "facebook/convnext-tiny-224" 
+
+print(f"Loading {model_name}...")
 processor = AutoImageProcessor.from_pretrained(model_name)
 model = AutoModelForImageClassification.from_pretrained(model_name)
 
-image = Image.open("benchmarks/generate_benchmarks/pics/image.png")
+img_path = "test_image.jpg"
+if not os.path.exists(img_path):
+    print("Downloading test image...")
+    url = "http://images.cocodataset.org/val2017/000000039769.jpg"
+    image = Image.open(requests.get(url, stream=True).raw)
+    image.save(img_path)
+else:
+    image = Image.open(img_path)
+
 inputs = processor(images=image, return_tensors="pt")
 
 config = AutoConfig.from_pretrained(model_name)
@@ -133,10 +145,27 @@ print(prof.key_averages().table(sort_by="count", row_limit=50))
 # ****************************
 
 
-print("Saving....")
-print(model.__class__.__name__)
-torch.save(calls, f"benchmarks/generate_benchmarks/{model.__class__.__name__}.pt")
-print("Saved to output.pt")
+base_dir = "benchmarks/generate_benchmarks/PyTorchFunctions"
+os.makedirs(base_dir, exist_ok=True)
 
-for func, iters in calls.items():
-    print(f"{func}: {len(iters)}")
+for func_name, entries in calls.items():
+    # Safe filename
+    filename = func_name.replace("/", ".") + ".pt"
+    file_path = os.path.join(base_dir, filename)
+
+    # If file exists → load and append
+    if os.path.exists(file_path):
+        existing = torch.load(file_path)
+        # Ensure merging (existing must be a dict)
+        if not isinstance(existing, dict):
+            raise ValueError(f"Expected list in {file_path}, got {type(existing)}")
+        
+        existing[func_name].extend(entries)
+
+        torch.save(existing, file_path)
+        print(f"Updated file: {func_name}")
+
+    else:
+        # Create new file
+        torch.save(entries, file_path)
+        print(f"Created new file: {func_name}")
