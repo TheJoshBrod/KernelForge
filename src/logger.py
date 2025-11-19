@@ -1,7 +1,10 @@
 """Handles all functions that log statistics"""
-from statistics import mean, median
 import csv
+from typing import Any
 from pathlib import Path
+from statistics import mean, median
+
+import torch
 
 def save_statistics_csv(benchmark_name: str, benchmark_stats: list[dict], OUTPUT_BASE_DIR: Path):
     """
@@ -103,3 +106,18 @@ def save_statistics_csv(benchmark_name: str, benchmark_stats: list[dict], OUTPUT
     
     print(f"Detailed statistics saved to: {detail_path}\n")
 
+def get_arg_types(all_args: list[list[Any]], all_kwargs: list[dict[str, Any]]):
+    
+    print("args")
+    for args in all_args:
+        print([
+            "tensor" if isinstance(arg, torch.Tensor) else arg
+            for arg in args
+        ])
+            
+    print("kwargs")
+    for kwargs in all_kwargs:
+        print([
+            f"{key}: tensor" if isinstance(value, torch.Tensor) else f"{key}: {value}"
+            for key, value in kwargs.items()
+        ])
