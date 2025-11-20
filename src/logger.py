@@ -12,22 +12,6 @@ from dataclasses import dataclass
 import torch
 from torch.utils.cpp_extension import load
 
-def get_arg_types(all_args: list[list[Any]], all_kwargs: list[dict[str, Any]]):
-
-    print("args")
-    for args in all_args:
-        print([
-            "tensor" if isinstance(arg, torch.Tensor) else arg
-            for arg in args
-        ])
-
-    print("kwargs")
-    for kwargs in all_kwargs:
-        print([
-            f"{key}: tensor" if isinstance(value, torch.Tensor) else f"{key}: {value}"
-            for key, value in kwargs.items()
-        ])
-
 def handle_input_pytorch(input_path: Path):
     inputs = torch.load(input_path)
 
@@ -67,6 +51,7 @@ def handle_input_custom(input_path):
                 cuda_kwargs[k] = v
             # Skip other types
     return cuda_args, cuda_kwargs
+
 @dataclass
 class PerformanceMetrics:
     mean_time_ms: float
@@ -126,16 +111,14 @@ def run_custom_kernel(module, all_inputs, warmup=5, iterations=100) -> Performan
         print(f"Custom kernel failed: {e}")
         return None
 
-def run_pytorch_version(function_name, exec_str, all_inputs, warmup=5, iterations=100) -> PerformanceMetrics:
+def run_pytorch_version(exec_str, all_inputs, warmup=5, iterations=100) -> PerformanceMetrics:
     """Profile PyTorch reference implementation across all inputs together."""
     try:
         torch_module = __import__("torch")
         
         # Warmup
-        for i in range(warmup):
-            counter = 0
+        for _ in range(warmup):
             for cuda_args, cuda_kwargs in all_inputs:        
-                counter += 1
                 context = {
                     "torch": torch_module,
                     "args": cuda_args,
@@ -195,21 +178,46 @@ def create_log_file(custom_metrics: PerformanceMetrics, pytorch_metrics: Perform
 
 def compare_kernel_to_pytorch(output_dir: Path, function_name: str, exec_str: str, warmup=10, iterations=100):
     
-    tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
-
     cu_path = output_dir / "kernel.cu"
 
-    # Compile
-    try:
-        module = load(
-                    name=f"generated_module_{os.path.basename(tmpdir)}",
-                    sources=[cu_path],
-                    build_directory=output_dir,
-                    verbose=True, 
-                )
-    except Exception as e:
-        return
     
+
+    # Load Compiled Module
+    compile_path = output_dir / "compiled"
+    os.makedirs(compile_path, exist_ok=True)
+    module_name = f"generated_module_{os.path.basename(str(compile_path))}"
+
+    module = None
+    try:
+    # Try loading an existing compiled module
+        module = load(
+            name=module_name,
+            sources=[cu_path],
+            build_directory=compile_path,
+            verbose=False,
+            extra_cflags=[],
+            extra_cuda_cflags=[],
+            with_cuda=True,
+            is_python_module=False
+        )
+    except Exception as load_err:
+        # If compiled module does not exist, create compile
+        print("No compiled module found compiling now...")
+        try:
+            # Compile from source
+            module = load(
+                name=module_name,
+                sources=[cu_path],
+                build_directory=compile_path,
+                verbose=True,
+            )
+
+        except Exception as compile_err:
+            print("Compilation failed:", compile_err)
+            return
+
+    print("Compiled/Loaded compiled version...")
+
     input_paths = glob.glob(str(output_dir / "input*.pt"))
     
     # Handle all inputs
@@ -229,6 +237,6 @@ def compare_kernel_to_pytorch(output_dir: Path, function_name: str, exec_str: st
     custom_metrics = run_custom_kernel(module, all_custom_inputs, warmup, iterations)
 
     # Profile pytorch version
-    pytorch_metrics = run_pytorch_version(function_name, exec_str, all_pytorch_inputs, warmup, iterations)
+    pytorch_metrics = run_pytorch_version(exec_str, all_pytorch_inputs, warmup, iterations)
     
     create_log_file(custom_metrics, pytorch_metrics, output_dir)
