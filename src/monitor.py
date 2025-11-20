@@ -23,15 +23,15 @@ def handle_trace(prof):
         if event.key.startswith("aten::"):
             # Start a new high-level op
             current_op = event.key
-            aten_output += f"[Op: {current_op}]\n"
+            aten_output += f"       [Op: {current_op}]\n"
 
         elif "ProfilerStep" not in event.key:
             # Low-level kernel; associate with current op if exists
             if current_op:
-                kernel_output += f"    [Kernel: {event.key}]\n"
+                kernel_output += f"     [Kernel: {event.key}]\n"
             else:
                 # Kernel not associated with any high-level op
-                kernel_output += f"[Kernel: {event.key}]\n"
+                kernel_output += f"     [Kernel: {event.key}]\n"
 
 
 def profile_single_op(context: dict, full_exec_string: str) -> str:
