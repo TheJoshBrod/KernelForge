@@ -33,6 +33,10 @@ def validate_with_retries(output_dir: Path, validation_size: int, conversation_h
         bool: is the final kernel successful
     """
 
+    # Iterative kernel folder
+    kernel_dir = output_dir / "kernel"
+    kernel_dir.mkdir(parents=True, exist_ok=True)
+
     # Try n times to go through entire test suite
     for attempt in range(MAX_ATTEMPTS + 1):
         
@@ -68,7 +72,7 @@ def validate_with_retries(output_dir: Path, validation_size: int, conversation_h
             is_valid = is_valid and call_success and exec_success
             if not is_valid:        
                 # Save kernel
-                with open(output_dir / f"kernel-{attempt}-{i}.cu", "w") as f:
+                with open(kernel_dir / f"kernel-{attempt}-{i}.cu", "w") as f:
                     f.write(cu_code)
                 
                 conversation_history.append({"role": "user", "content": feedback})
@@ -81,7 +85,7 @@ def validate_with_retries(output_dir: Path, validation_size: int, conversation_h
         if is_valid:
             print(f"SUCCESSFUL on {attempt + 1}")
             # Save kernel
-            with open(output_dir / f"kernel-{attempt}-g.cu", "w") as f:
+            with open(kernel_dir / f"kernel-{attempt}-g.cu", "w") as f:
                 f.write(cu_code)
                 
             return True
@@ -125,7 +129,6 @@ def process_function(function_name: str, call_list: list[dict], index: int, op_d
         print(e)
         return False
 
-
     # Define validation set 
     all_args   = [call.get("args", []) for call in call_list]
     all_kwargs = [call.get("kwargs", {}) for call in call_list]
@@ -154,11 +157,10 @@ def process_function(function_name: str, call_list: list[dict], index: int, op_d
     success = validate_with_retries(
         op_dir, len(all_args), conversation_history
     )
-
+    
     # Track performance
     if success:
-        src.logger.compare_kernel_to_pytorch(op_dir, function_name)
-
+        src.logger.compare_kernel_to_pytorch(op_dir, function_name, exec_str)
 
     # Erase pt files
     for i, _ in enumerate(all_iterations[0]):
@@ -179,7 +181,6 @@ def main():
     
     # Loop over all operations in the benchmark
     for i, file_name in enumerate(tqdm(glob.glob(sys.argv[1] + "/*.pt"), desc="Processing functions")):
-
         file = Path(file_name)
         function_name = file.stem
         call_list = torch.load(file)[function_name]
@@ -187,7 +188,7 @@ def main():
         op_dir = OUTPUT_BASE_DIR / "PyTorchFunctions" / function_name.replace(".", "_")
         op_dir.mkdir(parents=True, exist_ok=True)
 
-        performance_file = op_dir / "performance.txt" 
+        performance_file = op_dir / "performance.json" 
         if performance_file.exists():
             continue
 
