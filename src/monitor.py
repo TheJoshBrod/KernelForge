@@ -82,5 +82,4 @@ def profile_single_op(context: dict, full_exec_string: str) -> str:
 
     # 8. Format op_details string for the LLM
     op_details = f"aten output:\n{aten_output}\n\n\nkernel output:\n{kernel_output}"
-    print(op_details)
     return op_details
