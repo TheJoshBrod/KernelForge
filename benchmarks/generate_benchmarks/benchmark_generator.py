@@ -4,12 +4,14 @@ import torch.nn.functional as F
 from functools import wraps
 from PIL import Image
 import os
+import glob
+import json
+import tqdm
 import inspect
-import requests
+import pyarrow.parquet as pq
+import pandas as pd
 
-
-# from benchmarks.generate_benchmarks.trivial import SimpleModel
-# from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from transformers import AutoImageProcessor, AutoModelForImageClassification, AutoConfig
 
 
@@ -74,7 +76,8 @@ def wrap_function(module, func_name):
         else:
             ser_output = output
 
-        calls.setdefault(key, []).append({
+        calls.setdefault(key, [])
+        calls[key].append({
             "args": ser_args,
             "kwargs": ser_kwargs,
             "output": ser_output
@@ -95,77 +98,169 @@ for name in dir(F):
         wrap_function(F, name)
 
 
-# ****************************
-#    Initialize PyTorch Model
-# ****************************
+def save_entries(func_name, entries):
+    base_dir = "benchmarks/generate_benchmarks/PyTorchFunctions"
+    func_dir = os.path.join(base_dir, func_name.replace(".", "_").replace("/", "_"))
+    os.makedirs(func_dir, exist_ok=True)
+    
+    # Count existing files to avoid overwriting
+    existing_count = len(glob.glob(os.path.join(func_dir, "entry_*.pt")))
+    
+    for idx, entry in enumerate(entries):
+        if existing_count > 200:
+            return
+        file_path = os.path.join(func_dir, f"entry_{existing_count + idx:06d}.pt")
+        torch.save(entry, file_path)
 
-model_name = "facebook/convnext-tiny-224" 
+def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
+    """Runs Image Classification model from HuggingFace's Transformer library to profile input and outputs. 
+    Outputs the input/output pairs to pt file separate by PyTorch function name
 
-print(f"Loading {model_name}...")
-processor = AutoImageProcessor.from_pretrained(model_name)
-model = AutoModelForImageClassification.from_pretrained(model_name)
+    Args:
+        model_name (str, optional): Name of Hugging Face image classification model. Defaults to "facebook/convnext-tiny-224".
+    """
+    global calls
 
-img_path = "test_image.jpg"
-if not os.path.exists(img_path):
-    print("Downloading test image...")
-    url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-    image = Image.open(requests.get(url, stream=True).raw)
-    image.save(img_path)
-else:
-    image = Image.open(img_path)
+    # ****************************
+    #    Initialize PyTorch Model
+    # ****************************
 
-inputs = processor(images=image, return_tensors="pt")
+    print(f"Loading {model_name}...")
+    processor = AutoImageProcessor.from_pretrained(model_name)
+    model = AutoModelForImageClassification.from_pretrained(model_name)
+    device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model.to(device_str)
+ 
+    # ****************************
+    #        Run Model 
+    # ****************************
 
-config = AutoConfig.from_pretrained(model_name)
-id2label = config.id2label
+    print(f"Running {model_name}...")
+    image_paths = glob.glob("benchmarks/generate_benchmarks/images/*.JPEG")
+    for path in tqdm.tqdm(image_paths[:7], desc="images"):
+        print(path)
+        if os.path.exists(path):
+            # Open image
+            image = Image.open(path)
+            
+            # Configure inputs
+            inputs = processor(images=image, return_tensors="pt")
+            config = AutoConfig.from_pretrained(model_name)
+            id2label = config.id2label
+            
+            inputs = {k: v.to(device_str) for k, v in inputs.items()}
+            
+            # Run model
+            with profiler.profile(record_shapes=True, use_device=device_str) as prof:
+                with profiler.record_function("forward"):
+                    with torch.no_grad():
+                        with torch.no_grad():
+                            outputs = model(**inputs)
 
-# ****************************
-#        ATen Profiler 
-# ****************************
+            # Calculate Output 
+            logits = outputs.logits
+            predicted_class_id = logits.argmax(-1).item()
+            label = id2label[predicted_class_id]
+            print(label)
+            # ****************************
+            #  Export PyTorch API In/Out 
+            # ****************************
 
-device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
-model.to(device_str)
-inputs = {k: v.to(device_str) for k, v in inputs.items()}
-with profiler.profile(record_shapes=True, use_device=device_str) as prof:
-    with profiler.record_function("forward"):
-        with torch.no_grad():
-            outputs = model(**inputs)
-            probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
-            top5 = probs.topk(5)
-            print("\nRAW TOP-5 TENSOR:\n", top5)
+            print(f"Exporting {model_name}...")
+            base_dir = "benchmarks/generate_benchmarks/PyTorchFunctions"
+            os.makedirs(base_dir, exist_ok=True)
 
-            print("\nDECODED PREDICTIONS:")
-            for idx in top5.indices.squeeze().tolist():
-                print(f"{idx}: {id2label[idx]} ({float(probs[0][idx]):.5f})")
-
-print(prof.key_averages().table(sort_by="count", row_limit=50))
-
-# ****************************
-#  Export PyTorch API In/Out 
-# ****************************
+            for func_name, entries in calls.items():
+                save_entries(func_name, entries)
+            calls.clear()
+            torch.cuda.empty_cache()
 
 
-base_dir = "benchmarks/generate_benchmarks/PyTorchFunctions"
-os.makedirs(base_dir, exist_ok=True)
+def profile_text_model(model_name: str = "bert-base-uncased"):
+    """
+    Runs a HuggingFace text classification model using text samples from a JSON file
+    and profiles PyTorch forward passes. Saves profiling input/output to .pt files
+    grouped by PyTorch function names.
 
-for func_name, entries in calls.items():
-    # Safe filename
-    filename = func_name.replace("/", ".") + ".pt"
-    file_path = os.path.join(base_dir, filename)
+    Expected JSON format:
+        {
+            "samples": [
+                "This movie was awesome!",
+                "I hate the food here.",
+                "Weather looks great today."
+            ]
+        }
 
-    # If file exists → load and append
-    if os.path.exists(file_path):
-        existing = torch.load(file_path)
-        # Ensure merging (existing must be a dict)
-        if not isinstance(existing, dict):
-            raise ValueError(f"Expected list in {file_path}, got {type(existing)}")
-        
-        existing[func_name].extend(entries)
+    Args:
+        model_name (str): Hugging Face model name.
+        input_json (str): Path to JSON file containing text samples.
+    """
 
-        torch.save(existing, file_path)
-        print(f"Updated file: {func_name}")
+    global calls
 
-    else:
-        # Create new file
-        torch.save(entries, file_path)
-        print(f"Created new file: {func_name}")
+    print(f"Loading {model_name}...")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSequenceClassification.from_pretrained(model_name)
+
+    # Load text samples    
+    pq_path = "benchmarks/generate_benchmarks/text_inputs.parquet"
+    table = pq.read_table(pq_path)
+    df = table.to_pandas()
+    text_samples = df["sentence"].tolist()[:20]
+
+    print(f"Running {model_name}...")
+    device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model.to(device_str)
+
+    for text in tqdm.tqdm(text_samples, desc="Text Samples"):
+        # Tokenize input
+        inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=256)
+        inputs = {k: v.to(device_str) for k, v in inputs.items()}
+
+        # Profile model
+        with profiler.profile(record_shapes=True, use_device=device_str) as prof:
+            with profiler.record_function("forward"):
+                with torch.no_grad():
+                    outputs = model(**inputs)
+
+        # Get predicted label
+        logits = outputs.logits
+        predicted_class = torch.argmax(logits).item()
+
+        # Try mapping to readable class labels if available
+        config = AutoConfig.from_pretrained(model_name)
+        label_map = config.id2label if hasattr(config, "id2label") else None
+        label_text = label_map[predicted_class] if label_map else predicted_class
+
+        print(f"TEXT: {text}\nPREDICTION: {label_text}\n")
+
+        # ****************************
+        #  Export PyTorch API In/Out
+        # ****************************
+
+        for func_name, entries in calls.items():
+            save_entries(func_name, entries)
+        calls.clear()
+        torch.cuda.empty_cache()
+
+    print("Done.")
+
+
+
+def main():
+    image_model_names = [
+        "microsoft/resnet-50",
+        "microsoft/swin-base-patch4-window7-224",
+        "facebook/convnext-base-224"
+    ]
+    for model_name in image_model_names:
+        profile_image_model(model_name)
+
+    text_classification_model_names = [
+        "distilbert-base-uncased-finetuned-sst-2-english"
+    ]
+    for model_name in text_classification_model_names:
+        profile_text_model(model_name)
+    
+if __name__ == "__main__":
+    main()

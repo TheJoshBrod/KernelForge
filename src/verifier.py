@@ -37,8 +37,7 @@ def handle_output(traceback_error: str, cu_code: str, log_file_path: Path) -> st
 
 def validate_kernel(
     generated_cu_code: str,
-    input_path: str,
-    ground_truth_path: str,
+    entry_file: str,
     log_file_path: Path,
     tmpdir: Path
 ) -> tuple[bool, bool, str]:
@@ -83,13 +82,12 @@ def validate_kernel(
     # --- 3. Stage 2: Execution Status (Correctness) ---
     try:
         # Load ground truth and inputs
-        inputs = torch.load(input_path)
-        ground_truth = torch.load(ground_truth_path).cuda()
+        entry = torch.load(entry_file)
         
         # Check if inputs contain separate args and kwargs
-        if isinstance(inputs, dict) and "args" in inputs and "kwargs" in inputs:
-            args = inputs["args"]
-            kwargs = inputs["kwargs"]
+        if isinstance(entry, dict) and "args" in entry and "kwargs" in entry:
+            args = entry["args"]
+            kwargs = entry["kwargs"]
             
             # Move tensors to CUDA, keep scalars as-is
             cuda_args = []
@@ -113,21 +111,21 @@ def validate_kernel(
         
         else:
             # Original behavior: inputs is a list/tuple/tensor/scalar
-            if isinstance(inputs, (list, tuple)):
+            if isinstance(entry, (list, tuple)):
                 cuda_inputs = []
-                for item in inputs:
+                for item in entry:
                     if torch.is_tensor(item):
                         cuda_inputs.append(item.cuda())
                     elif isinstance(item, (int, float, bool, str)):
                         cuda_inputs.append(item)
                     else:
                         continue
-            elif torch.is_tensor(inputs):
-                cuda_inputs = [inputs.cuda()]
+            elif torch.is_tensor(entry):
+                cuda_inputs = [entry.cuda()]
             else:
                 # Single scalar input
-                if isinstance(inputs, (int, float, bool, str)):
-                    cuda_inputs = [inputs]
+                if isinstance(entry, (int, float, bool, str)):
+                    cuda_inputs = [entry]
                 else:
                     exec_success = False
                     print("No valid inputs found")
@@ -153,7 +151,7 @@ def validate_kernel(
         exec_success = False
         # Extract useful metadata about inputs
         input_info = {
-            "input_type": type(inputs).__name__,
+            "input_type": type(entry).__name__,
             "args": [
                 {
                     "index": idx,
@@ -187,6 +185,7 @@ def validate_kernel(
     if runtime_success:
         try:
             # Use numerical tolerance checking
+            ground_truth = entry["output"]
             is_correct = torch.allclose(output_generated, ground_truth, atol=1e-2, rtol=1e-1)
             
             if is_correct:

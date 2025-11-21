@@ -15,19 +15,26 @@ import torch
 import tempfile
 from pathlib import Path
 from tqdm import tqdm
+import pickle
 
-import src.monitor
 import src.generator
-import src.verifier
 import src.logger
+import src.monitor
+import src.prompts.prompts
+import src.verifier
 
 # Configuration
 MAX_ATTEMPTS = 5
 OUTPUT_BASE_DIR = Path("generated_kernels")
 
-def validate_with_retries(output_dir: Path, validation_size: int, conversation_history: list) -> bool:
+def validate_with_retries(output_dir: Path, entry_files: list[str], conversation_history: list) -> bool:
     """
     Attempt to validate and fix kernel code up to MAX_ATTEMPTS times.
+    
+    Args:
+        output_dir: Directory to save kernel outputs
+        entry_files: List of paths to entry_*.pt files containing inputs/outputs
+        conversation_history: LLM conversation history
     
     Returns:
         bool: is the final kernel successful
@@ -46,7 +53,7 @@ def validate_with_retries(output_dir: Path, validation_size: int, conversation_h
             conversation_history.append({"role": "assistant", "content": cu_code})
         except Exception as e:
             print(f"Failed on attempt {attempt}\n{e}")
-            return False, "", -1
+            return False
         
         tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
 
@@ -56,16 +63,13 @@ def validate_with_retries(output_dir: Path, validation_size: int, conversation_h
 
         # For each generated kernel validate ALL input/output
         is_valid = True
-        for i in tqdm(range(validation_size), desc="Input Tests"):
+        for i, entry_file in enumerate(tqdm(entry_files, desc="Input Tests")):
 
-            input_path = output_dir / f"input{i}.pt"      
-            gold_path = output_dir / f"gold{i}.pt"
-
-            # Validate current kernel
+            # Validate current kernel with entry file
             log_file_loc = output_dir / "attempts" / f"log-{attempt}-{i}.txt"
             os.makedirs(log_file_loc.parent, exist_ok=True)
             call_success, exec_success, feedback = src.verifier.validate_kernel(
-                cu_code, input_path, gold_path, log_file_loc, tmpdir
+                cu_code, entry_file, log_file_loc, tmpdir
             )
                         
             # If failed on a testcase regenerate
@@ -81,6 +85,7 @@ def validate_with_retries(output_dir: Path, validation_size: int, conversation_h
         # Delete tmp directory before next generation 
         if os.path.exists(tmpdir):
             shutil.rmtree(tmpdir)
+            
         # If all testcases passed, escape
         if is_valid:
             print(f"SUCCESSFUL on {attempt + 1}")
@@ -93,19 +98,18 @@ def validate_with_retries(output_dir: Path, validation_size: int, conversation_h
     return False
 
 
-def process_function(function_name: str, call_list: list[dict], index: int, op_dir: Path):
+def process_function(function_name: str, entry_files: list[str], op_dir: Path):
     """
     Process all profiled calls for a given function.
 
     Args:
         function_name: Name of the PyTorch API function (e.g. "torch.nn.functional.relu")
-        call_list: List of recorded calls, each containing 'args', 'kwargs', and 'output'
-        index: Index of this function within the benchmark file
+        entry_files: List of paths to entry_*.pt files
+        op_dir: Output directory for this operation
     """
 
-    
-    first_call = call_list[0]
-
+    # Load first call to set up context for profiling
+    first_call = torch.load(entry_files[0], map_location='cpu', weights_only=False)
     first_args = first_call.get("args", [])
     first_kwargs = first_call.get("kwargs", {})
 
@@ -116,11 +120,9 @@ def process_function(function_name: str, call_list: list[dict], index: int, op_d
     }
 
     exec_str = f"{function_name}(*args, **kwargs)"
-
     
     # Set up conversation history
     conversation_history = []
-    
 
     # Profile operation
     try:
@@ -129,71 +131,74 @@ def process_function(function_name: str, call_list: list[dict], index: int, op_d
         print(e)
         return False
 
-    # Define validation set 
-    all_args   = [call.get("args", []) for call in call_list]
-    all_kwargs = [call.get("kwargs", {}) for call in call_list]
-    all_output = [call.get("output", None) for call in call_list]
-    all_iterations = [all_args, all_kwargs, all_output]
+    # Load all calls for prompt generation
+    call_list = []
+    for entry_file in entry_files:
+        try:
+            entry = torch.load(entry_file, map_location='cpu', weights_only=False)
+            call_list.append(entry)
+        except Exception as e:
+            print(f"Error loading {entry_file}: {e}")
+            continue
 
-    prompt = op_details
+    if not call_list:
+        print(f"Failed to load any entries for {function_name}")
+        return False
+
+    prompt = src.prompts.prompts.generate_full_llm_prompt(call_list, function_name, op_details)
     conversation_history.append({"role": "user", "content": prompt})
-    
-    # Save input/output for verification
-    for i, _ in enumerate(all_iterations[0]):
 
-        input_path = op_dir / f"input{i}.pt"
-        gold_path = op_dir / f"gold{i}.pt"
+    call_list.clear()
 
-        args = all_iterations[0][i]
-        kwargs = all_iterations[1][i]
-        
-        inputs = {"args": args, "kwargs": kwargs}
-        ground_truth = all_iterations[2][i]
-
-        torch.save(inputs, input_path)
-        torch.save(ground_truth, gold_path)
-
-    # Validate loop
+    # Validate loop - pass entry files directly
     success = validate_with_retries(
-        op_dir, len(all_args), conversation_history
+        op_dir, entry_files, conversation_history
     )
     
     # Track performance
     if success:
-        src.logger.compare_kernel_to_pytorch(op_dir, function_name, exec_str)
+        success_file = op_dir / "success"
+        with open(success_file, "w") as f:
+            f.write("passed")
 
-    # Erase pt files
-    for i, _ in enumerate(all_iterations[0]):
-        input_path = op_dir / f"input{i}.pt"
-        gold_path = op_dir / f"gold{i}.pt"
-
-        if os.path.exists(input_path):
-            os.remove(input_path)
-        if os.path.exists(gold_path):
-            os.remove(gold_path)
+    return success
 
 
 def main():
     """Main entry point: load benchmarks and process each one."""
     if len(sys.argv) < 2:
-        print("Usage: python main.py <benchmark_file.pt>")
+        print("Usage: python main.py <benchmark_dir>")
         sys.exit(1)
     
-    # Loop over all operations in the benchmark
-    for i, file_name in enumerate(tqdm(glob.glob(sys.argv[1] + "/*.pt"), desc="Processing functions")):
-        file = Path(file_name)
-        function_name = file.stem
-        call_list = torch.load(file)[function_name]
+    # Loop over all function directories
+    function_dirs = sorted(glob.glob(os.path.join(sys.argv[1], "*")))
 
+    for func_dir in tqdm(function_dirs, desc="Processing functions"):
+        if "2d" not in func_dir:
+            continue
+        if not os.path.isdir(func_dir):
+            continue
+            
+        function_name = os.path.basename(func_dir).replace("_", ".")
+        print(function_name)
+        
+        # Get all entry files
+        entry_files = sorted(glob.glob(os.path.join(func_dir, "entry_*.pt")))
+        
+        if not entry_files:
+            print(f"No entry files found for {function_name}, skipping...")
+            continue
+        
         op_dir = OUTPUT_BASE_DIR / "PyTorchFunctions" / function_name.replace(".", "_")
         op_dir.mkdir(parents=True, exist_ok=True)
 
-        performance_file = op_dir / "performance.json" 
+        performance_file = op_dir / "success" 
         if performance_file.exists():
             continue
+        
+        # Pass entry file paths directly
+        process_function(function_name, entry_files, op_dir)
 
-        process_function(function_name, call_list, i, op_dir)
-    
 
 if __name__ == "__main__":
     main()
