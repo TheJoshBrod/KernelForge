@@ -78,7 +78,8 @@ def validate_kernel(
             name=f"generated_module_{os.path.basename(tmpdir)}",
             sources=[cu_path],
             build_directory=tmpdir,
-            verbose=True, 
+            verbose=True,
+            is_python_module=True
         )
         call_success = True
 
@@ -86,7 +87,7 @@ def validate_kernel(
         # --- Handle compilation failure ---
         call_success = False
         exec_success = False
-        log_message = f"[Compilation Failed]\nSummarized traceback:\n {handle_output(str(e), generated_cu_code, log_file_path, None, None)}"
+        log_message = f"[Compilation Failed]\nSummarized traceback:\n {handle_output(str(e), generated_cu_code, log_file_path, entry)}"
         return call_success, exec_success, log_message
     
 
