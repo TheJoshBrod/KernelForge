@@ -34,7 +34,7 @@ cpp
 4. No text, explanation, or comments outside the code block.
 
 -----------------------------------------------
- REQUIRED CODE STRUCTURE
+ EXAMPLE CODE STRUCTURE
 -----------------------------------------------
 
 ```
@@ -43,6 +43,7 @@ cpp
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <string>
+#include <vector>
 
 // ============ DEVICE CODE (CUDA kernels only) ============
 template <typename T>
@@ -53,8 +54,9 @@ __global__ void my_kernel(...) {
 // ============ HOST CODE ============
 #include <torch/extension.h>
 
-torch::Tensor launch_my_op(...) {
-    // Input validation
+
+torch::Tensor launch_my_op(torch::Tensor input, std::vector<int64_t> shape, ...) {
+    // Input validation (only check is_cuda on Tensors)
     // Contiguous conversion
     // Type dispatch (float32, float64, half)
     // Kernel launch
@@ -79,116 +81,161 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 - Use `std::vector<int64_t>` for shape construction.
 - Never allocate GPU memory manually (`cudaMalloc`, etc.)
 - Never include `main()`, logging, prints, or extra blocks.
+- The Pybind11 binding must include named arguments using py::arg() matching the function signature. All arguments must be keyword-callable in Python.
+- Argument Types & Validation:
+  - **TENSORS:** Use `torch::Tensor` in the C++ signature. You MUST validate `is_cuda()` and `dtype` for these.
+  - **LISTS/TUPLES:** Use `std::vector<int64_t>` in the C++ signature for arguments like kernel_size, stride, padding, or shapes.
+  - **SCALARS:** Use `int64_t`, `float`, or `bool` for scalar arguments.
+  - **CRITICAL:** Do NOT call `.is_cuda()` or `.contiguous()` on `std::vector` or scalar arguments. Only call these on `torch::Tensor`.
+- Dynamic vs. Hardcoded Values:
+  - When the input description provides a list, tuple, or variable for a parameter (e.g., kernel size, stride, padding), use that variable from the arguments.
+  - **Do NOT hardcode** specific values (e.g., don't write `3` or `256`) if an input argument is available.
+  - **ONLY** hardcode values if a specific value is **NOT** provided in the input description (i.e., use sensible defaults only when necessary).
 
 -----------------------------------------------
-Input: Operator description
-Output: Complete valid `kernel.cu` implementation following rules
+Output a complete valid `kernel.cu` implementation following rules
 -----------------------------------------------
 """
 
 
-def generate_function_spec_from_calls(calls_dict, function_name):
+import torch
+
+def generate_function_spec_from_calls(call_list, function_name):
     """
-    Extract function specification from tracked PyTorch calls.
-    Updated to support call records with 'args' and 'kwargs' instead of 'params'.
+    Extract function specification from ALL tracked PyTorch calls.
+    Aggregates types and detects dynamic shapes across all iterations.
     """
-    import torch
-    
-    if function_name not in calls_dict:
-        return None
-    
-    call_list = calls_dict[function_name]
     if not call_list:
         return None
+
+    # 1. Data Aggregation
+    # We will store observed properties for every argument across all calls
+    # param_stats = { "arg0": { "types": set(), "shapes": [], "is_list": False }, ... }
+    param_stats = {}
     
-    ref_call = call_list[0]
-    
-    # Build combined parameter dict
-    params = {}
-    
-    # Convert args to synthetic param names: arg0, arg1, ...
-    for i, arg in enumerate(ref_call.get("args", [])):
-        params[f"arg{i}"] = arg
-    
-    # Add kwargs normally
-    params.update(ref_call.get("kwargs", {}))
-    
-    output = ref_call.get("output", None)
-    
+    param_order = [] # To keep arguments in correct order
+
+    for call_idx, call in enumerate(call_list):
+        # Normalize args to dict keys (arg0, arg1...) to match kwargs
+        current_params = {}
+        for i, arg in enumerate(call.get("args", [])):
+            current_params[f"arg{i}"] = arg
+        current_params.update(call.get("kwargs", {}))
+
+        # Initialize param order from the first call
+        if call_idx == 0:
+            param_order = list(current_params.keys())
+
+        # Update stats for each parameter
+        for name, value in current_params.items():
+            if name not in param_stats:
+                param_stats[name] = {"types": set(), "shapes": [], "list_lens": set()}
+            
+            # Record Type
+            param_stats[name]["types"].add(type(value))
+
+            # Record Shape (for Tensors)
+            if isinstance(value, torch.Tensor):
+                param_stats[name]["shapes"].append(list(value.shape))
+            
+            # Record Length (for Lists/Tuples)
+            elif isinstance(value, (list, tuple)):
+                param_stats[name]["list_lens"].add(len(value))
+
+    # 2. Build Specification
     param_specs = []
-    for param_name, param_value in params.items():
-        if isinstance(param_value, torch.Tensor):
-            param_specs.append({
-                "name": param_name,
-                "type": "torch::Tensor",
-                "dtype": str(param_value.dtype).replace('torch.', ''),
-                "shape": list(param_value.shape),
-                "description": f"Input tensor of shape {list(param_value.shape)}"
-            })
-        elif param_value is None:
-            param_specs.append({
-                "name": param_name,
-                "type": "optional",
-                "value": "None",
-                "description": "Optional parameter (default: None)"
-            })
-        elif isinstance(param_value, bool):
-            param_specs.append({
-                "name": param_name,
-                "type": "bool",
-                "value": param_value,
-                "description": "Boolean flag"
-            })
-        elif isinstance(param_value, int):
-            param_specs.append({
-                "name": param_name,
-                "type": "int64_t",
-                "value": param_value,
-                "description": "Integer parameter"
-            })
-        elif isinstance(param_value, float):
-            param_specs.append({
-                "name": param_name,
-                "type": "double",
-                "value": param_value,
-                "description": "Float parameter"
-            })
-        elif isinstance(param_value, str):
-            param_specs.append({
-                "name": param_name,
-                "type": "std::string",
-                "value": f'"{param_value}"',
-                "description": "String parameter"
-            })
-        elif isinstance(param_value, (list, tuple)):
-            param_specs.append({
-                "name": param_name,
-                "type": "std::vector<int64_t>",
-                "value": list(param_value),
-                "description": "List/tuple parameter"
-            })
     
-    # Output spec
-    if isinstance(output, torch.Tensor):
-        output_spec = {
-            "type": "torch::Tensor",
-            "dtype": str(output.dtype).replace('torch.', ''),
-            "shape": list(output.shape),
-            "description": f"Output tensor of shape {list(output.shape)}"
+    for name in param_order:
+        stats = param_stats.get(name)
+        if not stats:
+            continue
+
+        types = stats["types"]
+        shapes = stats["shapes"]
+        
+        spec = {
+            "name": name,
+            "description": ""
         }
-    else:
-        output_spec = {
-            "type": str(type(output).__name__),
-            "description": "Non-tensor output"
-        }
-    
+
+        # --- Logic for Tensors ---
+        if torch.Tensor in types:
+            spec["type"] = "torch::Tensor"
+            
+            # Check if it is Optional (sometimes None)
+            if type(None) in types:
+                 spec["type"] = "std::optional<torch::Tensor>"
+                 spec["description"] += "Optional Tensor (handle null/None). "
+
+            # Analyze Shapes for Dynamics
+            if not shapes:
+                # Can happen if Tensor type was seen but only as None (rare edge case)
+                spec["shape"] = "Unknown"
+            else:
+                # Compare all observed shapes to find dynamic dimensions
+                # Start with the first observed shape as reference
+                ref_shape = shapes[0] 
+                final_shape = list(ref_shape)
+                
+                is_dynamic_rank = False
+                
+                for s in shapes[1:]:
+                    if len(s) != len(ref_shape):
+                        final_shape = "Rank Varies"
+                        is_dynamic_rank = True
+                        break
+                    
+                    for dim_i, dim_val in enumerate(s):
+                        if dim_val != final_shape[dim_i]:
+                            final_shape[dim_i] = -1 # Mark as dynamic
+                
+                spec["shape"] = final_shape
+                
+                # Format description
+                if is_dynamic_rank:
+                    spec["description"] += "Input tensor with varying rank. "
+                elif -1 in final_shape:
+                    spec["description"] += f"Input tensor. Dynamic shape: {final_shape} (-1 indicates variable dim). "
+                else:
+                    spec["description"] += f"Input tensor. Fixed shape: {final_shape}. "
+                    
+            # Grab dtype from the last non-None value seen
+            # (In a real implementation, you might check if dtypes vary too)
+            spec["dtype"] = "mixed" # Placeholder, usually consistent
+
+        # --- Logic for Lists/Tuples ---
+        elif list in types or tuple in types:
+            spec["type"] = "std::vector"
+            lens = stats["list_lens"]
+            if len(lens) > 1:
+                spec["description"] = f"List/Tuple with varying lengths: {lens}"
+            else:
+                spec["description"] = f"List/Tuple of length {list(lens)[0]}"
+
+        # --- Logic for Scalars ---
+        elif int in types:
+            spec["type"] = "int64_t"
+            spec["description"] = "Integer scalar"
+        elif float in types:
+            spec["type"] = "double"
+            spec["description"] = "Float scalar"
+        elif bool in types:
+            spec["type"] = "bool"
+            spec["description"] = "Boolean flag"
+        elif str in types:
+            spec["type"] = "std::string"
+            spec["description"] = "String parameter"
+        else:
+             spec["type"] = "auto"
+             spec["description"] = "Unknown/Complex type"
+
+        param_specs.append(spec)
+
     return {
         "function_name": function_name,
         "num_calls": len(call_list),
-        "parameters": param_specs,
-        "output": output_spec
+        "parameters": param_specs
     }
-
 
 def format_operator_prompt(function_spec, profiler_context=None):
     """
@@ -219,15 +266,6 @@ Based on {function_spec['num_calls']} tracked call(s), implement this operator:
         elif 'value' in param and param['value'] is not None:
             prompt += f"\n   - Default/Example: {param['value']}"
         prompt += f"\n   - {param['description']}"
-    
-    prompt += f"""
-
-**Returns:**
-- Type: {function_spec['output']['type']}
-"""
-    if 'shape' in function_spec['output']:
-        prompt += f"- Shape: {function_spec['output']['shape']}\n"
-        prompt += f"- dtype: {function_spec['output']['dtype']}\n"
     
     # Add profiler context if available
     if profiler_context:
@@ -317,7 +355,7 @@ def parse_profiler_output(profiler_text):
     }
 
 
-def generate_full_llm_prompt(calls_dict, function_name, profiler_output=None):
+def generate_full_llm_prompt(calls_list, function_name, profiler_output=None):
     """
     Complete pipeline: Generate the full prompt to send to an LLM.
     
@@ -336,9 +374,9 @@ def generate_full_llm_prompt(calls_dict, function_name, profiler_output=None):
         profiler_text = "..."  # Your aten/kernel output
         prompt = generate_full_llm_prompt(calls, "torch.nn.functional.linear", profiler_text)
     """
-    
+
     # Extract function specification
-    spec = generate_function_spec_from_calls(calls_dict, function_name)
+    spec = generate_function_spec_from_calls(calls_list, function_name)
     if spec is None:
         return f"Error: Could not generate spec for {function_name}"
     
