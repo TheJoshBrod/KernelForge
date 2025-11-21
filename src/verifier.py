@@ -13,20 +13,31 @@ from torch.utils.cpp_extension import load
 
 from byllm.lib import Model, by
 
-llm = Model(model_name="gpt-5")
+llm = Model(model_name="claude-sonnet-4-5-20250929")
 
 
 
 @by(llm)
-def summarize_issue_with_traceback(traceback_error: str, cu_code: str) -> str: ...
-"""Summarize the issue of the CUDA kernel within the traceback.
-Ignoring warnings, focuses on actual errors.
-How to fix CUDA kernel?"""
+def summarize_issue_with_traceback(traceback_error: str, cu_code: str, input_and_output: dict) -> str: ...
+"""Analyze the CUDA kernel compilation or runtime error and provide actionable fix suggestions.
+
+This function uses an LLM to parse the traceback, identify the root cause of the failure,
+and generate specific recommendations for modifying the CUDA kernel code.
+
+Note:
+    Called during validation failures to provide LLM-generated debugging guidance
+    for iteratively improving the kernel and/or PyBind11 interface overhead.
+
+    The caller of the pybind11 function is static and unable to be changed. You should instead explain how to accommodate the caller and how to fix how it is received
+"""
 
 
-def handle_output(traceback_error: str, cu_code: str, log_file_path: Path) -> str:
+def handle_output(traceback_error: str, cu_code: str, log_file_path: Path, input_and_output: dict) -> str:
     
-    feedback = summarize_issue_with_traceback(traceback_error, cu_code)
+    input_and_output["correct-output"] = input_and_output["output"]
+    del input_and_output["output"]
+
+    feedback = summarize_issue_with_traceback(traceback_error, cu_code, input_and_output)
     
     output = f"[Traceback Error]:\n{traceback_error}\n\n[LLM Generated Feedback]:\n{feedback}"
     with open(log_file_path, "w") as f:
@@ -75,7 +86,7 @@ def validate_kernel(
         # --- Handle compilation failure ---
         call_success = False
         exec_success = False
-        log_message = f"[Compilation Failed]\nSummarized traceback:\n {handle_output(str(e), generated_cu_code, log_file_path)}"
+        log_message = f"[Compilation Failed]\nSummarized traceback:\n {handle_output(str(e), generated_cu_code, log_file_path, None, None)}"
         return call_success, exec_success, log_message
     
 
@@ -85,55 +96,28 @@ def validate_kernel(
         entry = torch.load(entry_file)
         
         # Check if inputs contain separate args and kwargs
-        if isinstance(entry, dict) and "args" in entry and "kwargs" in entry:
-            args = entry["args"]
-            kwargs = entry["kwargs"]
-            
-            # Move tensors to CUDA, keep scalars as-is
-            cuda_args = []
-            for item in args:
-                if torch.is_tensor(item):
-                    cuda_args.append(item.cuda())
-                elif isinstance(item, (int, float, bool, str)):
-                    cuda_args.append(item)
-                # Skip other types
-            
-            cuda_kwargs = {}
-            for k, v in kwargs.items():
-                if torch.is_tensor(v):
-                    cuda_kwargs[k] = v.cuda()
-                elif isinstance(v, (int, float, bool, str)):
-                    cuda_kwargs[k] = v
-                # Skip other types
-            
-            # Call with both args and kwargs
-            output_generated = module.launch(*cuda_args, **cuda_kwargs)
+        args = entry["args"]
+        kwargs = entry["kwargs"]
         
-        else:
-            # Original behavior: inputs is a list/tuple/tensor/scalar
-            if isinstance(entry, (list, tuple)):
-                cuda_inputs = []
-                for item in entry:
-                    if torch.is_tensor(item):
-                        cuda_inputs.append(item.cuda())
-                    elif isinstance(item, (int, float, bool, str)):
-                        cuda_inputs.append(item)
-                    else:
-                        continue
-            elif torch.is_tensor(entry):
-                cuda_inputs = [entry.cuda()]
-            else:
-                # Single scalar input
-                if isinstance(entry, (int, float, bool, str)):
-                    cuda_inputs = [entry]
-                else:
-                    exec_success = False
-                    print("No valid inputs found")
-                    exit(1)
-                    return call_success, exec_success, log_message
-            
-            # Call the compiled kernel
-            output_generated = module.launch(*cuda_inputs)
+        # Move tensors to CUDA, keep scalars as-is
+        cuda_args = []
+        for item in args:
+            if torch.is_tensor(item):
+                cuda_args.append(item.cuda())
+            elif isinstance(item, (int, float, bool, str)):
+                cuda_args.append(item)
+            # Skip other types
+        
+        cuda_kwargs = {}
+        for k, v in kwargs.items():
+            if torch.is_tensor(v):
+                cuda_kwargs[k] = v.cuda()
+            elif isinstance(v, (int, float, bool, str)):
+                cuda_kwargs[k] = v
+            # Skip other types
+        
+        # Call with both args and kwargs
+        output_generated = module.launch(*cuda_args, **cuda_kwargs)
         
         # Ensure all CUDA operations complete
         torch.cuda.synchronize()
@@ -175,7 +159,7 @@ def validate_kernel(
 
         log_message = (
             "[Kernel Runtime Error]\n"
-            f"Summarized traceback:\n{handle_output(str(e), generated_cu_code, log_file_path)}\n\n"
+            f"Summarized traceback:\n{handle_output(str(e), generated_cu_code, log_file_path, entry)}\n\n"
             f"Input metadata:\n{input_info}"
         )
         
@@ -197,7 +181,7 @@ def validate_kernel(
                 output_shape = list(output_generated.shape)
                 expected_shape = list(ground_truth.shape)
 
-                log_message += (
+                analysis = (
                     "[Output Mismatch]\n"
                     f"- Expected shape: {expected_shape}\n"
                     f"- Output shape:   {output_shape}\n"
@@ -206,6 +190,9 @@ def validate_kernel(
                     "Likely causes: boundary indexing errors, thread grid size mismatch, "
                     "or incorrect memory writes.\n"
                 )
+
+                entry["generated-incorrect-output"] = output_generated
+                log_message += handle_output(analysis, generated_cu_code, log_file_path, entry)
 
                 with open(log_file_path, "w") as f:
                     f.write(f"[Incorrect Output]:\n{log_message}")
