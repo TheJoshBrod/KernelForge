@@ -71,6 +71,8 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
             call_success, exec_success, feedback = src.verifier.validate_kernel(
                 cu_code, entry_file, log_file_loc, tmpdir
             )
+
+            print(feedback)
                         
             # If failed on a testcase regenerate
             is_valid = is_valid and call_success and exec_success
@@ -174,8 +176,6 @@ def main():
     function_dirs = sorted(glob.glob(os.path.join(sys.argv[1], "*")))
 
     for func_dir in tqdm(function_dirs, desc="Processing functions"):
-        if "2d" not in func_dir:
-            continue
         if not os.path.isdir(func_dir):
             continue
             

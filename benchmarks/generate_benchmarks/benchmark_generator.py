@@ -42,11 +42,18 @@ def wrap_function(module, func_name):
 
     module_path = module.__name__
     
-    # Get function signature to extract default values
+    # Get function signature to extract parameter order and defaults
     try:
         sig = inspect.signature(func)
+        params = list(sig.parameters.keys())
+        defaults = {}
+        for param_name, param in sig.parameters.items():
+            if param.default != inspect.Parameter.empty:
+                defaults[param_name] = param.default
     except (ValueError, TypeError):
         sig = None
+        params = []
+        defaults = {}
 
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -58,7 +65,7 @@ def wrap_function(module, func_name):
             for a in args
         ]
 
-        # Only record kwargs explicitly passed
+        # Store kwargs as provided
         ser_kwargs = {
             k: (v.detach().cpu() if isinstance(v, torch.Tensor) else v)
             for k, v in kwargs.items()
@@ -80,7 +87,11 @@ def wrap_function(module, func_name):
         calls[key].append({
             "args": ser_args,
             "kwargs": ser_kwargs,
-            "output": ser_output
+            "output": ser_output,
+            "signature": {
+                "params": params,
+                "defaults": defaults
+            }
         })
 
         return output

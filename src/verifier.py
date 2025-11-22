@@ -9,27 +9,46 @@ import os
 import time
 
 from pathlib import Path
-from torch.utils.cpp_extension import load
+from torch.utils.cpp_extension import load_inline
+import re
 
 from byllm.lib import Model, by
 
 llm = Model(model_name="claude-sonnet-4-5-20250929")
 
-
-
 @by(llm)
 def summarize_issue_with_traceback(traceback_error: str, cu_code: str, input_and_output: dict) -> str: ...
-"""Analyze the CUDA kernel compilation or runtime error and provide actionable fix suggestions.
+@by(llm)
+def summarize_issue_with_traceback(
+    traceback_error: str, 
+    cu_code: str, 
+    input_and_output: dict
+) -> str:
+    """
+    Analyze CUDA kernel compilation or runtime errors and provide actionable fix suggestions.
 
-This function uses an LLM to parse the traceback, identify the root cause of the failure,
-and generate specific recommendations for modifying the CUDA kernel code.
+    Important:
+    - The caller-side argument formatting is already correct and MUST NOT be modified.
+    - The issue will always be internal to the CUDA kernel code (argument order, typing,
+        indexing, launch signature, or parameter handling).
 
-Note:
-    Called during validation failures to provide LLM-generated debugging guidance
-    for iteratively improving the kernel and/or PyBind11 interface overhead.
+    The input_and_output dict contains:
+    - args: List of positional arguments (normalized from kwargs if applicable)
+    - signature: Dict with 'params' (parameter names in order) and 'defaults'
+    - output or correct-output: Expected output tensor
 
-    The caller of the pybind11 function is static and unable to be changed. You should instead explain how to accommodate the caller and how to fix how it is received
-"""
+    The CUDA kernel's launch() function MUST accept arguments in exactly this order:
+    {', '.join(input_and_output.get('signature', {}).get('params', ['arg0', 'arg1', '...']))}
+
+    Provide specific recommendations for:
+    1. Correct argument ordering and types in the kernel launch() signature
+    2. Correct parameter use inside the CUDA code
+    3. Indexing, pointer arithmetic, and shape-related issues
+
+    Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
+    Only CUDA-side fixes are relevant.
+    """
+
 
 
 def handle_output(traceback_error: str, cu_code: str, log_file_path: Path, input_and_output: dict) -> str:
@@ -44,7 +63,59 @@ def handle_output(traceback_error: str, cu_code: str, log_file_path: Path, input
         f.write(output)
 
     return feedback
+
+def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:
+    """
+    Normalize args and kwargs into a complete positional argument list.
     
+    Args:
+        args: Positional arguments as captured
+        kwargs: Keyword arguments as captured
+        signature_info: Dict with 'params' (list of param names) and 'defaults' (dict of defaults)
+    
+    Returns:
+        tuple: (normalized_args, remaining_kwargs)
+            - normalized_args: Complete list of positional args with defaults filled
+            - remaining_kwargs: Any kwargs that couldn't be mapped (for error reporting)
+    """
+    params = signature_info.get("params", [])
+    defaults = signature_info.get("defaults", {})
+    
+    if not params:
+        # No signature info available, return as-is
+        return args, kwargs
+    
+    # Start with provided positional args
+    normalized = list(args)
+    remaining_kwargs = dict(kwargs)
+    
+    # Fill in any kwargs that should be positional
+    for i in range(len(normalized), len(params)):
+        param_name = params[i]
+        
+        if param_name in remaining_kwargs:
+            # Use the provided kwarg
+            normalized.append(remaining_kwargs.pop(param_name))
+        elif param_name in defaults:
+            # Use the default value
+            normalized.append(defaults[param_name])
+        else:
+            # No value available - this might cause issues
+            # Log a warning but continue
+            print(f"Warning: No value for parameter '{param_name}' at position {i}")
+            break
+    
+    return normalized, remaining_kwargs
+
+def move_to_cuda(item):
+    """Recursively move tensors to CUDA."""
+    if torch.is_tensor(item):
+        return item.cuda()
+    elif isinstance(item, (list, tuple)):
+        return type(item)(move_to_cuda(x) for x in item)
+    elif isinstance(item, dict):
+        return {k: move_to_cuda(v) for k, v in item.items()}
+    return item
 
 def validate_kernel(
     generated_cu_code: str,
@@ -74,12 +145,29 @@ def validate_kernel(
     
     # --- 2. Stage 1: Call Status (Compilation) ---
     try:
-        module = load(
+        # Set environment variables for correct CUDA version
+        # Also add python executable dir to PATH to ensure ninja is found
+        import sys
+        python_bin_dir = os.path.dirname(sys.executable)
+        os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
+        os.environ["PATH"] = f"{python_bin_dir}:/usr/local/cuda-12.1/bin:{os.environ['PATH']}"
+        
+        # Extract function signature for load_inline
+        # Looking for: torch::Tensor launch(...)
+        match = re.search(r"(torch::Tensor\s+launch\s*\([^)]*\))", generated_cu_code)
+        if not match:
+             raise ValueError("Could not find 'launch' function signature in generated code.")
+        
+        cpp_source = match.group(1) + ";"
+        
+        module = load_inline(
             name=f"generated_module_{os.path.basename(tmpdir)}",
-            sources=[cu_path],
+            cpp_sources=cpp_source,
+            cuda_sources=generated_cu_code,
+            functions=['launch'],
             build_directory=tmpdir,
             verbose=True,
-            is_python_module=True
+            with_cuda=True
         )
         call_success = True
 
@@ -87,6 +175,12 @@ def validate_kernel(
         # --- Handle compilation failure ---
         call_success = False
         exec_success = False
+        # Need to load entry to pass to handle_output if possible, or pass empty dict
+        try:
+            entry = torch.load(entry_file)
+        except:
+            entry = {"input": "Unknown", "output": "Unknown"}
+            
         log_message = f"[Compilation Failed]\nSummarized traceback:\n {handle_output(str(e), generated_cu_code, log_file_path, entry)}"
         return call_success, exec_success, log_message
     
@@ -96,29 +190,23 @@ def validate_kernel(
         # Load ground truth and inputs
         entry = torch.load(entry_file)
         
-        # Check if inputs contain separate args and kwargs
-        args = entry["args"]
-        kwargs = entry["kwargs"]
+        # Extract args, kwargs, and signature info
+        args = entry.get("args", [])
+        kwargs = entry.get("kwargs", {})
+        signature_info = entry.get("signature", {"params": [], "defaults": {}})
+        
+        # Normalize to positional arguments
+        normalized_args, remaining_kwargs = normalize_args_kwargs(args, kwargs, signature_info)
+        
+        # Warn if there are kwargs that couldn't be mapped
+        if remaining_kwargs:
+            print(f"Warning: Unmapped kwargs: {list(remaining_kwargs.keys())}")
         
         # Move tensors to CUDA, keep scalars as-is
-        cuda_args = []
-        for item in args:
-            if torch.is_tensor(item):
-                cuda_args.append(item.cuda())
-            elif isinstance(item, (int, float, bool, str)):
-                cuda_args.append(item)
-            # Skip other types
+        cuda_args = [move_to_cuda(item) for item in normalized_args]
         
-        cuda_kwargs = {}
-        for k, v in kwargs.items():
-            if torch.is_tensor(v):
-                cuda_kwargs[k] = v.cuda()
-            elif isinstance(v, (int, float, bool, str)):
-                cuda_kwargs[k] = v
-            # Skip other types
-        
-        # Call with both args and kwargs
-        output_generated = module.launch(*cuda_args, **cuda_kwargs)
+        # Call with ONLY positional args (load_inline doesn't support kwargs)
+        output_generated = module.launch(*cuda_args)
         
         # Ensure all CUDA operations complete
         torch.cuda.synchronize()
@@ -134,9 +222,13 @@ def validate_kernel(
         # --- Handle runtime errors ---
         runtime_success = False
         exec_success = False
-        # Extract useful metadata about inputs
+        
+        # Build detailed input info including normalization details
         input_info = {
-            "input_type": type(entry).__name__,
+            "original_args_count": len(args) if "args" in locals() else 0,
+            "original_kwargs": list(kwargs.keys()) if "kwargs" in locals() else [],
+            "normalized_args_count": len(cuda_args) if "cuda_args" in locals() else 0,
+            "signature_params": signature_info.get("params", []) if "signature_info" in locals() else [],
             "args": [
                 {
                     "index": idx,
@@ -146,17 +238,7 @@ def validate_kernel(
                 }
                 for idx, a in enumerate(cuda_args) if "cuda_args" in locals()
             ],
-            "kwargs": [
-                {
-                    "name": k,
-                    "dtype": str(v.dtype) if torch.is_tensor(v) else None,
-                    "shape": list(v.shape) if torch.is_tensor(v) else None,
-                    "type": type(v).__name__,
-                }
-                for k, v in (cuda_kwargs.items() if "cuda_kwargs" in locals() else [])
-            ]
         }
-
 
         log_message = (
             "[Kernel Runtime Error]\n"
@@ -165,12 +247,15 @@ def validate_kernel(
         )
         
         return call_success, exec_success, log_message
-    
+
     # --- 4. Final Comparison ---
     if runtime_success:
         try:
             # Use numerical tolerance checking
             ground_truth = entry["output"]
+            if torch.is_tensor(ground_truth):
+                ground_truth = ground_truth.to(output_generated.device)
+            
             is_correct = torch.allclose(output_generated, ground_truth, atol=1e-2, rtol=1e-1)
             
             if is_correct:
