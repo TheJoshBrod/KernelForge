@@ -1,9 +1,0 @@
-Metric,Value
-Total Operations,1
-Successful Operations,1
-Success Rate (%),100.00
-Median Attempts (Success Only),4.00
-Mean Attempts (Success Only),4.00
-Mean Execution Time (ms),0.216
-Mean Memory Allocated (MB),0.016
-Mean Peak Memory (MB),8.250

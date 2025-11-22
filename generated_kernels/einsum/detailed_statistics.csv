@@ -1,2 +1,0 @@
-Test Name,Operation,Success,Attempts,Execution Time (ms),Memory Allocated (MB),Memory Reserved (MB),Peak Memory (MB)
-core_op_einsum,torch.einsum,Yes,4,0.216,0.016,22.000,8.250

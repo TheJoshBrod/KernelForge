@@ -1,4 +1,0 @@
-Test Name,Operation,Success,Attempts,Execution Time (ms),Memory Allocated (MB),Memory Reserved (MB),Peak Memory (MB)
-matrix_multiply_sum,torch.matmul,Yes,1,14.059,16.000,132.000,120.125
-matrix_multiply_sum,torch.sin,Yes,2,0.248,16.000,202.000,120.125
-matrix_multiply_sum,torch.sin,Yes,1,0.241,16.000,202.000,152.125

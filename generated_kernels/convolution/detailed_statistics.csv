@@ -1,5 +1,0 @@
-Test Name,Operation,Success,Attempts,Execution Time (ms),Memory Allocated (MB),Memory Reserved (MB),Peak Memory (MB)
-core_op_conv1d,torch.nn.functional.conv1d,No,Failed,N/A,N/A,N/A,N/A
-core_op_conv2d,torch.nn.functional.conv2d,No,Failed,N/A,N/A,N/A,N/A
-core_op_conv3d,torch.nn.functional.conv3d,No,Failed,N/A,N/A,N/A,N/A
-core_op_conv_transpose2d,torch.nn.functional.conv_transpose2d,No,Failed,N/A,N/A,N/A,N/A

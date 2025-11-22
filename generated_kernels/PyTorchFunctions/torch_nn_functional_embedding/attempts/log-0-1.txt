@@ -1,0 +1,160 @@
+[Traceback Error]:
+launch(): incompatible function arguments. The following argument types are supported:
+    1. (arg0: torch.Tensor, arg1: torch.Tensor, arg2: int, arg3: Optional[float], arg4: float, arg5: bool, arg6: bool) -> torch.Tensor
+
+Invoked with: tensor([[ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11]], device='cuda:0'), tensor([[ 1.8007e-02, -2.3798e-02, -3.5982e-02,  ...,  4.5726e-04,
+          5.1363e-05,  1.5002e-02],
+        [ 7.8592e-03,  4.8144e-03, -1.6093e-02,  ...,  2.9312e-02,
+          2.7634e-02, -8.5431e-03],
+        [-1.1663e-02, -3.1590e-03, -9.4000e-03,  ...,  1.4870e-02,
+          2.1609e-02, -7.4069e-03],
+        ...,
+        [ 1.7418e-02,  3.4903e-03, -9.5621e-03,  ...,  2.9599e-03,
+          4.3435e-04, -2.6949e-02],
+        [ 2.1687e-02, -6.0216e-03,  1.4736e-02,  ..., -5.6118e-03,
+         -1.2590e-02, -2.8085e-02],
+        [ 2.6413e-03, -2.3298e-02,  5.4922e-03,  ...,  1.7537e-02,
+          2.7550e-02, -7.7656e-02]], device='cuda:0'), None, None, 2.0, False, False
+
+[LLM Generated Feedback]:
+Looking at the error, the issue is clear:
+
+**Problem:** The `launch()` function signature expects `int` for `arg2` (padding_idx), but it's being called with `None` (which is a Python `NoneType`, not convertible to `int`).
+
+**Root Cause:** The function signature declares `arg2` as `int64_t` (non-optional), but the caller is passing `None` for `padding_idx` when no padding index is specified.
+
+**Fix:** Change `arg2` to accept an optional integer type.
+
+# Corrected CUDA kernel code:
+
+```cuda
+// [START kernel.cu]
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <torch/extension.h>
+
+// ============ DEVICE CODE (CUDA kernels only) ============
+
+template <typename scalar_t>
+__global__ void embedding_kernel(
+    const int64_t* __restrict__ indices,
+    const scalar_t* __restrict__ weight,
+    scalar_t* __restrict__ output,
+    int64_t num_indices,
+    int64_t embedding_dim,
+    int64_t num_embeddings,
+    int64_t padding_idx,
+    bool has_padding_idx,
+    bool scale_grad_by_freq,
+    bool sparse
+) {
+    int64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int64_t total_elements = num_indices * embedding_dim;
+    
+    if (idx < total_elements) {
+        int64_t batch_idx = idx / embedding_dim;
+        int64_t embed_idx = idx % embedding_dim;
+        
+        int64_t index = indices[batch_idx];
+        
+        // Handle padding_idx: output zeros for padding indices
+        if (has_padding_idx && index == padding_idx) {
+            output[idx] = scalar_t(0);
+        } else {
+            // Bounds check
+            if (index >= 0 && index < num_embeddings) {
+                output[idx] = weight[index * embedding_dim + embed_idx];
+            } else {
+                output[idx] = scalar_t(0);
+            }
+        }
+    }
+}
+
+// ============ HOST CODE ============
+
+torch::Tensor launch(
+    torch::Tensor arg0,
+    torch::Tensor arg1,
+    c10::optional<int64_t> arg2,
+    c10::optional<double> arg3,
+    double arg4,
+    bool arg5,
+    bool arg6
+) {
+    // Input validation
+    TORCH_CHECK(arg0.is_cuda(), "indices tensor must be a CUDA tensor");
+    TORCH_CHECK(arg1.is_cuda(), "weight tensor must be a CUDA tensor");
+    TORCH_CHECK(arg0.scalar_type() == torch::kLong || arg0.scalar_type() == torch::kInt,
+                "indices must be of integer type");
+    
+    // Ensure contiguous
+    auto indices = arg0.contiguous();
+    auto weight = arg1.contiguous();
+    
+    // Extract parameters
+    bool has_padding_idx = arg2.has_value();
+    int64_t padding_idx = has_padding_idx ? arg2.value() : -1;
+    // arg3 is max_norm (not used in forward pass, only affects gradient)
+    double max_norm = arg3.has_value() ? arg3.value() : -1.0;
+    double norm_type = arg4;
+    bool scale_grad_by_freq = arg5;
+    bool sparse = arg6;
+    
+    // Get dimensions
+    auto indices_sizes = indices.sizes();
+    auto weight_sizes = weight.sizes();
+    
+    int64_t num_embeddings = weight_sizes[0];
+    int64_t embedding_dim = weight_sizes[1];
+    
+    // Calculate output shape: same as indices shape + embedding_dim
+    std::vector<int64_t> output_shape;
+    for (int64_t i = 0; i < indices.dim(); ++i) {
+        output_shape.push_back(indices_sizes[i]);
+    }
+    output_shape.push_back(embedding_dim);
+    
+    // Flatten indices for easier indexing
+    auto indices_flat = indices.reshape({-1});
+    int64_t num_indices = indices_flat.size(0);
+    
+    // Create output tensor
+    auto output = torch::empty(output_shape, weight.options());
+    auto output_flat = output.reshape({num_indices, embedding_dim});
+    
+    // Launch kernel
+    int64_t total_elements = num_indices * embedding_dim;
+    int threads = 256;
+    int blocks = (total_elements + threads - 1) / threads;
+    
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(weight.scalar_type(), "embedding_kernel", [&] {
+        embedding_kernel<scalar_t><<<blocks, threads>>>(
+            indices_flat.data_ptr<int64_t>(),
+            weight.data_ptr<scalar_t>(),
+            output_flat.data_ptr<scalar_t>(),
+            num_indices,
+            embedding_dim,
+            num_embeddings,
+            padding_idx,
+            has_padding_idx,
+            scale_grad_by_freq,
+            sparse
+        );
+    });
+    
+    // Check for errors
+    cudaError_t err = cudaGetLastError();
+    TORCH_CHECK(err == cudaSuccess, "CUDA kernel failed: ", cudaGetErrorString(err));
+    
+    return output;
+}
+
+// [END kernel.cu]
+```
+
+**Key Changes:**
+1. Changed `arg2` from `int64_t` to `c10::optional<int64_t>` to accept `None`
+2. Added `has_padding_idx` boolean flag to track whether padding_idx was provided
+3. Pass `has_padding_idx` to the kernel to conditionally check padding
+4. Modified kernel to only check padding when `has_padding_idx` is true
