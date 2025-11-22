@@ -1,8 +1,12 @@
 torch
 numpy
+pandas
+
 protobuf==5.26.1
 grpcio-status==1.59.0
 grpcio==1.59.0
+pyarrow
+
 google-generativeai
 openai==2.3.0
 ollama
