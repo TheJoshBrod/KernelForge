@@ -13,3 +13,4 @@ ollama
 anthropic
 
 ninja
+python-dotenv

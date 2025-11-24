@@ -5,8 +5,6 @@ from functools import wraps
 from PIL import Image
 import os
 import glob
-import json
-import tqdm
 import inspect
 import pyarrow.parquet as pq
 import pandas as pd
@@ -14,22 +12,18 @@ from pathlib import Path
 import importlib.util
 import sys
 import time 
+from dotenv import load_dotenv
 
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from transformers import AutoImageProcessor, AutoModelForImageClassification, AutoConfig
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-SKIP_FUNCTIONS = [
-    "has_torch_function",
-    "handle_torch_function",
-    "is_storage",
-    "result_type",
-    "get_default_dtype",
-    "tensor",  # Don't wrap tensor creation
-    "as_tensor",
-    "from_numpy",
-]
+
+load_dotenv()
+run_compiled = os.getenv("compiled_run") == "true"
+
+
 
 # ****************************
 # Load Custom Kernels into Dict
@@ -44,9 +38,7 @@ if compiled_root.exists():
         if not kernel_dir.is_dir():
             continue
         
-        # Find .so files in this directory
         so_files = list(kernel_dir.glob("*.so"))
-        print(so_files)
         if not so_files:
             continue
         
@@ -54,7 +46,6 @@ if compiled_root.exists():
         so_file = so_files[0]
         
         try:
-            # Load the module
             module_name = so_file.stem
             spec = importlib.util.spec_from_file_location(module_name, so_file)
             if spec is None or spec.loader is None:
@@ -65,8 +56,6 @@ if compiled_root.exists():
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
             
-            # Add to dict with function name as key
-            # Assuming the kernel has a 'launch' function
             if kernel_name.startswith("torch_nn_functional_"):
                 func_name = kernel_name.replace("torch_nn_functional_", "")
                 key = f"torch.nn.functional.{func_name}"
@@ -86,11 +75,12 @@ print(f"\nTotal custom kernels loaded: {len(CUSTOM_KERNELS)}")
 print(f"Available keys: {list(CUSTOM_KERNELS.keys())}\n")
 
 # ****************************
-# Track specific PyTorch Calls
+# Track specific PyTorch Calls with CUDA Event Timing
 # ****************************
 _wrapped = set()
 ENABLE_WRAPPING = True
 CALL_STATS = {}  # Track how many times each kernel is called
+TIMING_STATS = {}  # Track execution times with CUDA events
 
 def move_to_cuda(item):
     """Recursively move tensors to CUDA and make them contiguous."""
@@ -107,38 +97,61 @@ def move_to_cuda(item):
 def normalize_args_kwargs(args: list, kwargs: dict, params: list, defaults: dict) -> tuple[list, dict]:
     """
     Normalize args and kwargs into a complete positional argument list.
-    
-    Args:
-        args: Positional arguments as captured
-        kwargs: Keyword arguments as captured
-        params: List of parameter names in order
-        defaults: Dict of default values
-    
-    Returns:
-        tuple: (normalized_args, remaining_kwargs)
     """
     if not params:
         return args, kwargs
 
-    # Start with provided positional args
     normalized = list(args)
     remaining_kwargs = dict(kwargs)
     
-    # Fill in any kwargs that should be positional
     for i in range(len(normalized), len(params)):
         param_name = params[i]
         
         if param_name in remaining_kwargs:
-            # Use the provided kwarg
             normalized.append(remaining_kwargs.pop(param_name))
         elif param_name in defaults:
-            # Use the default value
             normalized.append(defaults[param_name])
         else:
-            # No value available
             break
     
     return normalized, remaining_kwargs
+
+
+def time_kernel_execution(kernel_fn, *args, num_warmup=3):
+    """
+    Time kernel execution using CUDA events for precise GPU timing.
+    
+    Args:
+        kernel_fn: The kernel function to execute
+        *args: Arguments to pass to the kernel
+        num_warmup: Number of warmup runs (default: 3)
+    
+    Returns:
+        tuple: (result, execution_time_ms)
+    """
+    # Warmup runs
+    for _ in range(num_warmup):
+        _ = kernel_fn(*args)
+    
+    # Synchronize before timing
+    torch.cuda.synchronize()
+    
+    # Create CUDA events
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+    
+    # Time the execution
+    start_event.record()
+    result = kernel_fn(*args)
+    end_event.record()
+    
+    # Wait for completion
+    torch.cuda.synchronize()
+    
+    # Get elapsed time in milliseconds
+    elapsed_time = start_event.elapsed_time(end_event)
+    
+    return result, elapsed_time
 
 
 def wrap_function(module, func_name):
@@ -172,6 +185,7 @@ def wrap_function(module, func_name):
             # Track usage
             if key not in CALL_STATS:
                 CALL_STATS[key] = 0
+                TIMING_STATS[key] = []
             CALL_STATS[key] += 1
             
             try:
@@ -183,17 +197,20 @@ def wrap_function(module, func_name):
                 for item in normalized_args:
                     if torch.is_tensor(item):
                         item = item.cuda() if not item.is_cuda else item
-                        item = item.contiguous()  # ← ADD THIS
+                        item = item.contiguous()
                         cuda_args.append(item)
                     else:
                         cuda_args.append(move_to_cuda(item))
                 
-                # Call custom kernel with positional args only
-                result = CUSTOM_KERNELS[key](*cuda_args)
+                # Time the custom kernel execution using CUDA events
+                if run_compiled:
+                    model = CUSTOM_KERNELS[key]
+                else:
+                    model = func
+                result, elapsed_time = time_kernel_execution(model, *cuda_args)
                 
-                # Ensure CUDA operations complete
-                if torch.is_tensor(result):
-                    torch.cuda.synchronize()
+                # Store timing information
+                TIMING_STATS[key].append(elapsed_time)
                 
                 return result
                 
@@ -207,141 +224,121 @@ def wrap_function(module, func_name):
 
     setattr(module, func_name, wrapper)
 
-# Wrap all functions in torch.nn.functional AND torch module
-print("Wrapping torch.nn.functional functions...")
-for name in dir(F):
-    if name.startswith("_"):
-        continue  # skip private names like _in_projection, etc.
-    if name in SKIP_FUNCTIONS or any(skip in name for skip in ["torch_function", "storage", "result_type", "dtype"]):
-        continue  # skip helpers by substring match
-    obj = getattr(F, name)
-    if callable(obj):
-        wrap_function(F, name)
+def selective_wrap():
+    """Only wrap functions that have custom implementations."""
+    print("Wrapping compiled functions...")
+    wrapped_count = 0
+    for kernel_key in CUSTOM_KERNELS.keys():
+        if kernel_key.startswith("torch.nn.functional."):
+            func_name = kernel_key.split(".")[-1]
+            if hasattr(F, func_name):
+                wrap_function(F, func_name)
+                wrapped_count += 1
+    
+    print(f"Wrapped {wrapped_count} functions with custom kernels")
+
 
 def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
-    """Runs Image Classification model from HuggingFace's Transformer library to profile input and outputs. 
-    Outputs the input/output pairs to pt file separate by PyTorch function name
-
-    Args:
-        model_name (str, optional): Name of Hugging Face image classification model. Defaults to "facebook/convnext-tiny-224".
-    """
-
-    # ****************************
-    #    Initialize PyTorch Model
-    # ****************************
-
-    # print(f"Loading {model_name}...")
+    """Runs Image Classification model from HuggingFace's Transformer library."""
     processor = AutoImageProcessor.from_pretrained(model_name)
     model = AutoModelForImageClassification.from_pretrained(model_name)
     device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
     model.to(device_str)
  
-    # ****************************
-    #        Run Model 
-    # ****************************
-
-    # print(f"Running {model_name}...")
     image_paths = glob.glob("benchmarks/generate_benchmarks/images/*.JPEG")
     for path in image_paths[:7]:
         if os.path.exists(path):
-            # Open image
             image = Image.open(path)
-            
-            # Configure inputs
             inputs = processor(images=image, return_tensors="pt")
             config = AutoConfig.from_pretrained(model_name)
             id2label = config.id2label
             
             inputs = {k: v.to(device_str) for k, v in inputs.items()}
             
-            # Run model
             with profiler.profile(record_shapes=True, use_device=device_str) as prof:
                 with profiler.record_function("forward"):
                     with torch.no_grad():
                         outputs = model(**inputs)
 
-            # Calculate Output 
             logits = outputs.logits
             predicted_class_id = logits.argmax(-1).item()
             label = id2label[predicted_class_id]
-            # print(label)
 
 
 def profile_text_model(model_name: str = "bert-base-uncased"):
-    """
-    Runs a HuggingFace text classification model using text samples from a JSON file
-    and profiles PyTorch forward passes. Saves profiling input/output to .pt files
-    grouped by PyTorch function names.
-
-    Expected JSON format:
-        {
-            "samples": [
-                "This movie was awesome!",
-                "I hate the food here.",
-                "Weather looks great today."
-            ]
-        }
-
-    Args:
-        model_name (str): Hugging Face model name.
-        input_json (str): Path to JSON file containing text samples.
-    """
-
-    # print(f"Loading {model_name}...")
+    """Runs a HuggingFace text classification model."""
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSequenceClassification.from_pretrained(model_name)
 
-    # Load text samples    
     pq_path = "benchmarks/generate_benchmarks/text_inputs.parquet"
     table = pq.read_table(pq_path)
     df = table.to_pandas()
     text_samples = df["sentence"].tolist()[:20]
 
-    # print(f"Running {model_name}...")
     device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
     model.to(device_str)
 
     for text in text_samples:
-        # Tokenize input
         inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=256)
         inputs = {k: v.to(device_str) for k, v in inputs.items()}
 
-        # Profile model
         with profiler.profile(record_shapes=True, use_device=device_str) as prof:
             with profiler.record_function("forward"):
                 with torch.no_grad():
                     outputs = model(**inputs)
 
-        # Get predicted label
         logits = outputs.logits
         predicted_class = torch.argmax(logits).item()
 
-        # Try mapping to readable class labels if available
         config = AutoConfig.from_pretrained(model_name)
         label_map = config.id2label if hasattr(config, "id2label") else None
         label_text = label_map[predicted_class] if label_map else predicted_class
 
-        # print(f"TEXT: {text}\nPREDICTION: {label_text}\n")
-
 
 def print_kernel_stats():
-    """Print statistics about custom kernel usage."""
-    print("\n" + "="*60)
-    print("CUSTOM KERNEL USAGE STATISTICS")
-    print("="*60)
+    """Print statistics about custom kernel usage and timing."""
+    print("\n" + "="*80)
+    print("CUSTOM KERNEL USAGE AND TIMING STATISTICS")
+    print("="*80)
+    
     if CALL_STATS:
-        for func_name, count in sorted(CALL_STATS.items(), key=lambda x: x[1], reverse=True):
-            print(f"  {func_name}: {count} calls")
+        print(f"\n{'Kernel Name':<50} {'Calls':<8} {'Avg (ms)':<12} {'Total (ms)':<12}")
+        print("-" * 80)
+        
+        for func_name in sorted(CALL_STATS.keys()):
+            count = CALL_STATS[func_name]
+            timings = TIMING_STATS.get(func_name, [])
+            
+            if timings:
+                avg_time = sum(timings) / len(timings)
+                total_time = sum(timings)
+                print(f"{func_name:<50} {count:<8} {avg_time:<12.4f} {total_time:<12.4f}")
+            else:
+                print(f"{func_name:<50} {count:<8} {'N/A':<12} {'N/A':<12}")
+        
+        # Print summary
+        total_calls = sum(CALL_STATS.values())
+        all_timings = [t for times in TIMING_STATS.values() for t in times]
+        if all_timings:
+            total_gpu_time = sum(all_timings)
+            print("-" * 80)
+            print(f"{'TOTAL':<50} {total_calls:<8} {'':<12} {total_gpu_time:<12.4f}")
+            print(f"\nTotal GPU time (custom kernels): {total_gpu_time:.4f} ms")
     else:
         print("  No custom kernels were called.")
-    print("="*60 + "\n")
+    
+    print("="*80 + "\n")
 
 
 def main():
-
     total_time = 0
+
+    # Wraps functions we compiled
+    selective_wrap()
+
     for i in range(11):
         start = time.time()
+        
         image_model_names = [
             "microsoft/resnet-50",
             "microsoft/swin-base-patch4-window7-224",
@@ -358,11 +355,16 @@ def main():
         
         end = time.time()
 
-        # give warmup set
+        # Skip warmup iteration
         if i == 0:
             continue
         total_time += end - start
-    print(total_time)
+    
+    print(f"\nTotal wall-clock time (excluding warmup): {total_time:.4f} seconds")
+    
+    # Print detailed kernel statistics
+    print_kernel_stats()
+
     
 if __name__ == "__main__":
     main()
