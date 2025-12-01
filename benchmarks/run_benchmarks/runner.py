@@ -7,12 +7,10 @@ import os
 import glob
 import inspect
 import pyarrow.parquet as pq
-import pandas as pd
 from pathlib import Path
 import importlib.util
 import sys
-import time 
-from dotenv import load_dotenv
+import time
 
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from transformers import AutoImageProcessor, AutoModelForImageClassification, AutoConfig
@@ -20,14 +18,16 @@ from transformers import AutoImageProcessor, AutoModelForImageClassification, Au
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-load_dotenv()
-run_compiled = os.getenv("compiled_run") == "true"
-
-
-
 # ****************************
-# Load Custom Kernels into Dict
+# Global Configuration & Setup
 # ****************************
+
+run_compiled = False
+for arg in sys.argv:
+    if arg == "--compiled":
+        print("true")
+        run_compiled = True 
+
 CUSTOM_KERNELS = {}
 
 compiled_root = Path("benchmarks/run_benchmarks/compiled_kernels")
@@ -74,13 +74,18 @@ else:
 print(f"\nTotal custom kernels loaded: {len(CUSTOM_KERNELS)}")
 print(f"Available keys: {list(CUSTOM_KERNELS.keys())}\n")
 
-# ****************************
+# ***************************************************
 # Track specific PyTorch Calls with CUDA Event Timing
-# ****************************
+# ***************************************************
 _wrapped = set()
 ENABLE_WRAPPING = True
 CALL_STATS = {}  # Track how many times each kernel is called
 TIMING_STATS = {}  # Track execution times with CUDA events
+
+
+# *******************************
+# CUDA Utilities & Timing Helpers
+# *******************************
 
 def move_to_cuda(item):
     """Recursively move tensors to CUDA and make them contiguous."""
@@ -92,7 +97,6 @@ def move_to_cuda(item):
     elif isinstance(item, dict):
         return {k: move_to_cuda(v) for k, v in item.items()}
     return item
-
 
 def normalize_args_kwargs(args: list, kwargs: dict, params: list, defaults: dict) -> tuple[list, dict]:
     """
@@ -115,7 +119,6 @@ def normalize_args_kwargs(args: list, kwargs: dict, params: list, defaults: dict
             break
     
     return normalized, remaining_kwargs
-
 
 def time_kernel_execution(kernel_fn, *args, num_warmup=3):
     """
@@ -153,6 +156,10 @@ def time_kernel_execution(kernel_fn, *args, num_warmup=3):
     
     return result, elapsed_time
 
+
+# *******************************************
+# Dynamic Function Wrapping & Monkey Patching
+# *******************************************
 
 def wrap_function(module, func_name):
     if not ENABLE_WRAPPING:
@@ -238,6 +245,10 @@ def selective_wrap():
     print(f"Wrapped {wrapped_count} functions with custom kernels")
 
 
+# ********************
+# Run model Functions
+# ********************
+
 def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
     """Runs Image Classification model from HuggingFace's Transformer library."""
     processor = AutoImageProcessor.from_pretrained(model_name)
@@ -263,7 +274,6 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
             logits = outputs.logits
             predicted_class_id = logits.argmax(-1).item()
             label = id2label[predicted_class_id]
-
 
 def profile_text_model(model_name: str = "bert-base-uncased"):
     """Runs a HuggingFace text classification model."""
@@ -294,6 +304,10 @@ def profile_text_model(model_name: str = "bert-base-uncased"):
         label_map = config.id2label if hasattr(config, "id2label") else None
         label_text = label_map[predicted_class] if label_map else predicted_class
 
+
+# **********************
+# Statistics & Reporting
+# **********************
 
 def print_kernel_stats():
     """Print statistics about custom kernel usage and timing."""
@@ -329,6 +343,10 @@ def print_kernel_stats():
     
     print("="*80 + "\n")
 
+
+# **************************
+# Main Execution Entry Point
+# **************************
 
 def main():
     total_time = 0
