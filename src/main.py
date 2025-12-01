@@ -25,7 +25,7 @@ import src.verifier
 
 # Configuration
 MAX_ATTEMPTS = 5
-OUTPUT_BASE_DIR = Path("generated_kernels")
+OUTPUT_BASE_DIR = Path("generated_kernels_optimized")
 
 def validate_with_retries(output_dir: Path, entry_files: list[str], conversation_history: list) -> bool:
     """
