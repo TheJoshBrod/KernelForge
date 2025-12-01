@@ -22,18 +22,22 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Global Configuration & Setup
 # ****************************
 
-run_compiled = False
-for arg in sys.argv:
-    if arg == "--compiled":
-        print("true")
-        run_compiled = True 
+run_compiled = "--compiled" in sys.argv
+run_optimized = "--optimized" in sys.argv
+if run_optimized and run_compiled:
+    print("Can only run one of the following flags: --compiled or ----optimized")
+    sys.exit(1)
+
 
 CUSTOM_KERNELS = {}
 
-compiled_root = Path("benchmarks/run_benchmarks/compiled_kernels")
+if run_compiled:
+    compiled_root = Path("benchmarks/run_benchmarks/compiled_kernels")
+elif run_optimized:
+    compiled_root = Path("benchmarks/run_benchmarks/optimized_compiled_kernels")
 
 print("Loading compiled kernels...")
-if compiled_root.exists():
+if (run_optimized or run_compiled) and compiled_root.exists():
     for kernel_dir in compiled_root.iterdir():
         if not kernel_dir.is_dir():
             continue

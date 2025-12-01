@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 import os
+import sys
 import torch
 from torch.utils.cpp_extension import load_inline
 from pathlib import Path
 import hashlib
 import re
+from multiprocessing import Pool, cpu_count, set_start_method
+import multiprocessing
+
+HARDWARE_OPTIMIZED = "--optimized" in sys.argv
 
 # Root directory where generated kernels live
-SOURCE_ROOT = Path("generated_kernels/PyTorchFunctions")
-
 # Output directory for compiled modules
-OUTPUT_ROOT = Path("benchmarks/run_benchmarks/compiled_kernels")
+if HARDWARE_OPTIMIZED:
+    SOURCE_ROOT = Path("generated_kernels_optimized/PyTorchFunctions")
+    OUTPUT_ROOT = Path("benchmarks/run_benchmarks/optimized_compiled_kernels")
+else:
+    SOURCE_ROOT = Path("generated_kernels/PyTorchFunctions")
+    OUTPUT_ROOT = Path("benchmarks/run_benchmarks/compiled_kernels")
 
 # NVCC optimization flags
 EXTRA_CUDA_CFLAGS = ["-O3", "--use_fast_math", "-lineinfo"]
@@ -53,7 +61,7 @@ def compile_kernel(kernel_path: Path):
         cpp_source = extract_launch_signature(cuda_source)
     except ValueError as e:
         print(f"✗ Skipping {kernel_path}: {e}")
-        return None
+        return (parent_name, False)
 
     # Create a unique module name based on parent directory
     module_hash = hashlib.md5(parent_name.encode()).hexdigest()[:8]
@@ -82,13 +90,20 @@ def compile_kernel(kernel_path: Path):
             with_cuda=True
         )
         print(f"✓ Success - Module compiled and loaded")
-        return module
+        return (parent_name, True)
     except Exception as e:
         print(f"✗ Compilation failed: {e}")
-        return None
+        return (parent_name, False)
 
 
 def main():
+    # Set spawn method before any CUDA operations
+    try:
+        set_start_method('spawn')
+    except RuntimeError:
+        # Already set
+        pass
+    
     # Ensure PyTorch with CUDA is available
     if not torch.cuda.is_available():
         print("ERROR: CUDA not available in PyTorch")
@@ -103,16 +118,24 @@ def main():
     print(f"Found {len(kernels)} kernel.cu files.")
     print(f"PyTorch version: {torch.__version__}")
     print(f"CUDA version: {torch.version.cuda}")
+    
+    # Determine number of workers (use all CPUs or set manually)
+    num_workers = cpu_count()
+    print(f"Using {num_workers} parallel workers")
 
     compiled_modules = {}
     success_count = 0
 
-    for kernel in kernels:
-        module = compile_kernel(kernel)
-        if module is not None:
-            parent_name = kernel.parent.name
-            compiled_modules[parent_name] = module
+    # Parallelize compilation
+    with Pool(processes=num_workers) as pool:
+        results = pool.map(compile_kernel, kernels)
+    
+    # Collect results
+    for parent_name, success in results:
+        if success:
             success_count += 1
+            # Note: modules are compiled but not loaded in main process
+            compiled_modules[parent_name] = True
 
     print(f"\n{'='*60}")
     print(f"Compilation complete: {success_count}/{len(kernels)} succeeded")
