@@ -14,7 +14,7 @@ HARDWARE_OPTIMIZED = "--optimized" in sys.argv
 # Root directory where generated kernels live
 # Output directory for compiled modules
 if HARDWARE_OPTIMIZED:
-    SOURCE_ROOT = Path("generated_kernels_optimized/PyTorchFunctions")
+    SOURCE_ROOT = Path("optimized_compiled_kernels")
     OUTPUT_ROOT = Path("benchmarks/run_benchmarks/optimized_compiled_kernels")
 else:
     SOURCE_ROOT = Path("generated_kernels/PyTorchFunctions")

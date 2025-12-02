@@ -1,14 +1,14 @@
 ninja_required_version = 1.3
 cxx = c++
-nvcc = /usr/local/cuda-12.1/bin/nvcc
+nvcc = /usr/local/cuda/bin/nvcc
 
-cflags = -DTORCH_EXTENSION_NAME=kernel_torch_nn_functional_relu_178ac7f3 -DTORCH_API_INCLUDE_EXTENSION_H -DPYBIND11_COMPILER_TYPE=\"_gcc\" -DPYBIND11_STDLIB=\"_libstdcpp\" -DPYBIND11_BUILD_ABI=\"_cxxabi1018\" -isystem /home/jodab/research/GinS/env/lib/python3.12/site-packages/torch/include -isystem /home/jodab/research/GinS/env/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.1/include -isystem /usr/include/python3.12 -fPIC -std=c++17 -O3
+cflags = -DTORCH_EXTENSION_NAME=kernel_torch_nn_functional_relu_178ac7f3 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/gins/jbrod_sarnav_ai_compilers/try_2/Ghost-in-the-Shell-GPU-Compiler/env/lib/python3.12/site-packages/torch/include -isystem /home/gins/jbrod_sarnav_ai_compilers/try_2/Ghost-in-the-Shell-GPU-Compiler/env/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/local/include/python3.12 -fPIC -std=c++17 -O3
 post_cflags = 
-cuda_cflags = -DTORCH_EXTENSION_NAME=kernel_torch_nn_functional_relu_178ac7f3 -DTORCH_API_INCLUDE_EXTENSION_H -DPYBIND11_COMPILER_TYPE=\"_gcc\" -DPYBIND11_STDLIB=\"_libstdcpp\" -DPYBIND11_BUILD_ABI=\"_cxxabi1018\" -isystem /home/jodab/research/GinS/env/lib/python3.12/site-packages/torch/include -isystem /home/jodab/research/GinS/env/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.1/include -isystem /usr/include/python3.12 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_75,code=compute_75 -gencode=arch=compute_75,code=sm_75 --compiler-options '-fPIC' -O3 --use_fast_math -lineinfo -std=c++17
+cuda_cflags = -DTORCH_EXTENSION_NAME=kernel_torch_nn_functional_relu_178ac7f3 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/gins/jbrod_sarnav_ai_compilers/try_2/Ghost-in-the-Shell-GPU-Compiler/env/lib/python3.12/site-packages/torch/include -isystem /home/gins/jbrod_sarnav_ai_compilers/try_2/Ghost-in-the-Shell-GPU-Compiler/env/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -isystem /usr/local/include/python3.12 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_86,code=compute_86 -gencode=arch=compute_86,code=sm_86 --compiler-options '-fPIC' -O3 --use_fast_math -lineinfo -std=c++17
 cuda_post_cflags = 
 cuda_dlink_post_cflags = 
 sycl_dlink_post_cflags = 
-ldflags = -shared -L/home/jodab/research/GinS/env/lib/python3.12/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda-12.1/lib64 -lcudart
+ldflags = -shared -L/home/gins/jbrod_sarnav_ai_compilers/try_2/Ghost-in-the-Shell-GPU-Compiler/env/lib/python3.12/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart
 
 rule compile
   command = $cxx -MMD -MF $out.d $cflags -c $in -o $out $post_cflags
@@ -27,8 +27,8 @@ rule cuda_compile
 rule link
   command = $cxx $in $ldflags -o $out
 
-build main.o: compile /home/jodab/research/GinS/benchmarks/run_benchmarks/compiled_kernels/torch_nn_functional_relu/main.cpp
-build cuda.cuda.o: cuda_compile /home/jodab/research/GinS/benchmarks/run_benchmarks/compiled_kernels/torch_nn_functional_relu/cuda.cu
+build main.o: compile /home/gins/jbrod_sarnav_ai_compilers/try_2/Ghost-in-the-Shell-GPU-Compiler/benchmarks/run_benchmarks/compiled_kernels/torch_nn_functional_relu/main.cpp
+build cuda.cuda.o: cuda_compile /home/gins/jbrod_sarnav_ai_compilers/try_2/Ghost-in-the-Shell-GPU-Compiler/benchmarks/run_benchmarks/compiled_kernels/torch_nn_functional_relu/cuda.cu
 
 
 
