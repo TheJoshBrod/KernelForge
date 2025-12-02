@@ -213,11 +213,20 @@ def profile_text_model(model_name: str = "bert-base-uncased"):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSequenceClassification.from_pretrained(model_name)
 
-    # Load text samples    
-    pq_path = "benchmarks/generate_benchmarks/text_inputs.parquet"
-    table = pq.read_table(pq_path)
-    df = table.to_pandas()
-    text_samples = df["sentence"].tolist()[:20]
+    # Load text samples
+    try:
+        pq_path = "benchmarks/generate_benchmarks/text_inputs.parquet"
+        table = pq.read_table(pq_path)
+        df = table.to_pandas()
+        text_samples = df["sentence"].tolist()[:20]
+    except FileNotFoundError:
+        print("Missing text_inputs.parquet — using fallback sentences.")
+        text_samples = [
+            "Hello world.",
+            "This is a test.",
+            "I love GPU kernels.",
+            "This model is performing well."
+        ]
 
     print(f"Running {model_name}...")
     device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
