@@ -19,9 +19,9 @@ import sys
 # ---------------------------------------------------------------------
 # ROOTS
 # ---------------------------------------------------------------------
-BASE_KERNEL_ROOT = Path("generated_kernels/PyTorchFunctions")
-BASE_ENTRY_ROOT  = Path("benchmarks/generate_benchmarks/PyTorchFunctions")
-OUT_ROOT         = Path("benchmarks/run_benchmarks/optimized_compiled_kernels")
+BASE_KERNEL_ROOT = Path("kernels/generated/PyTorchFunctions")
+BASE_ENTRY_ROOT  = Path("benchmarks/data/PyTorchFunctions")
+OUT_ROOT         = Path("kernels/optimized")
 
 
 def main():

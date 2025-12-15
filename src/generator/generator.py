@@ -3,7 +3,7 @@ import ollama as ol
 import google.generativeai as genai
 from openai import OpenAI
 from anthropic import Anthropic
-import src.prompts.prompts
+import src.generator.prompts.prompts
 
 def cleanup_mkdown(input: str) -> str:
     """Extract code from markdown code blocks using regex."""
@@ -38,7 +38,7 @@ def ollama_generator(msg: str, model: str = "llama3.2:latest", outputIR: str = "
         str: kernel_code
     """
     print("Generating code...")
-    sys_prompt = src.prompts.prompts.aten_to_cuda
+    sys_prompt = src.generator.prompts.prompts.get_system_prompt()
     response = ol.chat(model=model, messages=[{"role": "system", "content": sys_prompt},{"role": "user", "content": msg}])
     
     cu_code = response['message']['content']
@@ -77,7 +77,7 @@ def gemini_generator(conversation_history: list, model: str = "gemini-2.5-flash"
         str: kernel_code
     """
     print("Generating code...")
-    sys_prompt = src.prompts.prompts.aten_to_cuda
+    sys_prompt = src.generator.prompts.prompts.get_system_prompt()
 
     
     chat = genai.GenerativeModel(
@@ -103,7 +103,7 @@ def chatgpt_generator(conversation_history: list, model: str = "gpt-4o", outputI
     client = OpenAI()
         
     print("Generating code...")
-    sys_prompt = src.prompts.prompts.aten_to_cuda
+    sys_prompt = src.generator.prompts.prompts.get_system_prompt()
     
     conversation_history.insert(0, sys_prompt)
     response = client.chat.completions.create(
@@ -149,7 +149,7 @@ def anthropic_generator(conversation_history: list,
     params = {
         "model": model,
         "max_tokens": 4096,
-        "system": src.prompts.prompts.aten_to_cuda,
+        "system": src.generator.prompts.prompts.get_system_prompt(),
         "messages": anthropic_history
     }
     

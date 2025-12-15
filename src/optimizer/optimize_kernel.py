@@ -17,7 +17,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from byllm.lib import Model, by
-from src.verifier import validate_kernel
+from src.generator.verifier import validate_kernel
 
 
 # ----------------------------

@@ -1,0 +1,8 @@
+
+## Image Classification
+ResNetForImageClassification
+SwinForImageClassification
+ConvNextForImageClassification
+
+# NLP
+DistilBertForSequenceClassification

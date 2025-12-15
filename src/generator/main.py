@@ -15,17 +15,16 @@ import torch
 import tempfile
 from pathlib import Path
 from tqdm import tqdm
-import pickle
 
-import src.generator
-import src.logger
-import src.monitor
-import src.prompts.prompts
-import src.verifier
+import src.generator.generator as generator
+import src.generator.logger as logger
+import src.generator.monitor as monitor
+import src.generator.prompts.prompts as prompts
+import src.generator.verifier as verify
 
 # Configuration
 MAX_ATTEMPTS = 5
-OUTPUT_BASE_DIR = Path("generated_kernels_optimized")
+OUTPUT_BASE_DIR = Path("kernels/generated")
 
 def validate_with_retries(output_dir: Path, entry_files: list[str], conversation_history: list) -> bool:
     """
@@ -49,7 +48,7 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
         
         # Generate kernel
         try:
-            cu_code = src.generator.anthropic_generator(conversation_history)
+            cu_code = generator.anthropic_generator(conversation_history)
             conversation_history.append({"role": "assistant", "content": cu_code})
         except Exception as e:
             print(f"Failed on attempt {attempt}\n{e}")
@@ -68,7 +67,7 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
             # Validate current kernel with entry file
             log_file_loc = output_dir / "attempts" / f"log-{attempt}-{i}.txt"
             os.makedirs(log_file_loc.parent, exist_ok=True)
-            call_success, exec_success, feedback = src.verifier.validate_kernel(
+            call_success, exec_success, feedback = verify.validate_kernel(
                 cu_code, entry_file, log_file_loc, tmpdir
             )
 
@@ -128,7 +127,7 @@ def process_function(function_name: str, entry_files: list[str], op_dir: Path):
 
     # Profile operation
     try:
-        op_details = src.monitor.profile_single_op(context, exec_str)
+        op_details = monitor.profile_single_op(context, exec_str)
     except Exception as e:
         print(e)
         return False
@@ -147,7 +146,7 @@ def process_function(function_name: str, entry_files: list[str], op_dir: Path):
         print(f"Failed to load any entries for {function_name}")
         return False
 
-    prompt = src.prompts.prompts.generate_full_llm_prompt(call_list, function_name, op_details)
+    prompt = prompts.generate_full_llm_prompt(call_list, function_name, op_details)
     conversation_history.append({"role": "user", "content": prompt})
 
     call_list.clear()
