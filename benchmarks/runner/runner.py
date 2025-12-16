@@ -22,22 +22,22 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Global Configuration & Setup
 # ****************************
 
-run_compiled = "--compiled" in sys.argv
+run_standard = "--standard" in sys.argv
 run_optimized = "--optimized" in sys.argv
-if run_optimized and run_compiled:
+if run_optimized and run_standard:
     print("Can only run one of the following flags: --compiled or ----optimized")
     sys.exit(1)
 
 
 CUSTOM_KERNELS = {}
 
-if run_compiled:
-    compiled_root = Path("benchmarks/run_benchmarks/compiled_kernels")
+if run_standard:
+    compiled_root = Path("benchmarks/compiled/standard")
 elif run_optimized:
-    compiled_root = Path("benchmarks/run_benchmarks/optimized_compiled_kernels")
+    compiled_root = Path("benchmarks/compiled/optimized")
 
 print("Loading compiled kernels...")
-if (run_optimized or run_compiled) and compiled_root.exists():
+if (run_optimized or run_standard) and compiled_root.exists():
     for kernel_dir in compiled_root.iterdir():
         if not kernel_dir.is_dir():
             continue
@@ -214,7 +214,7 @@ def wrap_function(module, func_name):
                         cuda_args.append(move_to_cuda(item))
                 
                 # Time the custom kernel execution using CUDA events
-                if run_compiled:
+                if run_standard or run_optimized:
                     model = CUSTOM_KERNELS[key]
                 else:
                     model = func

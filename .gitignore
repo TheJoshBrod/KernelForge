@@ -5,10 +5,12 @@
 # Test/Temp files
 tmp
 output
+benchmarks/data/text/*.txt
 
 # Large Data Files
 *.pt
 *.parquet
+*.JPEG
 
 # Compiled files
 benchmarks/compiled/*

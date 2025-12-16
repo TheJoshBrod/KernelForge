@@ -14,10 +14,10 @@ HARDWARE_OPTIMIZED = "--optimized" in sys.argv
 # Output directory for compiled modules
 if HARDWARE_OPTIMIZED:
     SOURCE_ROOT = Path("kernels/optimized")
-    OUTPUT_ROOT = Path("benchmarks/run_benchmarks/optimized_compiled_kernels")
+    OUTPUT_ROOT = Path("benchmarks/compiled/optimized")
 else:
     SOURCE_ROOT = Path("kernels/generated/PyTorchFunctions")
-    OUTPUT_ROOT = Path("benchmarks/run_benchmarks/compiled_kernels")
+    OUTPUT_ROOT = Path("benchmarks/compiled/standard")
 
 # NVCC optimization flags
 EXTRA_CUDA_CFLAGS = ["-O3", "--use_fast_math", "-lineinfo"]
@@ -28,13 +28,6 @@ def find_kernel_files(root: Path):
     """Yield all kernel.cu files in directory tree."""
     for path in root.rglob("kernel.cu"):
         yield path
-
-
-def read_cuda_kernel(kernel_path: Path):
-    """Read the CUDA kernel source code."""
-    with open(kernel_path, 'r') as f:
-        return f.read()
-
 
 def extract_launch_signature(cuda_source: str):
     """Extract the launch function signature from CUDA source."""
@@ -53,7 +46,8 @@ def compile_kernel(kernel_path: Path):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Read the CUDA source
-    cuda_source = read_cuda_kernel(kernel_path)
+    with open(kernel_path, 'r') as f:
+        return f.read()
     
     # Extract launch function signature
     try:
@@ -119,7 +113,7 @@ def main():
     print(f"CUDA version: {torch.version.cuda}")
     
     # Determine number of workers (use all CPUs or set manually)
-    num_workers = cpu_count()
+    num_workers = 4
     print(f"Using {num_workers} parallel workers")
 
     compiled_modules = {}
@@ -144,4 +138,7 @@ def main():
 
 
 if __name__ == "__main__":
+    import time
+    start = time.time()
     main()
+    print(time.time() - start)
