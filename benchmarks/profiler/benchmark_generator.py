@@ -110,7 +110,7 @@ for name in dir(F):
 
 
 def save_entries(func_name, entries):
-    base_dir = "benchmarks/generate_benchmarks/PyTorchFunctions"
+    base_dir = "benchmarks/profiler/individual_ops"
     func_dir = os.path.join(base_dir, func_name.replace(".", "_").replace("/", "_"))
     os.makedirs(func_dir, exist_ok=True)
     
@@ -147,7 +147,7 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
     # ****************************
 
     print(f"Running {model_name}...")
-    image_paths = glob.glob("benchmarks/generate_benchmarks/images/*.JPEG")
+    image_paths = glob.glob("benchmarks/data/images/*.JPEG")
     for path in tqdm.tqdm(image_paths[:7], desc="images"):
         print(path)
         if os.path.exists(path):
@@ -213,14 +213,21 @@ def profile_text_model(model_name: str = "bert-base-uncased"):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSequenceClassification.from_pretrained(model_name)
 
-    # Load text samples
-    try:
-        pq_path = "benchmarks/generate_benchmarks/text_inputs.parquet"
-        table = pq.read_table(pq_path)
-        df = table.to_pandas()
-        text_samples = df["sentence"].tolist()[:20]
-    except FileNotFoundError:
-        print("Missing text_inputs.parquet — using fallback sentences.")
+    # Load text samples from individual files
+    text_dir = "benchmarks/data/text"
+    text_samples = []
+
+    if os.path.exists(text_dir):
+        files = sorted(glob.glob(os.path.join(text_dir, "*.txt")))[:20]
+        for f in files:
+            try:
+                with open(f, "r", encoding="utf-8") as tf:
+                    text_samples.append(tf.read().strip())
+            except Exception as e:
+                print(f"Error reading {f}: {e}")
+
+    if not text_samples:
+        print("Missing text files in benchmarks/data/text/ using fallback sentences.")
         text_samples = [
             "Hello world.",
             "This is a test.",

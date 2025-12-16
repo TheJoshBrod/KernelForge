@@ -260,7 +260,7 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
     device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
     model.to(device_str)
  
-    image_paths = glob.glob("benchmarks/generate_benchmarks/images/*.JPEG")
+    image_paths = glob.glob("benchmarks/data/images/*.JPEG")
     for path in image_paths[:7]:
         if os.path.exists(path):
             image = Image.open(path)
@@ -284,10 +284,23 @@ def profile_text_model(model_name: str = "bert-base-uncased"):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSequenceClassification.from_pretrained(model_name)
 
-    pq_path = "benchmarks/generate_benchmarks/text_inputs.parquet"
-    table = pq.read_table(pq_path)
-    df = table.to_pandas()
-    text_samples = df["sentence"].tolist()[:20]
+    text_dir = "benchmarks/data/text"
+    text_samples = []
+    if os.path.exists(text_dir):
+        files = sorted(glob.glob(os.path.join(text_dir, "*.txt")))[:20]
+        for fpath in files:
+            with open(fpath, "r", encoding="utf-8") as f:
+                text_samples.append(f.read().strip())
+    
+    # Fallback if empty/missing
+    if not text_samples:
+        print("Missing text files in benchmarks/data/text/ using fallback sentences.")
+        text_samples = [
+            "Hello world.",
+            "This is a test.",
+            "I love GPU kernels.",
+            "This model is performing well."
+        ]
 
     device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
     model.to(device_str)

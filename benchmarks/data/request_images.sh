@@ -8,7 +8,7 @@
 BASE_URL="https://www.isi.imi.i.u-tokyo.ac.jp/pattern/ilsvrc/test_images/all_mini/1-1000"
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-DEST_DIR="${SCRIPT_DIR}/pictures"
+DEST_DIR="${SCRIPT_DIR}/images"
 NUM_IMAGES=10 # NOTE: CHANGE AS NEEDED
 
 mkdir -p "$DEST_DIR"
