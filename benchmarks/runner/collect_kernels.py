@@ -70,7 +70,8 @@ def compile_kernel(kernel_path: Path):
         python_bin_dir = os.path.dirname(sys.executable)
         os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
         os.environ["PATH"] = f"{python_bin_dir}:/usr/local/cuda-12.1/bin:{os.environ['PATH']}"
-        
+        os.environ["TORCH_CUDA_ARCH_LIST"] = "7.5"
+
         module = load_inline(
             name=module_name,
             cpp_sources=cpp_source,
