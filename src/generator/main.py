@@ -17,7 +17,6 @@ from pathlib import Path
 from tqdm import tqdm
 
 import src.generator.generator as generator
-import src.generator.logger as logger
 import src.generator.monitor as monitor
 import src.generator.prompts.prompts as prompts
 import src.generator.verifier as verify
