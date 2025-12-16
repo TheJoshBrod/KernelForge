@@ -2,10 +2,18 @@
 # Generic gitignore #
 #####################
 
-## Dont commit test output or temporary files
+# Test/Temp files
 tmp
 output
+
+# Large Data Files
 *.pt
+*.parquet
+
+# Compiled files
+benchmarks/compiled/*
+
+
 
 # Python
 Python-3.12.5/*
