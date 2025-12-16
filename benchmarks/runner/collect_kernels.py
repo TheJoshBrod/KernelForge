@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+#cSpell:disable
+
 import os
 import sys
 import torch
@@ -13,10 +15,10 @@ HARDWARE_OPTIMIZED = "--optimized" in sys.argv
 # Root directory where generated kernels live
 # Output directory for compiled modules
 if HARDWARE_OPTIMIZED:
-    SOURCE_ROOT = Path("kernels/optimized")
+    SOURCE_ROOT = Path("kernels/optimized/individual_op_kernels")
     OUTPUT_ROOT = Path("benchmarks/compiled/optimized")
 else:
-    SOURCE_ROOT = Path("kernels/generated/PyTorchFunctions")
+    SOURCE_ROOT = Path("kernels/generated/individual_op_kernels")
     OUTPUT_ROOT = Path("benchmarks/compiled/standard")
 
 # NVCC optimization flags
@@ -47,7 +49,7 @@ def compile_kernel(kernel_path: Path):
 
     # Read the CUDA source
     with open(kernel_path, 'r') as f:
-        return f.read()
+        cuda_source = f.read()
     
     # Extract launch function signature
     try:
@@ -114,7 +116,7 @@ def main():
     print(f"CUDA version: {torch.version.cuda}")
     
     # Determine number of workers (use all CPUs or set manually)
-    num_workers = 4
+    num_workers = 1
     print(f"Using {num_workers} parallel workers")
 
     compiled_modules = {}
@@ -123,7 +125,7 @@ def main():
     # Parallelize compilation
     with Pool(processes=num_workers) as pool:
         results = pool.map(compile_kernel, kernels)
-    
+
     # Collect results
     for parent_name, success in results:
         if success:
