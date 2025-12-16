@@ -5,11 +5,8 @@ from functools import wraps
 from PIL import Image
 import os
 import glob
-import json
 import tqdm
 import inspect
-import pyarrow.parquet as pq
-import pandas as pd
 
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from transformers import AutoImageProcessor, AutoModelForImageClassification, AutoConfig
@@ -85,6 +82,7 @@ def wrap_function(module, func_name):
 
         calls.setdefault(key, [])
         calls[key].append({
+            "function_name": key,
             "args": ser_args,
             "kwargs": ser_kwargs,
             "output": ser_output,
@@ -178,7 +176,7 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
             # ****************************
 
             print(f"Exporting {model_name}...")
-            base_dir = "benchmarks/generate_benchmarks/PyTorchFunctions"
+            base_dir = "benchmarks/profiler/individual_ops"
             os.makedirs(base_dir, exist_ok=True)
 
             for func_name, entries in calls.items():

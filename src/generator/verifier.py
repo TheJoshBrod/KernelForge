@@ -17,8 +17,6 @@ from byllm.lib import Model, by
 llm = Model(model_name="claude-sonnet-4-5-20250929")
 
 @by(llm)
-def summarize_issue_with_traceback(traceback_error: str, cu_code: str, input_and_output: dict) -> str: ...
-@by(llm)
 def summarize_issue_with_traceback(
     traceback_error: str, 
     cu_code: str, 

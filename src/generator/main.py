@@ -99,27 +99,36 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
     return False
 
 
-def process_function(function_name: str, entry_files: list[str], op_dir: Path):
+def process_function(directory_name: str, entry_files: list[str], op_dir: Path):
     """
     Process all profiled calls for a given function.
 
     Args:
-        function_name: Name of the PyTorch API function (e.g. "torch.nn.functional.relu")
+        directory_name: Name of the directory that is based on the PyTorch API function (e.g. "torch-nn-functional-relu" -> "torch.nn.functional.relu")
         entry_files: List of paths to entry_*.pt files
         op_dir: Output directory for this operation
     """
+
 
     # Load first call to set up context for profiling
     first_call = torch.load(entry_files[0], map_location='cpu', weights_only=False)
     first_args = first_call.get("args", [])
     first_kwargs = first_call.get("kwargs", {})
 
+    
+    # Extract function name out of directory name
+    function_name = first_call.get("function_name")
+    if not function_name:
+        print(f"Skipping {directory_name}: no function_name stored")
+        return False
+
     context = {
-        "torch": __import__("torch"),
+        "torch": torch,
+        "F": torch.nn.functional,
         "args": first_args,
         "kwargs": first_kwargs,
     }
-
+    print(function_name)
     exec_str = f"{function_name}(*args, **kwargs)"
     
     # Set up conversation history
@@ -188,7 +197,7 @@ def main():
             print(f"No entry files found for {function_name}, skipping...")
             continue
         
-        op_dir = OUTPUT_BASE_DIR / "PyTorchFunctions" / function_name.replace(".", "_")
+        op_dir = OUTPUT_BASE_DIR / "individual_op_kernels" / function_name.replace(".", "_")
         op_dir.mkdir(parents=True, exist_ok=True)
 
         performance_file = op_dir / "success" 
