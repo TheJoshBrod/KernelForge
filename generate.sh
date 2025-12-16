@@ -53,4 +53,4 @@ if missing:
 print("All required Python libraries are installed.")
 EOF
 
-python -m src.generator.main benchmarks/data/PyTorchFunctions/
+python -m src.generator.main benchmarks/profiler/individual_ops/
