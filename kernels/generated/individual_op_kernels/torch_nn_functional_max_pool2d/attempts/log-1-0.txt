@@ -1,0 +1,106 @@
+[Traceback Error]:
+launch(): incompatible function arguments. The following argument types are supported:
+    1. (arg0: torch.Tensor, arg1: typing.SupportsInt, arg2: typing.SupportsInt, arg3: typing.SupportsInt, arg4: typing.SupportsInt, arg5: bool, arg6: bool) -> torch.Tensor
+
+Invoked with: tensor([[[[15.6951, 11.8611, 10.1637,  ..., 16.7884, 15.2305, 16.7644],
+          [16.8311, 13.1416, 10.5840,  ..., 16.7288, 15.8760, 17.0319],
+          [14.4460, 12.8579, 12.8681,  ..., 16.7857, 18.4908, 19.4205],
+          ...,
+          [14.4195, 13.7963, 13.6054,  ..., 11.5770, 10.7252, 14.2937],
+          [15.0426, 13.6911, 14.0765,  ..., 13.6046, 12.7308, 14.9911],
+          [16.4055, 14.6647, 14.1946,  ..., 14.0194, 14.6025, 16.7915]],
+
+         [[ 2.4944,  2.3112,  2.6031,  ...,  1.8766,  2.2644,  3.2781],
+          [ 2.2655,  2.7408,  2.2986,  ...,  3.1346,  3.0303,  2.2922],
+          [ 1.9345,  3.5757,  3.0595,  ...,  3.0195,  2.3226,  1.5293],
+          ...,
+          [ 2.0654,  2.6098,  2.9023,  ...,  2.7593,  2.1567,  2.1257],
+          [ 2.0713,  1.5738,  2.7072,  ...,  2.6785,  2.2441,  1.7432],
+          [ 3.0817,  2.3163,  2.3394,  ...,  2.3664,  3.0944,  1.8416]],
+
+         [[ 1.6228,  1.2543,  1.2262,  ...,  1.5428,  2.2958,  1.9846],
+          [ 1.9263,  2.1849,  2.1192,  ...,  2.3697,  1.7729,  0.9153],
+          [ 2.4898,  2.0710,  1.2493,  ...,  1.5177,  0.8072,  1.8047],
+          ...,
+          [ 2.1233,  1.5499,  1.7086,  ...,  2.2189,  1.7665,  1.7135],
+          [ 1.2302,  2.0099,  1.7561,  ...,  0.9578,  1.6656,  2.1801],
+          [ 3.0544,  1.5476,  1.4188,  ...,  2.2310,  1.4115,  0.6117]],
+
+         ...,
+
+         [[ 4.5849,  3.1007,  4.5037,  ...,  3.9723,  3.9351,  4.7436],
+          [ 4.8216,  4.2343,  3.2953,  ...,  5.0781,  3.0750,  4.2264],
+          [ 2.7076,  6.1543,  3.6794,  ...,  5.5695,  3.8049,  4.7764],
+          ...,
+          [ 2.1102,  5.6967,  4.8707,  ...,  4.8947,  3.6229,  3.2093],
+          [ 3.3054,  3.2927,  6.4479,  ...,  5.6319,  4.0268,  2.1652],
+          [ 4.9255,  3.0210,  4.9132,  ...,  5.2879,  5.0222,  1.9091]],
+
+         [[ 4.1295,  3.5100,  4.0998,  ...,  3.1710,  4.3682,  4.0033],
+          [ 5.1377,  2.3802,  4.1331,  ...,  2.7304,  3.9584,  3.3004],
+          [ 5.8941,  3.0908,  2.9663,  ...,  4.0131,  3.0169,  3.7754],
+          ...,
+          [ 3.1423,  4.8491,  2.4323,  ...,  2.9917,  3.8108,  4.4240],
+          [ 2.2509,  5.0026,  3.4338,  ...,  3.1157,  3.1582,  4.5173],
+          [ 1.9887,  4.0638,  4.3539,  ...,  4.0268,  3.3767,  2.8834]],
+
+         [[ 0.4084,  0.4301,  0.4021,  ...,  0.2770,  0.2790,  0.2192],
+          [ 0.4345,  0.4540,  0.4248,  ...,  0.3482,  0.3697,  0.2844],
+          [ 0.4201,  0.4350,  0.4258,  ...,  0.4034,  0.4125,  0.3064],
+          ...,
+          [ 0.8070,  0.8191,  0.7369,  ...,  0.6048,  0.6471,  0.5608],
+          [ 0.8136,  0.8270,  0.7220,  ...,  0.6192,  0.6500,  0.5763],
+          [ 0.6551,  0.6528,  0.5587,  ...,  0.5139,  0.5165,  0.4705]]]],
+       device='cuda:0'), 3, 2, 1, 1
+
+[LLM Generated Feedback]:
+Looking at the error, the issue is clear:
+
+**Problem:** The `launch()` function signature expects 7 arguments, but only 5 are being passed. The caller is passing `(tensor, 3, 2, 1, 1)` but the function expects `(tensor, int, int, int, int, bool, bool)`.
+
+**Root Cause:** The `kwargs` dictionary contains `ceil_mode=False` and `return_indices=False`, but these are not being passed as positional arguments.
+
+**Fix:** The `launch()` function signature is correct as declared, but the binding expects ALL parameters including the boolean flags from kwargs. Since the signature shows `['args', 'kwargs']`, the actual parameters being passed are:
+- arg0: tensor
+- arg1: 3 (kernel_size)
+- arg2: 2 (stride)  
+- arg3: 1 (padding)
+- arg4: 1 (dilation)
+- **Missing: ceil_mode (from kwargs)**
+- **Missing: return_indices (from kwargs)**
+
+The kernel code itself is correct. The issue is that the function is being invoked with only 5 arguments when 7 are expected.
+
+**Solution:** Ensure the launch function receives all 7 parameters. Based on the error message showing the invocation has only 5 values, the binding layer needs to pass the kwargs values as positional arguments.
+
+However, since you stated "caller-side argument formatting is already correct", the actual fix needed is:
+
+**Change the launch() signature parameter order to match what's actually being passed:**
+
+```cpp
+torch::Tensor launch(
+    torch::Tensor arg0,
+    int64_t arg1,
+    int64_t arg2,
+    int64_t arg3,
+    int64_t arg4,
+    bool return_indices = false,
+    bool ceil_mode = false
+) {
+```
+
+**Or provide default values:**
+
+```cpp
+torch::Tensor launch(
+    torch::Tensor arg0,
+    int64_t arg1,
+    int64_t arg2,
+    int64_t arg3,
+    int64_t arg4,
+    bool ceil_mode = false,
+    bool return_indices = false
+) {
+```
+
+The second option with defaults allows the function to be called with 5, 6, or 7 arguments, matching the invocation pattern shown.

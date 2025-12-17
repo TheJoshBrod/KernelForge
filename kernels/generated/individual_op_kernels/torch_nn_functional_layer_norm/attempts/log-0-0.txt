@@ -1,0 +1,66 @@
+[Traceback Error]:
+input must be contiguous
+
+[LLM Generated Feedback]:
+Looking at the error "input must be contiguous" and the code, I can see the issue:
+
+The CUDA kernel's `launch()` function signature has the parameters in the wrong order. The function currently expects:
+
+```cpp
+torch::Tensor launch(
+    torch::Tensor input,
+    std::vector<int64_t> normalized_shape,
+    torch::Tensor weight,
+    torch::Tensor bias,
+    double eps
+)
+```
+
+But based on the signature provided, the arguments are being passed as:
+1. `input` (tensor)
+2. `normalized_shape` (tuple/list → becomes vector)
+3. `weight` (tensor)
+4. `bias` (tensor)
+5. `eps` (float)
+
+However, the actual arguments being passed show that `normalized_shape` is being passed as `(128,)` which is a single integer tuple, but `weight` and `bias` are full tensors.
+
+The issue is that when PyTorch/pybind11 converts the Python tuple `(128,)` to `std::vector<int64_t>`, and the subsequent tensor arguments, the binding may be creating a non-contiguous view or the tensor arguments are not in the expected format.
+
+**The actual problem**: The `normalized_shape` parameter should be `c10::IntArrayRef` instead of `std::vector<int64_t>` to properly handle PyTorch's tensor shape arguments without creating contiguity issues.
+
+## Fix:
+
+```cpp
+torch::Tensor launch(
+    torch::Tensor input,
+    c10::IntArrayRef normalized_shape,
+    torch::Tensor weight,
+    torch::Tensor bias,
+    double eps
+) {
+    // Input validation
+    TORCH_CHECK(input.is_cuda(), "input must be a CUDA tensor");
+    TORCH_CHECK(input.is_contiguous(), "input must be contiguous");
+    
+    if (weight.defined()) {
+        TORCH_CHECK(weight.is_cuda(), "weight must be a CUDA tensor");
+        TORCH_CHECK(weight.is_contiguous(), "weight must be contiguous");
+    }
+    
+    if (bias.defined()) {
+        TORCH_CHECK(bias.is_cuda(), "bias must be a CUDA tensor");
+        TORCH_CHECK(bias.is_contiguous(), "bias must be contiguous");
+    }
+    
+    // Get dimensions
+    auto input_sizes = input.sizes();
+    int64_t batch_size = input_sizes[0];
+    int64_t seq_len = input_sizes[1];
+    int64_t normalized_size = normalized_shape[0];
+    
+    TORCH_CHECK(input_sizes[2] == normalized_size, 
+                "Last dimension of input must match normalized_shape");
+```
+
+Change `std::vector<int64_t> normalized_shape` to `c10::IntArrayRef normalized_shape` in the launch function signature. This is the proper PyTorch type for shape/size arguments and will prevent any contiguity issues during argument marshalling.
