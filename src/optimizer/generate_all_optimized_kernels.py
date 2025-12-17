@@ -3,7 +3,7 @@
 generate_all_optimized_kernels.py
 
 Scans:
-  generated_kernels/PyTorchFunctions/* for kernel.cu
+  kernels/generated/individual_op_kernels/* for kernel.cu
 
 Finds matching entry files in:
   benchmarks/profiler/individual_ops/*/entry_*.pt
@@ -19,7 +19,7 @@ import sys
 # ---------------------------------------------------------------------
 # ROOTS
 # ---------------------------------------------------------------------
-BASE_KERNEL_ROOT = Path("kernels/generated/PyTorchFunctions")
+BASE_KERNEL_ROOT = Path("kernels/generated/individual_op_kernels")
 BASE_ENTRY_ROOT  = Path("benchmarks/profiler/individual_ops")
 OUT_ROOT         = Path("kernels/optimized")
 
