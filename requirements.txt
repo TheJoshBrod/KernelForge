@@ -16,3 +16,5 @@ ninja
 python-dotenv
 pillow
 transformers
+
+byllm

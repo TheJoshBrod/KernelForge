@@ -14,7 +14,7 @@ import re
 
 from byllm.lib import Model, by
 
-llm = Model(model_name="claude-sonnet-4-5-20250929")
+llm = Model(model_name="claude-claude-opus-4-5-20251101")
 
 @by(llm)
 def summarize_issue_with_traceback(

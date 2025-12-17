@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
+. ~/.profile
+
 PYTHON=python3
 
 $PYTHON - <<'EOF'

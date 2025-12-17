@@ -135,7 +135,7 @@ def convert_chatgpt_to_anthropic(chatgpt_history: list) -> list:
     return anthropic_history
 
 def anthropic_generator(conversation_history: list,
-                        model: str = "claude-sonnet-4-5-20250929") -> str:
+                        model: str = "claude-opus-4-5-20251101") -> str:
     """Initial generation of kernel/IR using Anthropic Claude API."""
     print("Generating code with Claude...")
     
