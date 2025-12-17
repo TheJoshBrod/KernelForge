@@ -1,0 +1,92 @@
+[Traceback Error]:
+Dimension out of range (expected to be in range of [-4, 3], but got 4)
+
+[LLM Generated Feedback]:
+Looking at the error "Dimension out of range (expected to be in range of [-4, 3], but got 4)" and analyzing the code:
+
+The issue is in the kernel code's dimension handling. The input tensor is **4D** (N, C, H, W), but the code treats it as **5D** (N, C, D, H, W).
+
+**Root Cause:**
+1. Line 93: `TORCH_CHECK(input.dim() == 4, "input must be 4D tensor (N, C, D, H, W)")` - Comment says 5D but checks for 4D
+2. Line 99: `int64_t in_width = input.size(4);` - Tries to access dimension 4 on a 4D tensor (valid indices: 0-3)
+3. The padding is `(0, 0, 0, 0, 0, 0)` which is 2D padding (left, right, top, bottom, front, back), but the input is only 4D
+
+**Fix:**
+
+The kernel should handle 2D padding on a 4D tensor (N, C, H, W), not 3D padding on a 5D tensor.
+
+```cuda
+// ============ HOST CODE ============
+
+torch::Tensor launch(
+    torch::Tensor input,
+    std::vector<int64_t> pad,
+    std::string mode,
+    c10::optional<double> value
+) {
+    // 1. Input validation
+    TORCH_CHECK(input.is_cuda(), "input must be a CUDA tensor");
+    TORCH_CHECK(input.is_contiguous(), "input must be contiguous");
+    TORCH_CHECK(input.dim() >= 3, "input must be at least 3D tensor");
+    TORCH_CHECK(mode == "constant", "Only 'constant' padding mode is supported");
+    
+    int ndim = input.dim();
+    
+    // For 4D input (N, C, H, W) with 4-element pad (left, right, top, bottom)
+    if (ndim == 4 && pad.size() == 4) {
+        int64_t batch = input.size(0);
+        int64_t channels = input.size(1);
+        int64_t in_height = input.size(2);
+        int64_t in_width = input.size(3);
+        
+        int64_t pad_left = pad[0];
+        int64_t pad_right = pad[1];
+        int64_t pad_top = pad[2];
+        int64_t pad_bottom = pad[3];
+        
+        int64_t out_width = in_width + pad_left + pad_right;
+        int64_t out_height = in_height + pad_top + pad_bottom;
+        
+        double pad_value = value.has_value() ? value.value() : 0.0;
+        auto output = torch::zeros({batch, channels, out_height, out_width}, input.options());
+        
+        int64_t total_elements = batch * channels * out_height * out_width;
+        int threads = 256;
+        int blocks = (total_elements + threads - 1) / threads;
+        
+        // Use simplified 2D kernel or adapt 3D kernel with depth=1
+        AT_DISPATCH_FLOATING_TYPES_AND_HALF(input.scalar_type(), "constant_pad_2d_kernel", ([&] {
+            constant_pad_3d_kernel<scalar_t><<<blocks, threads>>>(
+                input.data_ptr<scalar_t>(),
+                output.data_ptr<scalar_t>(),
+                batch,
+                channels,
+                1,  // in_depth = 1
+                in_height,
+                in_width,
+                1,  // out_depth = 1
+                out_height,
+                out_width,
+                pad_left,
+                pad_top,
+                0,  // pad_front = 0
+                scalar_t(pad_value)
+            );
+        }));
+        
+        cudaError_t err = cudaGetLastError();
+        TORCH_CHECK(err == cudaSuccess, "CUDA kernel launch failed: ", cudaGetErrorString(err));
+        
+        return output;
+    }
+    
+    // Original 5D/3D padding logic would go here
+    TORCH_CHECK(false, "Unsupported input dimension or padding configuration");
+    return input;
+}
+```
+
+**Key Changes:**
+1. Handle 4D input (N, C, H, W) with 4-element padding
+2. Set depth dimensions to 1 when calling the 3D kernel for 2D data
+3. Extract dimensions using correct indices (0-3 for 4D tensor)

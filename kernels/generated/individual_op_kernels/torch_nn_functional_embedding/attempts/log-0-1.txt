@@ -1,0 +1,87 @@
+[Traceback Error]:
+launch(): incompatible function arguments. The following argument types are supported:
+    1. (arg0: torch.Tensor, arg1: torch.Tensor, arg2: typing.SupportsInt, arg3: typing.SupportsFloat | None, arg4: typing.SupportsFloat, arg5: bool, arg6: bool) -> torch.Tensor
+
+Invoked with: tensor([[ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11]], device='cuda:0'), tensor([[ 1.8007e-02, -2.3798e-02, -3.5982e-02,  ...,  4.5726e-04,
+          5.1363e-05,  1.5002e-02],
+        [ 7.8592e-03,  4.8144e-03, -1.6093e-02,  ...,  2.9312e-02,
+          2.7634e-02, -8.5431e-03],
+        [-1.1663e-02, -3.1590e-03, -9.4000e-03,  ...,  1.4870e-02,
+          2.1609e-02, -7.4069e-03],
+        ...,
+        [ 1.7418e-02,  3.4903e-03, -9.5621e-03,  ...,  2.9599e-03,
+          4.3435e-04, -2.6949e-02],
+        [ 2.1687e-02, -6.0216e-03,  1.4736e-02,  ..., -5.6118e-03,
+         -1.2590e-02, -2.8085e-02],
+        [ 2.6413e-03, -2.3298e-02,  5.4922e-03,  ...,  1.7537e-02,
+          2.7550e-02, -7.7656e-02]], device='cuda:0'), None, None, 2.0, False, False
+
+[LLM Generated Feedback]:
+Looking at the error, the issue is clear:
+
+**Problem**: The `launch()` function signature expects `padding_idx` as type `typing.SupportsInt` (which means it should accept `None` or an int), but the function declares it as `int64_t` which is a primitive type that cannot be `None`.
+
+**The caller is passing**: `None` for `padding_idx` (3rd argument)
+
+**Current signature**:
+```cpp
+torch::Tensor launch(
+    torch::Tensor input,
+    torch::Tensor weight,
+    int64_t padding_idx,  // ❌ Cannot accept None
+    c10::optional<double> max_norm,
+    double norm_type,
+    bool scale_grad_by_freq,
+    bool sparse)
+```
+
+**Fix**: Change `padding_idx` to `c10::optional<int64_t>` to accept `None`:
+
+```cpp
+torch::Tensor launch(
+    torch::Tensor input,
+    torch::Tensor weight,
+    c10::optional<int64_t> padding_idx,  // ✅ Can accept None or int
+    c10::optional<double> max_norm,
+    double norm_type,
+    bool scale_grad_by_freq,
+    bool sparse)
+{
+    // Update padding_idx handling:
+    int64_t padding_idx_value = -1;
+    bool has_padding_idx = padding_idx.has_value();
+    
+    if (has_padding_idx) {
+        padding_idx_value = padding_idx.value();
+        if (padding_idx_value < 0) {
+            padding_idx_value += num_embeddings;
+        }
+    }
+    
+    // Remove the old handling code:
+    // bool has_padding_idx = (padding_idx != -1);
+    // if (has_padding_idx && padding_idx < 0) {
+    //     padding_idx += num_embeddings;
+    // }
+    
+    // In kernel launch, use padding_idx_value instead of padding_idx:
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(weight_contig.scalar_type(), "embedding_kernel", [&] {
+        embedding_kernel<scalar_t><<<blocks, threads>>>(
+            input_flat.data_ptr<int64_t>(),
+            weight_contig.data_ptr<scalar_t>(),
+            output.data_ptr<scalar_t>(),
+            num_embeddings,
+            embedding_dim,
+            num_indices,
+            padding_idx_value,  // Use the extracted value
+            has_padding_idx,
+            scale_grad_by_freq,
+            sparse
+        );
+    });
+    
+    // ... rest of the code
+}
+```
+
+This matches the expected signature where `padding_idx` can be `None` (Python) / `c10::optional<int64_t>` (C++).

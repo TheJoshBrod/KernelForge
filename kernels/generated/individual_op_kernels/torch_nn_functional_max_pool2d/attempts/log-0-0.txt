@@ -1,0 +1,134 @@
+[Traceback Error]:
+Could not find 'launch' function signature in generated code.
+
+[LLM Generated Feedback]:
+Looking at the error and code, the issue is clear: **the `launch` function signature does not match the expected parameter order from the signature specification**.
+
+The signature specifies `['args', 'kwargs']`, meaning the function should accept:
+1. A list/vector of positional arguments
+2. A dictionary/map of keyword arguments
+
+But the current `launch` function has individual parameters unpacked.
+
+## Required Fix
+
+Replace the `launch` function signature with:
+
+```cpp
+std::vector<torch::Tensor> launch(
+    std::vector<torch::Tensor> args,
+    std::unordered_map<std::string, torch::IValue> kwargs
+) {
+    // Extract positional arguments
+    TORCH_CHECK(args.size() >= 5, "Expected at least 5 positional arguments");
+    
+    torch::Tensor input = args[0];
+    int64_t kernel_size = args[1].item<int64_t>();
+    int64_t stride = args[2].item<int64_t>();
+    int64_t padding = args[3].item<int64_t>();
+    int64_t dilation = args[4].item<int64_t>();
+    
+    // Extract keyword arguments with defaults
+    bool ceil_mode = false;
+    bool return_indices = false;
+    
+    if (kwargs.find("ceil_mode") != kwargs.end()) {
+        ceil_mode = kwargs["ceil_mode"].toBool();
+    }
+    if (kwargs.find("return_indices") != kwargs.end()) {
+        return_indices = kwargs["return_indices"].toBool();
+    }
+    
+    // Input validation
+    TORCH_CHECK(input.is_cuda(), "input must be a CUDA tensor");
+    TORCH_CHECK(input.is_contiguous(), "input must be contiguous");
+    TORCH_CHECK(input.dim() == 4, "input must be 4D (NCHW)");
+    
+    input = input.contiguous();
+    
+    // Extract dimensions
+    const int64_t batch_size = input.size(0);
+    const int64_t channels = input.size(1);
+    const int64_t input_height = input.size(2);
+    const int64_t input_width = input.size(3);
+    
+    // Use extracted parameters
+    const int64_t kernel_h = kernel_size;
+    const int64_t kernel_w = kernel_size;
+    const int64_t stride_h = stride;
+    const int64_t stride_w = stride;
+    const int64_t pad_h = padding;
+    const int64_t pad_w = padding;
+    const int64_t dilation_h = dilation;
+    const int64_t dilation_w = dilation;
+    
+    // Calculate output dimensions
+    int64_t output_height, output_width;
+    
+    if (ceil_mode) {
+        output_height = (input_height + 2 * pad_h - dilation_h * (kernel_h - 1) - 1 + stride_h) / stride_h;
+        output_width = (input_width + 2 * pad_w - dilation_w * (kernel_w - 1) - 1 + stride_w) / stride_w;
+    } else {
+        output_height = (input_height + 2 * pad_h - dilation_h * (kernel_h - 1) - 1) / stride_h + 1;
+        output_width = (input_width + 2 * pad_w - dilation_w * (kernel_w - 1) - 1) / stride_w + 1;
+    }
+    
+    // Create output tensors
+    auto output = torch::empty({batch_size, channels, output_height, output_width}, 
+                               input.options());
+    
+    torch::Tensor indices;
+    int64_t* indices_ptr = nullptr;
+    
+    if (return_indices) {
+        indices = torch::empty({batch_size, channels, output_height, output_width}, 
+                               input.options().dtype(torch::kLong));
+        indices_ptr = indices.data_ptr<int64_t>();
+    }
+    
+    // Kernel launch parameters
+    const int64_t total_elements = batch_size * channels * output_height * output_width;
+    const int threads = 256;
+    const int blocks = (total_elements + threads - 1) / threads;
+    
+    // Launch kernel with dtype dispatch
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(input.scalar_type(), "max_pool2d_kernel", [&] {
+        max_pool2d_kernel<scalar_t><<<blocks, threads>>>(
+            input.data_ptr<scalar_t>(),
+            output.data_ptr<scalar_t>(),
+            indices_ptr,
+            batch_size,
+            channels,
+            input_height,
+            input_width,
+            output_height,
+            output_width,
+            kernel_h,
+            kernel_w,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            dilation_h,
+            dilation_w,
+            return_indices
+        );
+    });
+    
+    // Check for errors
+    cudaError_t err = cudaGetLastError();
+    TORCH_CHECK(err == cudaSuccess, "CUDA kernel failed: ", cudaGetErrorString(err));
+    
+    // Return output(s)
+    if (return_indices) {
+        return {output, indices};
+    } else {
+        return {output};
+    }
+}
+```
+
+**Key changes:**
+1. Function signature now accepts `std::vector<torch::Tensor> args` and `std::unordered_map<std::string, torch::IValue> kwargs`
+2. Arguments are extracted from the vectors/maps instead of being direct parameters
+3. Tensor arguments in args need `.item<T>()` for scalar extraction
