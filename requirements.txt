@@ -2,13 +2,13 @@ torch
 numpy
 pandas
 
-protobuf==5.26.1
-grpcio-status==1.59.0
-grpcio==1.59.0
+protobuf>=5.26.1
+grpcio-status>=1.59.0
+grpcio>=1.59.0
 pyarrow
 
 google-genai
-openai==2.3.0
+openai>=2.3.0
 ollama
 anthropic
 
