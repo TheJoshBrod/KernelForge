@@ -6,7 +6,6 @@ and comparing its tensor output against a ground-truth tensor.
 
 import torch
 import os
-import time
 
 from pathlib import Path
 from torch.utils.cpp_extension import load_inline
