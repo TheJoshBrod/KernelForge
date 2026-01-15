@@ -122,6 +122,9 @@ def main():
     for op_dir in op_dirs:
 
         io_dir = io_parent_dir / op_dir.name
+        if not io_dir.exists():
+            print(f"{op_dir.name} has no i/o")
+            continue
         proj_op_dir = proj_dir / op_dir.name
         proj_op_dir.mkdir(parents=True, exist_ok=False)
         paths = {

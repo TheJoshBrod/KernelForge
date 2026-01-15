@@ -78,7 +78,10 @@ def get_gpu_specs(device_index: int = 0):
         "warp_size": attrs[cuda.device_attribute.WARP_SIZE],
         "max_threads_per_block": attrs[cuda.device_attribute.MAX_THREADS_PER_BLOCK],
         "max_threads_per_sm": attrs[cuda.device_attribute.MAX_THREADS_PER_MULTIPROCESSOR],
-        "max_blocks_per_sm": attrs[cuda.device_attribute.MAX_BLOCKS_PER_MULTIPROCESSOR],
+        "max_blocks_per_sm": attrs.get(
+            getattr(cuda.device_attribute, 'MAX_BLOCKS_PER_MULTIPROCESSOR', None), 
+            "unknown"
+        ) if hasattr(cuda.device_attribute, 'MAX_BLOCKS_PER_MULTIPROCESSOR') else "unknown",
         "registers_per_sm": attrs[cuda.device_attribute.MAX_REGISTERS_PER_MULTIPROCESSOR],
         "registers_per_block": attrs[cuda.device_attribute.MAX_REGISTERS_PER_BLOCK],
         "shared_mem_per_sm_kb": attrs[
