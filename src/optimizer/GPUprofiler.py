@@ -1,6 +1,17 @@
+import glob
+from pathlib import Path
+
+# GPU Architecture Info
 import pycuda.driver as cuda
-import pycuda.autoinit
 from pynvml import *
+from pynvml import NVMLError_NotSupported 
+
+# Kernel Profiling
+import torch
+import numpy as np
+from torch.utils.cpp_extension import load_inline
+from torch.profiler import profile, ProfilerActivity
+
 
 # ******************
 #  HELPER FUNCTIONS
@@ -105,6 +116,182 @@ def get_gpu_specs(device_index: int = 0):
 
     return gpu_spec
 
-def profile_kernel(kernel_path: str, *, device_index: int = 0, baseline: bool = False, previous_stats: dict = None):
+def get_module(kernel_path: Path, baseline: bool):
+    """Retrieves a module object from compiled CUDA kernel
+
+    Args:
+        kernel_path (Path): Directory containing compiled CUDA kernel
+        baseline (bool): Is this the performance of the initial correctly generated kernel in `kernels/generated/*`
+
+    Raises:
+        FileNotFoundError: If directory does not contain compiled CUDA kernel AND NOT initial baseline (should never happen)
+
+    Returns:
+        module: module object to run load_inline CUDA kernel in python
+    """
+
+    # Sanity check to see if generated and validated (you're welcome future me.)
+    so_files = list(kernel_path.glob("*.so"))
     
-    pass
+    cuda_source = (kernel_path / "kernel.cu").read_text()
+    
+    # Extract function signature from CUDA code (same as in validator)
+    import re
+    match = re.search(r"(torch::Tensor\s+launch\s*\([^)]*\))", cuda_source)
+    if not match:
+        raise ValueError("Could not find 'launch' function signature in kernel.cu")
+    
+    cpp_source = match.group(1) + ";"
+    
+    if not so_files:
+        if not baseline:
+            raise FileNotFoundError("Somehow passed correctness validation (generator.py), but lost .so file (GPUprofiler.py)")
+        
+        # Baseline case: compile the kernel now
+        # Use a consistent module name based on the directory
+        module_name = kernel_path.name
+        
+        module = load_inline(
+            name=module_name,
+            cpp_sources=cpp_source,
+            cuda_sources=cuda_source,
+            functions=['launch'],
+            build_directory=str(kernel_path),
+            verbose=False,
+            with_cuda=True
+        )
+        return module
+    
+    # Already compiled case: load existing module
+    module_name = so_files[0].stem
+    
+    module = load_inline(
+        name=module_name,
+        cpp_sources=cpp_source,
+        cuda_sources=cuda_source,
+        functions=['launch'],
+        build_directory=str(kernel_path),
+        verbose=False,
+        with_cuda=True
+    )
+    return module
+
+def normalize_args_kwargs(args: list, kwargs: dict, params: list, defaults: dict) -> tuple[list, dict]:
+    if not params:
+        return args, kwargs
+
+    normalized = list(args)
+    remaining_kwargs = dict(kwargs)
+    
+    for i in range(len(normalized), len(params)):
+        param_name = params[i]
+        
+        if param_name in remaining_kwargs:
+            normalized.append(remaining_kwargs.pop(param_name))
+        elif param_name in defaults:
+            normalized.append(defaults[param_name])
+        else:
+            break
+    
+    return normalized, remaining_kwargs
+
+def retrieve_inputs(io_dir: Path) -> list[tuple[list[any], dict[str, any]]]:
+    """Retrieves list of all inputs (args and kwargs) for a given profiled pytorch op 
+
+    Args:
+        io_dir (Path): Directory containing .pt files with input/output pairs
+
+    Returns:
+        list[tuple[list[Any], dict[str, Any]]]: list of all [args, kwargs] tuple pairs
+    """
+    inputs = []
+    pt_files = sorted(glob.glob(os.path.join(io_dir, "entry_*.pt")))
+    
+    if not pt_files:
+        raise ValueError(f"No entry_*.pt files found in {io_dir}")
+    
+    for pt_file in pt_files:
+        try:
+            entry = torch.load(pt_file, map_location='cpu')
+            
+            # Move to GPU
+            args = [
+                arg.cuda() if isinstance(arg, torch.Tensor) else arg
+                for arg in entry['args']
+            ]
+            
+            kwargs = {
+                k: v.cuda() if isinstance(v, torch.Tensor) else v
+                for k, v in entry['kwargs'].items()
+            }
+            
+            # Normalize using signature
+            if 'signature' in entry:
+                sig = entry['signature']
+                params = sig.get('params', [])
+                defaults = sig.get('defaults', {})
+                
+                if params:
+                    args, kwargs = normalize_args_kwargs(args, kwargs, params, defaults)
+            
+            inputs.append((args, kwargs))
+            
+        except Exception as e:
+            print(f"Warning: Failed to load {pt_file}: {e}")
+            continue
+    
+    return inputs
+
+def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int = 0, previous_stats: dict = None):
+    
+    kernel_path = paths["tmp_dir"]
+    module = get_module(kernel_path, baseline)
+
+    input_dir = paths["io_dir"]
+    torch.cuda.set_device(device_index)
+    inputs = retrieve_inputs(input_dir)
+
+    # Warmup
+    for args, kwargs in inputs:
+        module.launch(*args, **kwargs)
+    torch.cuda.synchronize()
+
+    # Measure each input separately
+    timings = []
+    for args, kwargs in inputs:
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        
+        start.record()
+        for _ in range(10):
+            module.launch(*args, **kwargs)
+        end.record()
+        torch.cuda.synchronize()
+        
+        elapsed_ms = start.elapsed_time(end) / 10
+        timings.append(elapsed_ms)
+    
+    # Now profile for detailed metrics
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=True
+    ) as prof:
+        for args, kwargs in inputs:
+            module.launch(*args, **kwargs)
+            torch.cuda.synchronize()
+    
+    stats = {
+        'mean_time_ms': float(np.mean(timings)),
+        'std_time_ms':  float(np.std(timings)),
+        'min_time_ms':  float(np.min(timings)),
+        'max_time_ms':  float(np.max(timings)),
+    }
+    
+    # Compare with baseline if provided
+    if previous_stats:
+        speedup = previous_stats['mean_time_ms'] / stats['mean_time_ms']
+        print(f"Speedup: {speedup:.2f}x")
+    
+    return stats, prof

@@ -1,180 +1,62 @@
 import re
 from pathlib import Path
 
-import ollama as ol
-from openai import OpenAI
-from anthropic import Anthropic
-import google.genai as genai
 
+from src.llm_tools import GenModel
 import src.optimizer.verifier as verifier
+import src.optimizer.prompts as prompts
 
 
-def cleanup_mkdown(input: str) -> str:
-    """Extract code from markdown code blocks using regex."""
+import re
+from typing import Tuple, Optional
 
-    # Try to match code blocks with language specifiers (C++, cpp, cuda, c)
-    pattern = r"```(?:C\+\+|cpp|cuda|c)\s*\n(.*?)```"
-    match = re.search(pattern, input, re.DOTALL | re.IGNORECASE)
+# Global variables
+sys_prompt = prompts.get_sys_prompt()
+
+
+def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Extract feedback and code sections from a formatted string.
     
-    if match:
-        return match.group(1).strip()
-    
-    # Try generic code block without language specifier
-    pattern = r"```\s*\n(.*?)```"
-    match = re.search(pattern, input, re.DOTALL)
-    
-    if match:
-        return match.group(1).strip()
-    
-    # No markdown found, return as-is
-    return input.strip()
+    Args:
+        content: The input string containing feedback and code sections
+        
+    Returns:
+        A tuple of (feedback, code) where each is None if not found
+    """
 
-# ************************
-# Model Specific Functions
-# ************************
+    # Extract feedback section
+    feedback_pattern = r'// \[START FEEDBACK\](.*?)// \[END FEEDBACK\]'
+    feedback_match = re.search(feedback_pattern, content, re.DOTALL)
+    feedback = feedback_match.group(1).strip() if feedback_match else None
+    
+    # Extract code section
+    code_pattern = r'// \[START kernel\.cu\](.*?)// \[END kernel\.cu\]'
+    code_match = re.search(code_pattern, content, re.DOTALL)
+    code = code_match.group(1).strip() if code_match else None
+    
+    return feedback, code
 
-def ollama_generator(msg: str, model: str = "llama3.2:latest", outputIR: str = "CUDA") -> str:
-    """Initial generation of kernel/IR
+
+def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) -> Tuple[str, bool, str]:
+    """Generates a new kernel then validates it for correctness
 
     Args:
-        msg (str): Context for LLM to generate Kernel/IR
-        model (str, optional): Which Ollama model to use for LLM. Defaults to "llama3.2:latest".
-        outputIR (str, optional): What is the desired output IR type. Defaults to "CUDA".
+        llm (GenModel): LLM abstraction class with chat history
+        msg (str): User message for LLM
+        model (str): Name of LLM model
+        paths (dict[Path]): Data structure holding different filepaths
 
     Returns:
-        str: kernel_code
+        Tuple[str, bool, str]: _description_
     """
-    print("Generating code...")
-    sys_prompt = src.generator.prompts.prompts.get_system_prompt()
-    response = ol.chat(model=model, messages=[{"role": "system", "content": sys_prompt},{"role": "user", "content": msg}])
-    
-    cu_code = response['message']['content']
-    
-    
-    print("Code generated...")
-    return cleanup_mkdown(cu_code)
+    response = llm.chat(msg, model)
+    feedback, cu_code = extract_feedback_and_code(response)
 
-def convert_chatgpt_to_gemini(chatgpt_history: list) -> list:
-    gemini_history = []
+    is_valid, error = verifier.validate_kernel(cu_code, paths)
+    return feedback, is_valid, error
 
-    for msg in chatgpt_history:
-        role = msg["role"]
-
-        # Gemini uses "model" instead of "assistant"
-        if role == "assistant":
-            role = "model"
-
-        # Gemini supports only "user" and "model" inside the messages list
-        if role == "system":
-            # Skip it here (it goes to system_instruction)
-            continue
-
-        content = msg["content"]
-        gemini_history.append({
-            "role": role,
-            "parts": [content]
-        })
-
-    return gemini_history
-
-def gemini_generator(conversation_history: list, model: str = "gemini-2.5-flash", outputIR: str = "CUDA") -> str:
-    """Initial generation of kernel/IR using Gemini.
-
-    Returns:
-        str: kernel_code
-    """
-    print("Generating code...")
-    sys_prompt = src.generator.prompts.prompts.get_system_prompt()
-
-    
-    chat = genai.GenerativeModel(
-        model_name=model,
-        system_instruction=sys_prompt
-    )
-    
-    gemini_history = convert_chatgpt_to_gemini(conversation_history)
-    response = chat.generate_content(gemini_history)
-
-    cu_code = cleanup_mkdown(response.text)
-
-    print("Code generated...")
-    return cu_code
-
-def chatgpt_generator(conversation_history: list, model: str = "gpt-4o", outputIR: str = "CUDA") -> str:
-    """Initial generation of kernel/IR using OpenAI.
-
-    Returns:
-        str: kernel_code
-    """
-
-    client = OpenAI()
-        
-    print("Generating code...")
-    sys_prompt = src.generator.prompts.prompts.get_system_prompt()
-    
-    conversation_history.insert(0, sys_prompt)
-    response = client.chat.completions.create(
-            model=model,
-            messages=conversation_history
-        )
-
-    cu_code = cleanup_mkdown(response.choices[0].message.content)
-    
-    print("Code generated...")
-    return cu_code
-        
-def convert_chatgpt_to_anthropic(chatgpt_history: list) -> list:
-    anthropic_history = []
-    for msg in chatgpt_history:
-        role = msg["role"]
-        if role == "system":
-            continue  # Handle separately
-        if role == "assistant":
-            role = "assistant"
-        elif role == "user":
-            role = "user"
-        
-        content = msg["content"]
-        anthropic_history.append({
-            "role": role,
-            "content": content
-        })
-    return anthropic_history
-
-def anthropic_generator(conversation_history: list,
-                        model: str = "claude-opus-4-5-20251101") -> str:
-    """Initial generation of kernel/IR using Anthropic Claude API."""
-    print("Generating code with Claude...")
-    
-    from anthropic import Anthropic
-    
-    anthropic_history = convert_chatgpt_to_anthropic(conversation_history)
-    
-    client = Anthropic()
-    
-    # Build the request parameters
-    params = {
-        "model": model,
-        "max_tokens": 4096,
-        "system": src.generator.prompts.prompts.get_system_prompt(),
-        "messages": anthropic_history
-    }
-    
-    response = client.messages.create(**params)
-    
-    # Extract the generated content
-    code = cleanup_mkdown(response.content[0].text)
-    
-    print("Code generated…")
-    return code
-
-
-# **********************
-# Verification Functions
-# **********************
-
-
-def generate(gpu_specs: dict, op_dir: str, improvement_log: list, temp_dir: Path, io_dir: Path, model: str = "claude-opus-4-5-20251101"):
+def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, paths: dict[str, Path], model: str = "claude-opus-4-5-20251101") -> Tuple[str, bool]:
     """Generates and validates CUDA kernels 
 
     Args:
@@ -186,15 +68,18 @@ def generate(gpu_specs: dict, op_dir: str, improvement_log: list, temp_dir: Path
         model (str, optional): LLM that will generate kernels. Defaults to "claude-opus-4-5-20251101".
     """
 
-    error_msgs = []
-    for _ in range(3):
-        
-        # Generate
-        cu_code = generate() # TODO
-
-        # Verify
-        is_valid, error = verifier.validate_kernel(cu_code, io_dir, temp_dir)
+    # Attempt initial CUDA code generation
+    llm: GenModel = GenModel(sys_prompt)
+    msg = prompts.generate_gpu_optimization_prompt(gpu_specs, best_kernel_code, improvement_log)
+    feedback, is_valid, error = create_and_validate(llm, msg, model, paths)
+    if is_valid:
+        return feedback, True
+    print("\t\tInitial gen failed...")
+    # On failure attempt fix 3 times before giving up
+    for i in range(3):
+        print(f"\t\t\tReattempt {i}")
+        _, is_valid, error = create_and_validate(llm, error, model, paths)
         if is_valid:
-            break
-        error_msgs.append(error)
+            return feedback, True
 
+    return "", False
