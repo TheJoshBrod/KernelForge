@@ -5,7 +5,9 @@ aten_output: str = ""
 kernel_output: str = ""
 
 if not torch.cuda.is_available():
-    raise RuntimeError("This example requires a CUDA-enabled PyTorch installation.")
+    raise RuntimeError(
+        "This example requires a CUDA-enabled PyTorch installation.")
+
 
 def handle_trace(prof):
     """
@@ -38,20 +40,20 @@ def profile_single_op(context: dict, full_exec_string: str) -> str:
     """
     Profiles a *single line* of PyTorch code
     and the formatted op_details string.
-    
+
     Args:
         context (dict): The current execution context, for our purposes usually just imports pytorch.
         full_exec_string (str): The single line of code to execute (e.g., "c = torch.matmul(a, b)").
-        
+
     Output:
         op_details (str): Formatted string of Aten/kernel info for the LLM.
     """
-    
+
     # 1. Reset global profiler strings for this specific op
     global aten_output, kernel_output
     aten_output = ""
     kernel_output = ""
-    
+
     # 2. Set deterministic state
     torch.cuda.manual_seed(100)
     torch.backends.cudnn.deterministic = True
@@ -60,7 +62,7 @@ def profile_single_op(context: dict, full_exec_string: str) -> str:
     # 3. We'll run the profiler for just a few steps on this one op
     # (wait, warmup, active)
     schedule = torch.profiler.schedule(wait=1, warmup=1, active=1, repeat=1)
-    
+
     # 4. Create a *copy* of the context to safely execute the line
     # This ensures we don't modify the main context if exec fails
     # (though main.py will update its own context upon success)
@@ -76,7 +78,7 @@ def profile_single_op(context: dict, full_exec_string: str) -> str:
         on_trace_ready=handle_trace,
         record_shapes=True
     ) as p:
-        for _ in range(3): # Total steps: wait + warmup + active
+        for _ in range(3):  # Total steps: wait + warmup + active
             exec(full_exec_string, temp_context)
             p.step()
 

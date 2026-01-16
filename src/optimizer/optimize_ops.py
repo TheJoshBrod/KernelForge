@@ -13,10 +13,10 @@ import src.optimizer.GPUprofiler as gpu
 
 
 def get_project_dir():
-    
+
     # Determine project name (random or user requested)
     letters = string.ascii_letters + string.digits
-    proj_name = ''.join(random.choices(letters, k=10)) 
+    proj_name = ''.join(random.choices(letters, k=10))
     if len(sys.argv) >= 3:
         proj_name = sys.argv[2]
     print(f"Beginning optimizing on project {proj_name}...")
@@ -25,9 +25,11 @@ def get_project_dir():
     try:
         proj_dir.mkdir(parents=True, exist_ok=False)
     except Exception as e:
-        print(f"Error: Project {proj_name} name already exists, please pick a new name")
+        print(
+            f"Error: Project {proj_name} name already exists, please pick a new name")
 
     return proj_dir
+
 
 def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
     """Optimizes target kernel
@@ -40,7 +42,8 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
     print("\nMeasuring baseline...")
     with tempfile.TemporaryDirectory() as tmpdir:
         paths["tmp_dir"] = Path(tmpdir)
-        import shutil; shutil.copy(paths["op_dir"] / "kernel.cu", Path(tmpdir) / "kernel.cu")
+        import shutil
+        shutil.copy(paths["op_dir"] / "kernel.cu", Path(tmpdir) / "kernel.cu")
         baseline_stats, profiler = gpu.profile_kernel(paths, baseline=True)
         best_stats = baseline_stats.copy()
         best_kernel_code = (paths["op_dir"] / "kernel.cu").read_text()
@@ -48,7 +51,7 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
     # Iterative refinement loop
     # Step 1. Generate:
     #   Generate kernel: Via LLM generate new kernel using the gpu specs & previously found best kernel
-    #   Verification loop: Check if new kernel can handle expected input/output pairs, if not attempt to fix (max 3 times) 
+    #   Verification loop: Check if new kernel can handle expected input/output pairs, if not attempt to fix (max 3 times)
     # Step 2. Profile:
     #   Profile Kernel: Run kernel and measure inference time and memory management
     #   Log kernel: If kernel performs better, have LLM attempt to explain what this improvement did better and give extra context (pass that to next iteration)
@@ -60,7 +63,8 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
             paths["tmp_dir"] = Path(tmpdir)
 
             print("\tBeginning generation...")
-            improvement_description, is_valid = generator.generate(best_kernel_code, gpu_specs, improvement_log, paths)
+            improvement_description, is_valid = generator.generate(
+                best_kernel_code, gpu_specs, improvement_log, paths)
             print("\tFinished generation.")
             print(f"\t\t- Desc: {improvement_description}")
             print(f"\t\t- Status: {is_valid}")
@@ -81,7 +85,8 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
                 if current_stats['mean_time_ms'] < best_stats['mean_time_ms']:
                     log_entry["is_best"] = True
                     best_stats = current_stats.copy()
-                    best_kernel_code = (paths["tmp_dir"] / "kernel.cu").read_text()
+                    best_kernel_code = (
+                        paths["tmp_dir"] / "kernel.cu").read_text()
                     with open(paths["proj_dir"] / f"kernel{iteration}.cu", "w") as f:
                         f.write(best_kernel_code)
 
@@ -91,13 +96,15 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
 
     with open(paths["proj_dir"] / "improvement_log.json", 'w') as f:
         json.dump(improvement_log, f, indent=2)
-    
+
     print(f"\n{'='*60}")
     print(f"Optimization Complete!")
     print(f"{'='*60}")
     print(f"Baseline: {baseline_stats['mean_time_ms']:.3f} ms")
     print(f"Best:     {best_stats['mean_time_ms']:.3f} ms")
-    print(f"Speedup:  {baseline_stats['mean_time_ms'] / best_stats['mean_time_ms']:.2f}x")
+    print(
+        f"Speedup:  {baseline_stats['mean_time_ms'] / best_stats['mean_time_ms']:.2f}x")
+
 
 def main():
     """Calls optimization pipeline on each kernel."""
@@ -105,7 +112,8 @@ def main():
     # Directory of Torch files containing formatted input/output pairs (for specific model preferably)
     if len(sys.argv) < 2:
         print("Missing input/output torch dir")
-        print("`python3 -m src.optimizer.optimize_ops <io_directory> <optional_project_name>`")
+        print(
+            "`python3 -m src.optimizer.optimize_ops <io_directory> <optional_project_name>`")
         sys.exit(1)
     io_parent_dir = Path(sys.argv[1])
 
@@ -114,7 +122,7 @@ def main():
 
     # Directory containing initial wave of correct, but unoptimized kernels
     op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
-    
+
     # Collect GPU specs
     gpu_specs = gpu.get_gpu_specs()
 
@@ -133,6 +141,7 @@ def main():
             "op_dir": op_dir
         }
         optimization_loop(gpu_specs, paths)
+
 
 if __name__ == "__main__":
     main()

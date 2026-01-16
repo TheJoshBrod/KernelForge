@@ -14,10 +14,10 @@ sys_prompt = prompts.get_sys_prompt()
 def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str]]:
     """
     Extract feedback and code sections from a formatted string.
-    
+
     Args:
         content: The input string containing feedback and code sections
-        
+
     Returns:
         A tuple of (feedback, code) where each is None if not found
     """
@@ -26,12 +26,12 @@ def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str
     feedback_pattern = r'// \[START FEEDBACK\](.*?)// \[END FEEDBACK\]'
     feedback_match = re.search(feedback_pattern, content, re.DOTALL)
     feedback = feedback_match.group(1).strip() if feedback_match else None
-    
+
     # Extract code section
     code_pattern = r'// \[START kernel\.cu\](.*?)// \[END kernel\.cu\]'
     code_match = re.search(code_pattern, content, re.DOTALL)
     code = code_match.group(1).strip() if code_match else None
-    
+
     return feedback, code
 
 
@@ -53,6 +53,7 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
     is_valid, error = verifier.validate_kernel(cu_code, paths)
     return feedback, is_valid, error
 
+
 def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, paths: dict[str, Path], model: str = "claude-opus-4-5-20251101") -> Tuple[str, bool]:
     """Generates and validates CUDA kernels 
 
@@ -67,7 +68,8 @@ def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, path
 
     # Attempt initial CUDA code generation
     llm: GenModel = GenModel(sys_prompt)
-    msg = prompts.generate_gpu_optimization_prompt(gpu_specs, best_kernel_code, improvement_log)
+    msg = prompts.generate_gpu_optimization_prompt(
+        gpu_specs, best_kernel_code, improvement_log)
     feedback, is_valid, error = create_and_validate(llm, msg, model, paths)
     if is_valid:
         return feedback, True

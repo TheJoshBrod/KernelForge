@@ -14,6 +14,7 @@ def get_system_prompt() -> str:
         prompt = f.read()
     return prompt
 
+
 def generate_function_spec_from_calls(call_list, function_name):
     """
     Extract function specification from ALL tracked PyTorch calls.
@@ -26,8 +27,8 @@ def generate_function_spec_from_calls(call_list, function_name):
     # We will store observed properties for every argument across all calls
     # param_stats = { "arg0": { "types": set(), "shapes": [], "is_list": False }, ... }
     param_stats = {}
-    
-    param_order = [] # To keep arguments in correct order
+
+    param_order = []  # To keep arguments in correct order
 
     for call_idx, call in enumerate(call_list):
         # Normalize args to dict keys (arg0, arg1...) to match kwargs
@@ -43,22 +44,23 @@ def generate_function_spec_from_calls(call_list, function_name):
         # Update stats for each parameter
         for name, value in current_params.items():
             if name not in param_stats:
-                param_stats[name] = {"types": set(), "shapes": [], "list_lens": set()}
-            
+                param_stats[name] = {
+                    "types": set(), "shapes": [], "list_lens": set()}
+
             # Record Type
             param_stats[name]["types"].add(type(value))
 
             # Record Shape (for Tensors)
             if isinstance(value, torch.Tensor):
                 param_stats[name]["shapes"].append(list(value.shape))
-            
+
             # Record Length (for Lists/Tuples)
             elif isinstance(value, (list, tuple)):
                 param_stats[name]["list_lens"].add(len(value))
 
     # 2. Build Specification
     param_specs = []
-    
+
     for name in param_order:
         stats = param_stats.get(name)
         if not stats:
@@ -66,7 +68,7 @@ def generate_function_spec_from_calls(call_list, function_name):
 
         types = stats["types"]
         shapes = stats["shapes"]
-        
+
         spec = {
             "name": name,
             "description": ""
@@ -75,11 +77,11 @@ def generate_function_spec_from_calls(call_list, function_name):
         # --- Logic for Tensors ---
         if torch.Tensor in types:
             spec["type"] = "torch::Tensor"
-            
+
             # Check if it is Optional (sometimes None)
             if type(None) in types:
-                 spec["type"] = "std::optional<torch::Tensor>"
-                 spec["description"] += "Optional Tensor (handle null/None). "
+                spec["type"] = "std::optional<torch::Tensor>"
+                spec["description"] += "Optional Tensor (handle null/None). "
 
             # Analyze Shapes for Dynamics
             if not shapes:
@@ -88,23 +90,23 @@ def generate_function_spec_from_calls(call_list, function_name):
             else:
                 # Compare all observed shapes to find dynamic dimensions
                 # Start with the first observed shape as reference
-                ref_shape = shapes[0] 
+                ref_shape = shapes[0]
                 final_shape = list(ref_shape)
-                
+
                 is_dynamic_rank = False
-                
+
                 for s in shapes[1:]:
                     if len(s) != len(ref_shape):
                         final_shape = "Rank Varies"
                         is_dynamic_rank = True
                         break
-                    
+
                     for dim_i, dim_val in enumerate(s):
                         if dim_val != final_shape[dim_i]:
-                            final_shape[dim_i] = -1 # Mark as dynamic
-                
+                            final_shape[dim_i] = -1  # Mark as dynamic
+
                 spec["shape"] = final_shape
-                
+
                 # Format description
                 if is_dynamic_rank:
                     spec["description"] += "Input tensor with varying rank. "
@@ -112,10 +114,10 @@ def generate_function_spec_from_calls(call_list, function_name):
                     spec["description"] += f"Input tensor. Dynamic shape: {final_shape} (-1 indicates variable dim). "
                 else:
                     spec["description"] += f"Input tensor. Fixed shape: {final_shape}. "
-                    
+
             # Grab dtype from the last non-None value seen
             # (In a real implementation, you might check if dtypes vary too)
-            spec["dtype"] = "mixed" # Placeholder, usually consistent
+            spec["dtype"] = "mixed"  # Placeholder, usually consistent
 
         # --- Logic for Lists/Tuples ---
         elif list in types or tuple in types:
@@ -140,8 +142,8 @@ def generate_function_spec_from_calls(call_list, function_name):
             spec["type"] = "std::string"
             spec["description"] = "String parameter"
         else:
-             spec["type"] = "auto"
-             spec["description"] = "Unknown/Complex type"
+            spec["type"] = "auto"
+            spec["description"] = "Unknown/Complex type"
 
         param_specs.append(spec)
 
@@ -151,16 +153,17 @@ def generate_function_spec_from_calls(call_list, function_name):
         "parameters": param_specs
     }
 
+
 def format_operator_prompt(function_spec, profiler_context=None):
     """
     Format the function specification into a clear prompt for the LLM.
     This is what you append to the system prompt.
-    
+
     Args:
         function_spec: Function specification dict
         profiler_context: Optional dict with {'aten_ops': [...], 'cuda_kernels': [...]}
     """
-    
+
     prompt = f"""
 ## OPERATOR TO IMPLEMENT: {function_spec['function_name']}
 
@@ -170,7 +173,7 @@ Based on {function_spec['num_calls']} tracked call(s), implement this operator:
 
 **Parameters:**
 """
-    
+
     # List all parameters
     for i, param in enumerate(function_spec['parameters'], 1):
         prompt += f"\n{i}. `{param['name']}` ({param['type']})"
@@ -180,7 +183,7 @@ Based on {function_spec['num_calls']} tracked call(s), implement this operator:
         elif 'value' in param and param['value'] is not None:
             prompt += f"\n   - Default/Example: {param['value']}"
         prompt += f"\n   - {param['description']}"
-    
+
     # Add profiler context if available
     if profiler_context:
         prompt += """
@@ -195,13 +198,13 @@ This shows how PyTorch implements this operation internally:
             for op in profiler_context['aten_ops']:
                 prompt += f"- {op}\n"
             prompt += "\n"
-        
+
         if 'cuda_kernels' in profiler_context and profiler_context['cuda_kernels']:
             prompt += "**CUDA Kernels Launched:**\n"
             for kernel in profiler_context['cuda_kernels']:
                 prompt += f"- {kernel}\n"
             prompt += "\n"
-        
+
         prompt += """**What This Means:**
 - You may see setup operations (cudaGetDeviceCount, etc.) - ignore these
 - Focus on the actual computation kernels
@@ -209,7 +212,7 @@ This shows how PyTorch implements this operation internally:
 - You don't need to match PyTorch's internal implementation exactly
 
 """
-    
+
     # Add implementation guidance
     prompt += """
 ### Implementation Requirements
@@ -231,30 +234,30 @@ This shows how PyTorch implements this operation internally:
 
 Now generate the complete kernel.cu file following the system prompt guidelines.
 """
-    
+
     return prompt
 
 
 def parse_profiler_output(profiler_text):
     """
     Parse the profiler output string to extract ATen ops and CUDA kernels.
-    
+
     Args:
         profiler_text: String containing profiler output with [Op: ...] and [Kernel: ...] lines
-    
+
     Returns:
         dict with 'aten_ops' and 'cuda_kernels' lists
     """
     import re
-    
+
     aten_ops = []
     cuda_kernels = []
-    
+
     # Extract [Op: aten::something]
     op_pattern = r'\[Op:\s*(aten::\w+)\]'
     for match in re.finditer(op_pattern, profiler_text):
         aten_ops.append(match.group(1))
-    
+
     # Extract [Kernel: something]
     kernel_pattern = r'\[Kernel:\s*([^\]]+)\]'
     for match in re.finditer(kernel_pattern, profiler_text):
@@ -262,7 +265,7 @@ def parse_profiler_output(profiler_text):
         # Filter out setup/instrumentation kernels
         if kernel_name not in ['Activity Buffer Request', 'Instrumentation', 'Resource']:
             cuda_kernels.append(kernel_name)
-    
+
     return {
         'aten_ops': aten_ops,
         'cuda_kernels': cuda_kernels
@@ -272,18 +275,18 @@ def parse_profiler_output(profiler_text):
 def generate_full_llm_prompt(calls_list, function_name, profiler_output=None):
     """
     Complete pipeline: Generate the full prompt to send to an LLM.
-    
+
     Args:
         calls_dict: Tracked function calls
         function_name: Function to implement (e.g., "torch.nn.functional.linear")
         profiler_output: Optional string output from PyTorch profiler
-    
+
     Usage:
         calls = torch.load("tracked_calls.pt")
-        
+
         # Without profiler context
         prompt = generate_full_llm_prompt(calls, "torch.nn.functional.linear")
-        
+
         # With profiler context
         profiler_text = "..."  # Your aten/kernel output
         prompt = generate_full_llm_prompt(calls, "torch.nn.functional.linear", profiler_text)
@@ -293,13 +296,13 @@ def generate_full_llm_prompt(calls_list, function_name, profiler_output=None):
     spec = generate_function_spec_from_calls(calls_list, function_name)
     if spec is None:
         return f"Error: Could not generate spec for {function_name}"
-    
+
     # Parse profiler output if provided
     profiler_context = None
     if profiler_output:
         profiler_context = parse_profiler_output(profiler_output)
-    
+
     # Combine system prompt + operator specification
     full_prompt = format_operator_prompt(spec, profiler_context)
-    
+
     return full_prompt

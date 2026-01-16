@@ -25,15 +25,16 @@ import src.generator.verifier as verify
 MAX_ATTEMPTS = 5
 OUTPUT_BASE_DIR = Path("kernels/generated")
 
+
 def validate_with_retries(output_dir: Path, entry_files: list[str], conversation_history: list) -> bool:
     """
     Attempt to validate and fix kernel code up to MAX_ATTEMPTS times.
-    
+
     Args:
         output_dir: Directory to save kernel outputs
         entry_files: List of paths to entry_*.pt files containing inputs/outputs
         conversation_history: LLM conversation history
-    
+
     Returns:
         bool: is the final kernel successful
     """
@@ -44,15 +45,16 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
 
     # Try n times to go through entire test suite
     for attempt in range(MAX_ATTEMPTS + 1):
-        
+
         # Generate kernel
         try:
             cu_code = generator.anthropic_generator(conversation_history)
-            conversation_history.append({"role": "assistant", "content": cu_code})
+            conversation_history.append(
+                {"role": "assistant", "content": cu_code})
         except Exception as e:
             print(f"Failed on attempt {attempt}\n{e}")
             return False
-        
+
         tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
 
         # Output newest version of kernel
@@ -71,30 +73,31 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
             )
 
             print(feedback)
-                        
+
             # If failed on a testcase regenerate
             is_valid = is_valid and call_success and exec_success
-            if not is_valid:        
+            if not is_valid:
                 # Save kernel
                 with open(kernel_dir / f"kernel-{attempt}-{i}.cu", "w") as f:
                     f.write(cu_code)
-                
-                conversation_history.append({"role": "user", "content": feedback})
+
+                conversation_history.append(
+                    {"role": "user", "content": feedback})
                 break
-        
-        # Delete tmp directory before next generation 
+
+        # Delete tmp directory before next generation
         if os.path.exists(tmpdir):
             shutil.rmtree(tmpdir)
-            
+
         # If all testcases passed, escape
         if is_valid:
             print(f"SUCCESSFUL on {attempt + 1}")
             # Save kernel
             with open(kernel_dir / f"kernel-{attempt}-g.cu", "w") as f:
                 f.write(cu_code)
-                
+
             return True
-        
+
     return False
 
 
@@ -108,13 +111,12 @@ def process_function(directory_name: str, entry_files: list[str], op_dir: Path):
         op_dir: Output directory for this operation
     """
 
-
     # Load first call to set up context for profiling
-    first_call = torch.load(entry_files[0], map_location='cpu', weights_only=False)
+    first_call = torch.load(
+        entry_files[0], map_location='cpu', weights_only=False)
     first_args = first_call.get("args", [])
     first_kwargs = first_call.get("kwargs", {})
 
-    
     # Extract function name out of directory name
     function_name = first_call.get("function_name")
     if not function_name:
@@ -129,7 +131,7 @@ def process_function(directory_name: str, entry_files: list[str], op_dir: Path):
     }
     print(function_name)
     exec_str = f"{function_name}(*args, **kwargs)"
-    
+
     # Set up conversation history
     conversation_history = []
 
@@ -144,7 +146,8 @@ def process_function(directory_name: str, entry_files: list[str], op_dir: Path):
     call_list = []
     for entry_file in entry_files:
         try:
-            entry = torch.load(entry_file, map_location='cpu', weights_only=False)
+            entry = torch.load(
+                entry_file, map_location='cpu', weights_only=False)
             call_list.append(entry)
         except Exception as e:
             print(f"Error loading {entry_file}: {e}")
@@ -154,7 +157,8 @@ def process_function(directory_name: str, entry_files: list[str], op_dir: Path):
         print(f"Failed to load any entries for {function_name}")
         return False
 
-    prompt = prompts.generate_full_llm_prompt(call_list, function_name, op_details)
+    prompt = prompts.generate_full_llm_prompt(
+        call_list, function_name, op_details)
     conversation_history.append({"role": "user", "content": prompt})
 
     call_list.clear()
@@ -163,7 +167,7 @@ def process_function(directory_name: str, entry_files: list[str], op_dir: Path):
     success = validate_with_retries(
         op_dir, entry_files, conversation_history
     )
-    
+
     # Track performance
     if success:
         success_file = op_dir / "success"
@@ -178,31 +182,32 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: python main.py <benchmark_dir>")
         sys.exit(1)
-    
+
     # Loop over all function directories
     function_dirs = sorted(glob.glob(os.path.join(sys.argv[1], "*")))
 
     for func_dir in tqdm(function_dirs, desc="Processing functions"):
         if not os.path.isdir(func_dir):
             continue
-            
+
         function_name = os.path.basename(func_dir).replace("_", ".")
         print(function_name)
-        
+
         # Get all entry files
         entry_files = sorted(glob.glob(os.path.join(func_dir, "entry_*.pt")))
-        
+
         if not entry_files:
             print(f"No entry files found for {function_name}, skipping...")
             continue
-        
-        op_dir = OUTPUT_BASE_DIR / "individual_op_kernels" / function_name.replace(".", "_")
+
+        op_dir = OUTPUT_BASE_DIR / "individual_op_kernels" / \
+            function_name.replace(".", "_")
         op_dir.mkdir(parents=True, exist_ok=True)
 
-        performance_file = op_dir / "success" 
+        performance_file = op_dir / "success"
         if performance_file.exists():
             continue
-        
+
         # Pass entry file paths directly
         process_function(function_name, entry_files, op_dir)
 

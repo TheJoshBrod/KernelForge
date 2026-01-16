@@ -169,80 +169,81 @@ Your optimized output will be saved to a kernel.cu follow and must follow ALL ru
 -----------------------------------------------
 """
 
+
 def generate_gpu_optimization_prompt(gpu_info: dict, kernel_code: str, improvement_log: list[str]) -> str:
-   """
-   Generates a structured prompt for an LLM to optimize a CUDA kernel 
-   based on specific GPU hardware architecture and constraints.
-   """
-   
-   # 1. Determine Architecture Family & Specific Advice
-   cc = float(gpu_info.get('compute_capability', 0.0))
-   arch_name = "Unknown"
+    """
+    Generates a structured prompt for an LLM to optimize a CUDA kernel 
+    based on specific GPU hardware architecture and constraints.
+    """
 
-   # 1. Determine Architecture Family & Specific Advice
-   cc = float(gpu_info.get('compute_capability', 0.0))
-   arch_name = "Unknown"
-   specific_tips = ""  # <--- NEW VARIABLE
+    # 1. Determine Architecture Family & Specific Advice
+    cc = float(gpu_info.get('compute_capability', 0.0))
+    arch_name = "Unknown"
 
-   if cc >= 8.0:
-      arch_name = "Ampere / Ada Lovelace / Hopper (SM 8.0+)"
-      # Advice for modern cards (RTX 30xx, 40xx, A100, H100)
-      specific_tips = (
-         "- **Pipeline Memory:** Use `cp.async` to hide global memory latency.\n"
-         "- **L2 Cache:** Optimize for L2 residency; avoid thrashing the cache."
-      )
-   elif cc >= 7.0:
-      arch_name = "Volta / Turing (SM 7.0 - 7.5)"
-      # Advice for V100, T4, RTX 20xx, GTX 16xx
-      specific_tips = (
-         "- **Independent Thread Scheduling:** Threads can diverge freely. You MUST use `__syncwarp()` or `__shfl_sync` explicitly.\n"
-         "- **Warp Primitives:** Prefer `__shfl_sync` over shared memory for reduction."
-      )
-   elif cc >= 5.0:
-      arch_name = "Maxwell / Pascal (SM 5.0 - 6.0)"
-      # Advice for GTX 9xx, GTX 10xx, P100
-      specific_tips = (
-         "- **Strict Coalescing:** Memory alignment is critical here.\n"
-         "- **Shared Memory:** Heavy reuse is required to overcome lower bandwidth."
-      )
-   else:
-      arch_name = "Legacy (Pre-Maxwell)"
-      specific_tips = "- Focus on basic memory coalescing."
-   constraints = (
-      f"- **Max Threads per Block:** {gpu_info.get('max_threads_per_block', 'N/A')}\n"
-      f"- **Max Registers per Block:** {gpu_info.get('registers_per_block', 'N/A')} "
-      f"(High register usage will limit occupancy)\n"
-      f"- **Shared Memory per Block:** {gpu_info.get('shared_mem_per_block_kb', 'N/A')} KB\n"
-      f"- **Warp Size:** {gpu_info.get('warp_size', 32)}\n"
-      f"- **Memory Bandwidth:** {gpu_info.get('peak_memory_bandwidth_gbps', 'N/A')} GB/s"
-   )
+    # 1. Determine Architecture Family & Specific Advice
+    cc = float(gpu_info.get('compute_capability', 0.0))
+    arch_name = "Unknown"
+    specific_tips = ""  # <--- NEW VARIABLE
 
-   # 2. Process the Improvement Log
-   history_blocks = []
-   best_speedup = 0.0
-   best_iter = 0
+    if cc >= 8.0:
+        arch_name = "Ampere / Ada Lovelace / Hopper (SM 8.0+)"
+        # Advice for modern cards (RTX 30xx, 40xx, A100, H100)
+        specific_tips = (
+            "- **Pipeline Memory:** Use `cp.async` to hide global memory latency.\n"
+            "- **L2 Cache:** Optimize for L2 residency; avoid thrashing the cache."
+        )
+    elif cc >= 7.0:
+        arch_name = "Volta / Turing (SM 7.0 - 7.5)"
+        # Advice for V100, T4, RTX 20xx, GTX 16xx
+        specific_tips = (
+            "- **Independent Thread Scheduling:** Threads can diverge freely. You MUST use `__syncwarp()` or `__shfl_sync` explicitly.\n"
+            "- **Warp Primitives:** Prefer `__shfl_sync` over shared memory for reduction."
+        )
+    elif cc >= 5.0:
+        arch_name = "Maxwell / Pascal (SM 5.0 - 6.0)"
+        # Advice for GTX 9xx, GTX 10xx, P100
+        specific_tips = (
+            "- **Strict Coalescing:** Memory alignment is critical here.\n"
+            "- **Shared Memory:** Heavy reuse is required to overcome lower bandwidth."
+        )
+    else:
+        arch_name = "Legacy (Pre-Maxwell)"
+        specific_tips = "- Focus on basic memory coalescing."
+    constraints = (
+        f"- **Max Threads per Block:** {gpu_info.get('max_threads_per_block', 'N/A')}\n"
+        f"- **Max Registers per Block:** {gpu_info.get('registers_per_block', 'N/A')} "
+        f"(High register usage will limit occupancy)\n"
+        f"- **Shared Memory per Block:** {gpu_info.get('shared_mem_per_block_kb', 'N/A')} KB\n"
+        f"- **Warp Size:** {gpu_info.get('warp_size', 32)}\n"
+        f"- **Memory Bandwidth:** {gpu_info.get('peak_memory_bandwidth_gbps', 'N/A')} GB/s"
+    )
 
-   if not improvement_log:
-      history_section = "> *No previous attempts recorded. Starting from baseline.*"
-   else:
-      for entry in improvement_log:
+    # 2. Process the Improvement Log
+    history_blocks = []
+    best_speedup = 0.0
+    best_iter = 0
+
+    if not improvement_log:
+        history_section = "> *No previous attempts recorded. Starting from baseline.*"
+    else:
+        for entry in improvement_log:
             iter_num = entry.get('iteration', '?')
             strategy_text = entry.get('attempted', 'No description provided.')
-            
+
             # Extract metrics
             results = entry.get('results', {})
             mean_time = results.get('mean_time_ms', 0.0)
             speedup_base = entry.get('speedup_vs_baseline', 1.0)
-            
+
             # Determine Outcome Icon
             if speedup_base > best_speedup:
-               best_speedup = speedup_base
-               best_iter = iter_num
-               outcome_header = f"**ITERATION {iter_num}: NEW BEST ({speedup_base:.2f}x Speedup)**"
+                best_speedup = speedup_base
+                best_iter = iter_num
+                outcome_header = f"**ITERATION {iter_num}: NEW BEST ({speedup_base:.2f}x Speedup)**"
             elif speedup_base < 1.0:
-               outcome_header = f"**ITERATION {iter_num}: REGRESSION ({speedup_base:.2f}x Speedup)**"
+                outcome_header = f"**ITERATION {iter_num}: REGRESSION ({speedup_base:.2f}x Speedup)**"
             else:
-               outcome_header = f"**ITERATION {iter_num}: IMPROVEMENT ({speedup_base:.2f}x Speedup)**"
+                outcome_header = f"**ITERATION {iter_num}: IMPROVEMENT ({speedup_base:.2f}x Speedup)**"
 
             # Clean up the multi-line strategy text for indentation
             # We wrap it in a blockquote for visual distinction
@@ -254,13 +255,11 @@ def generate_gpu_optimization_prompt(gpu_info: dict, kernel_code: str, improveme
 - **Strategy & Rationale:**
 > {formatted_strategy}
 ---"""
-            history_blocks.append(block)   
-      history_section = "\n".join(history_blocks)
-   
-   
-   
-   # 4. Construct the Final Prompt
-   prompt = f"""
+            history_blocks.append(block)
+        history_section = "\n".join(history_blocks)
+
+    # 4. Construct the Final Prompt
+    prompt = f"""
 ### Task: Optimize CUDA Kernel for {gpu_info.get('gpu_name', 'Specific GPU')}
 
 **Target Hardware Context**
@@ -296,4 +295,4 @@ Below is the log of previous optimization attempts. Use this to determine what w
    - Ensure the `launch(...)` signature remains unchanged.
  """
 
-   return prompt.strip()
+    return prompt.strip()

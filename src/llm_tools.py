@@ -22,15 +22,13 @@ class GenModel:
         self.history: List[Dict[str, Any]] = []
         self.tools: Dict[str, callable] = {}
 
-
-
     def chat(self, user_msg: str, model: str) -> str:
         if not user_msg or not model:
             return ""
         self.__user(user_msg)
 
         response = ""
-        
+
         if "claude" in model:
             response = self.__claude(model)
         elif "gemini" in model:
@@ -40,7 +38,7 @@ class GenModel:
         else:
             self.history.pop()
             return "Unsupported llm model/provider"
-        
+
         self.__assistant(response)
         return response
 
@@ -49,13 +47,12 @@ class GenModel:
 
     def set_tools(self, tools: Dict[str, callable]):
         self.tools = tools
-    
+
     def to_json(self, **kwargs) -> str:
         return json.dumps(self.history, **kwargs)
 
     def __repr__(self) -> str:
         return f"ChatHistory(turns={len(self.history)})"
-
 
     # Helper functions to interface with different LLM providers
 
@@ -68,9 +65,9 @@ class GenModel:
         Returns:
             str: LLM response
         """
-        
+
         payload = self.__to_anthropic_payload()
-        
+
         try:
             # Make the API call
             self._anthropic_client = anthropic.Anthropic()
@@ -80,18 +77,18 @@ class GenModel:
                 system=payload["system"],
                 messages=payload["messages"]
             )
-            
+
             # Extract text from response
             response_text = ""
             for block in message.content:
                 if hasattr(block, 'text'):
                     response_text += block.text
-            
+
             return response_text
-            
+
         except Exception as e:
             return f"Error calling Claude API: {str(e)}"
-    
+
     def __gemini(self, model: str) -> str:
         """Call Google's Gemini API
 
@@ -115,7 +112,7 @@ class GenModel:
                     }
                 )
                 return response.text
-            
+
             # For multi-turn conversations, use chat API
             # Convert history to Gemini format
             chat_history = []
@@ -125,7 +122,7 @@ class GenModel:
                     "role": role,
                     "parts": [{"text": msg["content"]}]
                 })
-            
+
             # Create chat with history
             chat = self._genai_client.chats.create(
                 model=model,
@@ -134,13 +131,13 @@ class GenModel:
                 },
                 history=chat_history
             )
-            
+
             # Send the latest user message
             latest_user_msg = self.history[-1]["content"]
             response = chat.send_message(latest_user_msg)
 
             return response.text
-            
+
         except Exception as e:
             return f"Error calling Gemini API: {str(e)}"
 
@@ -153,20 +150,20 @@ class GenModel:
         Returns:
             str: LLM response
         """
-         
+
         try:
             self._openai_client = OpenAI()
             messages = self.__to_openai_messages()
-            
+
             # Make the API call
             response = self._openai_client.chat.completions.create(
                 model=model,
                 messages=messages,
                 max_tokens=4096
             )
-            
+
             return response.choices[0].message.content
-            
+
         except Exception as e:
             return f"Error calling OpenAI API: {str(e)}"
 
@@ -192,7 +189,7 @@ class GenModel:
             [{"role": "system", "content": self.sys_prompt}]
             + self.history
         )
-    
+
     def __to_anthropic_payload(self) -> Dict[str, Any]:
         return {
             "system": self.sys_prompt,
