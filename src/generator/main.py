@@ -6,14 +6,14 @@ Walks through each operation in a benchmark to:
 2. Generate CUDA kernel code
 3. Validate correctness through iterative refinement
 """
-
-import os
-import sys
 import glob
+import os
 import shutil
-import torch
+import sys
 import tempfile
 from pathlib import Path
+
+import torch
 from tqdm import tqdm
 
 import src.generator.generator as generator

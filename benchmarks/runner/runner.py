@@ -1,19 +1,22 @@
+import glob
+import importlib.util
+import inspect
+import os
+import sys
+import time
+from functools import wraps
+from pathlib import Path
+
+import pyarrow.parquet as pq
 import torch
 import torch.autograd.profiler as profiler
 import torch.nn.functional as F
-from functools import wraps
 from PIL import Image
-import os
-import glob
-import inspect
-import pyarrow.parquet as pq
-from pathlib import Path
-import importlib.util
-import sys
-import time
-
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from transformers import AutoImageProcessor, AutoModelForImageClassification, AutoConfig
+from transformers import AutoConfig
+from transformers import AutoImageProcessor
+from transformers import AutoModelForImageClassification
+from transformers import AutoModelForSequenceClassification
+from transformers import AutoTokenizer
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

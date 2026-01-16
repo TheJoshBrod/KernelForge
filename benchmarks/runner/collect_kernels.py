@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 #cSpell:disable
-
+import hashlib
 import os
+import re
 import sys
+from multiprocessing import cpu_count
+from multiprocessing import Pool
+from multiprocessing import set_start_method
+from pathlib import Path
+
 import torch
 from torch.utils.cpp_extension import load_inline
-from pathlib import Path
-import hashlib
-import re
-from multiprocessing import Pool, cpu_count, set_start_method
 
 HARDWARE_OPTIMIZED = "--optimized" in sys.argv
 

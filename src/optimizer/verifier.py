@@ -3,15 +3,14 @@ src/verifier.py
 Validates a generated CUDA kernel by compiling it as a PyTorch C++ extension
 and comparing its tensor output against a ground-truth tensor.
 """
+import os
+import re
+from pathlib import Path
 
 import torch
-import os
-
-from pathlib import Path
+from byllm.lib import by
+from byllm.lib import Model
 from torch.utils.cpp_extension import load_inline
-import re
-
-from byllm.lib import Model, by
 
 llm = Model(model_name="claude-opus-4-5-20251101")
 

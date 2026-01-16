@@ -1,15 +1,15 @@
 """
 Optimizes individual Ops for target GPU architecture
 """
-import sys
 import json
 import random
 import string
+import sys
 import tempfile
 from pathlib import Path
 
-import src.optimizer.GPUprofiler as gpu
 import src.optimizer.generator as generator
+import src.optimizer.GPUprofiler as gpu
 
 
 def get_project_dir():
@@ -132,4 +132,4 @@ def main():
         optimization_loop(gpu_specs, paths)
 
 if __name__ == "__main__":
-    main() 
+    main()

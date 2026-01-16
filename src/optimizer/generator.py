@@ -1,14 +1,11 @@
 import re
 from pathlib import Path
+from typing import Optional
+from typing import Tuple
 
-
-from src.llm_tools import GenModel
-import src.optimizer.verifier as verifier
 import src.optimizer.prompts as prompts
-
-
-import re
-from typing import Tuple, Optional
+import src.optimizer.verifier as verifier
+from src.llm_tools import GenModel
 
 # Global variables
 sys_prompt = prompts.get_sys_prompt()

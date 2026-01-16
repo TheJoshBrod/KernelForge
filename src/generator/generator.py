@@ -1,8 +1,10 @@
 import re
-import ollama as ol
+
 import google.generativeai as genai
-from openai import OpenAI
+import ollama as ol
 from anthropic import Anthropic
+from openai import OpenAI
+
 import src.generator.prompts.prompts
 
 def cleanup_mkdown(input: str) -> str:

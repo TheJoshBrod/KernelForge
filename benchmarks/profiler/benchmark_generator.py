@@ -1,15 +1,18 @@
+import glob
+import inspect
+import os
+from functools import wraps
+
 import torch
 import torch.autograd.profiler as profiler
 import torch.nn.functional as F
-from functools import wraps
-from PIL import Image
-import os
-import glob
 import tqdm
-import inspect
-
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from transformers import AutoImageProcessor, AutoModelForImageClassification, AutoConfig
+from PIL import Image
+from transformers import AutoConfig
+from transformers import AutoImageProcessor
+from transformers import AutoModelForImageClassification
+from transformers import AutoModelForSequenceClassification
+from transformers import AutoTokenizer
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

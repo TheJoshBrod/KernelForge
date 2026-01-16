@@ -1,16 +1,16 @@
 import glob
 from pathlib import Path
 
-# GPU Architecture Info
+import numpy as np
 import pycuda.driver as cuda
+import torch
 from pynvml import *
 from pynvml import NVMLError_NotSupported 
-
-# Kernel Profiling
-import torch
-import numpy as np
+from torch.profiler import profile
+from torch.profiler import ProfilerActivity
 from torch.utils.cpp_extension import load_inline
-from torch.profiler import profile, ProfilerActivity
+# GPU Architecture Info
+# Kernel Profiling
 
 
 # ******************
