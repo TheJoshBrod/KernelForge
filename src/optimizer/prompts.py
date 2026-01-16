@@ -1,3 +1,8 @@
+"""
+src/optimizer/prompts.py
+Generates prompts for LLM systems including "sys_prompt" AND iterative refinement "gpu_optimization" prompt.
+"""
+
 def get_sys_prompt() -> str:
     return """
 SYSTEM PROMPT — CUDA Kernel Optimizer
@@ -170,7 +175,9 @@ Your optimized output will be saved to a kernel.cu follow and must follow ALL ru
 """
 
 
-def generate_gpu_optimization_prompt(gpu_info: dict, kernel_code: str, improvement_log: list[str]) -> str:
+def generate_gpu_optimization_prompt(gpu_info: dict,
+                                     kernel_code: str,
+                                     improvement_log: list[str]) -> str:
     """
     Generates a structured prompt for an LLM to optimize a CUDA kernel 
     based on specific GPU hardware architecture and constraints.

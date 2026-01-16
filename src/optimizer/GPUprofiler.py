@@ -1,3 +1,7 @@
+"""
+src/optimizer/GPUprofiler.py
+Uses pynvml, pycuda, and torch to analyze GPU diagnostic statistics and architecture information.  
+"""
 import glob
 from pathlib import Path
 

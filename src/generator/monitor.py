@@ -1,4 +1,7 @@
-"""Monitors and Preprocesses PyTorch Aten and CUDA Kernel Abstraction Layer Calls for Generator"""
+"""
+src/generator/monitor.py
+Monitors and Preprocesses PyTorch Aten and CUDA Kernel Abstraction Layer Calls for Generator.
+"""
 import torch
 
 aten_output: str = ""

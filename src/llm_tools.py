@@ -1,10 +1,14 @@
+"""
+src/llm_tools.py
+Generalized LLM tooling for handling model agnostic conversations and tooling.
+"""
 import json
 from typing import Any
 from typing import Dict
 from typing import List
 
 import anthropic
-import google.genai as genai
+from google import genai
 from openai import OpenAI
 
 

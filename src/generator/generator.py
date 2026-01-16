@@ -1,6 +1,10 @@
+"""
+src/generator/generator.py
+Uses LLM to generate CUDA kernels that is semi-model-agnostic.
+"""
 import re
 
-import google.generativeai as genai
+from google import genai
 import ollama as ol
 from anthropic import Anthropic
 from openai import OpenAI

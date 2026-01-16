@@ -1,3 +1,7 @@
+"""
+src/optimizer/generator.py
+Uses LLM to generate CUDA kernels that is model-agnostic.
+"""
 import re
 from pathlib import Path
 from typing import Optional

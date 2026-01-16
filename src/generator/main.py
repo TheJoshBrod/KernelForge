@@ -58,7 +58,7 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
         tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
 
         # Output newest version of kernel
-        with open(output_dir / f"kernel.cu", "w") as f:
+        with open(output_dir / "kernel.cu", "w", encoding="utf-8") as f:
             f.write(cu_code)
 
         # For each generated kernel validate ALL input/output
