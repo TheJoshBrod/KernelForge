@@ -77,7 +77,7 @@ class GenModel:
             self._anthropic_client = anthropic.Anthropic()
             message = self._anthropic_client.messages.create(
                 model=model,
-                max_tokens=8196,
+                max_tokens=4096,
                 system=payload["system"],
                 messages=payload["messages"]
             )

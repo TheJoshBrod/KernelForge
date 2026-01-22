@@ -89,7 +89,7 @@ def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, path
         if provider == "gemini":
             model = "gemini-2.0-flash-exp"
         else:
-            model = "claude-3-5-sonnet-20240620"
+            model = "claude-opus-4-5-20251101"
 
     # Attempt initial CUDA code generation
     llm: GenModel = GenModel(sys_prompt)
