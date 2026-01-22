@@ -115,19 +115,16 @@ def validate_kernel(
         tuple: (is_valid, log_message)
     """
 
-    is_valid = False
-    log_message = ""
-    tmpdir = paths["tmp_dir"]
-    io_dir = paths["io_dir"]  # Changed variable name for clarity
+import multiprocessing
+import queue
 
-    # --- 1. Stage 1: Write Code to File ---
-    cu_path = os.path.join(tmpdir, "kernel.cu")
-
-    with open(cu_path, "w", encoding="utf-8") as f:
-        f.write(generated_cu_code)
-
-    # --- 2. Stage 1: Call Status (Compilation) ---
+def _validate_worker(generated_cu_code: str, tmpdir: str, io_dir: str, result_queue: multiprocessing.Queue):
+    """
+    Worker process to run validation in isolation.
+    Puts (bool, log_message) into result_queue.
+    """
     try:
+        # --- 2. Stage 1: Call Status (Compilation) ---
         # Set environment variables for correct CUDA version
         import sys
         python_bin_dir = os.path.dirname(sys.executable)
@@ -155,7 +152,7 @@ def validate_kernel(
 
     except Exception as e:
         # --- Handle compilation failure ---
-        # Load first entry file for error reporting
+        # Load first entry file for error reporting (if possible)
         entry_files = sorted(Path(io_dir).glob("entry_*.pt"))
         if entry_files:
             try:
@@ -166,14 +163,16 @@ def validate_kernel(
             entry = {"input": "Unknown", "output": "Unknown"}
 
         log_message = f"[Compilation Failed]\nSummarized traceback:\n {summarize_issue_with_traceback(str(e), generated_cu_code, entry)}"
-        return False, log_message
+        result_queue.put((False, log_message))
+        return
 
     # --- 3. Stage 2: Execution Status (Correctness) ---
     # Test against all entry files
     entry_files = sorted(Path(io_dir).glob("entry_*.pt"))
 
     if not entry_files:
-        return False, "[Error] No entry files found in io_dir"
+        result_queue.put((False, "[Error] No entry files found in io_dir"))
+        return
 
     all_valid = True
     error_logs = []
@@ -290,6 +289,52 @@ def validate_kernel(
     if all_valid:
         log_message = f"[Success] All {len(entry_files)} test cases passed"
     else:
-        log_message = "\n\n".join(error_logs)
+        log_message = "\n\n".join(error_logs) # Fixed newline join
+    
+    result_queue.put((all_valid, log_message))
 
-    return all_valid, log_message
+
+def validate_kernel(
+    generated_cu_code: str,
+    paths: dict[str, Path]
+) -> tuple[bool, str]:
+    """
+    Validates a single-file CUDA kernel using the PyTorch C++ extension API.
+    Runs in a subprocess to handle deadlocks/infinite loops.
+
+    Returns:
+        tuple: (is_valid, log_message)
+    """
+
+    tmpdir = paths["tmp_dir"]
+    io_dir = paths["io_dir"]  # Changed variable name for clarity
+
+    # --- 1. Stage 1: Write Code to File ---
+    cu_path = os.path.join(tmpdir, "kernel.cu")
+
+    with open(cu_path, "w", encoding="utf-8") as f:
+        f.write(generated_cu_code)
+
+    # Use 'spawn' to ensure CUDA context is initialized freshly in the child process
+    try:
+        multiprocessing.set_start_method('spawn', force=True)
+    except RuntimeError:
+        pass # Context might be already set
+
+    q = multiprocessing.Queue()
+    # We must pass strings for paths to avoid pickling issues with some Path objects across processes
+    p = multiprocessing.Process(target=_validate_worker, args=(generated_cu_code, str(tmpdir), str(io_dir), q))
+    
+    p.start()
+    p.join(timeout=300) # Wait up to 300 seconds for compilation + execution
+
+    if p.is_alive():
+        print(f"Warning: Validation timed out (possible deadlock/infinite loop). Killing process {p.pid}...")
+        p.terminate()
+        p.join()
+        return False, "[Timeout Error] Validation process killed after 300s. Likely caused by infinite loop or deadlock in CUDA kernel."
+
+    if not q.empty():
+        return q.get()
+    else:
+        return False, "[Process Error] Validation process exited without returning result (Possible segfault or OOM)."
