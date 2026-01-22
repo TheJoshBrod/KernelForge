@@ -1,23 +1,28 @@
+# Core
 torch
 numpy
 pandas
-
-protobuf>=5.26.1
-grpcio-status>=1.59.0
-grpcio>=1.59.0
 pyarrow
 
+# LLM providers
 google-genai
 openai>=2.3.0
 ollama
 anthropic
 
+# ML / vision
+transformers
+pillow
+
+# Build / utils
 ninja
 python-dotenv
-pillow
-transformers
 
+# Jaseci family
+jaclang
 byllm
+jac-client
 
+# GPU / system
 nvidia-ml-py
 pycuda
