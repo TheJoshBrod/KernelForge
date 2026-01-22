@@ -26,19 +26,21 @@ def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str
         A tuple of (feedback, code) where each is None if not found
     """
 
-    # Extract feedback section
-    feedback_pattern = r'// \[START FEEDBACK\](.*?)// \[END FEEDBACK\]'
-    feedback_match = re.search(feedback_pattern, content, re.DOTALL)
+    # Extract feedback section (tolerant to spacing)
+    feedback_pattern = r'//\s*\[START FEEDBACK\](.*?)//\s*\[END FEEDBACK\]'
+    feedback_match = re.search(feedback_pattern, content, re.DOTALL | re.IGNORECASE)
     feedback = feedback_match.group(1).strip() if feedback_match else "No feedback provided"
 
-    # Extract code section
-    code_pattern = r'// \[START kernel\.cu\](.*?)// \[END kernel\.cu\]'
-    code_match = re.search(code_pattern, content, re.DOTALL)
+    # Extract code section (tolerant to spacing)
+    # 1. Try strict tags
+    code_pattern = r'//\s*\[START kernel\.cu\](.*?)//\s*\[END kernel\.cu\]'
+    code_match = re.search(code_pattern, content, re.DOTALL | re.IGNORECASE)
     
     if code_match:
         code = code_match.group(1).strip()
     else:
-        # Fallback: Look for generic C++/CUDA code block
+        # 2. Markdown fallback
+        # This handles ```cpp\n ... ``` or ```cuda\n ... ```
         fallback_pattern = r"```(?:C\+\+|cpp|cuda|c)?\s*\n(.*?)```"
         fallback_match = re.search(fallback_pattern, content, re.DOTALL | re.IGNORECASE)
         code = fallback_match.group(1).strip() if fallback_match else None
@@ -58,9 +60,7 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
     Returns:
         Tuple[str, bool, str]: _description_
     """
-    print("\t\t[DEBUG] Querying LLM...")
     response = llm.chat(msg, model)
-    print("\t\t[DEBUG] LLM responded. Extracting code...")
     feedback, cu_code = extract_feedback_and_code(response)
 
     if cu_code is None:
@@ -68,9 +68,7 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
         print(f"Raw response:\n{response}")
         return feedback, False, "Failed to extract code"
 
-    print("\t\t[DEBUG] Validating kernel...")
     is_valid, error = verifier.validate_kernel(cu_code, paths)
-    print(f"\t\t[DEBUG] Validation complete. Valid={is_valid}")
     return feedback, is_valid, error
 
 
@@ -85,13 +83,13 @@ def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, path
         io_dir (Path): Path of file that contains all input/output pairs recorded of this op
         model (str, optional): LLM that will generate kernels. Defaults to None (will use env var or default).
     """
-    if model is None or model == "claude-opus-4-5-20251101":
+    if model is None or model == "claude-3-5-sonnet-20240620":
         import os
         provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
         if provider == "gemini":
             model = "gemini-2.0-flash-exp"
         else:
-            model = "claude-opus-4-5-20251101"
+            model = "claude-3-5-sonnet-20240620"
 
     # Attempt initial CUDA code generation
     llm: GenModel = GenModel(sys_prompt)
