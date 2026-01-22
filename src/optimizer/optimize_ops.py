@@ -54,6 +54,10 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
         best_stats = baseline_stats.copy()
         best_kernel_code = (paths["op_dir"] / "kernel.cu").read_text()
     print("Finished baseline.")
+    
+    # Create attempts directory
+    (paths["proj_dir"] / "attempts").mkdir(parents=True, exist_ok=True)
+
     # Iterative refinement loop
     # Step 1. Generate:
     #   Generate kernel: Via LLM generate new kernel using the gpu specs & previously found best kernel
@@ -76,6 +80,11 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
             print(f"\t\t- Status: {is_valid}")
 
             if is_valid:
+                # Save this attempt
+                current_kernel_code = (paths["tmp_dir"] / "kernel.cu").read_text()
+                with open(paths["proj_dir"] / "attempts" / f"kernel_{iteration}.cu", "w") as f:
+                    f.write(current_kernel_code)
+
                 # Log the attempt with results
                 print("\tBeginning Profiler...")
                 current_stats, profiler = gpu.profile_kernel(paths)
@@ -91,17 +100,17 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
                 if current_stats['mean_time_ms'] < best_stats['mean_time_ms']:
                     log_entry["is_best"] = True
                     best_stats = current_stats.copy()
-                    best_kernel_code = (
-                        paths["tmp_dir"] / "kernel.cu").read_text()
-                    with open(paths["proj_dir"] / f"kernel{iteration}.cu", "w") as f:
-                        f.write(best_kernel_code)
-
+                    best_kernel_code = current_kernel_code
                 else:
                     log_entry["is_best"] = False
                 improvement_log.append(log_entry)
 
     with open(paths["proj_dir"] / "improvement_log.json", 'w') as f:
         json.dump(improvement_log, f, indent=2)
+
+    # Save the final best kernel
+    with open(paths["proj_dir"] / "kernel.cu", "w") as f:
+        f.write(best_kernel_code)
 
     print(f"\n{'='*60}")
     print(f"Optimization Complete!")
