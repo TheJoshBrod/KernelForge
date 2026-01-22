@@ -12,21 +12,27 @@ import src.optimizer.generator as generator
 import src.optimizer.GPUprofiler as gpu
 
 
-def get_project_dir():
+def get_project_dir(gpu_name: str):
 
     # Determine project name (random or user requested)
     letters = string.ascii_letters + string.digits
     proj_name = ''.join(random.choices(letters, k=10))
     if len(sys.argv) >= 3:
         proj_name = sys.argv[2]
-    print(f"Beginning optimizing on project {proj_name}...")
+    
+    # Sanitize GPU name
+    clean_gpu_name = gpu_name.replace(" ", "_").replace(":", "").replace("-", "_")
+    
+    full_name = f"{clean_gpu_name}_{proj_name}"
 
-    proj_dir = Path(f"kernels/optimized/{proj_name}")
+    print(f"Beginning optimizing on project {full_name}...")
+
+    proj_dir = Path(f"kernels/optimized/{full_name}")
     try:
         proj_dir.mkdir(parents=True, exist_ok=False)
     except Exception as e:
         print(
-            f"Error: Project {proj_name} name already exists, please pick a new name")
+            f"Error: Project {full_name} name already exists, please pick a new name")
 
     return proj_dir
 
@@ -81,7 +87,7 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
                     "speedup_vs_baseline": baseline_stats['mean_time_ms'] / current_stats['mean_time_ms'],
                     "speedup_vs_best": best_stats['mean_time_ms'] / current_stats['mean_time_ms']
                 }
-                print(f"\t\t- stats: {log_entry["speedup_vs_best"]}")
+                print(f"\t\t- stats: {log_entry['speedup_vs_best']}")
                 if current_stats['mean_time_ms'] < best_stats['mean_time_ms']:
                     log_entry["is_best"] = True
                     best_stats = current_stats.copy()
@@ -117,14 +123,20 @@ def main():
         sys.exit(1)
     io_parent_dir = Path(sys.argv[1])
 
+    # Collect GPU specs first to get name
+    gpu_specs = gpu.get_gpu_specs()
+
+    # Optimization: Set the CUDA Architecture to the specific device to speed up JIT compilation
+    import os
+    os.environ["TORCH_CUDA_ARCH_LIST"] = gpu_specs["compute_capability"]
+
     # Output directory
-    proj_dir = get_project_dir()
+    proj_dir = get_project_dir(gpu_specs["gpu_name"])
 
     # Directory containing initial wave of correct, but unoptimized kernels
     op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
-
-    # Collect GPU specs
-    gpu_specs = gpu.get_gpu_specs()
+    # Prioritize attention as requested
+    op_dirs.sort(key=lambda x: 0 if "attention" in x.name else 1)
 
     # For each kernel, run optimization loop
     for op_dir in op_dirs:
@@ -132,6 +144,11 @@ def main():
         io_dir = io_parent_dir / op_dir.name
         if not io_dir.exists():
             print(f"{op_dir.name} has no i/o")
+            continue
+
+        # Check if the kernel was successfully generated
+        if not (op_dir / "success").exists():
+            print(f"Skipping {op_dir.name}: No 'success' marker found (generation failed).")
             continue
         proj_op_dir = proj_dir / op_dir.name
         proj_op_dir.mkdir(parents=True, exist_ok=False)
