@@ -12,7 +12,13 @@ from byllm.lib import by # type: ignore
 from byllm.lib import Model # type: ignore
 from torch.utils.cpp_extension import load_inline
 
-llm = Model(model_name="claude-opus-4-5-20251101")
+provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+if provider == "gemini":
+    model_name = "gemini/gemini-2.0-flash-exp"
+else:
+    model_name = "claude-opus-4-5-20251101"
+
+llm = Model(model_name=model_name)
 
 
 @by(llm)

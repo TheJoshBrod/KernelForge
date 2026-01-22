@@ -270,53 +270,51 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
     timings = []
 
     # We profile everything using one profiler context
-    with profile(
-        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        record_shapes=True,
-        profile_memory=True,
-        with_stack=True
-    ) as prof:
+    # UPDATE: Removed global profiler context as it accumulates too much RAM (OOM on batch 4)
+    # The consumer (optimize_ops.py) does not use the chrome trace 'prof' object, so we return None.
+    prof = None
 
-        for i in range(0, len(all_files), BATCH_SIZE):
-            batch_files = all_files[i : i + BATCH_SIZE]
-            inputs = load_batch(batch_files)
+    for i in range(0, len(all_files), BATCH_SIZE):
+        batch_files = all_files[i : i + BATCH_SIZE]
+        inputs = load_batch(batch_files)
 
-            # Warmup (only for this batch)
-            for args, kwargs in inputs:
+        # Warmup (only for this batch)
+        for args, kwargs in inputs:
+            try:
+                module.launch(*args, **kwargs)
+            except TypeError:
+                module.launch(*args)
+        torch.cuda.synchronize()
+
+        # Measure
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+
+        for args, kwargs in inputs:
+            start.record()
+            for _ in range(10):
                 try:
                     module.launch(*args, **kwargs)
                 except TypeError:
                     module.launch(*args)
+            end.record()
             torch.cuda.synchronize()
 
-            # Measure
-            start = torch.cuda.Event(enable_timing=True)
-            end = torch.cuda.Event(enable_timing=True)
+            elapsed_ms = start.elapsed_time(end) / 10
+            timings.append(elapsed_ms)
 
-            for args, kwargs in inputs:
-                start.record()
-                for _ in range(10):
-                    try:
-                        module.launch(*args, **kwargs)
-                    except TypeError:
-                        module.launch(*args)
-                end.record()
-                torch.cuda.synchronize()
+        # Profile run (for detailed metrics)
+        for args, kwargs in inputs:
+            try:
+                module.launch(*args, **kwargs)
+            except TypeError:
+                module.launch(*args)
+            torch.cuda.synchronize()
 
-                elapsed_ms = start.elapsed_time(end) / 10
-                timings.append(elapsed_ms)
+        # Cleanup VRAM
+        del inputs
+        torch.cuda.empty_cache()
 
-            # Profile run (for detailed metrics)
-            for args, kwargs in inputs:
-                try:
-                    module.launch(*args, **kwargs)
-                except TypeError:
-                    module.launch(*args)
-                torch.cuda.synchronize()
-
-            # Cleanup VRAM
-            del inputs
-            torch.cuda.empty_cache()
 
     stats = {
         'mean_time_ms': float(np.mean(timings)),

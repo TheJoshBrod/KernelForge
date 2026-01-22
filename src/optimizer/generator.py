@@ -29,12 +29,19 @@ def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str
     # Extract feedback section
     feedback_pattern = r'// \[START FEEDBACK\](.*?)// \[END FEEDBACK\]'
     feedback_match = re.search(feedback_pattern, content, re.DOTALL)
-    feedback = feedback_match.group(1).strip() if feedback_match else None
+    feedback = feedback_match.group(1).strip() if feedback_match else "No feedback provided"
 
     # Extract code section
     code_pattern = r'// \[START kernel\.cu\](.*?)// \[END kernel\.cu\]'
     code_match = re.search(code_pattern, content, re.DOTALL)
-    code = code_match.group(1).strip() if code_match else None
+    
+    if code_match:
+        code = code_match.group(1).strip()
+    else:
+        # Fallback: Look for generic C++/CUDA code block
+        fallback_pattern = r"```(?:C\+\+|cpp|cuda|c)?\s*\n(.*?)```"
+        fallback_match = re.search(fallback_pattern, content, re.DOTALL | re.IGNORECASE)
+        code = fallback_match.group(1).strip() if fallback_match else None
 
     return feedback, code
 
@@ -54,6 +61,11 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
     response = llm.chat(msg, model)
     feedback, cu_code = extract_feedback_and_code(response)
 
+    if cu_code is None:
+        print("Error: Could not extract code from LLM response.")
+        print(f"Raw response:\n{response}")
+        return feedback, False, "Failed to extract code"
+
     is_valid, error = verifier.validate_kernel(cu_code, paths)
     return feedback, is_valid, error
 
@@ -67,8 +79,15 @@ def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, path
         improvement_log (list): "Chat History" of why LLM thinks it made an improvement over past attempts
         temp_dir (Path): Path of directory to compile kernel into (used later by profiler)
         io_dir (Path): Path of file that contains all input/output pairs recorded of this op
-        model (str, optional): LLM that will generate kernels. Defaults to "claude-opus-4-5-20251101".
+        model (str, optional): LLM that will generate kernels. Defaults to None (will use env var or default).
     """
+    if model is None or model == "claude-opus-4-5-20251101":
+        import os
+        provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+        if provider == "gemini":
+            model = "gemini-2.0-flash-exp"
+        else:
+            model = "claude-opus-4-5-20251101"
 
     # Attempt initial CUDA code generation
     llm: GenModel = GenModel(sys_prompt)

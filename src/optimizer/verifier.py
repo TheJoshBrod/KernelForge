@@ -13,7 +13,7 @@ from byllm.lib import by # type: ignore
 from byllm.lib import Model # type: ignore
 from torch.utils.cpp_extension import load_inline
 
-llm = Model(model_name="claude-opus-4-5-20251101")
+llm = Model(model_name="anthropic/claude-opus-4-5-20251101")
 
 
 @by(llm)
@@ -115,226 +115,175 @@ def validate_kernel(
         tuple: (is_valid, log_message)
     """
 
-import multiprocessing
-import queue
+# --- Persistent Worker Globals ---
+_WORKER_PROCESS = None
+_WORKER_Q_IN = None
+_WORKER_Q_OUT = None
 
-def _validate_worker(generated_cu_code: str, tmpdir: str, io_dir: str, result_queue: multiprocessing.Queue):
+def _validate_worker_loop(q_in, q_out):
     """
-    Worker process to run validation in isolation.
-    Puts (bool, log_message) into result_queue.
+    Persistent worker loop.
+    Waits for (generated_cu_code, tmpdir, io_dir) tuples.
+    Sends back (is_valid, log_message).
     """
-    try:
-        # --- 2. Stage 1: Call Status (Compilation) ---
-        # Set environment variables for correct CUDA version
-        import sys
-        python_bin_dir = os.path.dirname(sys.executable)
-        os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
-        os.environ["PATH"] = f"{python_bin_dir}:/usr/local/cuda-12.1/bin:{os.environ['PATH']}"
+    # Set environment variables ONCE
+    import sys
+    python_bin_dir = os.path.dirname(sys.executable)
+    os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
+    os.environ["PATH"] = f"{python_bin_dir}:/usr/local/cuda-12.1/bin:{os.environ['PATH']}"
+    
+    # Pre-import torch to warm up (already imported at top level, but ensure context is ready)
+    if torch.cuda.is_available():
+        torch.cuda.init()
 
-        # Extract function signature for load_inline
-        match = re.search(
-            r"(torch::Tensor\s+launch\s*\([^)]*\))", generated_cu_code)
-        if not match:
-            raise ValueError(
-                "Could not find 'launch' function signature in generated code.")
-
-        cpp_source = match.group(1) + ";"
-
-        module = load_inline(
-            name=f"generated_module_{os.path.basename(tmpdir)}",
-            cpp_sources=cpp_source,
-            cuda_sources=generated_cu_code,
-            functions=['launch'],
-            build_directory=tmpdir,
-            verbose=True,
-            with_cuda=True
-        )
-
-    except Exception as e:
-        # --- Handle compilation failure ---
-        # Load first entry file for error reporting (if possible)
-        entry_files = sorted(Path(io_dir).glob("entry_*.pt"))
-        if entry_files:
-            try:
-                entry = torch.load(entry_files[0])
-            except:
-                entry = {"input": "Unknown", "output": "Unknown"}
-        else:
-            entry = {"input": "Unknown", "output": "Unknown"}
-
-        log_message = f"[Compilation Failed]\nSummarized traceback:\n {summarize_issue_with_traceback(str(e), generated_cu_code, entry)}"
-        result_queue.put((False, log_message))
-        return
-
-    # --- 3. Stage 2: Execution Status (Correctness) ---
-    # Test against all entry files
-    entry_files = sorted(Path(io_dir).glob("entry_*.pt"))
-
-    if not entry_files:
-        result_queue.put((False, "[Error] No entry files found in io_dir"))
-        return
-
-    all_valid = True
-    error_logs = []
-
-    for entry_file in entry_files:
+    while True:
         try:
-            # Load ground truth and inputs
-            entry = torch.load(entry_file)
-
-            # Extract args, kwargs, and signature info
-            args = entry.get("args", [])
-            kwargs = entry.get("kwargs", {})
-            signature_info = entry.get(
-                "signature", {"params": [], "defaults": {}})
-
-            # Normalize to positional arguments
-            normalized_args, remaining_kwargs = normalize_args_kwargs(
-                args, kwargs, signature_info)
-
-            # Warn if there are kwargs that couldn't be mapped
-            if remaining_kwargs:
-                print(
-                    f"Warning: Unmapped kwargs in {entry_file.name}: {list(remaining_kwargs.keys())}")
-
-            # Move tensors to CUDA, keep scalars as-is
-            cuda_args = [move_to_cuda(item) for item in normalized_args]
-
-            # Call with ONLY positional args
-            output_generated = module.launch(*cuda_args)
-
-            # Ensure all CUDA operations complete
-            torch.cuda.synchronize()
-
-            # Move to same device as ground truth if needed
-            if not output_generated.is_cuda:
-                output_generated = output_generated.cuda()
-
-            # Kernel executed without a runtime error
-            runtime_success = True
-
-        except Exception as e:
-            # --- Handle runtime errors ---
-            runtime_success = False
-            all_valid = False
-
-            # Safely build input_info only with variables that exist
-            input_info = {}
-
-            if "args" in locals():
-                input_info["original_args_count"] = len(args)
-            if "kwargs" in locals():
-                input_info["original_kwargs"] = list(kwargs.keys())
-            if "signature_info" in locals():
-                input_info["signature_params"] = signature_info.get(
-                    "params", [])
-            if "cuda_args" in locals():
-                input_info["normalized_args_count"] = len(cuda_args)
-                input_info["args"] = [
-                    {
-                        "index": idx,
-                        "dtype": str(a.dtype) if torch.is_tensor(a) else None,
-                        "shape": list(a.shape) if torch.is_tensor(a) else None,
-                        "type": type(a).__name__,
-                    }
-                    for idx, a in enumerate(cuda_args)
-                ]
-
-            error_log = (
-                f"[Kernel Runtime Error - {entry_file.name}]\n"
-                f"Summarized traceback:\n{summarize_issue_with_traceback(str(e), generated_cu_code, entry)}\n\n"
-                f"Input metadata:\n{input_info}"
-            )
-            error_logs.append(error_log)
-            continue  # Skip to next entry file
-
-        # --- 4. Output Comparison ---
-        if runtime_success:
+            job = q_in.get()
+            if job is None:
+                break # Sentinel to exit
+            
+            generated_cu_code, tmpdir, io_dir = job
+            
+            # Run the validation logic (refactored from original _validate_worker)
             try:
-                # Use numerical tolerance checking
-                ground_truth = entry["output"]
-                if torch.is_tensor(ground_truth):
-                    ground_truth = ground_truth.to(output_generated.device)
+                # Compile
+                match = re.search(r"(torch::Tensor\s+launch\s*\([^)]*\))", generated_cu_code)
+                if not match:
+                    raise ValueError("Could not find 'launch' function signature.")
+                
+                cpp_source = match.group(1) + ";"
+                
+                # Check if module already loaded (optimization?)
+                # load_inline uses a cache based on sources, but since we change tmpdir every time, 
+                # we force a recompile/realloc. Ideally we should reuse tmpdir if code is same, 
+                # but 'tmpdir' is provided by caller.
+                
+                module = load_inline(
+                    name=f"generated_module_{os.path.basename(tmpdir)}",
+                    cpp_sources=cpp_source,
+                    cuda_sources=generated_cu_code,
+                    functions=['launch'],
+                    build_directory=tmpdir,
+                    verbose=False, # Reduce spam
+                    with_cuda=True
+                )
+                
+                # Execution Test
+                entry_files = sorted(Path(io_dir).glob("entry_*.pt"))
+                if not entry_files:
+                    q_out.put((False, "[Error] No entry files found in io_dir"))
+                    continue
 
-                is_correct = torch.allclose(
-                    output_generated, ground_truth, atol=1e-2, rtol=1e-1)
+                all_valid = True
+                error_logs = []
 
-                if not is_correct:
-                    all_valid = False
-                    diff = torch.abs(output_generated - ground_truth)
-                    output_shape = list(output_generated.shape)
-                    expected_shape = list(ground_truth.shape)
+                for entry_file in entry_files:
+                    try:
+                        entry = torch.load(entry_file)
+                        args = entry.get("args", [])
+                        kwargs = entry.get("kwargs", {})
+                        signature_info = entry.get("signature", {"params": [], "defaults": {}})
+                        
+                        normalized_args, remaining_kwargs = normalize_args_kwargs(args, kwargs, signature_info)
+                        cuda_args = [move_to_cuda(item) for item in normalized_args]
+                        
+                        output_generated = module.launch(*cuda_args)
+                        torch.cuda.synchronize()
+                        
+                        if not output_generated.is_cuda:
+                            output_generated = output_generated.cuda()
+                            
+                        ground_truth = entry["output"]
+                        if torch.is_tensor(ground_truth):
+                            ground_truth = ground_truth.to(output_generated.device)
+                            
+                        is_correct = torch.allclose(output_generated, ground_truth, atol=1e-2, rtol=1e-1)
+                        
+                        if not is_correct:
+                            all_valid = False
+                            diff = torch.abs(output_generated - ground_truth)
+                            error_logs.append(f"[Output Mismatch {entry_file.name}] Max diff: {diff.max().item():.6f}")
 
-                    analysis = (
-                        f"[Output Mismatch - {entry_file.name}]\n"
-                        f"- Expected shape: {expected_shape}\n"
-                        f"- Output shape:   {output_shape}\n"
-                        f"- Max difference: {diff.max().item():.6f}\n"
-                        f"- Mean difference:{diff.mean().item():.6f}\n"
-                        "Likely causes: boundary indexing errors, thread grid size mismatch, "
-                        "or incorrect memory writes.\n"
-                    )
+                    except Exception as e:
+                        all_valid = False
+                        error_logs.append(f"[Runtime Error {entry_file.name}] {str(e)}")
 
-                    entry["generated-incorrect-output"] = output_generated
-                    analysis += summarize_issue_with_traceback(
-                        analysis, generated_cu_code, entry)
-                    error_logs.append(analysis)
+                if all_valid:
+                    q_out.put((True, f"[Success] All {len(entry_files)} tests passed"))
+                else:
+                    q_out.put((False, "\n".join(error_logs)))
 
             except Exception as e:
-                all_valid = False
-                error_logs.append(
-                    f"[Output Comparison Error - {entry_file.name}]:\n{e}")
+                 # Compilation or other top-level error
+                 q_out.put((False, f"[System Error] {str(e)}"))
 
-    # Final return
-    if all_valid:
-        log_message = f"[Success] All {len(entry_files)} test cases passed"
-    else:
-        log_message = "\n\n".join(error_logs) # Fixed newline join
-    
-    result_queue.put((all_valid, log_message))
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            # Fatal worker error
+            try:
+                q_out.put((False, f"[Worker Crash] {str(e)}"))
+            except:
+                pass
 
+def _ensure_worker_alive():
+    global _WORKER_PROCESS, _WORKER_Q_IN, _WORKER_Q_OUT
+    if _WORKER_PROCESS is None or not _WORKER_PROCESS.is_alive():
+        if _WORKER_PROCESS is not None:
+             print("Verifier: Restarting worker process...")
+        
+        # Reset queues
+        _WORKER_Q_IN = multiprocessing.Queue()
+        _WORKER_Q_OUT = multiprocessing.Queue()
+        
+        # Use spawn context
+        ctx = multiprocessing.get_context('spawn')
+        _WORKER_PROCESS = ctx.Process(target=_validate_worker_loop, args=(_WORKER_Q_IN, _WORKER_Q_OUT))
+        _WORKER_PROCESS.daemon = True # Kill if parent dies
+        _WORKER_PROCESS.start()
 
-def validate_kernel(
-    generated_cu_code: str,
-    paths: dict[str, Path]
-) -> tuple[bool, str]:
+def _kill_worker():
+    global _WORKER_PROCESS
+    if _WORKER_PROCESS:
+        _WORKER_PROCESS.terminate()
+        _WORKER_PROCESS.join()
+        _WORKER_PROCESS = None
+
+def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[bool, str]:
     """
-    Validates a single-file CUDA kernel using the PyTorch C++ extension API.
-    Runs in a subprocess to handle deadlocks/infinite loops.
-
-    Returns:
-        tuple: (is_valid, log_message)
+    Validates kernel using the persistent worker.
     """
-
     tmpdir = paths["tmp_dir"]
-    io_dir = paths["io_dir"]  # Changed variable name for clarity
-
-    # --- 1. Stage 1: Write Code to File ---
+    io_dir = paths["io_dir"]
+    
+    # 1. Write Code (needed for load_inline debugging/artifacts, though we pass string to worker)
+    # The worker also writes/compiles, but writing here ensures artifacts exist for user inspection
     cu_path = os.path.join(tmpdir, "kernel.cu")
-
     with open(cu_path, "w", encoding="utf-8") as f:
         f.write(generated_cu_code)
 
-    # Use 'spawn' to ensure CUDA context is initialized freshly in the child process
-    try:
-        multiprocessing.set_start_method('spawn', force=True)
-    except RuntimeError:
-        pass # Context might be already set
-
-    q = multiprocessing.Queue()
-    # We must pass strings for paths to avoid pickling issues with some Path objects across processes
-    p = multiprocessing.Process(target=_validate_worker, args=(generated_cu_code, str(tmpdir), str(io_dir), q))
+    # 2. Send to Worker
+    _ensure_worker_alive()
     
-    p.start()
-    p.join(timeout=300) # Wait up to 300 seconds for compilation + execution
-
-    if p.is_alive():
-        print(f"Warning: Validation timed out (possible deadlock/infinite loop). Killing process {p.pid}...")
-        p.terminate()
-        p.join()
-        return False, "[Timeout Error] Validation process killed after 300s. Likely caused by infinite loop or deadlock in CUDA kernel."
-
-    if not q.empty():
-        return q.get()
-    else:
-        return False, "[Process Error] Validation process exited without returning result (Possible segfault or OOM)."
+    # We pass paths as STRINGS to be safe
+    _WORKER_Q_IN.put((generated_cu_code, str(tmpdir), str(io_dir)))
+    
+    # 3. Wait for result with timeout
+    import time
+    import queue
+    start_time = time.time()
+    TIMEOUT = 300
+    
+    while time.time() - start_time < TIMEOUT:
+        if not _WORKER_PROCESS.is_alive():
+            return False, "[Process Error] Worker process crashed unexpectedly."
+        
+        try:
+            return _WORKER_Q_OUT.get(timeout=0.5)
+        except queue.Empty:
+            continue
+            
+    # Timeout occurred
+    print(f"Warning: Validation timed out. Killing worker.")
+    _kill_worker()
+    return False, "[Timeout Error] Validation timed out (Infinite loop detected)."
