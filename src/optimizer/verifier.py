@@ -6,6 +6,8 @@ and comparing its tensor output against a ground-truth tensor.
 
 import os
 import re
+import multiprocessing
+import queue
 from pathlib import Path
 
 import torch
@@ -232,12 +234,13 @@ def _ensure_worker_alive():
         if _WORKER_PROCESS is not None:
              print("Verifier: Restarting worker process...")
         
-        # Reset queues
-        _WORKER_Q_IN = multiprocessing.Queue()
-        _WORKER_Q_OUT = multiprocessing.Queue()
-        
-        # Use spawn context
+        # Use spawn context consistently for both Queues and Process
         ctx = multiprocessing.get_context('spawn')
+        
+        # Reset queues using the context
+        _WORKER_Q_IN = ctx.Queue()
+        _WORKER_Q_OUT = ctx.Queue()
+        
         _WORKER_PROCESS = ctx.Process(target=_validate_worker_loop, args=(_WORKER_Q_IN, _WORKER_Q_OUT))
         _WORKER_PROCESS.daemon = True # Kill if parent dies
         _WORKER_PROCESS.start()

@@ -58,7 +58,9 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
     Returns:
         Tuple[str, bool, str]: _description_
     """
+    print("\t\t[DEBUG] Querying LLM...")
     response = llm.chat(msg, model)
+    print("\t\t[DEBUG] LLM responded. Extracting code...")
     feedback, cu_code = extract_feedback_and_code(response)
 
     if cu_code is None:
@@ -66,7 +68,9 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
         print(f"Raw response:\n{response}")
         return feedback, False, "Failed to extract code"
 
+    print("\t\t[DEBUG] Validating kernel...")
     is_valid, error = verifier.validate_kernel(cu_code, paths)
+    print(f"\t\t[DEBUG] Validation complete. Valid={is_valid}")
     return feedback, is_valid, error
 
 

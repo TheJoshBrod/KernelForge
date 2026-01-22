@@ -145,7 +145,7 @@ def main():
     # Directory containing initial wave of correct, but unoptimized kernels
     op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
     # Prioritize attention as requested
-    op_dirs.sort(key=lambda x: 0 if "attention" in x.name else 1)
+    op_dirs.sort()
 
     # For each kernel, run optimization loop
     for op_dir in op_dirs:
