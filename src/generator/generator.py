@@ -13,23 +13,30 @@ import src.generator.prompts.prompts
 
 
 def cleanup_mkdown(input: str) -> str:
-    """Extract code from markdown code blocks using regex."""
+    """Extract code using strict tags (preferred) or markdown code blocks (fallback)."""
 
-    # Try to match code blocks with language specifiers (C++, cpp, cuda, c)
+    # 1. Try Strict Tags (Recommended)
+    # The prompt now asks for // [START kernel.cu] ... // [END kernel.cu]
+    tag_pattern = r"//\s*\[START kernel\.cu\](.*?)//\s*\[END kernel\.cu\]"
+    match = re.search(tag_pattern, input, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    # 2. Try Markdown with Language Specifier
     pattern = r"```(?:C\+\+|cpp|cuda|c)\s*\n(.*?)```"
     match = re.search(pattern, input, re.DOTALL | re.IGNORECASE)
 
     if match:
         return match.group(1).strip()
 
-    # Try generic code block without language specifier
+    # 3. Try Generic Markdown
     pattern = r"```\s*\n(.*?)```"
     match = re.search(pattern, input, re.DOTALL)
 
     if match:
         return match.group(1).strip()
 
-    # No markdown found, return as-is
+    # 4. No format found, return as-is
     return input.strip()
 
 
@@ -73,7 +80,7 @@ def convert_chatgpt_to_gemini(chatgpt_history: list) -> list:
         content = msg["content"]
         gemini_history.append({
             "role": role,
-            "parts": [content]
+            "parts": [{"text": content}]
         })
 
     return gemini_history
@@ -88,13 +95,16 @@ def gemini_generator(conversation_history: list, model: str = "gemini-2.5-flash"
     print("Generating code...")
     sys_prompt = src.generator.prompts.prompts.get_system_prompt()
 
-    chat = genai.GenerativeModel(
-        model_name=model,
-        system_instruction=sys_prompt
-    )
+    client = genai.Client()
 
     gemini_history = convert_chatgpt_to_gemini(conversation_history)
-    response = chat.generate_content(gemini_history)
+    response = client.models.generate_content(
+        model=model,
+        contents=gemini_history,
+        config={
+            "system_instruction": sys_prompt
+        }
+    )
 
     cu_code = cleanup_mkdown(response.text)
 
