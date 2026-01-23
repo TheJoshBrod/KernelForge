@@ -19,15 +19,59 @@ const initialEdges = [
     { id: 'e3-5', source: '3', target: '5', animated: true },
 ];
 
+// Mock data generator for different layers
+const getLayerData = (layerName) => {
+    // Deterministic pseudo-random based on string length/char codes to keep it consistent but different
+    const seed = layerName.charCodeAt(layerName.length - 1);
+    const isEven = seed % 2 === 0;
+
+    const baseNodes = [
+        { id: '1', position: { x: 50, y: 50 }, data: { label: `${layerName}_v1` }, style: { background: '#f97316', color: '#fff' } },
+    ];
+
+    // Add some random variations
+    if (isEven) {
+        baseNodes.push(
+            { id: '2', position: { x: 250, y: isEven ? 100 : 200 }, data: { label: 'v2 (22ms)' }, style: { background: '#22c55e', color: '#fff' } },
+            { id: '3', position: { x: 450, y: 150 }, data: { label: 'v3 (15ms)' }, style: { background: '#3b82f6', color: '#fff' } }
+        );
+    } else {
+        baseNodes.push(
+            { id: '2', position: { x: 250, y: 150 }, data: { label: 'v2 (19ms)' }, style: { background: '#22c55e', color: '#fff' } },
+            { id: '3', position: { x: 450, y: 50 }, data: { label: 'v3 (17ms)' }, style: { background: '#22c55e', color: '#fff' } },
+            { id: '4', position: { x: 650, y: 120 }, data: { label: 'v4 (12ms)' }, style: { background: '#3b82f6', color: '#fff' } }
+        );
+    }
+
+    const edges = baseNodes.slice(0, -1).map((node, i) => ({
+        id: `e${node.id}-${baseNodes[i + 1].id}`,
+        source: node.id,
+        target: baseNodes[i + 1].id,
+        animated: true
+    }));
+
+    return { nodes: baseNodes, edges };
+};
+
 export default function OperatorPage({ params }) {
     const router = useRouter();
     const { name, op } = use(params);
 
+    // Sidebar layers
+    const layers = [`${op}1`, `${op}2`, `${op}3`, `${op}4`, `${op}5`];
+    const [selectedLayer, setSelectedLayer] = useState(layers[0]);
+
     const [nodes, setNodes] = useState(initialNodes);
     const [edges, setEdges] = useState(initialEdges);
 
-    // Sidebar iterations
-    const iterations = ['linear1', 'linear2', 'linear3', 'linear4', 'linear5'];
+    // Update graph when layer changes
+    useEffect(() => {
+        if (selectedLayer) {
+            const data = getLayerData(selectedLayer);
+            setNodes(data.nodes);
+            setEdges(data.edges);
+        }
+    }, [selectedLayer]);
 
     // Maintain Escape key nav
     useEffect(() => {
@@ -89,7 +133,7 @@ export default function OperatorPage({ params }) {
             {/* Sidebar (25% width) */}
             <aside className="w-1/4 border-r border-zinc-900 flex flex-col p-4 space-y-6">
                 <div>
-                    <h2 className="text-xl font-bold mb-4 text-zinc-100">Iterations:</h2>
+                    <h2 className="text-xl font-bold mb-4 text-zinc-100">Layers:</h2>
                     <div className="flex gap-2">
                         <input
                             type="text"
@@ -103,19 +147,23 @@ export default function OperatorPage({ params }) {
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-                    {iterations.map((iter) => (
+                    {layers.map((layer) => (
                         <button
-                            key={iter}
-                            className="w-full text-left bg-zinc-900/50 hover:bg-zinc-800 border border-zinc-800/50 rounded px-4 py-3 text-sm font-mono text-zinc-300 transition-all"
+                            key={layer}
+                            onClick={() => setSelectedLayer(layer)}
+                            className={`w-full text-left border rounded px-4 py-3 text-sm font-mono transition-all ${selectedLayer === layer
+                                    ? 'bg-zinc-800 border-zinc-600 text-white'
+                                    : 'bg-zinc-900/50 hover:bg-zinc-800 border-zinc-800/50 text-zinc-300'
+                                }`}
                         >
-                            {iter}
+                            {layer}
                         </button>
                     ))}
                 </div>
 
                 <div className="space-y-4 pt-4 border-t border-zinc-900">
                     <button className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded shadow-lg shadow-blue-900/20 transition-all">
-                        New Iteration
+                        New Layer
                     </button>
                 </div>
             </aside>
@@ -123,7 +171,7 @@ export default function OperatorPage({ params }) {
             {/* Main Content Area (75% width) */}
             <main className="w-3/4 p-8 overflow-y-auto">
                 <h1 className="text-3xl font-bold text-center mb-12 tracking-tight">
-                    Operator: <span className="text-emerald-400">{op}</span> (Project: {name})
+                    Optimizing Layer: <span className="text-emerald-400">{selectedLayer}</span>
                 </h1>
 
                 <div className="grid grid-cols-1 gap-8 mb-12">
