@@ -127,6 +127,10 @@ STARTING IDEAS FOR OPTIMIZATION STRATEGIES TO CONSIDER (but also be creative AND
    - Breaking memory coalescing by changing access patterns incorrectly
    - Increasing register pressure that kills occupancy
    - Removing necessary __syncthreads() calls
+   - **Using reinterpret_cast without checking alignment** (PyTorch tensors are NOT guaranteed 16-byte aligned!)
+   - **Using __launch_bounds__ incorrectly** (causing compilation failures)
+   - **Assuming grid size constraints** (always handle arbitrary N)
+   - **Complex template metaprogramming** (keep C++ simple and readable)
 
 -----------------------------------------------
  EXPECTED OUTPUT FORMAT
@@ -197,7 +201,10 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
         # Advice for modern cards (RTX 30xx, 40xx, A100, H100)
         specific_tips = (
             "- **Pipeline Memory:** Use `cp.async` to hide global memory latency.\n"
-            "- **L2 Cache:** Optimize for L2 residency; avoid thrashing the cache."
+            "- **L2 Cache:** Optimize for L2 residency; avoid thrashing the cache.\n"
+            "- **Tensor Cores:** Leverage `mma.sync` or WMMA instructions for 16-bit precision math to get 4x-8x throughput over CUDA cores.\n"
+            "- **Shared Memory Swizzling:** Use XOR-based indexing (swizzling) for shared memory tiles to eliminate bank conflicts in SDPA kernels.\n"
+            "- **Sparse Arithmetic:** Utilize Ampere's 2:4 structured sparsity support if weights can be pruned for a 2x math speedup."
         )
     elif cc >= 7.0:
         arch_name = "Volta / Turing (SM 7.0 - 7.5)"

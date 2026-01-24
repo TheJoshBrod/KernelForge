@@ -71,6 +71,7 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
         print(f"\nIteration {iteration}:")
         with tempfile.TemporaryDirectory() as tmpdir:
             paths["tmp_dir"] = Path(tmpdir)
+            paths["iteration"] = iteration
 
             print("\tBeginning generation...")
             improvement_description, is_valid = generator.generate(
@@ -103,6 +104,19 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
                     best_kernel_code = current_kernel_code
                 else:
                     log_entry["is_best"] = False
+                # Parse feedback to extract rationale
+                optimization_text = "See attempted"
+                rationale_text = "See attempted"
+                try:
+                    parts = improvement_description.split("RATIONALE:")
+                    if len(parts) > 1:
+                        optimization_part = parts[0].replace("OPTIMIZATION:", "").strip()
+                        rationale_part = parts[1].strip()
+                        log_entry["optimization"] = optimization_part
+                        log_entry["rationale"] = rationale_part
+                except:
+                    pass
+
                 improvement_log.append(log_entry)
 
     with open(paths["proj_dir"] / "improvement_log.json", 'w') as f:
@@ -145,7 +159,7 @@ def main():
     # Directory containing initial wave of correct, but unoptimized kernels
     op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
     # Prioritize attention as requested
-    op_dirs.sort()
+    op_dirs.sort(key=lambda p: (0 if "torch_nn_functional_relu" in p.name else 1, p.name))
 
     # For each kernel, run optimization loop
     for op_dir in op_dirs:

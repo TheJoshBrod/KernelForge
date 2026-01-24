@@ -66,9 +66,30 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
     if cu_code is None:
         print("Error: Could not extract code from LLM response.")
         print(f"Raw response:\n{response}")
+        print(f"Raw response:\n{response}")
         return feedback, False, "Failed to extract code"
 
     is_valid, error = verifier.validate_kernel(cu_code, paths)
+
+    if not is_valid:
+        # Save to garbage dump
+        proj_dir = paths.get("proj_dir")
+        if proj_dir:
+            dump_dir = proj_dir / "garbage_dump"
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            
+            iteration = paths.get("iteration", "unknown")
+            attempt = paths.get("attempt", "unknown")
+            
+            filename = f"kernel_iter{iteration}_attempt{attempt}.cu"
+            dump_path = dump_dir / filename
+            
+            try:
+                dump_path.write_text(cu_code)
+                print(f"\t\t- Saved failed kernel to: {dump_path}")
+            except Exception as e:
+                print(f"\t\t- Failed to save garbage kernel: {e}")
+
     return feedback, is_valid, error
 
 
@@ -83,18 +104,14 @@ def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, path
         io_dir (Path): Path of file that contains all input/output pairs recorded of this op
         model (str, optional): LLM that will generate kernels. Defaults to None (will use env var or default).
     """
-    if model is None or model == "claude-3-5-sonnet-20240620":
-        import os
-        provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
-        if provider == "gemini":
-            model = "gemini-2.0-flash-exp"
-        else:
-            model = "claude-opus-4-5-20251101"
+    model = "claude-opus-4-5-20251101"
 
     # Attempt initial CUDA code generation
     llm: GenModel = GenModel(sys_prompt)
     msg = prompts.generate_gpu_optimization_prompt(
         gpu_specs, best_kernel_code, improvement_log)
+    
+    paths["attempt"] = 0
     feedback, is_valid, error = create_and_validate(llm, msg, model, paths)
     if is_valid:
         return feedback, True
@@ -102,6 +119,7 @@ def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, path
     # On failure attempt fix 3 times before giving up
     for i in range(3):
         print(f"\t\t\tReattempt {i}")
+        paths["attempt"] = i + 1
         _, is_valid, error = create_and_validate(llm, error, model, paths)
         if is_valid:
             return feedback, True
