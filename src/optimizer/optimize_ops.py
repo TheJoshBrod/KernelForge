@@ -159,7 +159,7 @@ def main():
     # Directory containing initial wave of correct, but unoptimized kernels
     op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
     # Prioritize attention as requested
-    op_dirs.sort(key=lambda p: (0 if "torch_nn_functional_relu" in p.name else 1, p.name))
+    #op_dirs.sort(key=lambda p: (0 if "torch_nn_functional_relu" in p.name else 1, p.name))
 
     # For each kernel, run optimization loop
     for op_dir in op_dirs:
