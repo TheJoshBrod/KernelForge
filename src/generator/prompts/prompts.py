@@ -232,6 +232,12 @@ This shows how PyTorch implements this operation internally:
    - Use scalar parameters directly in kernel launch
    - Handle optional tensors (check for null/validity)
 
+4. **Output Format:**
+   - You MUST wrap the complete kernel.cu file contents in special tags.
+   - Start with `// [START kernel.cu]`
+   - End with `// [END kernel.cu]`
+   - Do not include any other text inside these tags.
+
 Now generate the complete kernel.cu file following the system prompt guidelines.
 """
 

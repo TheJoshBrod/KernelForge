@@ -3,6 +3,7 @@ src/optimizer/GPUprofiler.py
 Uses pynvml, pycuda, and torch to analyze GPU diagnostic statistics and architecture information.  
 """
 import glob
+import os
 from pathlib import Path
 
 import numpy as np
@@ -209,21 +210,18 @@ def normalize_args_kwargs(args: list, kwargs: dict, params: list, defaults: dict
     return normalized, remaining_kwargs
 
 
-def retrieve_inputs(io_dir: Path) -> list[tuple[list[any], dict[str, any]]]:
-    """Retrieves list of all inputs (args and kwargs) for a given profiled pytorch op 
-
-    Args:
-        io_dir (Path): Directory containing .pt files with input/output pairs
-
-    Returns:
-        list[tuple[list[Any], dict[str, Any]]]: list of all [args, kwargs] tuple pairs
-    """
-    inputs = []
+def get_input_files(io_dir: Path) -> list:
+    """Retrieves list of all input file paths for a given profiled pytorch op"""
     pt_files = sorted(glob.glob(os.path.join(io_dir, "entry_*.pt")))
 
     if not pt_files:
         raise ValueError(f"No entry_*.pt files found in {io_dir}")
+    return pt_files
 
+
+def load_batch(pt_files: list) -> list[tuple[list[any], dict[str, any]]]:
+    """Loads a batch of .pt files into GPU memory"""
+    inputs = []
     for pt_file in pt_files:
         try:
             entry = torch.load(pt_file, map_location='cpu')
@@ -265,38 +263,58 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
 
     input_dir = paths["io_dir"]
     torch.cuda.set_device(device_index)
-    inputs = retrieve_inputs(input_dir)
 
-    # Warmup
-    for args, kwargs in inputs:
-        module.launch(*args, **kwargs)
-    torch.cuda.synchronize()
-
-    # Measure each input separately
+    # Batching logic to prevent OOM
+    all_files = get_input_files(input_dir)
+    BATCH_SIZE = 50
     timings = []
-    for args, kwargs in inputs:
+
+    # We profile everything using one profiler context
+    # UPDATE: Removed global profiler context as it accumulates too much RAM (OOM on batch 4)
+    # The consumer (optimize_ops.py) does not use the chrome trace 'prof' object, so we return None.
+    prof = None
+
+    for i in range(0, len(all_files), BATCH_SIZE):
+        batch_files = all_files[i : i + BATCH_SIZE]
+        inputs = load_batch(batch_files)
+
+        # Warmup (only for this batch)
+        for args, kwargs in inputs:
+            try:
+                module.launch(*args, **kwargs)
+            except TypeError:
+                module.launch(*args)
+        torch.cuda.synchronize()
+
+        # Measure
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
 
-        start.record()
-        for _ in range(10):
-            module.launch(*args, **kwargs)
-        end.record()
-        torch.cuda.synchronize()
-
-        elapsed_ms = start.elapsed_time(end) / 10
-        timings.append(elapsed_ms)
-
-    # Now profile for detailed metrics
-    with profile(
-        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        record_shapes=True,
-        profile_memory=True,
-        with_stack=True
-    ) as prof:
         for args, kwargs in inputs:
-            module.launch(*args, **kwargs)
+            start.record()
+            for _ in range(10):
+                try:
+                    module.launch(*args, **kwargs)
+                except TypeError:
+                    module.launch(*args)
+            end.record()
             torch.cuda.synchronize()
+
+            elapsed_ms = start.elapsed_time(end) / 10
+            timings.append(elapsed_ms)
+
+        # Profile run (for detailed metrics)
+        for args, kwargs in inputs:
+            try:
+                module.launch(*args, **kwargs)
+            except TypeError:
+                module.launch(*args)
+            torch.cuda.synchronize()
+
+        # Cleanup VRAM
+        del inputs
+        torch.cuda.empty_cache()
+
 
     stats = {
         'mean_time_ms': float(np.mean(timings)),

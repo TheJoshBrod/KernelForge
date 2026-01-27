@@ -48,7 +48,14 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
 
         # Generate kernel
         try:
-            cu_code = generator.anthropic_generator(conversation_history)
+            provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+            if provider == "anthropic":
+                cu_code = generator.anthropic_generator(conversation_history)
+            elif provider == "gemini":
+                cu_code = generator.gemini_generator(conversation_history)
+            else:
+                raise ValueError(f"Unknown LLM provider: {provider}. Supported: anthropic, gemini")
+
             conversation_history.append(
                 {"role": "assistant", "content": cu_code})
         except Exception as e:
