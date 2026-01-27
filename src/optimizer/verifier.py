@@ -106,17 +106,6 @@ def move_to_cuda(item):
     return item
 
 
-def validate_kernel(
-    generated_cu_code: str,
-    paths: dict[str, Path]
-) -> tuple[bool, str]:  # Fixed return type annotation
-    """
-    Validates a single-file CUDA kernel using the PyTorch C++ extension API.
-
-    Returns:
-        tuple: (is_valid, log_message)
-    """
-
 # --- Persistent Worker Globals ---
 _WORKER_PROCESS = None
 _WORKER_Q_IN = None
