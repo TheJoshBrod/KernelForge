@@ -5,7 +5,7 @@ import from react { createContext, useContext, useState, useEffect }
 # Create Context
 glob ConfigContext = createContext();
 
-def:pub ConfigProvider(children: any) -> any {
+def:pub ConfigProvider(children: any, getConfig: any, saveConfig: any) -> any {
     state = useState(
         {"llm_info": {"model": "", "apikey": "", "provider": "anthropic"}}
     );
@@ -20,18 +20,15 @@ def:pub ConfigProvider(children: any) -> any {
     useEffect(
         lambda -> None { async def fetchConfig() -> None {
             try {
-                res = await fetch("/api/config");
-                if res.ok {
-                    data = await res.json();
-                    # Merge with defaults
-                    setConfig(
-                        lambda prev: any  -> any { return {
-                            ** prev,
-                            ** data,
-                            "llm_info": {** prev["llm_info"], ** data["llm_info"]}
-                        }; }
-                    );
-                }
+                data = await getConfig();
+                # Merge with defaults
+                setConfig(
+                    lambda prev: any  -> any { return {
+                        ** prev,
+                        ** data,
+                        "llm_info": {** prev["llm_info"], ** data["llm_info"]}
+                    }; }
+                );
             } except (error) {
                 console.error("Failed to load config:", error);
             } finally {
@@ -41,17 +38,11 @@ def:pub ConfigProvider(children: any) -> any {
         []
     );
 
-    async def saveConfig(newConfig: any) -> bool {
+    async def save_config_handler(newConfig: any) -> bool {
         try {
-            res = await fetch(
-                "/api/config",
-                {
-                    "method": "POST",
-                    "headers": {"Content-Type": "application/json"},
-                    "body": JSON.stringify(newConfig)
-                }
-            );
-            if res.ok {
+            # Calls the passed saveConfig
+            res = await saveConfig(newConfig);
+            if res {
                 setConfig(newConfig);
                 return True;
             }
@@ -67,7 +58,7 @@ def:pub ConfigProvider(children: any) -> any {
             value={{
                 "config": config,
                 "setConfig": setConfig,
-                "saveConfig": saveConfig,
+                "saveConfig": save_config_handler,
                 "loading": loading
             }}
         >
