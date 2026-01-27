@@ -12,6 +12,9 @@ react-simple-code-editor = "latest"
 sonner = "latest"
 prismjs = "latest"
 tailwindcss = "latest"
+"@tailwindcss/vite" = "latest"
+tailwind-merge = "latest"
+clsx = "latest"
 
 [dependencies.npm.dev]
 "@jac-client/dev-deps" = "1.0.0"
@@ -22,4 +25,6 @@ watchdog = ">=3.0.0"
 [serve]
 base_route_app = "app"
 
-[plugins.client]
+[plugins.client.vite]
+plugins = ["tailwindcss()"]
+lib_imports = ["import tailwindcss from '@tailwindcss/vite'"]
