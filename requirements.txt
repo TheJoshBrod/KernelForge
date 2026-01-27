@@ -17,7 +17,7 @@ python-dotenv
 pillow
 transformers
 
-byllm
+jaseci
 
 nvidia-ml-py
 pycuda
