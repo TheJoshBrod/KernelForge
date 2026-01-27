@@ -18,10 +18,7 @@ pillow
 ninja
 python-dotenv
 
-# Jaseci family
-jaclang
-byllm
-jac-client
+jaseci
 
 # GPU / system
 nvidia-ml-py
