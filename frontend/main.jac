@@ -133,6 +133,7 @@ cl {
     import from .components.Project { Project }
     import from .components.Settings { Settings }
     import from .components.NewProject { NewProject }
+    import from .components.OpDetails { OpDetails }
 
     import "./styles.css";
 
@@ -180,6 +181,9 @@ cl {
         is_project = (parts[1] == "project") if parts.length > 1 else False;
         project_name = parts[2] if is_project and parts.length > 2 else "";
 
+        is_op_details = is_project and parts.length > 3;
+        op_name = parts[3] if is_op_details else "";
+
         return
             <ConfigProvider
                 getConfig={client_get_config}
@@ -200,6 +204,12 @@ cl {
                         createProjectWalker={client_create_project}
                     />
                     if page == "/new-project"
+                    else <OpDetails
+                        projectName={project_name}
+                        opName={op_name}
+                        onNavigate={navigate}
+                    />
+                    if is_op_details
                     else <Project name={project_name} onNavigate={navigate} />
                     if is_project
                     else <div
