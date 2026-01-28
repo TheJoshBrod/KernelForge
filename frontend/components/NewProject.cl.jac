@@ -19,7 +19,19 @@ def fileToBase64(file: any) -> any {
 }
 
 def:pub NewProject(onNavigate: any, createProjectWalker: any) -> any {
-    has code: str = "# Paste your model code here\n\nimport torch\nimport torch.nn as nn\n\nclass Model(nn.Module):\n    def __init__(self):\n        super().__init__()\n        pass\n";
+    has code: str = """# Paste your model code here
+
+import torch
+import torch.nn as nn
+
+class Model(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.linear = nn.Linear(in_features, out_features)
+
+    def forward(self, x):
+        return self.linear(x)
+""";
     has formData: dict = {
         "projectName": "",
         "weightsFile": None,
