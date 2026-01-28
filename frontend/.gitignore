@@ -21,6 +21,4 @@ node_modules/
 .jac/
 *.session
 *.session.*
-
-# Personal user info
 config.json

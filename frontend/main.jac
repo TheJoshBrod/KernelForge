@@ -1,15 +1,18 @@
 """Main entry point for frontend."""
 
 import from json { load, dump }
+import from pathlib { Path }
 
 glob config_store: dict = {
          "llm_info": {"model": "", "apikey": "", "provider": "anthropic"}
      };
 
+glob config_path: str = Path("config.json");
+
 walker:pub GetConfig {
     can return_config with `root entry {
         try {
-            with open("config.json", "r") as f {
+            with open(config_path, "r") as f {
                 config = load(f);
                 report config;
             }
@@ -25,7 +28,7 @@ walker:pub SaveConfig {
 
     can update_config with `root entry {
         try {
-            with open("config.json", "w") as f {
+            with open(config_path, "w") as f {
                 dump(self.cfg, f, indent=2);
                 global config_store;
                 config_store = self.cfg;
