@@ -74,7 +74,7 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                 </div>
                 <div className="flex flex-col sm:flex-row gap-4 w-full">
                     <button
-                        className="flex-1 h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-medium rounded-lg transition-all duration-200 ease-in-out shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_25px_rgba(255,255,255,0.2)]"
+                        className="flex-1 h-12 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 text-zinc-100 font-medium rounded-lg transition-all duration-200 ease-in-out shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)]"
                     >
                         Upload Full Model
                     </button>
@@ -83,7 +83,7 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                         className="flex-1 cursor-pointer"
                     >
                         <button
-                            className="w-full h-12 flex items-center justify-center bg-transparent border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-900 text-zinc-300 font-medium rounded-lg transition-all duration-200"
+                            className="w-full h-12 flex items-center justify-center bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 hover:border-zinc-500 text-zinc-300 font-medium rounded-lg transition-all duration-200 shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)]"
                         >
                             Upload Weights
                         </button>
