@@ -78,8 +78,6 @@ class Model(nn.Module):
             validationSetPath = "";
             if formData["validationSet"] and formData["validationSet"].length > 0 {
                 firstFile = formData["validationSet"][0];
-                # webkitRelativePath usually looks like "Folder/File.txt"
-                # webkitRelativePath usually looks like "Folder/File.txt"
                 parts = firstFile.webkitRelativePath.split("/");
                 validationSetPath = parts[0] if parts.length > 0 else "";
             }
