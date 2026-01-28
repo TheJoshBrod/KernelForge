@@ -69,7 +69,7 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                     <p
                         className="text-zinc-500 font-medium tracking-wide uppercase text-sm"
                     >
-                        New Project
+                        Agentic PyTorch Model Optimizer
                     </p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-4 w-full">
