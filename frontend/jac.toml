@@ -15,6 +15,7 @@ tailwindcss = "latest"
 "@tailwindcss/vite" = "latest"
 tailwind-merge = "latest"
 clsx = "latest"
+watchdog = "latest"
 
 [dependencies.npm.dev]
 "@jac-client/dev-deps" = "1.0.0"
