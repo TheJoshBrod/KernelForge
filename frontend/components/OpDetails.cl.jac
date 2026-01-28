@@ -174,7 +174,7 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any) -> any {
                             className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm focus:outline-none focus:border-zinc-700 transition-colors"
                         />
                         <button
-                            className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded text-sm font-medium transition-colors"
+                            className="bg-zinc-800 hover:bg-zinc-700 hover:text-white px-4 py-2 rounded text-sm font-medium transition-colors"
                         >
                             Filter
                         </button>
