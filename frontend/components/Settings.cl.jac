@@ -3,7 +3,7 @@
 import from react { useState, useEffect }
 import from ..context.ConfigContext { useConfig }
 
-def:pub Settings(onNavigate: any) -> any {
+def:pub Settings(onNavigate: any, onReturn: any = None) -> any {
     config_ctx = useConfig();
     config = config_ctx.config;
     setConfig = config_ctx.setConfig;
@@ -17,12 +17,16 @@ def:pub Settings(onNavigate: any) -> any {
     useEffect(
         lambda -> None { def handleKeyDown(event: any) -> None {
             if event.key == "Escape" {
-                onNavigate("/");
+                if onReturn {
+                    onReturn();
+                } else {
+                    onNavigate("/");
+                }
             }
         } window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
             "keydown", handleKeyDown
         );}; },
-        [onNavigate]
+        [onNavigate, onReturn]
     );
 
     def handleChange(field: str, value: str) -> None {
@@ -36,11 +40,19 @@ def:pub Settings(onNavigate: any) -> any {
         setSaving(True);
         await saveConfig(config);
         setSaving(False);
-        onNavigate("/");
+        if onReturn {
+            onReturn();
+        } else {
+            onNavigate("/");
+        }
     }
 
     def handleReturn() -> None {
-        onNavigate("/");
+        if onReturn {
+            onReturn();
+        } else {
+            onNavigate("/");
+        }
     }
 
     if loading {

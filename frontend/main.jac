@@ -139,9 +139,10 @@ cl {
 
     def:pub app() -> any {
         has page: str = "/";
+        has history: list = [];
 
         useEffect(lambda -> None { document.title = "CGinS";}, []);
-
+        # Client-side wrappers for walkers
         # Client-side wrappers for walkers
         async def client_get_config() -> dict {
             resp = await root spawn GetConfig();
@@ -172,8 +173,21 @@ cl {
 
         def navigate(path: str) -> None {
             console.log(f"Navigating to {path}");
+            if page != path {
+                history.push(page);
+            }
             page = path;
             # window.history.pushState({}, "", path);
+        }
+
+        def go_back() -> None {
+            if history.length > 0 {
+                prev_page = history.pop();
+                console.log(f"Going back to {prev_page}");
+                page = prev_page;
+            } else {
+                navigate("/");
+            }
         }
 
         parts = page.split("/");
@@ -197,7 +211,7 @@ cl {
                         getProjectsWalker={client_get_projects}
                     />
                     if page == "/" or page == ""
-                    else <Settings onNavigate={navigate} />
+                    else <Settings onNavigate={navigate} onReturn={go_back} />
                     if page == "/settings"
                     else <NewProject
                         onNavigate={navigate}
