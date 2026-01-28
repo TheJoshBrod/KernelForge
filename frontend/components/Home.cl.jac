@@ -2,20 +2,16 @@
 
 import from react { useEffect, useState }
 
-def:pub Home(onNavigate: any) -> any {
+def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
     has projects: list = [];
     has loading: bool = True;
 
     useEffect(
         lambda -> None { async def fetchProjects -> None {
             try {
-                # We assume the API path is /api/projects or similar
-                # For now, we unfortunately might not have the API running unless we proxy to Next.js or implement it.
-                # I'll try to fetch, if it fails, I'll set empty.
-                res = await fetch("/api/projects");
-                if res.ok {
-                    data = await res.json();
-                    projects = data.projects if data.projects else [];
+                if getProjectsWalker {
+                    data = await getProjectsWalker();
+                    projects = data["projects"] if data and "projects" in data else [];
                 }
             } except Exception as e {
                 console.error("Failed to fetch projects", e);
