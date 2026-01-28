@@ -80,7 +80,7 @@ def:pub Settings(onNavigate: any, onReturn: any = None) -> any {
                         Settings
                     </h1>
                     <p className="text-zinc-500 text-sm">
-                        Configure your Model Provider
+                        Configure your Model Provider (all information stored locally on your device)
                     </p>
                 </div>
                 <div className="space-y-6">
