@@ -5,6 +5,8 @@ import from react { useEffect, useState }
 def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
     has projects: list = [];
     has loading: bool = True;
+    has isDropdownOpen: bool = False;
+    has searchQuery: str = "";
 
     useEffect(
         lambda -> None { async def fetchProjects -> None {
@@ -22,14 +24,27 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
         []
     );
 
-    def handleProjectSelect(e: any) -> None {
-        projectId = e.target.value;
-        if projectId {
-            onNavigate(f"/project/{projectId}");
-        }
+    def toggleDropdown() -> None {
+        isDropdownOpen = not isDropdownOpen;
+    }
+
+    def selectProject(projectName: str) -> None {
+        isDropdownOpen = False;
+        searchQuery = "";
+        onNavigate(f"/project/{projectName}");
+    }
+
+    def handleSearchChange(e: any) -> None {
+        searchQuery = e.target.value;
+        isDropdownOpen = True;
     }
 
     recentProjects = projects[:3];
+    filteredProjects = [
+        p
+        for p in projects
+        if p.name.lower().includes(searchQuery.lower())
+    ];
 
     return
         <main
@@ -96,37 +111,87 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                         Load Existing
                     </div>
                     <div className="relative">
-                        <select
-                            defaultValue=""
-                            onChange={handleProjectSelect}
-                            className="w-full h-12 appearance-none bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 rounded-lg px-4 text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all cursor-pointer"
-                        >
-                            <option value="" disabled>
-                                Select a project to load...
-                            </option>
-                            {[
-                                <option key={project.name} value={project.name}>
-                                    {project.name}
-                                </option> for project in projects
-                            ]}
-                        </select>
                         <div
-                            className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500"
+                            className="w-full h-12 flex items-center justify-between bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900/80 rounded-lg px-4 text-zinc-300 transition-all cursor-text group"
                         >
-                            <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                width="16"
-                                height="16"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
+                            <input
+                                type="text"
+                                placeholder="Select or search a project..."
+                                value={searchQuery}
+                                onChange={handleSearchChange}
+                                onClick={lambda -> None { isDropdownOpen = True;}}
+                                className="bg-transparent border-none outline-none w-full text-zinc-300 placeholder-zinc-500 h-full"
+                            />
+                            <button
+                                onClick={lambda -> None { toggleDropdown();}}
+                                className="ml-2 focus:outline-none"
                             >
-                                <path d="m6 9 6 6 6-6" />
-                            </svg>
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    width="16"
+                                    height="16"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    className={"text-zinc-500 transition-transform duration-200 " + (
+                                        "rotate-180" if isDropdownOpen else ""
+                                    )}
+                                >
+                                    <path d="m6 9 6 6 6-6" />
+                                </svg>
+                            </button>
                         </div>
+                        {(
+                            <div
+                                className="absolute top-full left-0 w-full mt-2 bg-zinc-950 border border-zinc-800 rounded-lg shadow-[0_4px_20px_rgba(0,0,0,0.5)] overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-100"
+                            >
+                                <div className="max-h-60 overflow-y-auto py-1">
+                                    {(
+                                        <div
+                                            className="px-4 py-3 text-sm text-zinc-500 text-center italic"
+                                        >
+                                            No projects found
+                                        </div>
+                                    )
+                                    if filteredProjects.length == 0
+                                    else (
+                                        [
+                                            <div
+                                                key={project.name}
+                                                onClick={lambda -> None { selectProject(
+                                                    project.name
+                                                );}}
+                                                className="w-full text-left px-4 py-2.5 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer text-sm flex items-center justify-between group"
+                                            >
+                                                <span>
+                                                    {project.name}
+                                                </span>
+                                                <svg
+                                                    xmlns="http://www.w3.org/2000/svg"
+                                                    width="14"
+                                                    height="14"
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    strokeWidth="2"
+                                                    strokeLinecap="round"
+                                                    strokeLinejoin="round"
+                                                    className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500"
+                                                >
+                                                    <path d="M5 12h14" />
+                                                    <path d="m12 5 7 7-7 7" />
+                                                </svg>
+                                            </div> for project in filteredProjects
+                                        ]
+                                    )}
+                                </div>
+                            </div>
+                        )
+                        if isDropdownOpen
+                        else null}
                     </div>
                 </div>
                 <div className="w-full flex flex-col items-center space-y-3 pt-4">
