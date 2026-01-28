@@ -83,7 +83,7 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                         className="flex-1 cursor-pointer"
                     >
                         <button
-                            className="w-full h-12 flex items-center justify-center bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 hover:border-zinc-500 text-zinc-300 font-medium rounded-lg transition-all duration-200 shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)]"
+                            className="w-full h-12 flex items-center justify-center text-zinc-300 font-medium rounded-lg transition-all duration-200 rainbow-shadow"
                         >
                             Upload Weights
                         </button>
