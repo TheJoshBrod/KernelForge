@@ -4,7 +4,7 @@ import from react { useState, useEffect }
 import from "reactflow" { default as ReactFlow, Background, Controls }
 import "reactflow/dist/style.css";
 
-# Mock data generator logic (ported from JS)
+# Mock data generator logic
 def getLayerData(layerName: str) -> dict {
     # Simple deterministic variation based on layer name length
     seed = layerName.length;
