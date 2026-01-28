@@ -10,11 +10,15 @@ import "prismjs/themes/prism-tomorrow.css";
 
 # Client-side helper for reading file as base64
 def fileToBase64(file: any) -> any {
-    return Promise(
-        lambda resolve: any , reject: any  -> None { reader = FileReader();reader.readAsDataURL(
-            file
-        );reader.onload = lambda -> None { resolve(reader.result.split(",")[1]);};reader.onerror = lambda error:
-            any  -> None { reject(error);};}
+    return Reflect.construct(
+        Promise,
+        [
+            lambda resolve: any , reject: any  -> None { reader = Reflect.construct(
+                FileReader, []
+            );reader.readAsDataURL(file);reader.onload = lambda -> None { resolve(
+                reader.result.split(",")[1]
+            );};reader.onerror = lambda error: any  -> None { reject(error);};}
+        ]
     );
 }
 
@@ -58,7 +62,7 @@ class Model(nn.Module):
     );
 
     async def handleCreate() -> None {
-        if not formData["projectName"].strip() {
+        if not formData["projectName"].trim() {
             toast.error("Project name is required");
             return;
         }
@@ -66,7 +70,7 @@ class Model(nn.Module):
         isSubmitting = True;
 
         try {
-            weights_b64 = None;
+            weights_b64 = "";
             if formData["weightsFile"] {
                 weights_b64 = await fileToBase64(formData["weightsFile"]);
             }
@@ -75,16 +79,14 @@ class Model(nn.Module):
             if formData["validationSet"] and formData["validationSet"].length > 0 {
                 firstFile = formData["validationSet"][0];
                 # webkitRelativePath usually looks like "Folder/File.txt"
+                # webkitRelativePath usually looks like "Folder/File.txt"
                 parts = firstFile.webkitRelativePath.split("/");
                 validationSetPath = parts[0] if parts.length > 0 else "";
             }
 
             # Call the walker passed from parent
             result = await createProjectWalker(
-                projectName=formData["projectName"].strip(),
-                code=code,
-                weightsFileB64=weights_b64,
-                validationSetPath=validationSetPath
+                formData["projectName"].trim(), code, weights_b64, validationSetPath
             );
 
             if result and result["success"] {
@@ -305,7 +307,7 @@ class Model(nn.Module):
                     </div>
                     <div className="pt-6">
                         <button
-                            onClick={handleCreate}
+                            onClick={lambda e: any  -> None { handleCreate();}}
                             disabled={isSubmitting}
                             className="w-full h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
                         >

@@ -47,8 +47,8 @@ walker:pub SaveConfig {
 walker:pub CreateProject {
     has projectName: str;
     has code: str;
-    has weightsFileB64: str;
-    has validationSetPath: str;
+    has weightsFileB64: str = "";
+    has validationSetPath: str = "";
 
     can create with `root entry {
         try {
