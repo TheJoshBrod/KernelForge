@@ -1,14 +1,6 @@
 """Main entry point for frontend."""
 
-import from json { load, dump, loads }
-import from pathlib { Path }
-import from base64 { b64decode, b64encode }
-import from os { path, makedirs, listdir }
-import from datetime { datetime }
-import from zipfile { ZipFile }
-import sys;
-import os;
-import subprocess;
+import from json { load, dump }
 
 glob config_store: dict = {
          "llm_info": {"model": "", "apikey": "", "provider": ""},
@@ -384,10 +376,12 @@ def _run_llm_test(provider: str, model: str, apikey: str) -> dict {
     }
 }
 
+glob config_path: str = Path("config.json");
+
 walker:pub GetConfig {
     can return_config with `root entry {
         try {
-            with open("config.json", "r") as f {
+            with open(config_path, "r") as f {
                 config = load(f);
                 report config ;
             }
@@ -403,7 +397,7 @@ walker:pub SaveConfig {
 
     can update_config with `root entry {
         try {
-            with open("config.json", "w") as f {
+            with open(config_path, "w") as f {
                 dump(self.cfg, f, indent=2);
                 global config_store;
                 config_store = self.cfg;
