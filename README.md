@@ -1,17 +1,23 @@
 # CGinS: CUDA Ghost in the Shell
 
-**CGinS** (CUDA Ghost in the Shell) is an automated system for generating and validating CUDA kernels from PyTorch operations. It leverages Large Language Models (LLMs) to iteratively convert high-level PyTorch operations into optimized CUDA kernels, achieving comparable performance to standard PyTorch eager mode execution.
+**CGinS (CUDA Ghost in the Shell)** is an autonomous, multi-agent system that enables model engineers to achieve highly optimized CUDA kernel performance without requiring deep hardware expertise. The system employs LLM-based agents to abstract away individual CUDA kernels by iteratively generate, validate, and optimize CUDA kernels from PyTorch operations through autonomous decision-making and self-improvement mechanisms.
 
 ## Motivation
 
-PyTorch's eager mode offers great flexibility but misses out on global graph-level optimizations available to compiled backends. Consequently, performance relies heavily on individual kernel efficiency. Creating these high-performance kernels manually is tedious and requires deep hardware expertise.
+Modern AI infrastructure faces a critical challenge: achieving peak performance on specialized hardware requires extensive CUDA expertise that most model engineers lack. While PyTorch's eager mode provides flexibility, manually optimizing kernels for production workloads is both time-intensive and demands deep hardware knowledge.
 
-**CGinS** addresses this by using LLMs as a just-in-time compiler. Unlike static compilers, it uses **runtime profiling** to capture real-world execution contexts (tensor shapes, types, arguments) and prompts LLMs to generate hardware-aware kernels.
+CGinS pushes LLMs beyond information retrieval into autonomous technical decision-making. The system captures operator-level input-output pairs from your models during runtime profiling, then employs agents that reason about complex performance tradeoffs and autonomously converge toward optimal solutions, without human intervention.
+
+The core innovation is a persistent learning architecture where agents maintain an "improvement log tree" that tracks which optimization strategies yield actual speedups. This enables the system to learn from prior attempts and progressively refine its approach without falling into a local minima.
 
 **Key Results:**
-- **Within 20% of PyTorch Eager Mode** on standard workloads (ResNet-50, DistilBERT, Swin-Base, ConvNeXt-Base).
-- **Iterative Refinement**: Uses a validation-guided feedback loop where compilation and runtime errors help the model self-correct, typically converging within 2-4 iterations.
-- **Hardware Optimization**: A dedicated optimization pass targets specific GPU constraints (e.g., memory hierarchy, tiling) for maximum throughput.
+- Up to 4x optimization speedups over baseline generation through autonomous iterative refinement
+- Performance within 10% of native PyTorch implementations on production workloads
+- Automated correctness validation with precision threshold of 1e-5 per element
+- Two-tiered feedback mechanism:
+   - Generation-verification cycle with up to 3 self-debugging attempts per kernel
+   - Performance profiling loop measuring real hardware metrics to guide optimization
+- Self-improving agents that autonomously explore optimization strategies, learn from failures, and converge toward optimal solutions through iterative reasoning
 
 ## How It Works
 
@@ -29,6 +35,7 @@ The **Optimizer** pipeline refines the validated kernels for specific hardware.
 - **Analysis**: Takes valid kernels and applies hardware-specific optimization strategies (e.g., loop unrolling, shared memory usage).
 - **Tuning**: Can optimize for different metrics (inference latency, GPU utilization).
 - **Benchmarking**: Verifies that the new kernel is not only correct but faster than the baseline.
+- **Logging**: The LLM provides context of what it tried differently and stores the performance of the new kernel to be passed along
 
 ## Installation
 
@@ -46,7 +53,7 @@ The **Optimizer** pipeline refines the validated kernels for specific hardware.
    cd GinS
    ```
 
-2. **Install dependencies:**
+2. **Backend Python dependencies:**
    It is recommended to use a virtual environment.
    ```bash
    python -m venv env
@@ -54,52 +61,33 @@ The **Optimizer** pipeline refines the validated kernels for specific hardware.
    pip install -r requirements.txt
    ```
 
-3. **Configure API Keys:**
-   Add your LLM provider's API key to your environment.
+3. **Frontend Jac dependencies (npm)**
+   The front end was written in Jac due to its "one-language" capabilites of using modern web tools (React, npm/bun, etc.) with Python compability 
    ```bash
-   export GOOGLE_API_KEY="your-api-key"
-   # OR
-   export OPENAI_API_KEY="your-api-key"
-   # OR
-   export ANTHROPIC_API_KEY="your-api-key"
+   cd frontend
+   jac install
    ```
 
 ## Usage
 
-### Generate Input/Output Ground Truth
-To generate initial dataset
+To run the frontend make sure jac is installed (setup steps 2-3) and then run
 
-
-### Generating Kernels
-To run the generation pipeline (profiling → generation → validation):
 ```bash
-./generate.sh
+jac start main.jac
 ```
-This will:
-1. Scan for individual all pt files in `benchmarks/profiler/individual_ops/` for input/outputs.
-2. Generate kernels in `kernels/generated/`.
-3. Validate them against PyTorch reference outputs.
 
-### Optimizing Kernels
-To run the optimization pipeline (takes generated kernels → optimizes for hardware):
-```bash
-./optimize.sh
-```
-This will:
-1. Read valid kernels from `kernels/generated/`.
-2. Apply hardware-specific optimizations.
-3. Save results to `kernels/optimized/`.
+Once the project has been bundled, open [localhost:8000](localhost:8000) to access the CGinS tool.
+
 
 ## Project Structure
 
 ```
 GinS/
 ├── benchmarks/         # Data and scripts for profiling models
+├── frontend/           # Frontend tool to interact with tool
 ├── kernels/            # Output directory for generated CUDA code
 ├── src/
 │   ├── generator/      # Pipeline for ensuring kernel correctness
 │   └── optimizer/      # Pipeline for performance tuning
-├── generate.sh         # Entry point for generation
-├── optimize.sh         # Entry point for optimization
 └── requirements.txt    # Python dependencies
 ```
