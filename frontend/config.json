@@ -1,7 +1,7 @@
 {
   "llm_info": {
-    "model": "claude-4-5-opus",
-    "apikey": "asfasf",
-    "provider": "anthropic"
+    "model": "",
+    "apikey": "",
+    "provider": ""
   }
 }
