@@ -60,6 +60,8 @@ cl {
     def:pub app() -> any {
         has page: str = "/";
 
+        useEffect(lambda -> None { document.title = "CGinS";}, []);
+
         # Client-side wrappers for walkers
         async def client_get_config() -> dict {
             resp = await root spawn GetConfig();
