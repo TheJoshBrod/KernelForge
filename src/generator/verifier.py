@@ -8,49 +8,121 @@ import re
 from pathlib import Path
 
 import torch
-from byllm.lib import by # type: ignore
-from byllm.lib import Model # type: ignore
 from torch.utils.cpp_extension import load_inline
+from openai import OpenAI
 
-provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
-if provider == "gemini":
-    model_name = "gemini/gemini-2.0-flash-exp"
-else:
-    model_name = "claude-opus-4-5-20251101"
+try:
+    from byllm.lib import by  # type: ignore
+    from byllm.lib import Model  # type: ignore
+except Exception:
+    by = None
+    Model = None
 
-llm = Model(model_name=model_name)
+_SUMMARY_SYSTEM_PROMPT = """
+Analyze CUDA kernel compilation or runtime errors and provide actionable fix suggestions.
+
+Important:
+- The caller-side argument formatting is already correct and MUST NOT be modified.
+- The issue will always be internal to the CUDA kernel code (argument order, typing,
+    indexing, launch signature, or parameter handling).
+
+The input_and_output dict contains:
+- args: List of positional arguments (normalized from kwargs if applicable)
+- signature: Dict with 'params' (parameter names in order) and 'defaults'
+- output or correct-output: Expected output tensor
+
+The CUDA kernel's launch() function MUST accept arguments in exactly this order:
+{', '.join(input_and_output.get('signature', {}).get('params', ['arg0', 'arg1', '...']))}
+
+Provide specific recommendations for:
+1. Correct argument ordering and types in the kernel launch() signature
+2. Correct parameter use inside the CUDA code
+3. Indexing, pointer arithmetic, and shape-related issues
+
+Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
+Only CUDA-side fixes are relevant.
+""".strip()
+
+def _get_provider() -> str:
+    return os.environ.get("LLM_PROVIDER", "anthropic").lower()
 
 
-@by(llm)
-def summarize_issue_with_traceback(
-    traceback_error: str,
-    cu_code: str,
-    input_and_output: dict
-) -> str:
-    """
-    Analyze CUDA kernel compilation or runtime errors and provide actionable fix suggestions.
+def _summarize_with_byllm(traceback_error: str, cu_code: str, input_and_output: dict) -> str:
+    if not (by and Model):
+        return traceback_error
 
-    Important:
-    - The caller-side argument formatting is already correct and MUST NOT be modified.
-    - The issue will always be internal to the CUDA kernel code (argument order, typing,
-        indexing, launch signature, or parameter handling).
+    provider = _get_provider()
+    if provider == "gemini":
+        model_name = "gemini/gemini-2.0-flash-exp"
+    elif provider in {"openai", "gpt", "chatgpt"}:
+        return traceback_error
+    else:
+        model_name = "claude-opus-4-5-20251101"
 
-    The input_and_output dict contains:
-    - args: List of positional arguments (normalized from kwargs if applicable)
-    - signature: Dict with 'params' (parameter names in order) and 'defaults'
-    - output or correct-output: Expected output tensor
+    llm = Model(model_name=model_name)
 
-    The CUDA kernel's launch() function MUST accept arguments in exactly this order:
-    {', '.join(input_and_output.get('signature', {}).get('params', ['arg0', 'arg1', '...']))}
+    def _summarize(traceback_error: str, cu_code: str, input_and_output: dict) -> str:
+        return ""
 
-    Provide specific recommendations for:
-    1. Correct argument ordering and types in the kernel launch() signature
-    2. Correct parameter use inside the CUDA code
-    3. Indexing, pointer arithmetic, and shape-related issues
+    _summarize.__doc__ = _SUMMARY_SYSTEM_PROMPT
+    summarize = by(llm)(_summarize)
+    return summarize(traceback_error, cu_code, input_and_output)
 
-    Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
-    Only CUDA-side fixes are relevant.
-    """
+
+def _summarize_with_openai(traceback_error: str, cu_code: str, input_and_output: dict) -> str:
+    client = OpenAI()
+    model = os.environ.get("OPENAI_MODEL", "gpt-5.2")
+
+    user_content = (
+        f"Traceback Error:\n{traceback_error}\n\n"
+        f"CUDA code:\n{cu_code}\n\n"
+        f"Input/Output:\n{input_and_output}"
+    )
+
+    use_responses_env = os.environ.get("OPENAI_USE_RESPONSES", "")
+    if use_responses_env:
+        use_responses = use_responses_env.lower() in {"1", "true", "yes"}
+    else:
+        use_responses = model.startswith("gpt-5")
+    max_output = os.environ.get("OPENAI_MAX_OUTPUT_TOKENS")
+    max_tokens = os.environ.get("OPENAI_MAX_TOKENS")
+
+    if use_responses:
+        params = {
+            "model": model,
+            "input": [
+                {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+        }
+        if max_output:
+            params["max_output_tokens"] = int(max_output)
+        response = client.responses.create(**params)
+        return response.output_text.strip()
+
+    params = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ],
+    }
+    if max_output:
+        params["max_output_tokens"] = int(max_output)
+    elif max_tokens:
+        params["max_tokens"] = int(max_tokens)
+
+    try:
+        response = client.chat.completions.create(**params)
+    except TypeError:
+        if "max_output_tokens" in params:
+            params.pop("max_output_tokens", None)
+            params["max_tokens"] = int(max_output)
+            response = client.chat.completions.create(**params)
+        else:
+            raise
+
+    return response.choices[0].message.content.strip()
 
 
 def handle_output(traceback_error: str, cu_code: str, log_file_path: Path, input_and_output: dict) -> str:
@@ -58,8 +130,17 @@ def handle_output(traceback_error: str, cu_code: str, log_file_path: Path, input
     input_and_output["correct-output"] = input_and_output["output"]
     del input_and_output["output"]
 
-    feedback = summarize_issue_with_traceback(
-        traceback_error, cu_code, input_and_output)
+    if _get_provider() in {"openai", "gpt", "chatgpt"}:
+        try:
+            feedback = _summarize_with_openai(
+                traceback_error, cu_code, input_and_output
+            )
+        except Exception:
+            feedback = traceback_error
+    else:
+        feedback = _summarize_with_byllm(
+            traceback_error, cu_code, input_and_output
+        )
 
     output = f"[Traceback Error]:\n{traceback_error}\n\n[LLM Generated Feedback]:\n{feedback}"
     with open(log_file_path, "w") as f:

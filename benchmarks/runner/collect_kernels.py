@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 #cSpell:disable
+import argparse
 import hashlib
 import os
 import re
@@ -12,16 +13,16 @@ from pathlib import Path
 import torch
 from torch.utils.cpp_extension import load_inline
 
-HARDWARE_OPTIMIZED = "--optimized" in sys.argv
+def _parse_args():
+    parser = argparse.ArgumentParser(description="Compile kernels into .so modules.")
+    parser.add_argument("--optimized", action="store_true", help="Use optimized kernels by default.")
+    parser.add_argument("--source", type=str, default=None, help="Override source root.")
+    parser.add_argument("--output", type=str, default=None, help="Override output root.")
+    return parser.parse_args()
 
-# Root directory where generated kernels live
-# Output directory for compiled modules
-if HARDWARE_OPTIMIZED:
-    SOURCE_ROOT = Path("kernels/optimized/individual_op_kernels")
-    OUTPUT_ROOT = Path("benchmarks/compiled/optimized")
-else:
-    SOURCE_ROOT = Path("kernels/generated/individual_op_kernels")
-    OUTPUT_ROOT = Path("benchmarks/compiled/standard")
+# Default roots (can be overridden by CLI)
+SOURCE_ROOT = Path("kernels/generated/individual_op_kernels")
+OUTPUT_ROOT = Path("benchmarks/compiled/standard")
 
 # NVCC optimization flags
 EXTRA_CUDA_CFLAGS = ["-O3", "--use_fast_math", "-lineinfo"]
@@ -101,6 +102,28 @@ def main():
     except RuntimeError:
         # Already set
         pass
+
+    args = _parse_args()
+
+    # Root directory where generated kernels live
+    if args.source:
+        source_root = Path(args.source)
+    else:
+        source_root = (
+            Path("kernels/optimized/individual_op_kernels")
+            if args.optimized
+            else Path("kernels/generated/individual_op_kernels")
+        )
+
+    # Output directory for compiled modules
+    if args.output:
+        output_root = Path(args.output)
+    else:
+        output_root = Path("benchmarks/compiled/optimized") if args.optimized else Path("benchmarks/compiled/standard")
+
+    global SOURCE_ROOT, OUTPUT_ROOT
+    SOURCE_ROOT = source_root
+    OUTPUT_ROOT = output_root
     
     # Ensure PyTorch with CUDA is available
     if not torch.cuda.is_available():

@@ -1,6 +1,7 @@
 """
 Optimizes individual Ops for target GPU architecture
 """
+import argparse
 import json
 import random
 import string
@@ -8,17 +9,18 @@ import sys
 import tempfile
 from pathlib import Path
 
+from src.config import apply_llm_config
 import src.optimizer.generator as generator
 import src.optimizer.GPUprofiler as gpu
 
+apply_llm_config()
 
-def get_project_dir(gpu_name: str):
+
+def get_project_dir(gpu_name: str, project_name: str | None):
 
     # Determine project name (random or user requested)
     letters = string.ascii_letters + string.digits
-    proj_name = ''.join(random.choices(letters, k=10))
-    if len(sys.argv) >= 3:
-        proj_name = sys.argv[2]
+    proj_name = project_name or ''.join(random.choices(letters, k=10))
     
     # Sanitize GPU name
     clean_gpu_name = gpu_name.replace(" ", "_").replace(":", "").replace("-", "_")
@@ -138,13 +140,19 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
 def main():
     """Calls optimization pipeline on each kernel."""
 
-    # Directory of Torch files containing formatted input/output pairs (for specific model preferably)
-    if len(sys.argv) < 2:
-        print("Missing input/output torch dir")
-        print(
-            "`python3 -m src.optimizer.optimize_ops <io_directory> <optional_project_name>`")
+    parser = argparse.ArgumentParser(description="Optimize kernels for a project.")
+    parser.add_argument("io_dir", help="Directory containing per-op io data")
+    parser.add_argument("project", nargs="?", default=None, help="Optional project name")
+    parser.add_argument("--kernel-dir", default=None, help="Generated kernels directory")
+    args = parser.parse_args()
+
+    io_parent_dir = Path(args.io_dir)
+    kernel_root = Path(args.kernel_dir) if args.kernel_dir else Path(
+        "kernels/generated/individual_op_kernels"
+    )
+    if not kernel_root.exists():
+        print(f"Kernel directory not found: {kernel_root}")
         sys.exit(1)
-    io_parent_dir = Path(sys.argv[1])
 
     # Collect GPU specs first to get name
     gpu_specs = gpu.get_gpu_specs()
@@ -154,10 +162,10 @@ def main():
     os.environ["TORCH_CUDA_ARCH_LIST"] = gpu_specs["compute_capability"]
 
     # Output directory
-    proj_dir = get_project_dir(gpu_specs["gpu_name"])
+    proj_dir = get_project_dir(gpu_specs["gpu_name"], args.project)
 
     # Directory containing initial wave of correct, but unoptimized kernels
-    op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
+    op_dirs = list(kernel_root.glob("*"))
     # Prioritize attention as requested
     #op_dirs.sort(key=lambda p: (0 if "torch_nn_functional_relu" in p.name else 1, p.name))
 

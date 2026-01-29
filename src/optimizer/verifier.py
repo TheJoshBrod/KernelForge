@@ -11,43 +11,36 @@ import queue
 from pathlib import Path
 
 import torch
-from byllm.lib import by # type: ignore
-from byllm.lib import Model # type: ignore
 from torch.utils.cpp_extension import load_inline
 
-llm = Model(model_name="anthropic/claude-opus-4-5-20251101")
+try:
+    from byllm.lib import by  # type: ignore
+    from byllm.lib import Model  # type: ignore
+except Exception:
+    by = None
+    Model = None
 
+# NOTE: The summarizer is not used in this verifier path today, but keep it optional
+# to avoid hard failing when byllm isn't installed.
+if by and Model:
+    llm = Model(model_name="anthropic/claude-opus-4-5-20251101")
 
-@by(llm)
-def summarize_issue_with_traceback(
-    traceback_error: str,
-    cu_code: str,
-    input_and_output: dict
-) -> str:
-    """
-    Analyze CUDA kernel compilation or runtime errors and provide actionable fix suggestions.
-
-    Important:
-    - The caller-side argument formatting is already correct and MUST NOT be modified.
-    - The issue will always be internal to the CUDA kernel code (argument order, typing,
-        indexing, launch signature, or parameter handling).
-
-    The input_and_output dict contains:
-    - args: List of positional arguments (normalized from kwargs if applicable)
-    - signature: Dict with 'params' (parameter names in order) and 'defaults'
-    - output or correct-output: Expected output tensor
-
-    The CUDA kernel's launch() function MUST accept arguments in exactly this order:
-    {', '.join(input_and_output.get('signature', {}).get('params', ['arg0', 'arg1', '...']))}
-
-    Provide specific recommendations for:
-    1. Correct argument ordering and types in the kernel launch() signature
-    2. Correct parameter use inside the CUDA code
-    3. Indexing, pointer arithmetic, and shape-related issues
-
-    Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
-    Only CUDA-side fixes are relevant.
-    """
+    @by(llm)
+    def summarize_issue_with_traceback(
+        traceback_error: str,
+        cu_code: str,
+        input_and_output: dict
+    ) -> str:
+        """
+        Analyze CUDA kernel compilation or runtime errors and provide actionable fix suggestions.
+        """
+else:
+    def summarize_issue_with_traceback(
+        traceback_error: str,
+        cu_code: str,
+        input_and_output: dict
+    ) -> str:
+        return traceback_error
 
 
 def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:

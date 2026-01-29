@@ -14,41 +14,172 @@ import from recharts {
     ResponsiveContainer
 }
 
-def:pub Project(name: str, onNavigate: any) -> any {
-    # Hardcoded Data
+def:pub Project(
+    name: str,
+    onNavigate: any,
+    getProjectOpsWalker: any,
+    getProjectStatusWalker: any,
+    startProfileWalker: any,
+    startGenerateWalker: any,
+    startOptimizeWalker: any,
+    startBenchmarkWalker: any,
+    exportProjectWalker: any
+) -> any {
     COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
-    pieData = [
-        {"name": 'linear', "value": 1000, "fill": COLORS[1]},
-        {"name": 'relu', "value": 998, "fill": COLORS[0]},
-        {"name": 'batch_norm', "value": 500, "fill": COLORS[3]},
-        {"name": 'embedding', "value": 200, "fill": COLORS[2]}
-    ];
 
-    operatorFreqData = [
-        {"operator": 'linear', "freq": 1000},
-        {"operator": 'relu', "freq": 998},
-        {"operator": 'batch_norm', "freq": 500},
-        {"operator": 'embedding', "freq": 200}
-    ];
+    ops_state = useState([]);
+    ops = ops_state[0];
+    setOps = ops_state[1];
 
-    barData = [
-        {"name": 'Baseline', "time": 25, "fill": '#22c55e'},  # Green
-        {"name": 'PyTorch', "time": 20, "fill": '#f97316'},  # Orange
-        {"name": 'Optimized', "time": 10, "fill": '#3b82f6'}
-    ];
+    loading_state = useState(True);
+    loading = loading_state[0];
+    setLoading = loading_state[1];
 
-    timingData = [
-        {"ver": 'Default PyTorch', "time": '20 ms'},
-        {"ver": 'Baseline', "time": '25 ms'},
-        {"ver": 'Optimized', "time": '10 ms'}
-    ];
+    status_state = useState({});
+    status = status_state[0];
+    setStatus = status_state[1];
+
+    export_state = useState("");
+    exportPath = export_state[0];
+    setExportPath = export_state[1];
+
+    def format_op(raw: str) -> str {
+        prefix = "torch_nn_functional_";
+        if raw.startswith(prefix) {
+            return "torch.nn.functional." + raw.replace(prefix, "");
+        }
+        return raw.replace("_", ".");
+    }
+
+    async def refreshOps -> None {
+        setLoading(True);
+        try {
+            if getProjectOpsWalker {
+                data = await getProjectOpsWalker(name);
+                if data and data["ops"] {
+                    setOps(data["ops"]);
+                } else {
+                    setOps([]);
+                }
+            } else {
+                setOps([]);
+            }
+        } except (error) {
+            console.error("Failed to fetch ops:", error);
+            setOps([]);
+        } finally {
+            setLoading(False);
+        }
+    }
+
+    async def refreshStatus -> None {
+        try {
+            if getProjectStatusWalker {
+                data = await getProjectStatusWalker(name);
+                setStatus(data if data else {});
+            } else {
+                setStatus({});
+            }
+        } except (error) {
+            console.error("Failed to fetch status:", error);
+            setStatus({});
+        }
+    }
+
+    async def refreshAll -> None {
+        await refreshOps();
+        await refreshStatus();
+    }
 
     useEffect(
-        lambda -> None {
-        # fetch(f"/api/projects/{name}", { method: 'PATCH' }).catch(console.error);
-        },
+        lambda -> None { refreshAll();},
         [name]
     );
+
+    async def handleProfile -> None {
+        if startProfileWalker {
+            await startProfileWalker(name);
+            await refreshStatus();
+        }
+    }
+
+    async def handleGenerate -> None {
+        if startGenerateWalker {
+            await startGenerateWalker(name);
+            await refreshStatus();
+        }
+    }
+
+    async def handleOptimize -> None {
+        if startOptimizeWalker {
+            await startOptimizeWalker(name);
+            await refreshStatus();
+        }
+    }
+
+    async def handleBenchmark -> None {
+        if startBenchmarkWalker {
+            await startBenchmarkWalker(name);
+            await refreshStatus();
+        }
+    }
+
+    async def handleExport -> None {
+        if exportProjectWalker {
+            result = await exportProjectWalker(name);
+            if result and result["success"] {
+                setExportPath(result["path"]);
+            }
+        }
+    }
+
+    operatorFreqData = [];
+    for op in ops {
+        operatorFreqData.append({
+            "operator": format_op(op["name"]),
+            "freq": op["count"]
+        });
+    }
+
+    pieData = [];
+    count = 0;
+    for op in ops {
+        if count >= 4 {
+            break;
+        }
+        pieData.append({
+            "name": format_op(op["name"]),
+            "value": op["count"],
+            "fill": COLORS[0]
+        });
+        count = count + 1;
+    }
+
+    barData = [];
+
+    statusItems = [
+        {"key": "profile", "label": "Profile"},
+        {"key": "generate", "label": "Generate"},
+        {"key": "optimize", "label": "Optimize"},
+        {"key": "benchmark", "label": "Benchmark"}
+    ];
+
+    statusRows = [];
+    for item in statusItems {
+        job = status[item["key"]];
+        job_status = job["status"] if job and job["status"] else "idle";
+        statusRows.append(
+            <div
+                key={item["key"]}
+                className="flex items-center justify-between text-sm text-zinc-300"
+            >
+                <span>{item["label"]}</span>
+                <span className="font-mono text-xs text-zinc-500">
+                    {job_status}
+                </span>
+            </div>
+        );
+    }
 
     return
         <div className="flex min-h-screen bg-zinc-950 text-zinc-100 font-sans">
@@ -113,58 +244,70 @@ def:pub Project(name: str, onNavigate: any) -> any {
                             className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm focus:outline-none focus:border-zinc-700 transition-colors"
                         />
                         <button
+                            onClick={lambda -> None { refreshOps();}}
                             className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded text-sm font-medium transition-colors"
                         >
-                            Filter
+                            Refresh
                         </button>
                     </div>
                 </div>
                 <div
                     className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar"
                 >
-                    {[
-                        <a
-                            key={op}
-                            onClick={lambda -> None { onNavigate(
-                                f"/project/{name}/{op}"
-                            );}}
-                            className="block w-full text-left bg-zinc-900/50 hover:bg-zinc-800 border border-zinc-800/50 rounded px-4 py-3 text-sm font-mono text-zinc-300 transition-all cursor-pointer"
-                        >
-                            {op}
-                        </a>
-                        for op in [
-                            'linear',
-                            'conv2d',
-                            'relu',
-                            'batch_norm',
-                            'dropout',
-                            'embedding'
-                        ]
-                    ]}
+                    {<p className="text-sm text-zinc-500 px-2">
+                        Loading ops...
+                    </p>
+                    if loading
+                    else <p className="text-sm text-zinc-500 px-2">
+                        No ops profiled yet. Run the profiling step.
+                    </p>
+                    if ops.length == 0
+                    else ops.map(lambda op: any  -> any { return <a
+                        key={op["name"]}
+                        onClick={lambda -> None { onNavigate(
+                            "/project/" + name + "/" + op["name"]
+                        );}}
+                        className="block w-full text-left bg-zinc-900/50 hover:bg-zinc-800 border border-zinc-800/50 rounded px-4 py-3 text-sm font-mono text-zinc-300 transition-all cursor-pointer"
+                    >
+                        {format_op(op["name"])}
+                    </a>; })}
                 </div>
                 <div className="space-y-4 pt-4 border-t border-zinc-900">
                     <button
+                        onClick={lambda -> None { handleProfile();}}
                         className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded shadow-lg shadow-blue-900/20 transition-all"
                     >
-                        Generate All Missing
+                        Profile Model
                     </button>
                     <button
+                        onClick={lambda -> None { handleGenerate();}}
+                        className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded shadow-lg shadow-indigo-900/20 transition-all"
+                    >
+                        Generate Kernels
+                    </button>
+                    <button
+                        onClick={lambda -> None { handleOptimize();}}
                         className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded shadow-lg shadow-emerald-900/20 transition-all"
                     >
-                        Optimize All
+                        Optimize Kernels
                     </button>
-                    <div className="space-y-1">
-                        <label
-                            className="text-xs font-semibold text-zinc-500 uppercase"
-                        >
-                            {"#"}of Attempts (default = 10)
-                        </label>
-                        <input
-                            type="number"
-                            defaultValue="10"
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 focus:outline-none focus:border-zinc-700 transition-colors"
-                        />
-                    </div>
+                    <button
+                        onClick={lambda -> None { handleBenchmark();}}
+                        className="w-full bg-amber-500 hover:bg-amber-400 text-white font-bold py-3 rounded shadow-lg shadow-amber-900/20 transition-all"
+                    >
+                        Benchmark
+                    </button>
+                    <button
+                        onClick={lambda -> None { handleExport();}}
+                        className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded shadow-lg shadow-zinc-900/20 transition-all"
+                    >
+                        Export .cgins
+                    </button>
+                    {<p className="text-xs text-zinc-500 break-all">
+                        {exportPath}
+                    </p>
+                    if exportPath
+                    else <span></span>}
                 </div>
             </aside>
             <main className="w-3/4 p-8 overflow-y-auto">
@@ -184,7 +327,11 @@ def:pub Project(name: str, onNavigate: any) -> any {
                             <h4 className="text-sm font-medium text-zinc-400 mb-2">
                                 PyTorch Operator Usage %
                             </h4>
-                            <ResponsiveContainer width="100%" height="100%">
+                            {<p className="text-sm text-zinc-500">
+                                No profiling data yet.
+                            </p>
+                            if pieData.length == 0
+                            else <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
                                     <Pie
                                         data={pieData}
@@ -207,7 +354,7 @@ def:pub Project(name: str, onNavigate: any) -> any {
                                         align="right"
                                     />
                                 </PieChart>
-                            </ResponsiveContainer>
+                            </ResponsiveContainer>}
                         </div>
                         <div
                             className="overflow-hidden rounded-xl border border-zinc-800"
@@ -228,21 +375,19 @@ def:pub Project(name: str, onNavigate: any) -> any {
                                 <tbody
                                     className="divide-y divide-zinc-800 bg-zinc-900/50"
                                 >
-                                    {[
-                                        <tr
-                                            key={row.operator}
-                                            className="hover:bg-zinc-800/50 transition-colors"
+                                    {operatorFreqData.map(lambda row: any  -> any { return <tr
+                                        key={row["operator"]}
+                                        className="hover:bg-zinc-800/50 transition-colors"
+                                    >
+                                        <td
+                                            className="px-6 py-3 font-mono text-zinc-300"
                                         >
-                                            <td
-                                                className="px-6 py-3 font-mono text-zinc-300"
-                                            >
-                                                {row.operator}
-                                            </td>
-                                            <td className="px-6 py-3 text-zinc-300">
-                                                {row.freq}
-                                            </td>
-                                        </tr> for row in operatorFreqData
-                                    ]}
+                                            {row["operator"]}
+                                        </td>
+                                        <td className="px-6 py-3 text-zinc-300">
+                                            {row["freq"]}
+                                        </td>
+                                    </tr>; })}
                                 </tbody>
                             </table>
                         </div>
@@ -251,15 +396,28 @@ def:pub Project(name: str, onNavigate: any) -> any {
                         <h3
                             className="text-xl font-semibold border-b border-zinc-800 pb-2"
                         >
-                            Optimization Info:
+                            Pipeline Status:
                         </h3>
+                        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
+                            {statusRows}
+                            <button
+                                onClick={lambda -> None { refreshStatus();}}
+                                className="mt-2 w-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-2 rounded transition-all"
+                            >
+                                Refresh Status
+                            </button>
+                        </div>
                         <div
                             className="h-64 bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 flex flex-col items-center"
                         >
                             <h4 className="text-sm font-medium text-zinc-400 mb-2">
                                 Time (ms) vs. Version
                             </h4>
-                            <ResponsiveContainer width="100%" height="100%">
+                            {<p className="text-sm text-zinc-500">
+                                No optimization data yet.
+                            </p>
+                            if barData.length == 0
+                            else <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={barData}>
                                     <CartesianGrid
                                         strokeDasharray="3 3"
@@ -295,7 +453,7 @@ def:pub Project(name: str, onNavigate: any) -> any {
                                         fill="#3b82f6"
                                     />
                                 </BarChart>
-                            </ResponsiveContainer>
+                            </ResponsiveContainer>}
                         </div>
                     </div>
                 </div>

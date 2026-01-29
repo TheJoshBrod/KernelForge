@@ -2,13 +2,20 @@
 
 import from react { createContext, useContext, useState, useEffect }
 
+glob DEFAULT_CONFIG: dict = {
+    "llm_info": {"model": "", "apikey": "", "provider": "anthropic"}
+};
+
 # Create Context
-glob ConfigContext = createContext();
+glob ConfigContext = createContext({
+    "config": DEFAULT_CONFIG,
+    "setConfig": None,
+    "saveConfig": None,
+    "loading": True
+});
 
 def:pub ConfigProvider(children: any, getConfig: any, saveConfig: any) -> any {
-    state = useState(
-        {"llm_info": {"model": "", "apikey": "", "provider": "anthropic"}}
-    );
+    state = useState(DEFAULT_CONFIG);
     config = state[0];
     setConfig = state[1];
 
@@ -18,19 +25,17 @@ def:pub ConfigProvider(children: any, getConfig: any, saveConfig: any) -> any {
 
     # Load config on mount
     useEffect(
-        lambda -> None { async def fetchConfig() -> None {
+        lambda -> None { async def fetchConfig -> None {
             try {
                 data = await getConfig();
-                # Merge with defaults
-                setConfig(
-                    lambda prev: any  -> any { return {
-                        ** prev,
-                        ** data,
-                        "llm_info": {** prev["llm_info"], ** data["llm_info"]}
-                    }; }
-                );
+                if data and "llm_info" in data {
+                    setConfig(data);
+                } else {
+                    setConfig(DEFAULT_CONFIG);
+                }
             } except (error) {
                 console.error("Failed to load config:", error);
+                setConfig(DEFAULT_CONFIG);
             } finally {
                 setLoading(False);
             }
@@ -66,6 +71,6 @@ def:pub ConfigProvider(children: any, getConfig: any, saveConfig: any) -> any {
         </ConfigContext.Provider>;
 }
 
-def:pub useConfig() -> any {
+def:pub useConfig -> any {
     return useContext(ConfigContext);
 }

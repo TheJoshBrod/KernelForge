@@ -13,11 +13,14 @@ def fileToBase64(file: any) -> any {
     return Reflect.construct(
         Promise,
         [
-            lambda resolve: any , reject: any  -> None { reader = Reflect.construct(
-                FileReader, []
-            );reader.readAsDataURL(file);reader.onload = lambda -> None { resolve(
-                reader.result.split(",")[1]
-            );};reader.onerror = lambda error: any  -> None { reject(error);};}
+            lambda resolve: any, reject: any  -> None {
+                reader = Reflect.construct(FileReader, []);
+                reader.readAsDataURL(file);
+                reader.onload = lambda -> None {
+                    resolve(reader.result.split(",")[1]);
+                };
+                reader.onerror = lambda error: any  -> None { reject(error);};
+            }
         ]
     );
 }
@@ -27,24 +30,47 @@ def:pub NewProject(onNavigate: any, createProjectWalker: any) -> any {
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class Model(nn.Module):
-    def __init__(self, in_features, out_features):
+    def __init__(self, in_features=16, out_features=8):
         super().__init__()
         self.linear = nn.Linear(in_features, out_features)
 
     def forward(self, x):
-        return self.linear(x)
-""";
-    has formData: dict = {
-        "projectName": "",
-        "weightsFile": None,
-        "validationSet": None
-    };
-    has isSubmitting: bool = False;
+        x = self.linear(x)
+        return F.relu(x)
+
+def build_model():
+    return Model()
+
+def load_weights(path: str, device: str = "cpu"):
+    model = build_model()
+    state = torch.load(path, map_location=device, weights_only=False)
+    if isinstance(state, dict) and "state_dict" in state:
+        state = state["state_dict"]
+    model.load_state_dict(state, strict=False)
+    model.to(device)
+    model.eval()
+    return model
+
+def sample_inputs():
+    x = torch.randn(4, 16)
+    return (x,)
+""",
+        formData: dict = {
+            "projectName": "",
+            "weightsFile": None,
+            "validationSet": None
+        },
+        isSubmitting: bool = False;
 
     def handleInputChange(field: str, value: any) -> None {
-        newFormData = {** formData};
+        newFormData = {
+            "projectName": formData["projectName"],
+            "weightsFile": formData["weightsFile"],
+            "validationSet": formData["validationSet"]
+        };
         newFormData[field] = value;
         formData = newFormData;
     }
@@ -61,7 +87,7 @@ class Model(nn.Module):
         [onNavigate]
     );
 
-    async def handleCreate() -> None {
+    async def handleCreate -> None {
         if not formData["projectName"].trim() {
             toast.error("Project name is required");
             return;
@@ -297,7 +323,7 @@ class Model(nn.Module):
                                     />
                                 </svg>
                                 <span className="truncate">
-                                    {f"{formData['validationSet'].length} files selected"
+                                    {formData["validationSet"].length + " files selected"
                                     if formData["validationSet"]
                                     and formData["validationSet"].length > 0
                                     else "Select Directory..."}

@@ -15,7 +15,7 @@ def getLayerData(layerName: str) -> dict {
         {
             "id": "1",
             "position": {"x": 50, "y": 50},
-            "data": {"label": f"{layerName}_v1"},
+            "data": {"label": layerName + "_v1"},
             "style": {"background": "#f97316", "color": "#fff"}
         }
     ];
@@ -77,17 +77,17 @@ def getLayerData(layerName: str) -> dict {
 def:pub OpDetails(projectName: str, opName: str, onNavigate: any) -> any {
     # Generate some layers based on opName (simulated)
     has layers: list = [
-        f"{opName}1",
-        f"{opName}2",
-        f"{opName}3",
-        f"{opName}4",
-        f"{opName}5"
-    ];
-    has selectedLayer: str = layers[0];
+        opName + "1",
+        opName + "2",
+        opName + "3",
+        opName + "4",
+        opName + "5"
+    ],
+        selectedLayer: str = layers[0],
+        nodes: list = [],
+        edges: list = [];
 
     # State for nodes and edges
-    has nodes: list = [];
-    has edges: list = [];
 
     # Effect to update graph when selectedLayer changes
     useEffect(
@@ -103,7 +103,7 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any) -> any {
     useEffect(
         lambda -> any { def handleKeyDown(event: any) -> None {
             if event.key == "Escape" {
-                onNavigate(f"/project/{projectName}");
+                onNavigate("/project/" + projectName);
             }
         } window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
             "keydown", handleKeyDown
@@ -139,7 +139,7 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any) -> any {
             </div>
             <div className="absolute top-2 right-16 z-10">
                 <a
-                    onClick={lambda -> None { onNavigate(f"/project/{projectName}");}}
+                    onClick={lambda -> None { onNavigate("/project/" + projectName);}}
                     className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white bg-zinc-950/50 backdrop-blur-sm cursor-pointer"
                     aria-label="Go Back"
                 >
@@ -183,23 +183,17 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any) -> any {
                 <div
                     className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar"
                 >
-                    {[
-                        <button
-                            key={layer}
-                            onClick={(
-                                lambda l: str  -> any { return lambda -> None { selectedLayer = l;}; }
-                            )(
-                                layer
-                            )}
-                            className={"w-full text-left border rounded px-4 py-3 text-sm font-mono transition-all " + (
-                                "bg-zinc-800 border-zinc-600 text-white"
-                                if selectedLayer == layer
-                                else "bg-zinc-900/50 hover:bg-zinc-800 border-zinc-800/50 text-zinc-300"
-                            )}
-                        >
-                            {layer}
-                        </button> for layer in layers
-                    ]}
+                    {layers.map(lambda layer: any  -> any { return <button
+                        key={layer}
+                        onClick={lambda -> None { selectedLayer = layer;}}
+                        className={"w-full text-left border rounded px-4 py-3 text-sm font-mono transition-all " + (
+                            "bg-zinc-800 border-zinc-600 text-white"
+                            if selectedLayer == layer
+                            else "bg-zinc-900/50 hover:bg-zinc-800 border-zinc-800/50 text-zinc-300"
+                        )}
+                    >
+                        {layer}
+                    </button>; })}
                 </div>
                 <div className="space-y-4 pt-4 border-t border-zinc-900">
                     <button

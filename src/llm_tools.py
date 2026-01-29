@@ -3,13 +3,25 @@ src/llm_tools.py
 Generalized LLM tooling for handling model agnostic conversations and tooling.
 """
 import json
+import os
 from typing import Any
 from typing import Dict
 from typing import List
 
-import anthropic
-from google import genai
-from openai import OpenAI
+try:
+    import anthropic
+except Exception:
+    anthropic = None
+
+try:
+    from google import genai
+except Exception:
+    genai = None
+
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
 
 
 class GenModel:
@@ -69,6 +81,9 @@ class GenModel:
         Returns:
             str: LLM response
         """
+
+        if anthropic is None:
+            return "Error calling Claude API: anthropic package is not installed"
 
         payload = self.__to_anthropic_payload()
 
@@ -155,16 +170,52 @@ class GenModel:
             str: LLM response
         """
 
+        if OpenAI is None:
+            return "Error calling OpenAI API: openai package is not installed"
+
         try:
             self._openai_client = OpenAI()
+            if not model:
+                model = os.environ.get("OPENAI_MODEL", "gpt-5.2")
             messages = self.__to_openai_messages()
 
             # Make the API call
-            response = self._openai_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=4096
-            )
+            use_responses_env = os.environ.get("OPENAI_USE_RESPONSES", "")
+            if use_responses_env:
+                use_responses = use_responses_env.lower() in {"1", "true", "yes"}
+            else:
+                use_responses = model.startswith("gpt-5")
+            max_output = os.environ.get("OPENAI_MAX_OUTPUT_TOKENS")
+            max_tokens = os.environ.get("OPENAI_MAX_TOKENS")
+
+            if use_responses:
+                params = {
+                    "model": model,
+                    "input": messages,
+                }
+                if max_output:
+                    params["max_output_tokens"] = int(max_output)
+                response = self._openai_client.responses.create(**params)
+                return response.output_text
+
+            params = {
+                "model": model,
+                "messages": messages,
+            }
+            if max_output:
+                params["max_output_tokens"] = int(max_output)
+            elif max_tokens:
+                params["max_tokens"] = int(max_tokens)
+
+            try:
+                response = self._openai_client.chat.completions.create(**params)
+            except TypeError:
+                if "max_output_tokens" in params:
+                    params.pop("max_output_tokens", None)
+                    params["max_tokens"] = int(max_output)
+                    response = self._openai_client.chat.completions.create(**params)
+                else:
+                    raise
 
             return response.choices[0].message.content
 

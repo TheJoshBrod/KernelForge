@@ -45,6 +45,18 @@ The **Optimizer** pipeline refines the validated kernels for specific hardware.
 - **NVIDIA GPU** with CUDA support (NVCC ≥ 12.1 recommended)
 - **LLM API Key** (Gemini, OpenAI, or Anthropic)
 
+### LLM Provider Configuration
+Set the provider and model via environment variables or the UI settings gear.
+
+- LLM_PROVIDER=openai (or gemini, nthropic)
+- OPENAI_API_KEY=...
+- OPENAI_MODEL=gpt-5.2 (or your preferred OpenAI model)
+- Optional: OPENAI_USE_RESPONSES=1 (force Responses API). By default, gpt-5 models use Responses.
+- Optional: OPENAI_MAX_OUTPUT_TOKENS or OPENAI_MAX_TOKENS
+
+The frontend Settings gear writes rontend/config.json. The backend will
+auto-load that file and set the matching environment variables on startup.
+
 ### Setup
 
 1. **Clone the repository:**
@@ -77,6 +89,47 @@ jac start main.jac
 ```
 
 Once the project has been bundled, open [localhost:8000](localhost:8000) to access the CGinS tool.
+
+Routes are client-side; projects load at:
+http://localhost:8000/project/<project_name>
+
+### Profiling an uploaded project
+
+After uploading `model.py` and `weights.pt` in the UI, profile your project with:
+
+```bash
+python benchmarks/profiler/profile_project.py --project <project_name>
+```
+
+This writes per‑op input/output pairs under `projects/<project_name>/io/individual_ops`,
+which the UI reads to display real operator lists.
+
+### Full pipeline (CLI)
+
+You can run the full pipeline without the UI:
+
+`ash
+# 1) Profile
+python benchmarks/profiler/profile_project.py --project <project_name>
+
+# 2) Generate kernels (project-scoped)
+python -m src.generator.main --io-dir projects/<project_name>/io/individual_ops --out-dir projects/<project_name>/kernels/generated
+
+# 3) Optimize kernels
+python -m src.optimizer.optimize_ops projects/<project_name>/io/individual_ops <project_name> --kernel-dir projects/<project_name>/kernels/generated/individual_op_kernels
+
+# 4) Benchmark optimized kernels (requires CUDA)
+python scripts/benchmark_project.py --project <project_name>
+`
+
+### Sample model + weights
+
+Use the included CGinS mini model for testing:
+
+- Model code: enchmarks/models/cgins_mini.py
+- Weights: enchmarks/models/cgins_mini_weights.pt
+
+The model exposes uild_model() and make_example_input() so profiling works out of the box.
 
 
 ## Project Structure

@@ -2,6 +2,7 @@
 src/optimizer/generator.py
 Uses LLM to generate CUDA kernels that is model-agnostic.
 """
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -93,7 +94,7 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
     return feedback, is_valid, error
 
 
-def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, paths: dict[str, Path], model: str = "claude-opus-4-5-20251101") -> Tuple[str, bool]:
+def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, paths: dict[str, Path], model: str | None = None) -> Tuple[str, bool]:
     """Generates and validates CUDA kernels 
 
     Args:
@@ -104,7 +105,14 @@ def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, path
         io_dir (Path): Path of file that contains all input/output pairs recorded of this op
         model (str, optional): LLM that will generate kernels. Defaults to None (will use env var or default).
     """
-    model = "claude-opus-4-5-20251101"
+    if not model:
+        provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+        if provider in {"openai", "gpt", "chatgpt"}:
+            model = os.environ.get("OPENAI_MODEL", "gpt-5.2")
+        elif provider == "gemini":
+            model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        else:
+            model = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-5-20251101")
 
     # Attempt initial CUDA code generation
     llm: GenModel = GenModel(sys_prompt)

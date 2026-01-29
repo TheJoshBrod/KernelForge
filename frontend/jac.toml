@@ -23,8 +23,6 @@ watchdog = "latest"
 [dev-dependencies]
 watchdog = ">=3.0.0"
 
-[serve]
-base_route_app = "app"
 
 [plugins.client.vite]
 plugins = ["tailwindcss()"]

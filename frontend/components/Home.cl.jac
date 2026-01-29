@@ -3,15 +3,19 @@
 import from react { useEffect, useState }
 
 def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
-    has projects: list = [];
-    has loading: bool = True;
+    has projects: list = [],
+        loading: bool = True;
 
     useEffect(
         lambda -> None { async def fetchProjects -> None {
             try {
                 if getProjectsWalker {
                     data = await getProjectsWalker();
-                    projects = data["projects"] if data and "projects" in data else [];
+                    if data and data["projects"] {
+                        projects = data["projects"];
+                    } else {
+                        projects = [];
+                    }
                 }
             } except Exception as e {
                 console.error("Failed to fetch projects", e);
@@ -25,11 +29,11 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
     def handleProjectSelect(e: any) -> None {
         projectId = e.target.value;
         if projectId {
-            onNavigate(f"/project/{projectId}");
+            onNavigate("/project/" + projectId);
         }
     }
 
-    recentProjects = projects[:3];
+    recentProjects = projects.slice(0, 3);
 
     return
         <main
@@ -104,11 +108,12 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                             <option value="" disabled>
                                 Select a project to load...
                             </option>
-                            {[
-                                <option key={project.name} value={project.name}>
-                                    {project.name}
-                                </option> for project in projects
-                            ]}
+                            {projects.map(lambda project: any  -> any { return <option
+                                key={project["name"]}
+                                value={project["name"]}
+                            >
+                                {project["name"]}
+                            </option>; })}
                         </select>
                         <div
                             className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500"
@@ -135,17 +140,15 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                     </h3>
                     <div className="flex flex-col gap-2 text-center">
                         {(
-                            [
-                                <a
-                                    key={project.name}
-                                    onClick={lambda -> None { onNavigate(
-                                        f"/project/{project.name}"
-                                    );}}
-                                    className="text-blue-400 hover:text-blue-300 transition-colors text-sm hover:underline underline-offset-4 cursor-pointer"
-                                >
-                                    {project.name}
-                                </a> for project in recentProjects
-                            ]
+                            recentProjects.map(lambda project: any  -> any { return <a
+                                key={project["name"]}
+                                onClick={lambda -> None { onNavigate(
+                                    "/project/" + project["name"]
+                                );}}
+                                className="text-blue-400 hover:text-blue-300 transition-colors text-sm hover:underline underline-offset-4 cursor-pointer"
+                            >
+                                {project["name"]}
+                            </a>; })
                         )
                         if recentProjects.length > 0
                         else <p className="text-zinc-600 text-xs italic">

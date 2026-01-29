@@ -1,7 +1,7 @@
 """Settings Page Component"""
 
 import from react { useState, useEffect }
-import from ..context.ConfigContext { useConfig }
+import from ..contexts.ConfigContext { useConfig }
 
 def:pub Settings(onNavigate: any) -> any {
     config_ctx = useConfig();
@@ -26,20 +26,22 @@ def:pub Settings(onNavigate: any) -> any {
     );
 
     def handleChange(field: str, value: str) -> None {
-        setConfig(
-            lambda prev: any  -> any { new_llm_info = {** prev["llm_info"]};new_llm_info[
-                field
-            ] = value;return {** prev, "llm_info": new_llm_info}; }
-        );
+        new_llm_info = {
+            "model": config["llm_info"]["model"],
+            "apikey": config["llm_info"]["apikey"],
+            "provider": config["llm_info"]["provider"]
+        };
+        new_llm_info[field] = value;
+        setConfig({"llm_info": new_llm_info});
     }
-    async def handleSave() -> None {
+    async def handleSave -> None {
         setSaving(True);
         await saveConfig(config);
         setSaving(False);
         onNavigate("/");
     }
 
-    def handleReturn() -> None {
+    def handleReturn -> None {
         onNavigate("/");
     }
 

@@ -6,12 +6,17 @@ Walks through each operation in a benchmark to:
 2. Generate CUDA kernel code
 3. Validate correctness through iterative refinement
 """
+import argparse
 import glob
 import os
 import shutil
 import sys
 import tempfile
 from pathlib import Path
+
+from src.config import apply_llm_config
+
+apply_llm_config()
 
 import torch
 from tqdm import tqdm
@@ -53,8 +58,12 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
                 cu_code = generator.anthropic_generator(conversation_history)
             elif provider == "gemini":
                 cu_code = generator.gemini_generator(conversation_history)
+            elif provider in {"openai", "gpt", "chatgpt"}:
+                cu_code = generator.chatgpt_generator(conversation_history)
             else:
-                raise ValueError(f"Unknown LLM provider: {provider}. Supported: anthropic, gemini")
+                raise ValueError(
+                    f"Unknown LLM provider: {provider}. Supported: anthropic, gemini, openai"
+                )
 
             conversation_history.append(
                 {"role": "assistant", "content": cu_code})
@@ -186,12 +195,23 @@ def process_function(directory_name: str, entry_files: list[str], op_dir: Path):
 
 def main():
     """Main entry point: load benchmarks and process each one."""
-    if len(sys.argv) < 2:
-        print("Usage: python main.py <benchmark_dir>")
+    parser = argparse.ArgumentParser(description="Generate kernels from profiled ops.")
+    parser.add_argument("io_dir", nargs="?", help="Path to profiled ops directory")
+    parser.add_argument("--io-dir", dest="io_dir_opt", default=None, help="Path to profiled ops directory")
+    parser.add_argument("--out-dir", dest="out_dir", default=None, help="Base output directory for kernels")
+    args = parser.parse_args()
+
+    io_dir = args.io_dir_opt or args.io_dir
+    if not io_dir:
+        print("Usage: python -m src.generator.main <io_dir> [--out-dir <dir>]")
         sys.exit(1)
 
+    global OUTPUT_BASE_DIR
+    if args.out_dir:
+        OUTPUT_BASE_DIR = Path(args.out_dir)
+
     # Loop over all function directories
-    function_dirs = sorted(glob.glob(os.path.join(sys.argv[1], "*")))
+    function_dirs = sorted(glob.glob(os.path.join(io_dir, "*")))
 
     for func_dir in tqdm(function_dirs, desc="Processing functions"):
         if not os.path.isdir(func_dir):

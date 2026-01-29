@@ -2,11 +2,24 @@
 src/generator/generator.py
 Uses LLM to generate CUDA kernels that is semi-model-agnostic.
 """
+import os
 import re
 
-from google import genai
-import ollama as ol
-from anthropic import Anthropic
+try:
+    from google import genai
+except Exception:
+    genai = None
+
+try:
+    import ollama as ol
+except Exception:
+    ol = None
+
+try:
+    from anthropic import Anthropic
+except Exception:
+    Anthropic = None
+
 from openai import OpenAI
 
 import src.generator.prompts.prompts
@@ -53,6 +66,8 @@ def ollama_generator(msg: str, model: str = "llama3.2:latest", outputIR: str = "
     """
     print("Generating code...")
     sys_prompt = src.generator.prompts.prompts.get_system_prompt()
+    if ol is None:
+        raise RuntimeError("Ollama is not installed. Install 'ollama' to use this provider.")
     response = ol.chat(model=model, messages=[
                        {"role": "system", "content": sys_prompt}, {"role": "user", "content": msg}])
 
@@ -95,6 +110,8 @@ def gemini_generator(conversation_history: list, model: str = "gemini-2.5-flash"
     print("Generating code...")
     sys_prompt = src.generator.prompts.prompts.get_system_prompt()
 
+    if genai is None:
+        raise RuntimeError("google-genai is not installed. Install it to use Gemini.")
     client = genai.Client()
 
     gemini_history = convert_chatgpt_to_gemini(conversation_history)
@@ -112,7 +129,7 @@ def gemini_generator(conversation_history: list, model: str = "gemini-2.5-flash"
     return cu_code
 
 
-def chatgpt_generator(conversation_history: list, model: str = "gpt-4o", outputIR: str = "CUDA") -> str:
+def chatgpt_generator(conversation_history: list, model: str | None = None, outputIR: str = "CUDA") -> str:
     """Initial generation of kernel/IR using OpenAI.
 
     Returns:
@@ -123,14 +140,50 @@ def chatgpt_generator(conversation_history: list, model: str = "gpt-4o", outputI
 
     print("Generating code...")
     sys_prompt = src.generator.prompts.prompts.get_system_prompt()
+    model = model or os.environ.get("OPENAI_MODEL", "gpt-5.2")
 
-    conversation_history.insert(0, sys_prompt)
-    response = client.chat.completions.create(
-        model=model,
-        messages=conversation_history
-    )
+    # Build messages without mutating caller history
+    messages = [{"role": "system", "content": sys_prompt}] + conversation_history
 
-    cu_code = cleanup_mkdown(response.choices[0].message.content)
+    use_responses_env = os.environ.get("OPENAI_USE_RESPONSES", "")
+    if use_responses_env:
+        use_responses = use_responses_env.lower() in {"1", "true", "yes"}
+    else:
+        use_responses = model.startswith("gpt-5")
+    max_output = os.environ.get("OPENAI_MAX_OUTPUT_TOKENS")
+    max_tokens = os.environ.get("OPENAI_MAX_TOKENS")
+
+    if use_responses:
+        params = {
+            "model": model,
+            "input": messages,
+        }
+        if max_output:
+            params["max_output_tokens"] = int(max_output)
+        response = client.responses.create(**params)
+        response_text = response.output_text
+    else:
+        params = {
+            "model": model,
+            "messages": messages,
+        }
+        if max_output:
+            params["max_output_tokens"] = int(max_output)
+        elif max_tokens:
+            params["max_tokens"] = int(max_tokens)
+
+        try:
+            response = client.chat.completions.create(**params)
+        except TypeError:
+            if "max_output_tokens" in params:
+                params.pop("max_output_tokens", None)
+                params["max_tokens"] = int(max_output)
+                response = client.chat.completions.create(**params)
+            else:
+                raise
+        response_text = response.choices[0].message.content
+
+    cu_code = cleanup_mkdown(response_text)
 
     print("Code generated...")
     return cu_code
@@ -160,7 +213,8 @@ def anthropic_generator(conversation_history: list,
     """Initial generation of kernel/IR using Anthropic Claude API."""
     print("Generating code with Claude...")
 
-    from anthropic import Anthropic
+    if Anthropic is None:
+        raise RuntimeError("anthropic is not installed. Install it to use this provider.")
 
     anthropic_history = convert_chatgpt_to_anthropic(conversation_history)
 
