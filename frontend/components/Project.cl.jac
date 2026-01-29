@@ -50,6 +50,17 @@ def:pub Project(name: str, onNavigate: any) -> any {
         [name]
     );
 
+    useEffect(
+        lambda -> None { def handleKeyDown(event: any) -> None {
+            if event.key == "Escape" {
+                onNavigate("/");
+            }
+        } document.addEventListener("keydown", handleKeyDown);return lambda -> None { document.removeEventListener(
+            "keydown", handleKeyDown
+        );}; },
+        []
+    );
+
     return
         <div className="flex min-h-screen bg-zinc-950 text-zinc-100 font-sans">
             <div className="absolute top-2 right-6">

@@ -1,12 +1,24 @@
 """Home Page Component"""
 
-import from react { useEffect, useState }
+import from react { useEffect, useState, useRef }
 
 def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
     has projects: list = [];
     has loading: bool = True;
     has isDropdownOpen: bool = False;
     has searchQuery: str = "";
+    has dropdownRef: any = useRef(None);
+
+    useEffect(
+        lambda -> None { def handleClickOutside(event: any) -> None {
+            if dropdownRef.current and not dropdownRef.current.contains(event.target) {
+                isDropdownOpen = False;
+            }
+        } document.addEventListener("mousedown", handleClickOutside);return lambda -> None { document.removeEventListener(
+            "mousedown", handleClickOutside
+        );}; },
+        [dropdownRef]
+    );
 
     useEffect(
         lambda -> None { async def fetchProjects -> None {
@@ -110,7 +122,7 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                     >
                         Load Existing
                     </div>
-                    <div className="relative">
+                    <div className="relative" ref={dropdownRef}>
                         <div
                             className="w-full h-12 flex items-center justify-between bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900/80 rounded-lg px-4 text-zinc-300 transition-all cursor-text group"
                         >
