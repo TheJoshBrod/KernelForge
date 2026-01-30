@@ -482,7 +482,7 @@ def:pub Project -> any {
         if kernel_status == "missing" {
             source_text = "missing";
         } elif kernel_status == "error" {
-            source_text = source_text + " (error)";
+            source_text = f"{source_text} (error)";
         }
         checked = selectedOps.includes(op_name);
         benchRows = benchRows.concat(
