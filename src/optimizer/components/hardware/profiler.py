@@ -1,5 +1,5 @@
 """
-src/optimizer/GPUprofiler.py
+src/optimizer/components/hardware/profiler.py
 Uses pynvml, pycuda, and torch to analyze GPU diagnostic statistics and architecture information.  
 """
 import glob
@@ -17,6 +17,9 @@ from torch.utils.cpp_extension import load_inline
 # GPU Architecture Info
 # Kernel Profiling
 
+
+from src.optimizer.config.settings import settings
+from src.optimizer.core.types import GPUSpecs
 
 # ******************
 #  HELPER FUNCTIONS
@@ -39,14 +42,14 @@ def _to_str(x):
 # ******************
 
 
-def get_gpu_specs(device_index: int = 0):
+def get_gpu_specs(device_index: int = 0) -> GPUSpecs:
     """Retrieves GPU architecture information as context for LLM interpretation
 
     Args:
         device_index (int, optional): Chooses connected NVIDIA GPU via index. Defaults to 0.
 
     Returns:
-        dict: _description_
+        GPUSpecs: Pydantic model containing GPU specs
     """
     # -------------------------
     # NVML: Physical hardware
@@ -118,18 +121,23 @@ def get_gpu_specs(device_index: int = 0):
     # -------------------------
     # Unified output
     # -------------------------
-    gpu_spec = {
+    gpu_spec_data = {
         **nvml_info,
         **cuda_info,
         **derived,
     }
+    
+    gpu_spec = GPUSpecs(**gpu_spec_data)
+
+    # Optimization: Set the CUDA Architecture to the specific device to speed up JIT compilation
+    os.environ["TORCH_CUDA_ARCH_LIST"] = gpu_spec.compute_capability
 
     return gpu_spec
 
 
 def get_module(kernel_path: Path, baseline: bool):
     """Retrieves a module object from compiled CUDA kernel
-
+    
     Args:
         kernel_path (Path): Directory containing compiled CUDA kernel
         baseline (bool): Is this the performance of the initial correctly generated kernel in `kernels/generated/*`
@@ -266,7 +274,7 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
 
     # Batching logic to prevent OOM
     all_files = get_input_files(input_dir)
-    BATCH_SIZE = 50
+    BATCH_SIZE = settings.batch_size
     timings = []
 
     # We profile everything using one profiler context
@@ -275,7 +283,7 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
     prof = None
 
     for i in range(0, len(all_files), BATCH_SIZE):
-        batch_files = all_files[i : i + BATCH_SIZE]
+        batch_files = all_files[i: i + BATCH_SIZE]
         inputs = load_batch(batch_files)
 
         # Warmup (only for this batch)
@@ -314,7 +322,6 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
         # Cleanup VRAM
         del inputs
         torch.cuda.empty_cache()
-
 
     stats = {
         'mean_time_ms': float(np.mean(timings)),

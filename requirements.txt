@@ -3,6 +3,7 @@ torch
 numpy
 pandas
 pyarrow
+pydantic-settings
 
 # LLM providers
 google-genai
@@ -23,3 +24,6 @@ jaseci
 # GPU / system
 nvidia-ml-py
 pycuda
+
+# Testing
+pytest

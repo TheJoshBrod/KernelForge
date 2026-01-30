@@ -32,6 +32,7 @@ calls = {}
 _wrapped = set()
 ENABLE_WRAPPING = True
 
+
 def wrap_function(module, func_name):
     if not ENABLE_WRAPPING:
         return
@@ -41,7 +42,7 @@ def wrap_function(module, func_name):
     _wrapped.add(func)
 
     module_path = module.__name__
-    
+
     # Get function signature to extract parameter order and defaults
     try:
         sig = inspect.signature(func)
@@ -99,6 +100,7 @@ def wrap_function(module, func_name):
 
     setattr(module, func_name, wrapper)
 
+
 # Wrap all functions in torch.nn.functional
 for name in dir(F):
     if name.startswith("_"):
@@ -112,17 +114,20 @@ for name in dir(F):
 
 def save_entries(func_name, entries):
     base_dir = "benchmarks/profiler/individual_ops"
-    func_dir = os.path.join(base_dir, func_name.replace(".", "_").replace("/", "_"))
+    func_dir = os.path.join(
+        base_dir, func_name.replace(".", "_").replace("/", "_"))
     os.makedirs(func_dir, exist_ok=True)
-    
+
     # Count existing files to avoid overwriting
     existing_count = len(glob.glob(os.path.join(func_dir, "entry_*.pt")))
-    
+
     for idx, entry in enumerate(entries):
         if existing_count > 200:
             return
-        file_path = os.path.join(func_dir, f"entry_{existing_count + idx:06d}.pt")
+        file_path = os.path.join(
+            func_dir, f"entry_{existing_count + idx:06d}.pt")
         torch.save(entry, file_path)
+
 
 def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
     """Runs Image Classification model from HuggingFace's Transformer library to profile input and outputs. 
@@ -142,9 +147,9 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
     model = AutoModelForImageClassification.from_pretrained(model_name)
     device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
     model.to(device_str)
- 
+
     # ****************************
-    #        Run Model 
+    #        Run Model
     # ****************************
 
     print(f"Running {model_name}...")
@@ -154,14 +159,14 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
         if os.path.exists(path):
             # Open image
             image = Image.open(path)
-            
+
             # Configure inputs
             inputs = processor(images=image, return_tensors="pt")
             config = AutoConfig.from_pretrained(model_name)
             id2label = config.id2label
-            
+
             inputs = {k: v.to(device_str) for k, v in inputs.items()}
-            
+
             # Run model
             with profiler.profile(record_shapes=True, use_device=device_str) as prof:
                 with profiler.record_function("forward"):
@@ -169,13 +174,13 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
                         with torch.no_grad():
                             outputs = model(**inputs)
 
-            # Calculate Output 
+            # Calculate Output
             logits = outputs.logits
             predicted_class_id = logits.argmax(-1).item()
             label = id2label[predicted_class_id]
             print(label)
             # ****************************
-            #  Export PyTorch API In/Out 
+            #  Export PyTorch API In/Out
             # ****************************
 
             print(f"Exporting {model_name}...")
@@ -242,7 +247,8 @@ def profile_text_model(model_name: str = "bert-base-uncased"):
 
     for text in tqdm.tqdm(text_samples, desc="Text Samples"):
         # Tokenize input
-        inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=256)
+        inputs = tokenizer(text, return_tensors="pt",
+                           truncation=True, max_length=256)
         inputs = {k: v.to(device_str) for k, v in inputs.items()}
 
         # Profile model
@@ -274,7 +280,6 @@ def profile_text_model(model_name: str = "bert-base-uncased"):
     print("Done.")
 
 
-
 def main():
     image_model_names = [
         "microsoft/resnet-50",
@@ -289,6 +294,7 @@ def main():
     ]
     for model_name in text_classification_model_names:
         profile_text_model(model_name)
-    
+
+
 if __name__ == "__main__":
     main()
