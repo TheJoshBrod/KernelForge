@@ -1,5 +1,5 @@
 """
-src/optimizer/generator.py
+src/optimizer/components/llm/generator.py
 Uses LLM to generate CUDA kernels that is model-agnostic.
 """
 import re
@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Optional
 from typing import Tuple
 
-import src.optimizer.prompts as prompts
-import src.optimizer.verifier as verifier
+import src.optimizer.components.llm.prompts as prompts
+import src.optimizer.components.worker.verifier as verifier
 from src.llm_tools import GenModel
+from src.optimizer.core.types import GPUSpecs
+from src.optimizer.config.settings import settings
 
 # Global variables
 sys_prompt = prompts.get_sys_prompt()
@@ -96,31 +98,32 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
     return feedback, is_valid, error
 
 
-def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, paths: dict[str, Path], model: str = "claude-opus-4-5-20251101") -> Tuple[str, bool]:
+def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None) -> Tuple[str, bool]:
     """Generates and validates CUDA kernels 
 
     Args:
-        gpu_specs (dict): Specs of specific GPU architecture
+        gpu_specs (GPUSpecs): Specs of specific GPU architecture
         op_dir (str): Directory of previously generated CUDA kernel  
         improvement_log (list): "Chat History" of why LLM thinks it made an improvement over past attempts
         temp_dir (Path): Path of directory to compile kernel into (used later by profiler)
         io_dir (Path): Path of file that contains all input/output pairs recorded of this op
         model (str, optional): LLM that will generate kernels. Defaults to None (will use env var or default).
     """
-    model = "claude-opus-4-5-20251101"
+    if model is None:
+        model = settings.llm_model_name
 
     # Attempt initial CUDA code generation
     llm: GenModel = GenModel(sys_prompt)
     msg = prompts.generate_gpu_optimization_prompt(
-        gpu_specs, best_kernel_code, improvement_log)
+        gpu_specs.model_dump(), best_kernel_code, improvement_log)
 
     paths["attempt"] = 0
     feedback, is_valid, error = create_and_validate(llm, msg, model, paths)
     if is_valid:
         return feedback, True
     print("\t\tInitial gen failed...")
-    # On failure attempt fix 3 times before giving up
-    for i in range(3):
+    # On failure attempt fix before giving up
+    for i in range(settings.retry_limit):
         print(f"\t\t\tReattempt {i}")
         paths["attempt"] = i + 1
         _, is_valid, error = create_and_validate(llm, error, model, paths)

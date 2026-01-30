@@ -1,5 +1,5 @@
 """
-src/optimizer/prompts.py
+src/optimizer/components/llm/prompts.py
 Generates prompts for LLM systems including "sys_prompt" AND iterative refinement "gpu_optimization" prompt.
 """
 

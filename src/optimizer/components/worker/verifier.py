@@ -1,5 +1,5 @@
 """
-src/optimizer/verifier.py
+src/optimizer/components/worker/verifier.py
 Validates a generated CUDA kernel by compiling it as a PyTorch C++ extension
 and comparing its tensor output against a ground-truth tensor.
 """
@@ -14,8 +14,9 @@ import torch
 from byllm.lib import by  # type: ignore
 from byllm.lib import Model  # type: ignore
 from torch.utils.cpp_extension import load_inline
+from src.optimizer.config.settings import settings
 
-llm = Model(model_name="anthropic/claude-opus-4-5-20251101")
+llm = Model(model_name=settings.llm_model_name)
 
 
 @by(llm)
@@ -280,7 +281,7 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
     import time
     import queue
     start_time = time.time()
-    TIMEOUT = 300
+    TIMEOUT = settings.verifier_timeout_seconds
 
     while time.time() - start_time < TIMEOUT:
         if not _WORKER_PROCESS.is_alive():

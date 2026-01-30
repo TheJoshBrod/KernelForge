@@ -1,6 +1,3 @@
-"""
-Optimizes individual Ops for target GPU architecture
-"""
 import os
 import sys
 import json
@@ -10,9 +7,11 @@ import string
 import tempfile
 from pathlib import Path
 
-import src.optimizer.generator as generator
-import src.optimizer.GPUprofiler as gpu
-import src.optimizer.selector as selector
+import src.optimizer.components.llm.generator as generator
+import src.optimizer.components.hardware.profiler as gpu
+import src.optimizer.core.mcts as mcts
+from src.optimizer.core.types import KernelNode, GPUSpecs
+from src.optimizer.config.settings import settings
 
 
 def get_project_dir(gpu_name: str):
@@ -22,7 +21,7 @@ def get_project_dir(gpu_name: str):
     proj_name = ''.join(random.choices(letters, k=10))
     if len(sys.argv) >= 3:
         proj_name = sys.argv[2]
-
+    
     # Sanitize GPU name
     clean_gpu_name = gpu_name.replace(
         " ", "_").replace(":", "").replace("-", "_")
@@ -41,12 +40,12 @@ def get_project_dir(gpu_name: str):
     return proj_dir
 
 
-def save_iteration(paths: dict, parent_info: selector.kernel_node, improvement_description: str, best_kernel_code: str):
+def save_iteration(paths: dict, parent_info: KernelNode, improvement_description: str, best_kernel_code: str):
     """Profiles iteration and records performance results
 
     Args:
         paths (dict): path objects to various filepaths
-        parent_info (selector.kernel_node): 
+        parent_info (KernelNode): 
         improvement_description (str): _description_
         best_kernel_code (str): _description_
 
@@ -82,19 +81,21 @@ def save_iteration(paths: dict, parent_info: selector.kernel_node, improvement_d
             "code": str(paths["proj_dir"] / "attempts" / f"kernel_{next_id}.cu"),
             "visits": 1
         }
-        json.dump(node_val, f)
+        # Validate and dump with Pydantic
+        node_obj = KernelNode.model_validate(node_val)
+        f.write(node_obj.model_dump_json(indent=4, by_alias=True))
 
     next_id += 1
     return log_entry
 
 
-def optimize(gpu_specs: dict, paths: dict[str, Path], parent_node: selector.kernel_node):
+def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNode):
     """Optimizes target kernel
 
     Args:
-        gpu_specs (dict): GPU specs
+        gpu_specs (GPUSpecs): GPU specs
         paths (dict[str, Path]): paths to directories
-        parent_node (selector.kernel_node): node to optimize off of
+        parent_node (KernelNode): node to optimize off of
     """
 
     # Create attempts directory
@@ -107,7 +108,7 @@ def optimize(gpu_specs: dict, paths: dict[str, Path], parent_node: selector.kern
     #   Verification loop: Check if new kernel can handle expected input/output pairs, if not attempt to fix (max 3 times)
     # Step 2. Profile:
     #   Profile Kernel: Run kernel and measure inference time and memory management
-    #   Log kernel: If kernel performs better, have LLM attempt to explain what this improvement did better and give extra context (pass that to next iteration)
+    #   Log kernel: If kernel performs better, have LLM attempt to explain what this improvement did better and give extra context (max 3 times)
 
     # TODO: Add improvement log
     improvement_log = []
@@ -128,18 +129,18 @@ def optimize(gpu_specs: dict, paths: dict[str, Path], parent_node: selector.kern
                 paths, parent_node, improvement_description, str(paths["proj_dir"] / "attempts" / f"kernel_{parent_node.id}.cu"))
 
 
-def create_project(gpu_specs: dict, io_parent_dir: Path):
+def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path):
     """Creates a new optimization project for each individual operator kernel.
 
     Args:
-        gpu_specs (dict): GPU specs
+        gpu_specs (GPUSpecs): GPU specs
         io_parent_dir (Path): Path to directory containing input/output torch files
 
     Returns:
         Path: Path to project directory
     """
-    # Output directory
-    proj_dir = get_project_dir(gpu_specs["gpu_name"])
+    # Output directory (access via dot notation now)
+    proj_dir = get_project_dir(gpu_specs.gpu_name)
 
     # Directory containing initial wave of correct, but unoptimized kernels
     op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
@@ -194,9 +195,16 @@ def create_project(gpu_specs: dict, io_parent_dir: Path):
                 "code": str(proj_op_dir / "attempts" / "kernel_0.cu"),
                 "visits": 1
             }
-            node = selector.kernel_node(node_data)
-
-            save_iteration(paths, node, "Initial", str(op_dir / "kernel.cu"))
+            node = KernelNode.model_validate(node_data)
+            
+            # Save root node manually to ensure parent is -1
+            with open(paths["proj_dir"] / "nodes" / "0.json", "w") as f:
+                f.write(node.model_dump_json(indent=4, by_alias=True))
+                
+            # Copy kernel to attempts manually as well
+            (paths["proj_dir"] / "attempts").mkdir(parents=True, exist_ok=True)
+            with open(paths["proj_dir"] / "attempts" / "kernel_0.cu", "w") as f:
+                f.write((op_dir / "kernel.cu").read_text())
 
     return proj_dir
 
@@ -209,7 +217,7 @@ def main():
     if len(sys.argv) < 2:
         print("Missing input/output torch dir")
         print(
-            "`python3 -m src.optimizer.optimize_ops <io_directory> <optional_project_name>`")
+            "`python3 -m src.optimizer.pipeline <io_directory> <optional_project_name>`")
         sys.exit(1)
     io_parent_dir = Path(sys.argv[1])
 
@@ -217,9 +225,7 @@ def main():
     gpu_specs = gpu.get_gpu_specs()
 
     # Create project (or resume if exists/provided)
-    # proj_dir = create_project(gpu_specs, io_parent_dir)
-    proj_dir = Path("kernels/optimized/") / \
-        "NVIDIA_GeForce_GTX_1660_Ti_egr6dqhOEU"
+    proj_dir = create_project(gpu_specs, io_parent_dir)
 
     for op_dir_path in proj_dir.iterdir():
         if not op_dir_path.is_dir():
@@ -242,9 +248,12 @@ def main():
         }
 
         # Select parent node then optimize off of it
-        parent_node = selector.choose_optimization(paths)
+        # mcts.choose_optimization might need C constant which is default in settings now.
+        parent_node = mcts.choose_optimization(paths)
         optimize(gpu_specs, paths, parent_node)
-        selector.update_tree(paths, parent_node)
+        
+        # Pass paths to update_tree (it handles dict now)
+        mcts.update_tree(paths, parent_node)
 
 if __name__ == "__main__":
     main()
