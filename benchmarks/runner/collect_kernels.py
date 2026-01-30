@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#cSpell:disable
+# cSpell:disable
 import hashlib
 import os
 import re
@@ -33,11 +33,13 @@ def find_kernel_files(root: Path):
     for path in root.rglob("kernel.cu"):
         yield path
 
+
 def extract_launch_signature(cuda_source: str):
     """Extract the launch function signature from CUDA source."""
     match = re.search(r"(torch::Tensor\s+launch\s*\([^)]*\))", cuda_source)
     if not match:
-        raise ValueError("Could not find 'launch' function signature in generated code.")
+        raise ValueError(
+            "Could not find 'launch' function signature in generated code.")
     return match.group(1) + ";"
 
 
@@ -52,7 +54,7 @@ def compile_kernel(kernel_path: Path):
     # Read the CUDA source
     with open(kernel_path, 'r') as f:
         cuda_source = f.read()
-    
+
     # Extract launch function signature
     try:
         cpp_source = extract_launch_signature(cuda_source)
@@ -101,7 +103,7 @@ def main():
     except RuntimeError:
         # Already set
         pass
-    
+
     # Ensure PyTorch with CUDA is available
     if not torch.cuda.is_available():
         print("ERROR: CUDA not available in PyTorch")
@@ -116,7 +118,7 @@ def main():
     print(f"Found {len(kernels)} kernel.cu files.")
     print(f"PyTorch version: {torch.__version__}")
     print(f"CUDA version: {torch.version.cuda}")
-    
+
     # Determine number of workers (use all CPUs or set manually)
     num_workers = 1
     print(f"Using {num_workers} parallel workers")

@@ -3,6 +3,7 @@ import math
 from pathlib import Path
 from typing import Dict
 
+
 class kernel_node:
     def __init__(self, data: dict):
         self.id = data["id"]
@@ -24,6 +25,7 @@ class kernel_node:
         exploration = C * math.sqrt(math.log(parent_node.visits) / self.visits)
 
         return exploitation - exploration
+
 
 def choose_optimization(node_path: Path, C: float = 1.0) -> kernel_node:
     """Chooses which node to branch from on optimization tree
@@ -54,11 +56,11 @@ def choose_optimization(node_path: Path, C: float = 1.0) -> kernel_node:
         n for n in nodes.values()
         if n.parent_id == -1
     ]
-        
+
     if not roots:
         raise ValueError("No root node found")
 
-    # Find most promising child of all roots 
+    # Find most promising child of all roots
     best_leaf = None
     best_leaf_score = float("inf")
 
@@ -73,7 +75,7 @@ def choose_optimization(node_path: Path, C: float = 1.0) -> kernel_node:
             for child_id in current.children_ids:
                 if child_id not in nodes:
                     continue
-                
+
                 child = nodes[child_id]
                 score = child.uct_score(current, C)
 
@@ -84,7 +86,7 @@ def choose_optimization(node_path: Path, C: float = 1.0) -> kernel_node:
             if best_child_node is None:
                 # If all children are invalid or something went wrong, treat as leaf
                 break
-                
+
             current = best_child_node
 
         # ---- Evaluate leaf reached from this root ----
@@ -106,13 +108,13 @@ def update_tree(node_path: Path, new_node: kernel_node):
     """
     Recursively updates the tree moving upwards from the new_node.
     Updates children_ids, visits, and best_subtree_value for ancestors.
-    
+
     Args:
         node_path (Path): Directory containing node JSON files
         new_node (kernel_node): The newly added/updated node
     """
     current = new_node
-    
+
     # We need the best value from the current node to propagate up
     current_best_val = current.best_subtree_value if current.best_subtree_value is not None else current.value
 
@@ -125,23 +127,23 @@ def update_tree(node_path: Path, new_node: kernel_node):
         if not parent_file.exists():
             print(f"Warning: Parent file {parent_file} not found.")
             break
-            
+
         with open(parent_file, 'r') as f:
             data = json.load(f)
             parent = kernel_node(data)
-            
+
         # 1. Update children list
         if current.id not in parent.children_ids:
             parent.children_ids.append(current.id)
             parent.data['children'] = parent.children_ids
-            
+
         # 2. Update visits
         parent.visits += 1
         parent.data['visits'] = parent.visits
-        
+
         # 3. Update best_subtree_value
         parent_best = parent.best_subtree_value if parent.best_subtree_value is not None else parent.value
-        
+
         if current_best_val < parent_best:
             parent.best_subtree_value = current_best_val
             parent.data['best_subtree_value'] = current_best_val
@@ -155,6 +157,6 @@ def update_tree(node_path: Path, new_node: kernel_node):
         # Save updates
         with open(parent_file, 'w') as f:
             json.dump(parent.data, f, indent=4)
-            
+
         # Move up
         current = parent

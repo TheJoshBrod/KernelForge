@@ -8,8 +8,8 @@ import re
 from pathlib import Path
 
 import torch
-from byllm.lib import by # type: ignore
-from byllm.lib import Model # type: ignore
+from byllm.lib import by  # type: ignore
+from byllm.lib import Model  # type: ignore
 from torch.utils.cpp_extension import load_inline
 
 provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()

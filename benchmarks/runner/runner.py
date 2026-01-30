@@ -44,35 +44,35 @@ if (run_optimized or run_standard) and compiled_root.exists():
     for kernel_dir in compiled_root.iterdir():
         if not kernel_dir.is_dir():
             continue
-        
+
         so_files = list(kernel_dir.glob("*.so"))
         if not so_files:
             continue
-        
+
         kernel_name = kernel_dir.name
         so_file = so_files[0]
-        
+
         try:
             module_name = so_file.stem
             spec = importlib.util.spec_from_file_location(module_name, so_file)
             if spec is None or spec.loader is None:
                 print(f"✗ Could not load {kernel_name}")
                 continue
-            
+
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
-            
+
             if kernel_name.startswith("torch_nn_functional_"):
                 func_name = kernel_name.replace("torch_nn_functional_", "")
                 key = f"torch.nn.functional.{func_name}"
             else:
                 key = f"torch.nn.functional.{kernel_name}"
-            
+
             CUSTOM_KERNELS[key] = module.launch
-            
+
             print(f"✓ Loaded: {key}")
-            
+
         except Exception as e:
             print(f"✗ Failed to load {kernel_name}: {e}")
 else:
@@ -105,6 +105,7 @@ def move_to_cuda(item):
         return {k: move_to_cuda(v) for k, v in item.items()}
     return item
 
+
 def normalize_args_kwargs(args: list, kwargs: dict, params: list, defaults: dict) -> tuple[list, dict]:
     """
     Normalize args and kwargs into a complete positional argument list.
@@ -114,53 +115,54 @@ def normalize_args_kwargs(args: list, kwargs: dict, params: list, defaults: dict
 
     normalized = list(args)
     remaining_kwargs = dict(kwargs)
-    
+
     for i in range(len(normalized), len(params)):
         param_name = params[i]
-        
+
         if param_name in remaining_kwargs:
             normalized.append(remaining_kwargs.pop(param_name))
         elif param_name in defaults:
             normalized.append(defaults[param_name])
         else:
             break
-    
+
     return normalized, remaining_kwargs
+
 
 def time_kernel_execution(kernel_fn, *args, num_warmup=3):
     """
     Time kernel execution using CUDA events for precise GPU timing.
-    
+
     Args:
         kernel_fn: The kernel function to execute
         *args: Arguments to pass to the kernel
         num_warmup: Number of warmup runs (default: 3)
-    
+
     Returns:
         tuple: (result, execution_time_ms)
     """
     # Warmup runs
     for _ in range(num_warmup):
         _ = kernel_fn(*args)
-    
+
     # Synchronize before timing
     torch.cuda.synchronize()
-    
+
     # Create CUDA events
     start_event = torch.cuda.Event(enable_timing=True)
     end_event = torch.cuda.Event(enable_timing=True)
-    
+
     # Time the execution
     start_event.record()
     result = kernel_fn(*args)
     end_event.record()
-    
+
     # Wait for completion
     torch.cuda.synchronize()
-    
+
     # Get elapsed time in milliseconds
     elapsed_time = start_event.elapsed_time(end_event)
-    
+
     return result, elapsed_time
 
 
@@ -178,7 +180,7 @@ def wrap_function(module, func_name):
 
     module_path = module.__name__
     key = f"{module_path}.{func_name}"
-    
+
     # Get function signature to extract parameter order and defaults
     try:
         sig = inspect.signature(func)
@@ -201,11 +203,12 @@ def wrap_function(module, func_name):
                 CALL_STATS[key] = 0
                 TIMING_STATS[key] = []
             CALL_STATS[key] += 1
-            
+
             try:
                 # Normalize args and kwargs to positional arguments
-                normalized_args, remaining_kwargs = normalize_args_kwargs(args, kwargs, params, defaults)
-                
+                normalized_args, remaining_kwargs = normalize_args_kwargs(
+                    args, kwargs, params, defaults)
+
                 # Move tensors to CUDA AND make them contiguous
                 cuda_args = []
                 for item in normalized_args:
@@ -215,28 +218,30 @@ def wrap_function(module, func_name):
                         cuda_args.append(item)
                     else:
                         cuda_args.append(move_to_cuda(item))
-                
+
                 # Time the custom kernel execution using CUDA events
                 if run_standard or run_optimized:
                     model = CUSTOM_KERNELS[key]
                 else:
                     model = func
                 result, elapsed_time = time_kernel_execution(model, *cuda_args)
-                
+
                 # Store timing information
                 TIMING_STATS[key].append(elapsed_time)
-                
+
                 return result
-                
+
             except Exception as e:
                 # Fallback to original function if custom kernel fails
-                print(f"⚠ Custom kernel {key} failed, falling back to PyTorch: {e}")
+                print(
+                    f"⚠ Custom kernel {key} failed, falling back to PyTorch: {e}")
                 return func(*args, **kwargs)
 
         # Use original PyTorch function
         return func(*args, **kwargs)
 
     setattr(module, func_name, wrapper)
+
 
 def selective_wrap():
     """Only wrap functions that have custom implementations."""
@@ -248,7 +253,7 @@ def selective_wrap():
             if hasattr(F, func_name):
                 wrap_function(F, func_name)
                 wrapped_count += 1
-    
+
     print(f"Wrapped {wrapped_count} functions with custom kernels")
 
 
@@ -262,7 +267,7 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
     model = AutoModelForImageClassification.from_pretrained(model_name)
     device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
     model.to(device_str)
- 
+
     image_paths = glob.glob("benchmarks/data/images/*.JPEG")
     for path in image_paths[:7]:
         if os.path.exists(path):
@@ -270,9 +275,9 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
             inputs = processor(images=image, return_tensors="pt")
             config = AutoConfig.from_pretrained(model_name)
             id2label = config.id2label
-            
+
             inputs = {k: v.to(device_str) for k, v in inputs.items()}
-            
+
             with profiler.profile(record_shapes=True, use_device=device_str) as prof:
                 with profiler.record_function("forward"):
                     with torch.no_grad():
@@ -281,6 +286,7 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
             logits = outputs.logits
             predicted_class_id = logits.argmax(-1).item()
             label = id2label[predicted_class_id]
+
 
 def profile_text_model(model_name: str = "bert-base-uncased"):
     """Runs a HuggingFace text classification model."""
@@ -294,7 +300,7 @@ def profile_text_model(model_name: str = "bert-base-uncased"):
         for fpath in files:
             with open(fpath, "r", encoding="utf-8") as f:
                 text_samples.append(f.read().strip())
-    
+
     # Fallback if empty/missing
     if not text_samples:
         print("Missing text files in benchmarks/data/text/ using fallback sentences.")
@@ -309,7 +315,8 @@ def profile_text_model(model_name: str = "bert-base-uncased"):
     model.to(device_str)
 
     for text in text_samples:
-        inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=256)
+        inputs = tokenizer(text, return_tensors="pt",
+                           truncation=True, max_length=256)
         inputs = {k: v.to(device_str) for k, v in inputs.items()}
 
         with profiler.profile(record_shapes=True, use_device=device_str) as prof:
@@ -334,22 +341,24 @@ def print_kernel_stats():
     print("\n" + "="*80)
     print("CUSTOM KERNEL USAGE AND TIMING STATISTICS")
     print("="*80)
-    
+
     if CALL_STATS:
-        print(f"\n{'Kernel Name':<50} {'Calls':<8} {'Avg (ms)':<12} {'Total (ms)':<12}")
+        print(
+            f"\n{'Kernel Name':<50} {'Calls':<8} {'Avg (ms)':<12} {'Total (ms)':<12}")
         print("-" * 80)
-        
+
         for func_name in sorted(CALL_STATS.keys()):
             count = CALL_STATS[func_name]
             timings = TIMING_STATS.get(func_name, [])
-            
+
             if timings:
                 avg_time = sum(timings) / len(timings)
                 total_time = sum(timings)
-                print(f"{func_name:<50} {count:<8} {avg_time:<12.4f} {total_time:<12.4f}")
+                print(
+                    f"{func_name:<50} {count:<8} {avg_time:<12.4f} {total_time:<12.4f}")
             else:
                 print(f"{func_name:<50} {count:<8} {'N/A':<12} {'N/A':<12}")
-        
+
         # Print summary
         total_calls = sum(CALL_STATS.values())
         all_timings = [t for times in TIMING_STATS.values() for t in times]
@@ -357,10 +366,11 @@ def print_kernel_stats():
             total_gpu_time = sum(all_timings)
             print("-" * 80)
             print(f"{'TOTAL':<50} {total_calls:<8} {'':<12} {total_gpu_time:<12.4f}")
-            print(f"\nTotal GPU time (custom kernels): {total_gpu_time:.4f} ms")
+            print(
+                f"\nTotal GPU time (custom kernels): {total_gpu_time:.4f} ms")
     else:
         print("  No custom kernels were called.")
-    
+
     print("="*80 + "\n")
 
 
@@ -376,7 +386,7 @@ def main():
 
     for i in range(11):
         start = time.time()
-        
+
         image_model_names = [
             "microsoft/resnet-50",
             "microsoft/swin-base-patch4-window7-224",
@@ -390,19 +400,20 @@ def main():
         ]
         for model_name in text_classification_model_names:
             profile_text_model(model_name)
-        
+
         end = time.time()
 
         # Skip warmup iteration
         if i == 0:
             continue
         total_time += end - start
-    
-    print(f"\nTotal wall-clock time (excluding warmup): {total_time:.4f} seconds")
-    
+
+    print(
+        f"\nTotal wall-clock time (excluding warmup): {total_time:.4f} seconds")
+
     # Print detailed kernel statistics
     print_kernel_stats()
 
-    
+
 if __name__ == "__main__":
     main()

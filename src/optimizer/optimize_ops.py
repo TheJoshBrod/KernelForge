@@ -15,7 +15,6 @@ import src.optimizer.GPUprofiler as gpu
 import src.optimizer.selector as selector
 
 
-
 def get_project_dir(gpu_name: str):
 
     # Determine project name (random or user requested)
@@ -112,7 +111,7 @@ def optimize(gpu_specs: dict, paths: dict[str, Path], parent_node: selector.kern
 
     # TODO: Add improvement log
     improvement_log = []
-    
+
     with tempfile.TemporaryDirectory() as tmpdir:
         paths["tmp_dir"] = Path(tmpdir)
 
@@ -127,6 +126,7 @@ def optimize(gpu_specs: dict, paths: dict[str, Path], parent_node: selector.kern
         if is_valid:
             log_entry = save_iteration(
                 paths, parent_node, improvement_description, str(paths["proj_dir"] / "attempts" / f"kernel_{parent_node.id}.cu"))
+
 
 def create_project(gpu_specs: dict, io_parent_dir: Path):
     """Creates a new optimization project for each individual operator kernel.
@@ -143,13 +143,13 @@ def create_project(gpu_specs: dict, io_parent_dir: Path):
 
     # Directory containing initial wave of correct, but unoptimized kernels
     op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
-    
+
     # Profile each kernel in op_dirs and save results as a *.json node in their respective directories
     for op_dir in op_dirs:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             io_dir = io_parent_dir / op_dir.name
-            
+
             if not io_dir.exists():
                 print(f"{op_dir.name} has no i/o")
                 continue
@@ -159,7 +159,7 @@ def create_project(gpu_specs: dict, io_parent_dir: Path):
                 print(
                     f"Skipping {op_dir.name}: No 'success' marker found (generation failed).")
                 continue
-            
+
             # Prepare project op directory
             proj_op_dir = proj_dir / op_dir.name
             proj_op_dir.mkdir(parents=True, exist_ok=True)
@@ -168,7 +168,8 @@ def create_project(gpu_specs: dict, io_parent_dir: Path):
 
             # Skip if already initialized
             if (proj_op_dir / "nodes" / "0.json").exists():
-                print(f"{op_dir.name} already initialized, skipping baseline profile.")
+                print(
+                    f"{op_dir.name} already initialized, skipping baseline profile.")
                 continue
 
             paths = {
@@ -179,7 +180,7 @@ def create_project(gpu_specs: dict, io_parent_dir: Path):
 
             # Copy kernel to tmp_dir for profiling
             (tmp_path / "kernel.cu").write_text((op_dir / "kernel.cu").read_text())
-            
+
             # Profile kernel
             current_stats, profiler = gpu.profile_kernel(paths, baseline=True)
 
@@ -187,18 +188,17 @@ def create_project(gpu_specs: dict, io_parent_dir: Path):
             node_data = {
                 "id": 0,
                 "value": current_stats['mean_time_ms'],
-                "speedup_vs_parent": 1.0, 
-                "improvement_description": "Initial", 
-                "parent": -1, 
-                "code": str(proj_op_dir / "attempts" / "kernel_0.cu"), 
+                "speedup_vs_parent": 1.0,
+                "improvement_description": "Initial",
+                "parent": -1,
+                "code": str(proj_op_dir / "attempts" / "kernel_0.cu"),
                 "visits": 1
             }
             node = selector.kernel_node(node_data)
-            
+
             save_iteration(paths, node, "Initial", str(op_dir / "kernel.cu"))
 
     return proj_dir
-    
 
 
 def main():
@@ -215,18 +215,19 @@ def main():
 
     # Collect GPU specs first to get name
     gpu_specs = gpu.get_gpu_specs()
-    
+
     # Create project (or resume if exists/provided)
     # proj_dir = create_project(gpu_specs, io_parent_dir)
-    proj_dir = Path("kernels/optimized/") / "NVIDIA_GeForce_GTX_1660_Ti_egr6dqhOEU"
+    proj_dir = Path("kernels/optimized/") / \
+        "NVIDIA_GeForce_GTX_1660_Ti_egr6dqhOEU"
 
     for op_dir_path in proj_dir.iterdir():
         if not op_dir_path.is_dir():
             continue
-            
+
         op_name = op_dir_path.name
         print(f"Optimizing {op_name}...")
-        
+
         # Check if IO exists
         io_dir = io_parent_dir / op_name
         if not io_dir.exists():
@@ -244,6 +245,7 @@ def main():
         node_path = op_dir_path / "nodes"
         parent_node = selector.choose_optimization(node_path)
         optimize(gpu_specs, paths, parent_node)
+
 
 if __name__ == "__main__":
     main()

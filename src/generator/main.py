@@ -54,7 +54,8 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
             elif provider == "gemini":
                 cu_code = generator.gemini_generator(conversation_history)
             else:
-                raise ValueError(f"Unknown LLM provider: {provider}. Supported: anthropic, gemini")
+                raise ValueError(
+                    f"Unknown LLM provider: {provider}. Supported: anthropic, gemini")
 
             conversation_history.append(
                 {"role": "assistant", "content": cu_code})
