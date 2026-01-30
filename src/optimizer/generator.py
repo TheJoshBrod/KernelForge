@@ -28,21 +28,24 @@ def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str
 
     # Extract feedback section (tolerant to spacing)
     feedback_pattern = r'//\s*\[START FEEDBACK\](.*?)//\s*\[END FEEDBACK\]'
-    feedback_match = re.search(feedback_pattern, content, re.DOTALL | re.IGNORECASE)
-    feedback = feedback_match.group(1).strip() if feedback_match else "No feedback provided"
+    feedback_match = re.search(
+        feedback_pattern, content, re.DOTALL | re.IGNORECASE)
+    feedback = feedback_match.group(1).strip(
+    ) if feedback_match else "No feedback provided"
 
     # Extract code section (tolerant to spacing)
     # 1. Try strict tags
     code_pattern = r'//\s*\[START kernel\.cu\](.*?)//\s*\[END kernel\.cu\]'
     code_match = re.search(code_pattern, content, re.DOTALL | re.IGNORECASE)
-    
+
     if code_match:
         code = code_match.group(1).strip()
     else:
         # 2. Markdown fallback
         # This handles ```cpp\n ... ``` or ```cuda\n ... ```
         fallback_pattern = r"```(?:C\+\+|cpp|cuda|c)?\s*\n(.*?)```"
-        fallback_match = re.search(fallback_pattern, content, re.DOTALL | re.IGNORECASE)
+        fallback_match = re.search(
+            fallback_pattern, content, re.DOTALL | re.IGNORECASE)
         code = fallback_match.group(1).strip() if fallback_match else None
 
     return feedback, code
@@ -77,13 +80,13 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
         if proj_dir:
             dump_dir = proj_dir / "garbage_dump"
             dump_dir.mkdir(parents=True, exist_ok=True)
-            
+
             iteration = paths.get("iteration", "unknown")
             attempt = paths.get("attempt", "unknown")
-            
+
             filename = f"kernel_iter{iteration}_attempt{attempt}.cu"
             dump_path = dump_dir / filename
-            
+
             try:
                 dump_path.write_text(cu_code)
                 print(f"\t\t- Saved failed kernel to: {dump_path}")
@@ -110,7 +113,7 @@ def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, path
     llm: GenModel = GenModel(sys_prompt)
     msg = prompts.generate_gpu_optimization_prompt(
         gpu_specs, best_kernel_code, improvement_log)
-    
+
     paths["attempt"] = 0
     feedback, is_valid, error = create_and_validate(llm, msg, model, paths)
     if is_valid:

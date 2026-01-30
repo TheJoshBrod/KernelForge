@@ -124,6 +124,9 @@ def get_gpu_specs(device_index: int = 0):
         **derived,
     }
 
+    # Optimization: Set the CUDA Architecture to the specific device to speed up JIT compilation
+    os.environ["TORCH_CUDA_ARCH_LIST"] = gpu_spec["compute_capability"]
+
     return gpu_spec
 
 
@@ -275,7 +278,7 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
     prof = None
 
     for i in range(0, len(all_files), BATCH_SIZE):
-        batch_files = all_files[i : i + BATCH_SIZE]
+        batch_files = all_files[i: i + BATCH_SIZE]
         inputs = load_batch(batch_files)
 
         # Warmup (only for this batch)
@@ -314,7 +317,6 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
         # Cleanup VRAM
         del inputs
         torch.cuda.empty_cache()
-
 
     stats = {
         'mean_time_ms': float(np.mean(timings)),

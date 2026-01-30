@@ -1,15 +1,19 @@
 """
 Optimizes individual Ops for target GPU architecture
 """
+import os
+import sys
 import json
+import math
 import random
 import string
-import sys
 import tempfile
 from pathlib import Path
 
 import src.optimizer.generator as generator
 import src.optimizer.GPUprofiler as gpu
+import src.optimizer.selector as selector
+
 
 
 def get_project_dir(gpu_name: str):
@@ -19,44 +23,84 @@ def get_project_dir(gpu_name: str):
     proj_name = ''.join(random.choices(letters, k=10))
     if len(sys.argv) >= 3:
         proj_name = sys.argv[2]
-    
+
     # Sanitize GPU name
-    clean_gpu_name = gpu_name.replace(" ", "_").replace(":", "").replace("-", "_")
-    
+    clean_gpu_name = gpu_name.replace(
+        " ", "_").replace(":", "").replace("-", "_")
+
     full_name = f"{clean_gpu_name}_{proj_name}"
 
     print(f"Beginning optimizing on project {full_name}...")
 
     proj_dir = Path(f"kernels/optimized/{full_name}")
     try:
-        proj_dir.mkdir(parents=True, exist_ok=False)
+        proj_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
         print(
-            f"Error: Project {full_name} name already exists, please pick a new name")
+            f"Error: Project {full_name} creation failed: {e}")
 
     return proj_dir
 
 
-def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
+def save_iteration(paths: dict, parent_info: selector.kernel_node, improvement_description: str, best_kernel_code: str):
+    """Profiles iteration and records performance results
+
+    Args:
+        paths (dict): path objects to various filepaths
+        parent_info (selector.kernel_node): 
+        improvement_description (str): _description_
+        best_kernel_code (str): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    next_id = len(list(paths["proj_dir"].glob("nodes/*.json")))
+
+    # Export attempt's code
+    current_kernel_code = (paths["tmp_dir"] / "kernel.cu").read_text()
+    with open(paths["proj_dir"] / "attempts" / f"kernel_{next_id}.cu", "w") as f:
+        f.write(current_kernel_code)
+
+    # Log the attempt with results
+    print("\tBeginning Profiler...")
+    current_stats, profiler = gpu.profile_kernel(paths)
+    print("\tFinished Profiler.")
+    log_entry = {
+        "iteration": next_id,
+        "attempted": improvement_description,
+        "results": current_stats,
+        "speedup_vs_parent": parent_info.value / current_stats['mean_time_ms'],
+    }
+
+    # Export attempt as json
+    with open(paths["proj_dir"] / "nodes" / f"{next_id}.json", "w") as f:
+        node_val = {
+            "id": next_id,
+            "value": current_stats['mean_time_ms'],
+            "speedup_vs_parent": log_entry['speedup_vs_parent'],
+            "improvement_description": improvement_description,
+            "parent": parent_info.id,
+            "code": str(paths["proj_dir"] / "attempts" / f"kernel_{next_id}.cu"),
+            "visits": 1
+        }
+        json.dump(node_val, f)
+
+    next_id += 1
+    return log_entry
+
+
+def optimize(gpu_specs: dict, paths: dict[str, Path], parent_node: selector.kernel_node):
     """Optimizes target kernel
 
     Args:
-        op_dir (str): Directory of op
+        gpu_specs (dict): GPU specs
+        paths (dict[str, Path]): paths to directories
+        parent_node (selector.kernel_node): node to optimize off of
     """
 
-    # Baseline measure performance
-    print("\nMeasuring baseline...")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        paths["tmp_dir"] = Path(tmpdir)
-        import shutil
-        shutil.copy(paths["op_dir"] / "kernel.cu", Path(tmpdir) / "kernel.cu")
-        baseline_stats, profiler = gpu.profile_kernel(paths, baseline=True)
-        best_stats = baseline_stats.copy()
-        best_kernel_code = (paths["op_dir"] / "kernel.cu").read_text()
-    print("Finished baseline.")
-    
     # Create attempts directory
     (paths["proj_dir"] / "attempts").mkdir(parents=True, exist_ok=True)
+    (paths["proj_dir"] / "nodes").mkdir(parents=True, exist_ok=True)
 
     # Iterative refinement loop
     # Step 1. Generate:
@@ -66,77 +110,100 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
     #   Profile Kernel: Run kernel and measure inference time and memory management
     #   Log kernel: If kernel performs better, have LLM attempt to explain what this improvement did better and give extra context (pass that to next iteration)
 
+    # TODO: Add improvement log
     improvement_log = []
-    for iteration in range(10):
-        print(f"\nIteration {iteration}:")
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        paths["tmp_dir"] = Path(tmpdir)
+
+        # Kernel Generation
+        print("\tBeginning generation...")
+        improvement_description, is_valid = generator.generate(
+            parent_node.code, gpu_specs, improvement_log, paths)
+        print("\tFinished generation.")
+        print(f"\t\t- Status: {is_valid}")
+
+        # If its valid, log it
+        if is_valid:
+            log_entry = save_iteration(
+                paths, parent_node, improvement_description, str(paths["proj_dir"] / "attempts" / f"kernel_{parent_node.id}.cu"))
+
+def create_project(gpu_specs: dict, io_parent_dir: Path):
+    """Creates a new optimization project for each individual operator kernel.
+
+    Args:
+        gpu_specs (dict): GPU specs
+        io_parent_dir (Path): Path to directory containing input/output torch files
+
+    Returns:
+        Path: Path to project directory
+    """
+    # Output directory
+    proj_dir = get_project_dir(gpu_specs["gpu_name"])
+
+    # Directory containing initial wave of correct, but unoptimized kernels
+    op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
+    
+    # Profile each kernel in op_dirs and save results as a *.json node in their respective directories
+    for op_dir in op_dirs:
         with tempfile.TemporaryDirectory() as tmpdir:
-            paths["tmp_dir"] = Path(tmpdir)
-            paths["iteration"] = iteration
+            tmp_path = Path(tmpdir)
+            io_dir = io_parent_dir / op_dir.name
+            
+            if not io_dir.exists():
+                print(f"{op_dir.name} has no i/o")
+                continue
 
-            print("\tBeginning generation...")
-            improvement_description, is_valid = generator.generate(
-                best_kernel_code, gpu_specs, improvement_log, paths)
-            print("\tFinished generation.")
-            print(f"\t\t- Desc: {improvement_description}")
-            print(f"\t\t- Status: {is_valid}")
+            # Check if the kernel has been previously generated
+            if not (op_dir / "success").exists():
+                print(
+                    f"Skipping {op_dir.name}: No 'success' marker found (generation failed).")
+                continue
+            
+            # Prepare project op directory
+            proj_op_dir = proj_dir / op_dir.name
+            proj_op_dir.mkdir(parents=True, exist_ok=True)
+            (proj_op_dir / "attempts").mkdir(parents=True, exist_ok=True)
+            (proj_op_dir / "nodes").mkdir(parents=True, exist_ok=True)
 
-            if is_valid:
-                # Save this attempt
-                current_kernel_code = (paths["tmp_dir"] / "kernel.cu").read_text()
-                with open(paths["proj_dir"] / "attempts" / f"kernel_{iteration}.cu", "w") as f:
-                    f.write(current_kernel_code)
+            # Skip if already initialized
+            if (proj_op_dir / "nodes" / "0.json").exists():
+                print(f"{op_dir.name} already initialized, skipping baseline profile.")
+                continue
 
-                # Log the attempt with results
-                print("\tBeginning Profiler...")
-                current_stats, profiler = gpu.profile_kernel(paths)
-                print("\tFinished Profiler.")
-                log_entry = {
-                    "iteration": iteration,
-                    "attempted": improvement_description,
-                    "results": current_stats,
-                    "speedup_vs_baseline": baseline_stats['mean_time_ms'] / current_stats['mean_time_ms'],
-                    "speedup_vs_best": best_stats['mean_time_ms'] / current_stats['mean_time_ms']
-                }
-                print(f"\t\t- stats: {log_entry['speedup_vs_best']}")
-                if current_stats['mean_time_ms'] < best_stats['mean_time_ms']:
-                    log_entry["is_best"] = True
-                    best_stats = current_stats.copy()
-                    best_kernel_code = current_kernel_code
-                else:
-                    log_entry["is_best"] = False
-                # Parse feedback to extract rationale
-                optimization_text = "See attempted"
-                rationale_text = "See attempted"
-                try:
-                    parts = improvement_description.split("RATIONALE:")
-                    if len(parts) > 1:
-                        optimization_part = parts[0].replace("OPTIMIZATION:", "").strip()
-                        rationale_part = parts[1].strip()
-                        log_entry["optimization"] = optimization_part
-                        log_entry["rationale"] = rationale_part
-                except:
-                    pass
+            paths = {
+                "tmp_dir": tmp_path,
+                "io_dir": io_dir,
+                "proj_dir": proj_op_dir
+            }
 
-                improvement_log.append(log_entry)
+            # Copy kernel to tmp_dir for profiling
+            (tmp_path / "kernel.cu").write_text((op_dir / "kernel.cu").read_text())
+            
+            # Profile kernel
+            current_stats, profiler = gpu.profile_kernel(paths, baseline=True)
 
-    with open(paths["proj_dir"] / "improvement_log.json", 'w') as f:
-        json.dump(improvement_log, f, indent=2)
+            # Log kernel
+            node_data = {
+                "id": 0,
+                "value": current_stats['mean_time_ms'],
+                "speedup_vs_parent": 1.0, 
+                "improvement_description": "Initial", 
+                "parent": -1, 
+                "code": str(proj_op_dir / "attempts" / "kernel_0.cu"), 
+                "visits": 1
+            }
+            node = selector.kernel_node(node_data)
+            
+            save_iteration(paths, node, "Initial", str(op_dir / "kernel.cu"))
 
-    # Save the final best kernel
-    with open(paths["proj_dir"] / "kernel.cu", "w") as f:
-        f.write(best_kernel_code)
-
-    print(f"\n{'='*60}")
-    print(f"Optimization Complete!")
-    print(f"{'='*60}")
-    print(f"Baseline: {baseline_stats['mean_time_ms']:.3f} ms")
-    print(f"Best:     {best_stats['mean_time_ms']:.3f} ms")
-    print(
-        f"Speedup:  {baseline_stats['mean_time_ms'] / best_stats['mean_time_ms']:.2f}x")
+    return proj_dir
+    
 
 
 def main():
     """Calls optimization pipeline on each kernel."""
+    global next_id
 
     # Directory of Torch files containing formatted input/output pairs (for specific model preferably)
     if len(sys.argv) < 2:
@@ -148,40 +215,35 @@ def main():
 
     # Collect GPU specs first to get name
     gpu_specs = gpu.get_gpu_specs()
+    
+    # Create project (or resume if exists/provided)
+    # proj_dir = create_project(gpu_specs, io_parent_dir)
+    proj_dir = Path("kernels/optimized/") / "NVIDIA_GeForce_GTX_1660_Ti_egr6dqhOEU"
 
-    # Optimization: Set the CUDA Architecture to the specific device to speed up JIT compilation
-    import os
-    os.environ["TORCH_CUDA_ARCH_LIST"] = gpu_specs["compute_capability"]
-
-    # Output directory
-    proj_dir = get_project_dir(gpu_specs["gpu_name"])
-
-    # Directory containing initial wave of correct, but unoptimized kernels
-    op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
-    # Prioritize attention as requested
-    #op_dirs.sort(key=lambda p: (0 if "torch_nn_functional_relu" in p.name else 1, p.name))
-
-    # For each kernel, run optimization loop
-    for op_dir in op_dirs:
-
-        io_dir = io_parent_dir / op_dir.name
+    for op_dir_path in proj_dir.iterdir():
+        if not op_dir_path.is_dir():
+            continue
+            
+        op_name = op_dir_path.name
+        print(f"Optimizing {op_name}...")
+        
+        # Check if IO exists
+        io_dir = io_parent_dir / op_name
         if not io_dir.exists():
-            print(f"{op_dir.name} has no i/o")
+            print(f"  Skipping {op_name}: IO directory not found")
             continue
 
-        # Check if the kernel was successfully generated
-        if not (op_dir / "success").exists():
-            print(f"Skipping {op_dir.name}: No 'success' marker found (generation failed).")
-            continue
-        proj_op_dir = proj_dir / op_dir.name
-        proj_op_dir.mkdir(parents=True, exist_ok=False)
+        # Paths for optimization
         paths = {
-            "proj_dir": proj_op_dir,
+            "proj_dir": op_dir_path,
             "io_dir": io_dir,
-            "op_dir": op_dir
+            "op_dir": Path("kernels/generated/individual_op_kernels") / op_name,
         }
-        optimization_loop(gpu_specs, paths)
 
+        # Select parent node then optimize off of it
+        node_path = op_dir_path / "nodes"
+        parent_node = selector.choose_optimization(node_path)
+        optimize(gpu_specs, paths, parent_node)
 
 if __name__ == "__main__":
     main()
