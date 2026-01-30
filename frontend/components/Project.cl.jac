@@ -50,6 +50,17 @@ def:pub Project(name: str, onNavigate: any) -> any {
         [name]
     );
 
+    useEffect(
+        lambda -> None { def handleKeyDown(event: any) -> None {
+            if event.key == "Escape" {
+                onNavigate("/");
+            }
+        } document.addEventListener("keydown", handleKeyDown);return lambda -> None { document.removeEventListener(
+            "keydown", handleKeyDown
+        );}; },
+        []
+    );
+
     return
         <div className="flex min-h-screen bg-zinc-950 text-zinc-100 font-sans">
             <div className="absolute top-2 right-6">
@@ -113,7 +124,7 @@ def:pub Project(name: str, onNavigate: any) -> any {
                             className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm focus:outline-none focus:border-zinc-700 transition-colors"
                         />
                         <button
-                            className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded text-sm font-medium transition-colors"
+                            className="bg-zinc-800 hover:bg-zinc-700 hover:text-white px-4 py-2 rounded text-sm font-medium transition-colors"
                         >
                             Filter
                         </button>
@@ -231,7 +242,7 @@ def:pub Project(name: str, onNavigate: any) -> any {
                                     {[
                                         <tr
                                             key={row.operator}
-                                            className="hover:bg-zinc-800/50 transition-colors"
+                                            className="hover:bg-zinc-800 transition-colors"
                                         >
                                             <td
                                                 className="px-6 py-3 font-mono text-zinc-300"

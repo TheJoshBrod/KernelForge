@@ -78,8 +78,6 @@ class Model(nn.Module):
             validationSetPath = "";
             if formData["validationSet"] and formData["validationSet"].length > 0 {
                 firstFile = formData["validationSet"][0];
-                # webkitRelativePath usually looks like "Folder/File.txt"
-                # webkitRelativePath usually looks like "Folder/File.txt"
                 parts = firstFile.webkitRelativePath.split("/");
                 validationSetPath = parts[0] if parts.length > 0 else "";
             }
@@ -278,7 +276,7 @@ class Model(nn.Module):
                                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                             />
                             <div
-                                className="w-full h-12 bg-zinc-900 border border-zinc-800 group-hover:border-zinc-700 rounded-lg px-4 flex items-center text-zinc-400 transition-all"
+                                className="w-full h-12 bg-zinc-900 border border-zinc-800 group-hover:border-zinc-600 rounded-lg px-4 flex items-center text-zinc-400 transition-all"
                             >
                                 <svg
                                     xmlns="http://www.w3.org/2000/svg"
