@@ -182,10 +182,17 @@ Your optimized output will be saved to a kernel.cu follow and must follow ALL ru
 
 def generate_gpu_optimization_prompt(gpu_info: dict,
                                      kernel_code: str,
-                                     improvement_log: list[str]) -> str:
+                                     improvement_log: list[str],
+                                     ancestor_codes: list[tuple[int, str]] = None) -> str:
     """
     Generates a structured prompt for an LLM to optimize a CUDA kernel 
     based on specific GPU hardware architecture and constraints.
+    
+    Args:
+        gpu_info: GPU specifications dictionary
+        kernel_code: Current kernel code to optimize
+        improvement_log: List of optimization attempt records
+        ancestor_codes: List of (iteration_id, code_string) tuples from ancestor nodes
     """
 
     # 1. Determine Architecture Family & Specific Advice
@@ -237,10 +244,21 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
     history_blocks = []
     best_speedup = 0.0
     best_iter = 0
+    best_runtime = float('inf')  # Track actual best runtime (lower is better)
 
     if not improvement_log:
         history_section = "> *No previous attempts recorded. Starting from baseline.*"
     else:
+        # First pass: find the actual best iteration (lowest runtime)
+        for entry in improvement_log:
+            results = entry.get('results', {})
+            mean_time = results.get('mean_time_ms', float('inf'))
+            if mean_time < best_runtime:
+                best_runtime = mean_time
+                best_iter = entry.get('iteration', 0)
+                best_speedup = entry.get('speedup_vs_baseline', 1.0)
+        
+        # Second pass: format history blocks with correct labels
         for entry in improvement_log:
             iter_num = entry.get('iteration', '?')
             strategy_text = entry.get('attempted', 'No description provided.')
@@ -250,15 +268,13 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
             mean_time = results.get('mean_time_ms', 0.0)
             speedup_base = entry.get('speedup_vs_baseline', 1.0)
 
-            # Determine Outcome Icon
-            if speedup_base > best_speedup:
-                best_speedup = speedup_base
-                best_iter = iter_num
-                outcome_header = f"**ITERATION {iter_num}: NEW BEST ({speedup_base:.2f}x Speedup)**"
+            # Determine Outcome Icon based on comparison to best runtime
+            if iter_num == best_iter:
+                outcome_header = f"**ITERATION {iter_num}: CURRENT BEST ({speedup_base:.2f}x vs Baseline)**"
             elif speedup_base < 1.0:
-                outcome_header = f"**ITERATION {iter_num}: REGRESSION ({speedup_base:.2f}x Speedup)**"
+                outcome_header = f"**ITERATION {iter_num}: REGRESSION ({speedup_base:.2f}x vs Baseline)**"
             else:
-                outcome_header = f"**ITERATION {iter_num}: IMPROVEMENT ({speedup_base:.2f}x Speedup)**"
+                outcome_header = f"**ITERATION {iter_num}: IMPROVEMENT ({speedup_base:.2f}x vs Baseline)**"
 
             # Clean up the multi-line strategy text for indentation
             # We wrap it in a blockquote for visual distinction
@@ -267,6 +283,7 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
             block = f"""
 {outcome_header}
 - **Runtime:** {mean_time:.4f} ms
+- **Speedup vs Baseline:** {speedup_base:.2f}x
 - **Strategy & Rationale:**
 > {formatted_strategy}
 ---"""
@@ -274,6 +291,17 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
         history_section = "\n".join(history_blocks)
 
     # 4. Construct the Final Prompt
+    
+    # Format ancestor code evolution section if available
+    ancestor_section = ""
+    if ancestor_codes and len(ancestor_codes) > 0:
+        ancestor_section = "**Code Evolution (Previous Iterations)**\n"
+        ancestor_section += "Below are the kernel versions from previous iterations. Use these to understand how the code has evolved:\n\n"
+        for iter_id, code in ancestor_codes:
+            # Truncate very long codes to avoid token limits
+            display_code = code if len(code) < 8000 else code[:8000] + "\n// ... (truncated for brevity)"
+            ancestor_section += f"<details><summary>**Iteration {iter_id} Kernel**</summary>\n\n```cpp\n{display_code}\n```\n</details>\n\n"
+    
     prompt = f"""
 ### Task: Optimize CUDA Kernel for {gpu_info.get('gpu_name', 'Specific GPU')}
 
@@ -288,17 +316,22 @@ Below is the log of previous optimization attempts. Use this to determine what w
 
 {history_section}
 
-**Current Best Result:** Iteration {best_iter} with {best_speedup:.2f}x speedup.
+**Current Best Result:** Iteration {best_iter} with {best_speedup:.2f}x speedup ({best_runtime:.4f} ms).
 
-**Source Code of best optimization**
+{ancestor_section}
+
+**Source Code to Optimize (Selected Node)**
+The algorithm has selected this node for expansion. Your task is to create a NEW optimization starting from this code.
+This may or may not be the current best - the algorithm explores different branches to find better solutions.
 ```cpp
 {kernel_code}
 ```
 
 **Instructions for the Output**
-1. **Review the History:** Look at the table above.
+1. **Review the History:** Look at the log above.
    - Identify which tools/techniques (e.g., shared memory, warp shuffles, unrolling) yielded the "BEST" results.
-   - **DO NOT** repeat strategies marked as "Regression".
+   - **DO NOT** repeat strategies marked as "Regression" - they made performance WORSE.
+   - Focus on what made iteration {best_iter} successful.
    
 2. **Architecture Strategy:** - You are optimizing for **{arch_name}**.
    - If previous attempts to use specific features (like aggressive unrolling) failed, try a different orthogonal approach (like memory vectorization).

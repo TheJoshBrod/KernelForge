@@ -143,3 +143,74 @@ def update_tree(paths: dict, new_node: KernelNode):
 
         # Move up
         current = parent
+
+
+def collect_ancestry(paths: dict, leaf_node: KernelNode, code_depth: int = 3) -> tuple[list[dict], list[tuple[int, str]]]:
+    """
+    Traverse from leaf to root, collecting:
+    1. All improvement descriptions (full path to root)
+    2. Last N kernel code snippets with their iteration IDs
+    
+    Args:
+        paths: Project paths dict
+        leaf_node: Node to start from
+        code_depth: How many ancestor kernel codes to include
+        
+    Returns:
+        (improvement_log, ancestor_codes)
+        - improvement_log: List of {iteration, attempted, results, speedup_vs_baseline}
+        - ancestor_codes: List of (iteration_id, code_string) tuples (most recent first, then reversed)
+    """
+    node_path: Path = paths["proj_dir"] / "nodes"
+    
+    # Load baseline (node 0) to calculate true speedup vs baseline
+    baseline_value = None
+    baseline_file = node_path / "0.json"
+    if baseline_file.exists():
+        with open(baseline_file, 'r') as f:
+            baseline_node = KernelNode.model_validate(json.load(f))
+            baseline_value = baseline_node.value  # baseline runtime in ms
+    
+    improvement_log = []
+    ancestor_codes = []  # Now stores (iteration_id, code) tuples
+    current = leaf_node
+    
+    while current is not None:
+        # Collect improvement description for ALL ancestors (except baseline)
+        if current.improvement_description and current.improvement_description != "Initial":
+            # Calculate TRUE speedup vs baseline (baseline_time / current_time)
+            if baseline_value and current.value and current.value > 0:
+                speedup_vs_baseline = baseline_value / current.value
+            else:
+                speedup_vs_baseline = 1.0
+            
+            improvement_log.append({
+                "iteration": current.id,
+                "attempted": current.improvement_description,
+                "results": {"mean_time_ms": current.value},
+                "speedup_vs_baseline": speedup_vs_baseline
+            })
+        
+        # Collect kernel code for only N ancestors (with iteration ID)
+        if len(ancestor_codes) < code_depth and current.code:
+            code_path = Path(current.code)
+            if code_path.exists():
+                ancestor_codes.append((current.id, code_path.read_text()))
+        
+        # Move to parent
+        if current.parent_id == -1 or current.parent_id is None:
+            break
+            
+        parent_file = node_path / f"{current.parent_id}.json"
+        if parent_file.exists():
+            with open(parent_file, 'r') as f:
+                current = KernelNode.model_validate(json.load(f))
+        else:
+            break
+    
+    # Reverse both so oldest is first (matches iteration order)
+    improvement_log.reverse()
+    ancestor_codes.reverse()
+    
+    return improvement_log, ancestor_codes
+
