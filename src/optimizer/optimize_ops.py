@@ -242,10 +242,9 @@ def main():
         }
 
         # Select parent node then optimize off of it
-        node_path = op_dir_path / "nodes"
-        parent_node = selector.choose_optimization(node_path)
+        parent_node = selector.choose_optimization(paths)
         optimize(gpu_specs, paths, parent_node)
-
+        selector.update_tree(paths, parent_node)
 
 if __name__ == "__main__":
     main()

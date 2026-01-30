@@ -27,16 +27,17 @@ class kernel_node:
         return exploitation - exploration
 
 
-def choose_optimization(node_path: Path, C: float = 1.0) -> kernel_node:
+def choose_optimization(paths: dict, C: float = 1.0) -> kernel_node:
     """Chooses which node to branch from on optimization tree
 
     Args:
-        node_path (Path): Directory containing node JSON files
+        paths (dict): Dictionary containing paths to project files
         C (float): UCT exploration constant
 
     Returns:
         kernel_node: node to expand
     """
+    node_path: Path = paths["proj_dir"] / "nodes"
 
     # ---- Load all nodes ----
     nodes: Dict[int, kernel_node] = {}
