@@ -1,28 +1,30 @@
 """Settings Page Component"""
 
-import from react { useState, useEffect }
-import from ..contexts.ConfigContext { useConfig }
+import from react { useEffect }
+import from "react-router-dom" { useNavigate }
+import from .ConfigContext { useConfig }
 
-def:pub Settings(onNavigate: any) -> any {
+def:pub Settings -> any {
+    navigate = useNavigate();
     config_ctx = useConfig();
     config = config_ctx.config;
     setConfig = config_ctx.setConfig;
     saveConfig = config_ctx.saveConfig;
     loading = config_ctx.loading;
 
-    saving_state = useState(False);
-    saving = saving_state[0];
-    setSaving = saving_state[1];
+    has saving: bool = False;
+
+    def handleKeyDown(event: any) -> None {
+        if event.key == "Escape" {
+            navigate("/");
+        }
+    }
 
     useEffect(
-        lambda -> None { def handleKeyDown(event: any) -> None {
-            if event.key == "Escape" {
-                onNavigate("/");
-            }
-        } window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
+        lambda -> None { window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
             "keydown", handleKeyDown
         );}; },
-        [onNavigate]
+        []
     );
 
     def handleChange(field: str, value: str) -> None {
@@ -35,14 +37,14 @@ def:pub Settings(onNavigate: any) -> any {
         setConfig({"llm_info": new_llm_info});
     }
     async def handleSave -> None {
-        setSaving(True);
+        saving = True;
         await saveConfig(config);
-        setSaving(False);
-        onNavigate("/");
+        saving = False;
+        navigate("/");
     }
 
     def handleReturn -> None {
-        onNavigate("/");
+        navigate("/");
     }
 
     if loading {
@@ -57,6 +59,11 @@ def:pub Settings(onNavigate: any) -> any {
     }
 
     llm_info = config["llm_info"];
+    providers = config["providers"] if "providers" in config else [];
+    providerOptions = [];
+    for p in providers {
+        providerOptions = providerOptions.concat([<option key={p} value={p}></option>]);
+    }
 
     return
         <main
@@ -81,40 +88,19 @@ def:pub Settings(onNavigate: any) -> any {
                             Model Provider
                         </label>
                         <div className="relative">
-                            <select
+                            <input
+                                type="text"
+                                list="provider-list"
                                 value={llm_info["provider"]}
                                 onChange={lambda e: any  -> None { handleChange(
                                     "provider", e.target.value
                                 );}}
-                                className="w-full h-12 appearance-none bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-lg px-4 text-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all cursor-pointer"
-                            >
-                                <option value="anthropic">
-                                    Anthropic
-                                </option>
-                                <option value="openai">
-                                    OpenAI
-                                </option>
-                                <option value="gemini">
-                                    Gemini
-                                </option>
-                            </select>
-                            <div
-                                className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500"
-                            >
-                                <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    width="16"
-                                    height="16"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                >
-                                    <path d="m6 9 6 6 6-6" />
-                                </svg>
-                            </div>
+                                placeholder="openai, anthropic, gemini, ..."
+                                className="w-full h-12 appearance-none bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-lg px-4 text-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                            />
+                            <datalist id="provider-list">
+                                {providerOptions}
+                            </datalist>
                         </div>
                     </div>
                     <div className="space-y-2">

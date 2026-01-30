@@ -12,6 +12,7 @@ from pathlib import Path
 from src.config import apply_llm_config
 import src.optimizer.generator as generator
 import src.optimizer.GPUprofiler as gpu
+from src.progress import update_job_progress, wait_if_paused, check_cancelled
 
 apply_llm_config()
 
@@ -70,6 +71,10 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
 
     improvement_log = []
     for iteration in range(10):
+        if not wait_if_paused():
+            return
+        if check_cancelled():
+            return
         print(f"\nIteration {iteration}:")
         with tempfile.TemporaryDirectory() as tmpdir:
             paths["tmp_dir"] = Path(tmpdir)
@@ -169,9 +174,8 @@ def main():
     # Prioritize attention as requested
     #op_dirs.sort(key=lambda p: (0 if "torch_nn_functional_relu" in p.name else 1, p.name))
 
-    # For each kernel, run optimization loop
+    targets: list[tuple[Path, Path]] = []
     for op_dir in op_dirs:
-
         io_dir = io_parent_dir / op_dir.name
         if not io_dir.exists():
             print(f"{op_dir.name} has no i/o")
@@ -181,6 +185,20 @@ def main():
         if not (op_dir / "success").exists():
             print(f"Skipping {op_dir.name}: No 'success' marker found (generation failed).")
             continue
+        targets.append((op_dir, io_dir))
+
+    total_ops = len(targets)
+    update_job_progress(0, total_ops, "Starting optimization")
+
+    completed = 0
+    # For each kernel, run optimization loop
+    for op_dir, io_dir in targets:
+        if not wait_if_paused():
+            print("Optimization cancelled.")
+            return
+        if check_cancelled():
+            print("Optimization cancelled.")
+            return
         proj_op_dir = proj_dir / op_dir.name
         proj_op_dir.mkdir(parents=True, exist_ok=False)
         paths = {
@@ -189,6 +207,8 @@ def main():
             "op_dir": op_dir
         }
         optimization_loop(gpu_specs, paths)
+        completed += 1
+        update_job_progress(completed, total_ops, op_dir.name)
 
 
 if __name__ == "__main__":

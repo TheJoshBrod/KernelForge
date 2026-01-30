@@ -57,11 +57,15 @@ def main() -> int:
 
     try:
         with log_path.open("w", encoding="utf-8") as log_file:
+            env = os.environ.copy()
+            env["CGINS_STATE_PATH"] = str(state_path)
+            env["CGINS_JOB_KEY"] = str(args.job_key)
             proc = subprocess.Popen(
                 cmd,
                 cwd=args.cwd,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
+                env=env,
             )
             return_code = proc.wait()
     except Exception as exc:
@@ -77,6 +81,12 @@ def main() -> int:
         return 1
 
     status = "success" if return_code == 0 else "error"
+    try:
+        job_state = _load_state(state_path).get(args.job_key, {})
+        if str(job_state.get("control", "")).lower() == "cancelled":
+            status = "cancelled"
+    except Exception:
+        pass
     _update_state(
         state_path,
         args.job_key,

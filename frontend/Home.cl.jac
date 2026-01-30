@@ -1,39 +1,73 @@
 """Home Page Component"""
 
-import from react { useEffect, useState }
+import from react { useEffect }
+import from "@jac/runtime" { jacSpawn }
+import from "react-router-dom" { useNavigate }
 
-def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
+def:pub Home -> any {
+    navigate = useNavigate();
     has projects: list = [],
         loading: bool = True;
 
-    useEffect(
-        lambda -> None { async def fetchProjects -> None {
-            try {
-                if getProjectsWalker {
-                    data = await getProjectsWalker();
-                    if data and data["projects"] {
-                        projects = data["projects"];
-                    } else {
-                        projects = [];
-                    }
-                }
-            } except Exception as e {
-                console.error("Failed to fetch projects", e);
-            } finally {
-                loading = False;
+    async def fetchProjects -> None {
+        try {
+            resp = await jacSpawn("GetProjects", "", {});
+            data = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else None;
+            if data and data["projects"] {
+                projects = data["projects"];
+            } else {
+                projects = [];
             }
-        } fetchProjects();},
-        []
-    );
+        } except Exception as e {
+            console.error("Failed to fetch projects", e);
+        } finally {
+            loading = False;
+        }
+    }
+
+    useEffect(lambda -> None { fetchProjects();}, []);
 
     def handleProjectSelect(e: any) -> None {
         projectId = e.target.value;
         if projectId {
-            onNavigate("/project/" + projectId);
+            navigate("/project/" + projectId);
         }
     }
 
-    recentProjects = projects.slice(0, 3);
+    recentProjects = [];
+    recentLinks = [];
+    projectOptions = [];
+    hasRecent = False;
+    idx = 0;
+    for project in projects {
+        projectOptions = projectOptions.concat(
+            [
+                <option key={project["name"]} value={project["name"]}>
+                    {project["name"]}
+                </option>
+            ]
+        );
+        if idx < 3 {
+            recentProjects = recentProjects.concat([project]);
+            hasRecent = True;
+            idx = idx + 1;
+        }
+    }
+    for project in recentProjects {
+        recentLinks = recentLinks.concat(
+            [
+                <a
+                    key={project["name"]}
+                    onClick={lambda -> None { navigate("/project/" + project["name"]);}}
+                    className="text-blue-400 hover:text-blue-300 transition-colors text-sm hover:underline underline-offset-4 cursor-pointer"
+                >
+                    {project["name"]}
+                </a>
+            ]
+        );
+    }
 
     return
         <main
@@ -41,7 +75,7 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
         >
             <div className="absolute top-2 right-6">
                 <a
-                    onClick={lambda -> None { onNavigate("/settings");}}
+                    onClick={lambda -> None { navigate("/settings");}}
                     className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white cursor-pointer"
                     aria-label="Settings"
                 >
@@ -78,12 +112,13 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                 </div>
                 <div className="flex flex-col sm:flex-row gap-4 w-full">
                     <button
+                        onClick={lambda -> None { navigate("/new-project");}}
                         className="flex-1 h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-medium rounded-lg transition-all duration-200 ease-in-out shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_25px_rgba(255,255,255,0.2)]"
                     >
                         Upload Full Model
                     </button>
                     <a
-                        onClick={lambda -> None { onNavigate("/new-project");}}
+                        onClick={lambda -> None { navigate("/new-project");}}
                         className="flex-1 cursor-pointer"
                     >
                         <button
@@ -108,12 +143,7 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                             <option value="" disabled>
                                 Select a project to load...
                             </option>
-                            {projects.map(lambda project: any  -> any { return <option
-                                key={project["name"]}
-                                value={project["name"]}
-                            >
-                                {project["name"]}
-                            </option>; })}
+                            {projectOptions}
                         </select>
                         <div
                             className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500"
@@ -139,18 +169,8 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                         Recent Projects
                     </h3>
                     <div className="flex flex-col gap-2 text-center">
-                        {(
-                            recentProjects.map(lambda project: any  -> any { return <a
-                                key={project["name"]}
-                                onClick={lambda -> None { onNavigate(
-                                    "/project/" + project["name"]
-                                );}}
-                                className="text-blue-400 hover:text-blue-300 transition-colors text-sm hover:underline underline-offset-4 cursor-pointer"
-                            >
-                                {project["name"]}
-                            </a>; })
-                        )
-                        if recentProjects.length > 0
+                        {recentLinks
+                        if hasRecent
                         else <p className="text-zinc-600 text-xs italic">
                             No recently accessed projects
                         </p>}

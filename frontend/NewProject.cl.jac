@@ -1,95 +1,88 @@
 """New Project Component"""
 
-import from react { useState, useEffect }
+import from react { useEffect }
 import from sonner { toast }
-import from "react-simple-code-editor" { default as Editor }
-import from "prismjs/components/prism-core" { highlight, languages }
-import "prismjs/components/prism-clike";
-import "prismjs/components/prism-python";
-import "prismjs/themes/prism-tomorrow.css";
+import from "@jac/runtime" { jacSpawn }
+import from "react-router-dom" { useNavigate }
 
 # Client-side helper for reading file as base64
 def fileToBase64(file: any) -> any {
-    return Reflect.construct(
-        Promise,
-        [
-            lambda resolve: any, reject: any  -> None {
-                reader = Reflect.construct(FileReader, []);
-                reader.readAsDataURL(file);
-                reader.onload = lambda -> None {
-                    resolve(reader.result.split(",")[1]);
-                };
-                reader.onerror = lambda error: any  -> None { reject(error);};
-            }
-        ]
-    );
+    def executor(resolve: any, reject: any) -> None {
+        reader = Reflect.construct(FileReader, []);
+        reader.readAsDataURL(file);
+        reader.onload = lambda -> None { resolve(reader.result.split(",")[1]);};
+        reader.onerror = lambda -> None { return; };
+    }
+    return Reflect.construct(Promise, [executor]);
 }
 
-def:pub NewProject(onNavigate: any, createProjectWalker: any) -> any {
-    has code: str = """# Paste your model code here
+def fileToText(file: any) -> any {
+    def executor(resolve: any, reject: any) -> None {
+        reader = Reflect.construct(FileReader, []);
+        reader.readAsText(file);
+        reader.onload = lambda -> None { resolve(reader.result);};
+        reader.onerror = lambda -> None { return; };
+    }
+    return Reflect.construct(Promise, [executor]);
+}
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-class Model(nn.Module):
-    def __init__(self, in_features=16, out_features=8):
-        super().__init__()
-        self.linear = nn.Linear(in_features, out_features)
-
-    def forward(self, x):
-        x = self.linear(x)
-        return F.relu(x)
-
-def build_model():
-    return Model()
-
-def load_weights(path: str, device: str = "cpu"):
-    model = build_model()
-    state = torch.load(path, map_location=device, weights_only=False)
-    if isinstance(state, dict) and "state_dict" in state:
-        state = state["state_dict"]
-    model.load_state_dict(state, strict=False)
-    model.to(device)
-    model.eval()
-    return model
-
-def sample_inputs():
-    x = torch.randn(4, 16)
-    return (x,)
-""",
+def:pub NewProject -> any {
+    navigate = useNavigate();
+    has code: str = "",
         formData: dict = {
             "projectName": "",
+            "modelFile": None,
             "weightsFile": None,
-            "validationSet": None
+            "validationZip": None
         },
         isSubmitting: bool = False;
 
     def handleInputChange(field: str, value: any) -> None {
         newFormData = {
             "projectName": formData["projectName"],
+            "modelFile": formData["modelFile"],
             "weightsFile": formData["weightsFile"],
-            "validationSet": formData["validationSet"]
+            "validationZip": formData["validationZip"]
         };
         newFormData[field] = value;
         formData = newFormData;
     }
 
+    async def handleModelFile(file: any) -> None {
+        if not file {
+            return;
+        }
+        try {
+            text = await fileToText(file);
+            code = text;
+            handleInputChange("modelFile", file);
+        } except Exception as e {
+            console.error(e);
+            toast.error("Failed to read model file");
+        }
+    }
+
     # Handle Escape key to navigate back
+    def handleKeyDown(event: any) -> None {
+        if event.key == "Escape" {
+            navigate("/");
+        }
+    }
+
     useEffect(
-        lambda -> any { def handleKeyDown(event: any) -> None {
-            if event.key == "Escape" {
-                onNavigate("/");
-            }
-        } window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
+        lambda -> None { window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
             "keydown", handleKeyDown
         );}; },
-        [onNavigate]
+        []
     );
 
     async def handleCreate -> None {
         if not formData["projectName"].trim() {
             toast.error("Project name is required");
+            return;
+        }
+        if not code.trim() {
+            toast.error("Model code is required");
             return;
         }
 
@@ -101,23 +94,33 @@ def sample_inputs():
                 weights_b64 = await fileToBase64(formData["weightsFile"]);
             }
 
-            validationSetPath = "";
-            if formData["validationSet"] and formData["validationSet"].length > 0 {
-                firstFile = formData["validationSet"][0];
-                # webkitRelativePath usually looks like "Folder/File.txt"
-                # webkitRelativePath usually looks like "Folder/File.txt"
-                parts = firstFile.webkitRelativePath.split("/");
-                validationSetPath = parts[0] if parts.length > 0 else "";
+            validation_b64 = "";
+            validation_name = "";
+            if formData["validationZip"] {
+                validation_b64 = await fileToBase64(formData["validationZip"]);
+                validation_name = formData["validationZip"].name;
             }
 
             # Call the walker passed from parent
-            result = await createProjectWalker(
-                formData["projectName"].trim(), code, weights_b64, validationSetPath
+            resp = await jacSpawn(
+                "CreateProject",
+                "",
+                {
+                    "projectName": formData["projectName"].trim(),
+                    "code": code,
+                    "weightsFileB64": weights_b64,
+                    "validationSetPath": "",
+                    "validationZipB64": validation_b64,
+                    "validationZipName": validation_name
+                }
             );
+            result = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else None;
 
             if result and result["success"] {
                 toast.success("Project created successfully");
-                onNavigate("/project/" + result["name"]);
+                navigate("/project/" + result["name"]);
             } else {
                 error_msg = result["error"] if result else "Failed to create project";
                 toast.error(error_msg);
@@ -136,7 +139,7 @@ def sample_inputs():
         >
             <div className="absolute top-2 right-6">
                 <a
-                    onClick={lambda -> None { onNavigate("/settings");}}
+                    onClick={lambda -> None { navigate("/settings");}}
                     className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white cursor-pointer"
                     aria-label="Settings"
                 >
@@ -160,7 +163,7 @@ def sample_inputs():
             </div>
             <div className="absolute top-2 right-16 z-10">
                 <a
-                    onClick={lambda -> None { onNavigate("/");}}
+                    onClick={lambda -> None { navigate("/");}}
                     className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white bg-zinc-950/50 backdrop-blur-sm cursor-pointer"
                     aria-label="Go Back"
                 >
@@ -194,20 +197,11 @@ def sample_inputs():
                 <div
                     className="flex-1 overflow-auto bg-[#1d1f21] relative custom-scrollbar"
                 >
-                    <Editor
+                    <textarea
                         value={code}
-                        onValueChange={lambda c: any  -> None { code = c;}}
-                        highlight={lambda c: any  -> any { return highlight(
-                            c, languages.python
-                        ); }}
-                        padding={24}
-                        style={{
-                            "fontFamily": '"Fira Code", "Fira Mono", monospace',
-                            "fontSize": 14,
-                            "minHeight": "100%",
-
-                        }}
-                        className="min-h-full"
+                        onChange={lambda e: any  -> None { code = e.target.value;}}
+                        placeholder="# Paste your model code here or upload model.py"
+                        className="min-h-full w-full resize-none bg-[#1d1f21] text-zinc-100 font-mono text-sm p-6 focus:outline-none placeholder:text-zinc-500"
                     />
                 </div>
             </div>
@@ -237,6 +231,35 @@ def sample_inputs():
                             placeholder="e.g. ResNet-50 Fine-tune"
                             className="w-full h-12 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-lg px-4 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
                         />
+                    </div>
+                    <div className="space-y-2">
+                        <label
+                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
+                        >
+                            Model Code (.py)
+                        </label>
+                        <div className="relative group">
+                            <input
+                                type="file"
+                                accept=".py,.txt"
+                                onChange={lambda e: any  -> None { handleModelFile(
+                                    e.target.files[0]
+                                );}}
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                            />
+                            <div
+                                className="w-full h-20 bg-zinc-900/50 border-2 border-dashed border-zinc-800 group-hover:border-zinc-600 rounded-xl flex flex-col items-center justify-center transition-all"
+                            >
+                                <p className="text-sm text-zinc-400 font-medium">
+                                    {formData["modelFile"].name
+                                    if formData["modelFile"]
+                                    else "Click to select model.py"}
+                                </p>
+                                <p className="text-xs text-zinc-600 mt-1">
+                                    Uploading will replace the editor content
+                                </p>
+                            </div>
+                        </div>
                     </div>
                     <div className="space-y-2">
                         <label
@@ -291,15 +314,14 @@ def sample_inputs():
                         <label
                             className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
                         >
-                            Validation Set
+                            Validation Set (.zip)
                         </label>
                         <div className="relative group">
                             <input
                                 type="file"
-                                webkitdirectory=""
-                                directory=""
+                                accept=".zip"
                                 onChange={lambda e: any  -> None { handleInputChange(
-                                    "validationSet", e.target.files
+                                    "validationZip", e.target.files[0]
                                 );}}
                                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                             />
@@ -323,10 +345,9 @@ def sample_inputs():
                                     />
                                 </svg>
                                 <span className="truncate">
-                                    {formData["validationSet"].length + " files selected"
-                                    if formData["validationSet"]
-                                    and formData["validationSet"].length > 0
-                                    else "Select Directory..."}
+                                    {formData["validationZip"].name
+                                    if formData["validationZip"]
+                                    else "Select .zip file..."}
                                 </span>
                             </div>
                         </div>

@@ -130,6 +130,39 @@ def import_model_module(model_path: Path):
     return module
 
 
+def load_project_config(project_dir: Path) -> dict:
+    config_path = project_dir / "config.json"
+    if not config_path.exists():
+        return {}
+    try:
+        return json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"Warning: failed to read config.json: {e}")
+        return {}
+
+
+def _call_with_optional_path(fn, path_val: str | None):
+    if not path_val:
+        return fn()
+    try:
+        sig = inspect.signature(fn)
+        for name in [
+            "data_dir",
+            "dataset_path",
+            "validation_path",
+            "validation_set",
+            "path",
+            "root",
+        ]:
+            if name in sig.parameters:
+                return fn(**{name: path_val})
+        if len(sig.parameters) == 1:
+            return fn(path_val)
+    except Exception as e:
+        print(f"Warning: failed to call dataloader with path: {e}")
+    return fn()
+
+
 def _call_with_optional_device(fn, weights_path: Path, device: str):
     try:
         sig = inspect.signature(fn)
@@ -190,7 +223,7 @@ def move_to_device(obj, device: str):
     return obj
 
 
-def get_samples(module, project_dir: Path, max_batches: int):
+def get_samples(module, project_dir: Path, max_batches: int, validation_path: str | None):
     if hasattr(module, "sample_inputs"):
         data = module.sample_inputs()
     elif hasattr(module, "get_sample_inputs"):
@@ -198,9 +231,9 @@ def get_samples(module, project_dir: Path, max_batches: int):
     elif hasattr(module, "make_example_input"):
         data = module.make_example_input()
     elif hasattr(module, "get_dataloader"):
-        data = module.get_dataloader()
+        data = _call_with_optional_path(module.get_dataloader, validation_path)
     elif hasattr(module, "get_validation_dataloader"):
-        data = module.get_validation_dataloader()
+        data = _call_with_optional_path(module.get_validation_dataloader, validation_path)
     else:
         raise RuntimeError(
             "model.py must define sample_inputs()/make_example_input() or get_dataloader()."
@@ -256,7 +289,19 @@ def main():
     model.to(device)
     model.eval()
 
-    samples = get_samples(module, project_dir, args.max_batches)
+    config = load_project_config(project_dir)
+    validation_raw = config.get("validation_dir") or config.get("validation_set") or ""
+    validation_path = None
+    if validation_raw:
+        candidate = Path(validation_raw)
+        if not candidate.is_absolute():
+            candidate = project_dir / candidate
+        if candidate.exists():
+            validation_path = str(candidate)
+        else:
+            print(f"Warning: validation path not found: {candidate}")
+
+    samples = get_samples(module, project_dir, args.max_batches, validation_path)
 
     op_totals = {}
     with torch.no_grad():
