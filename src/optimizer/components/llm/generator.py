@@ -98,16 +98,16 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
     return feedback, is_valid, error
 
 
-def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None) -> Tuple[str, bool]:
+def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None) -> Tuple[str, bool]:
     """Generates and validates CUDA kernels 
 
     Args:
         gpu_specs (GPUSpecs): Specs of specific GPU architecture
-        op_dir (str): Directory of previously generated CUDA kernel  
-        improvement_log (list): "Chat History" of why LLM thinks it made an improvement over past attempts
-        temp_dir (Path): Path of directory to compile kernel into (used later by profiler)
-        io_dir (Path): Path of file that contains all input/output pairs recorded of this op
-        model (str, optional): LLM that will generate kernels. Defaults to None (will use env var or default).
+        best_kernel_code (str): Current best kernel code to optimize
+        improvement_log (list): History of optimization attempts from tree ancestors
+        paths (dict[str, Path]): Paths to directories
+        model (str, optional): LLM model name. Defaults to settings value.
+        ancestor_codes (list[tuple[int, str]], optional): List of (iteration_id, code) tuples from ancestors
     """
     if model is None:
         model = settings.llm_model_name
@@ -115,7 +115,18 @@ def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, 
     # Attempt initial CUDA code generation
     llm: GenModel = GenModel(sys_prompt)
     msg = prompts.generate_gpu_optimization_prompt(
-        gpu_specs.model_dump(), best_kernel_code, improvement_log)
+        gpu_specs.model_dump(), best_kernel_code, improvement_log, ancestor_codes)
+
+    # DEBUG: Save prompt to file on iteration 5
+    current_iter = paths.get("current_iteration", 0)
+    if current_iter == 5:
+        prompt_dump_path = paths["proj_dir"] / "debug_prompt_iter5.md"
+        with open(prompt_dump_path, "w") as f:
+            f.write("# System Prompt\n\n")
+            f.write(sys_prompt)
+            f.write("\n\n---\n\n# User Message\n\n")
+            f.write(msg)
+        print(f"\n*** DEBUG: Saved full prompt to {prompt_dump_path} ***\n")
 
     paths["attempt"] = 0
     feedback, is_valid, error = create_and_validate(llm, msg, model, paths)
