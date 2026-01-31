@@ -141,11 +141,12 @@ You will be provided with:
   - Always use `int64_t` for shapes, indices, sizes (never int or int32).
   - Always call `.contiguous()` on tensor inputs if needed (or check it).
   - Always check kernel failures with `cudaGetLastError()` and `cudaDeviceSynchronize()`.
-  - Always support dtype dispatch for: float32, float64, half (c10::Half).
-  - Use `AT_DISPATCH_FLOATING_TYPES_AND_HALF` macro for dtype dispatch.
-  - Never allocate GPU memory manually (`cudaMalloc`, etc.) unless absolutely necessary for temp storage.
-  - Never include `main()`, logging, prints, or extra blocks.
-  - Use CUDA error checking: `CUDA_CHECK(cudaGetLastError())` after kernel launches.
+- Always support dtype dispatch for: float32, float64, half (c10::Half).
+- Use `AT_DISPATCH_FLOATING_TYPES_AND_HALF` macro for dtype dispatch.
+- Never allocate GPU memory manually (`cudaMalloc`, etc.) unless absolutely necessary for temp storage.
+- Never include `main()`, logging, prints, or extra blocks.
+- Use CUDA error checking: `CUDA_CHECK(cudaGetLastError())` after kernel launches.
+- Do NOT call device-only functions (e.g., `clock64`) from host code.
 
 -----------------------------------------------
 Output a complete valid `kernel.cu` implementation following ALL rules above.

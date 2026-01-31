@@ -1,6 +1,6 @@
 """Main entry point for frontend."""
 
-import from json { load, dump }
+import from json { load, dump, loads }
 import from pathlib { Path }
 import from base64 { b64decode, b64encode }
 import from os { path, makedirs, listdir }
@@ -253,6 +253,55 @@ def _is_allowed_repo_path(rel_path: str, project_name: str) -> bool {
     return False;
 }
 
+def _run_llm_test(provider: str, model: str, apikey: str) -> dict {
+    if not provider {
+        return {"success": False, "error": "Missing provider"};
+    }
+    if not model {
+        return {"success": False, "error": "Missing model"};
+    }
+    if not apikey {
+        return {"success": False, "error": "Missing API key"};
+    }
+    test_script = path.join(repo_root, "scripts", "test_llm_connection.py");
+    cmd = [
+        sys.executable,
+        test_script,
+        "--provider",
+        provider,
+        "--model",
+        model,
+        "--apikey",
+        apikey
+    ];
+    try {
+        result = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True);
+        stdout = result.stdout.strip();
+        stderr = result.stderr.strip();
+        if stdout {
+            try {
+                data = loads(stdout);
+            } except Exception as e {
+                data = {
+                    "success": False,
+                    "error": "Failed to parse response",
+                    "raw": stdout,
+                    "exception": str(e)
+                };
+            }
+        } else {
+            data = {"success": False, "error": "No output from test"};
+        }
+        if stderr and "stderr" not in data {
+            data["stderr"] = stderr;
+        }
+        data["return_code"] = result.returncode;
+        return data;
+    } except Exception as e {
+        return {"success": False, "error": str(e)};
+    }
+}
+
 walker:pub GetConfig {
     can return_config with `root entry {
         try {
@@ -282,6 +331,32 @@ walker:pub SaveConfig {
             print(f"Error saving config: {e}");
             report False;
         }
+    }
+}
+
+walker:pub TestLLMConnection {
+    has cfg: dict = {};
+
+    can run with `root entry {
+        cfg = self.cfg;
+        if not cfg {
+            try {
+                with open(config_path, "r") as f {
+                    cfg = load(f);
+                }
+            } except Exception as e {
+                print(f"Error loading config: {e}");
+                cfg = config_store;
+            }
+        }
+        llm = cfg["llm_info"]
+        if cfg and "llm_info" in cfg
+        else config_store["llm_info"];
+        provider = llm["provider"] if llm and "provider" in llm else "";
+        model = llm["model"] if llm and "model" in llm else "";
+        apikey = llm["apikey"] if llm and "apikey" in llm else "";
+        result = _run_llm_test(provider, model, apikey);
+        report result;
     }
 }
 
@@ -349,7 +424,17 @@ walker:pub CreateProject {
             # Save config.json
             config = {
                 "validation_dir": validation_dir,
-                "created_at": datetime.now().isoformat()
+                "created_at": datetime.now().isoformat(),
+                "generator": {
+                    "skip_ops": [],
+                    "only_ops": [],
+                    "max_ops": 0,
+                    "use_baseline_kernels": True,
+                    "use_baseline_as_template": True,
+                    "max_attempts": 8,
+                    "extra_validation_cases": 1
+                },
+                "profile": {"allow_ops": [], "skip_ops": [], "skip_prefixes": []}
             };
             with open(path.join(project_path, "config.json"), "w") as f {
                 dump(config, f, indent=2);
@@ -576,7 +661,7 @@ walker:pub GetOpDetails {
         gen_kernel_dir = path.join(generated_dir, "kernel");
         gen_attempt_dir = path.join(generated_dir, "attempts");
         gen_kernels = _list_files(gen_kernel_dir, [".cu", ".so"]);
-        gen_logs = _list_files(gen_attempt_dir, [".txt", ".log"]);
+        gen_logs = _list_files(gen_attempt_dir, [".txt", ".log", ".json"]);
         gen_best_path = path.join(generated_dir, "kernel.cu");
         gen_best = _file_info(gen_best_path) if path.exists(gen_best_path) else {};
 

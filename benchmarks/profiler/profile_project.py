@@ -17,9 +17,110 @@ SKIP_FUNCTIONS = [
     "get_default_dtype",
 ]
 
+# Ops to skip from profiling artifacts (nondeterministic, RNG, meta/view, or alloc/cast)
+DEFAULT_SKIP_OPS = {
+    # RNG / training-only
+    "dropout",
+    "dropout_",
+    "alpha_dropout",
+    "feature_alpha_dropout",
+    "rand",
+    "rand_like",
+    "randn",
+    "randn_like",
+    "randint",
+    "bernoulli",
+    "multinomial",
+    "normal",
+    "uniform",
+    "poisson",
+    "exponential",
+    # view / meta
+    "view",
+    "reshape",
+    "permute",
+    "transpose",
+    "t",
+    "squeeze",
+    "unsqueeze",
+    "expand",
+    "expand_as",
+    "as_strided",
+    "flatten",
+    # shape queries
+    "size",
+    "stride",
+    "numel",
+    "dim",
+    "shape",
+    # copy/cast/alloc
+    "to",
+    "_to_copy",
+    "contiguous",
+    "clone",
+    "copy_",
+    "detach",
+    "empty",
+    "zeros",
+    "ones",
+    "full",
+    "arange",
+    "empty_like",
+    "zeros_like",
+    "ones_like",
+    "full_like",
+    "new_empty",
+    "new_zeros",
+    "new_ones",
+    "new_full",
+}
+
+DEFAULT_SKIP_PREFIXES = {
+    "rand",
+    "randn",
+    "randint",
+}
+
+PROFILE_ALLOW_OPS = set()
+PROFILE_SKIP_OPS = set()
+PROFILE_SKIP_PREFIXES = set()
+
 calls = {}
 _wrapped = set()
 ENABLE_WRAPPING = True
+skipped_counts = {}
+
+
+def _normalize_op_name(full_key: str) -> str:
+    return full_key.split(".")[-1].lower().strip()
+
+
+def _load_profile_filters(config: dict):
+    global PROFILE_ALLOW_OPS, PROFILE_SKIP_OPS, PROFILE_SKIP_PREFIXES
+    PROFILE_ALLOW_OPS = set()
+    PROFILE_SKIP_OPS = set(DEFAULT_SKIP_OPS)
+    PROFILE_SKIP_PREFIXES = set(DEFAULT_SKIP_PREFIXES)
+
+    profile_cfg = config.get("profile") if isinstance(config, dict) else None
+    if isinstance(profile_cfg, dict):
+        allow_ops = profile_cfg.get("allow_ops") or profile_cfg.get("allowlist") or []
+        skip_ops = profile_cfg.get("skip_ops") or profile_cfg.get("skiplist") or []
+        skip_prefixes = profile_cfg.get("skip_prefixes") or []
+        PROFILE_ALLOW_OPS = {str(op).lower() for op in allow_ops if op}
+        PROFILE_SKIP_OPS.update({str(op).lower() for op in skip_ops if op})
+        PROFILE_SKIP_PREFIXES.update({str(op).lower() for op in skip_prefixes if op})
+
+
+def _should_skip(full_key: str) -> bool:
+    op_name = _normalize_op_name(full_key)
+    if PROFILE_ALLOW_OPS:
+        return op_name not in PROFILE_ALLOW_OPS and full_key.lower() not in PROFILE_ALLOW_OPS
+    if op_name in PROFILE_SKIP_OPS or full_key.lower() in PROFILE_SKIP_OPS:
+        return True
+    for prefix in PROFILE_SKIP_PREFIXES:
+        if op_name.startswith(prefix):
+            return True
+    return False
 
 
 def wrap_function(module, func_name):
@@ -58,6 +159,9 @@ def wrap_function(module, func_name):
         }
 
         output = func(*args, **kwargs)
+        if _should_skip(key):
+            skipped_counts[key] = skipped_counts.get(key, 0) + 1
+            return output
 
         if isinstance(output, torch.Tensor):
             ser_output = output.detach().cpu()
@@ -282,6 +386,8 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    config = load_project_config(project_dir)
+    _load_profile_filters(config)
     wrap_torch_nn_functional()
 
     module = import_model_module(model_path)
@@ -289,7 +395,6 @@ def main():
     model.to(device)
     model.eval()
 
-    config = load_project_config(project_dir)
     validation_raw = config.get("validation_dir") or config.get("validation_set") or ""
     validation_path = None
     if validation_raw:
@@ -324,6 +429,12 @@ def main():
         "project": project_dir.name,
         "device": device,
         "op_counts": op_totals,
+        "skipped_counts": skipped_counts,
+        "skip_filters": {
+            "allow_ops": sorted(PROFILE_ALLOW_OPS),
+            "skip_ops": sorted(PROFILE_SKIP_OPS),
+            "skip_prefixes": sorted(PROFILE_SKIP_PREFIXES),
+        },
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(f"Saved profiling entries to {out_dir}")

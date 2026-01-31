@@ -1,6 +1,7 @@
 """Settings Page Component"""
 
 import from react { useEffect }
+import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
 import from .ConfigContext { useConfig }
 
@@ -12,7 +13,9 @@ def:pub Settings -> any {
     saveConfig = config_ctx.saveConfig;
     loading = config_ctx.loading;
 
-    has saving: bool = False;
+    has saving: bool = False,
+        apiTesting: bool = False,
+        apiTest: dict = {};
 
     def handleKeyDown(event: any) -> None {
         if event.key == "Escape" {
@@ -43,6 +46,27 @@ def:pub Settings -> any {
         navigate("/");
     }
 
+    async def handleTest -> None {
+        apiTesting = True;
+        apiTest = {};
+        try {
+            resp = await jacSpawn("TestLLMConnection", "", {"cfg": config});
+            data = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else None;
+            if data {
+                apiTest = data;
+            } else {
+                apiTest = {"success": False, "error": "No response from server"};
+            }
+        } except (error) {
+            console.error("API test failed:", error);
+            apiTest = {"success": False, "error": "API test failed"};
+        } finally {
+            apiTesting = False;
+        }
+    }
+
     def handleReturn -> None {
         navigate("/");
     }
@@ -63,6 +87,30 @@ def:pub Settings -> any {
     providerOptions = [];
     for p in providers {
         providerOptions = providerOptions.concat([<option key={p} value={p}></option>]);
+    }
+
+    testMessage = "";
+    testTone = "text-zinc-400";
+    hasLatency = False;
+    latencyValue = 0;
+    hasResponse = False;
+    responseValue = "";
+    if apiTest and "success" in apiTest {
+        if apiTest["success"] {
+            testTone = "text-emerald-400";
+            testMessage = "Success";
+            if "latency_ms" in apiTest {
+                hasLatency = True;
+                latencyValue = apiTest["latency_ms"];
+            }
+            if "response" in apiTest and apiTest["response"] {
+                hasResponse = True;
+                responseValue = apiTest["response"];
+            }
+        } else {
+            testTone = "text-red-400";
+            testMessage = apiTest["error"] if "error" in apiTest else "API test failed";
+        }
     }
 
     return
@@ -136,20 +184,43 @@ def:pub Settings -> any {
                         />
                     </div>
                 </div>
-                <div className="pt-4 flex gap-4">
+                <div className="pt-4 space-y-3">
                     <button
-                        onClick={handleReturn}
-                        className="flex-1 h-12 bg-transparent border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-900 text-zinc-300 font-bold rounded-lg transition-all"
+                        onClick={handleTest}
+                        disabled={apiTesting}
+                        className="w-full h-11 bg-zinc-900 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800 text-zinc-200 font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        Return
+                        {("Testing..." if apiTesting else "Test API Connection")}
                     </button>
-                    <button
-                        onClick={handleSave}
-                        disabled={saving}
-                        className="flex-1 h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {("Saving..." if saving else "Save Changes")}
-                    </button>
+                    {testMessage
+                    and <div className={"text-xs " + testTone}>
+                        <span>
+                            {testMessage}
+                        </span>
+                        {hasLatency
+                        and <span>
+                            {" - "}{latencyValue}ms
+                        </span>}
+                        {hasResponse
+                        and <span>
+                            {" - "}{responseValue}
+                        </span>}
+                    </div>}
+                    <div className="flex gap-4">
+                        <button
+                            onClick={handleReturn}
+                            className="flex-1 h-12 bg-transparent border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-900 text-zinc-300 font-bold rounded-lg transition-all"
+                        >
+                            Return
+                        </button>
+                        <button
+                            onClick={handleSave}
+                            disabled={saving}
+                            className="flex-1 h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {("Saving..." if saving else "Save Changes")}
+                        </button>
+                    </div>
                 </div>
             </div>
         </main>;

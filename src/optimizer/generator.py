@@ -11,6 +11,7 @@ from typing import Tuple
 import src.optimizer.prompts as prompts
 import src.optimizer.verifier as verifier
 from src.llm_tools import GenModel
+from src.config import ensure_llm_config
 
 # Global variables
 sys_prompt = prompts.get_sys_prompt()
@@ -106,7 +107,7 @@ def generate(best_kernel_code: str, gpu_specs: dict, improvement_log: list, path
         model (str, optional): LLM that will generate kernels. Defaults to None (will use env var or default).
     """
     if not model:
-        provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+        provider = ensure_llm_config() or "openai"
         if provider in {"openai", "gpt", "chatgpt"}:
             model = os.environ.get("OPENAI_MODEL", "gpt-5.2")
         elif provider == "gemini":

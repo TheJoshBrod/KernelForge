@@ -10,6 +10,7 @@ from pathlib import Path
 import torch
 from torch.utils.cpp_extension import load_inline
 from openai import OpenAI
+from src.config import ensure_llm_config
 
 try:
     from byllm.lib import by  # type: ignore
@@ -43,8 +44,20 @@ Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conve
 Only CUDA-side fixes are relevant.
 """.strip()
 
+
+def _short_error(msg: str, limit: int = 2000) -> str:
+    if not msg:
+        return ""
+    if len(msg) <= limit:
+        return msg
+    return msg[: limit - 3] + "..."
+
 def _get_provider() -> str:
-    return os.environ.get("LLM_PROVIDER", "anthropic").lower()
+    provider = ensure_llm_config()
+    if provider:
+        return provider
+    # If nothing is configured, avoid defaulting to anthropic
+    return ""
 
 
 def _summarize_with_byllm(traceback_error: str, cu_code: str, input_and_output: dict) -> str:
@@ -52,6 +65,8 @@ def _summarize_with_byllm(traceback_error: str, cu_code: str, input_and_output: 
         return traceback_error
 
     provider = _get_provider()
+    if not provider:
+        return traceback_error
     if provider == "gemini":
         model_name = "gemini/gemini-2.0-flash-exp"
     elif provider in {"openai", "gpt", "chatgpt"}:
@@ -130,7 +145,14 @@ def handle_output(traceback_error: str, cu_code: str, log_file_path: Path, input
     input_and_output["correct-output"] = input_and_output["output"]
     del input_and_output["output"]
 
-    if _get_provider() in {"openai", "gpt", "chatgpt"}:
+    raw_error = _short_error(traceback_error)
+
+    provider = _get_provider()
+    disable_summary = os.environ.get("CGINS_DISABLE_SUMMARY", "").lower() in {"1", "true", "yes"}
+
+    if disable_summary or not provider:
+        feedback = raw_error
+    elif provider in {"openai", "gpt", "chatgpt"}:
         try:
             feedback = _summarize_with_openai(
                 traceback_error, cu_code, input_and_output
@@ -138,15 +160,21 @@ def handle_output(traceback_error: str, cu_code: str, log_file_path: Path, input
         except Exception:
             feedback = traceback_error
     else:
-        feedback = _summarize_with_byllm(
-            traceback_error, cu_code, input_and_output
-        )
+        try:
+            feedback = _summarize_with_byllm(
+                traceback_error, cu_code, input_and_output
+            )
+        except Exception:
+            feedback = traceback_error
 
-    output = f"[Traceback Error]:\n{traceback_error}\n\n[LLM Generated Feedback]:\n{feedback}"
+    output = (
+        f"[Raw Error]:\n{raw_error}\n\n"
+        f"[LLM Generated Feedback]:\n{feedback}"
+    )
     with open(log_file_path, "w") as f:
         f.write(output)
 
-    return feedback
+    return output
 
 
 def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:
@@ -203,6 +231,105 @@ def move_to_cuda(item):
     elif isinstance(item, dict):
         return {k: move_to_cuda(v) for k, v in item.items()}
     return item
+
+
+def _resolve_function(function_name: str):
+    if not function_name:
+        return None
+    if function_name.startswith("torch.nn.functional."):
+        name = function_name.split(".")[-1]
+        return getattr(torch.nn.functional, name, None)
+    if function_name.startswith("torch."):
+        name = function_name.split(".")[-1]
+        return getattr(torch, name, None)
+    return None
+
+
+def _is_safe_for_extra_tests(function_name: str, args: list, kwargs: dict) -> bool:
+    safe_ops = {
+        "torch.nn.functional.linear",
+        "torch.nn.functional.gelu",
+        "torch.nn.functional.layer_norm",
+    }
+    if function_name not in safe_ops:
+        return False
+    for item in list(args) + list(kwargs.values()):
+        if torch.is_tensor(item) and not item.is_floating_point():
+            return False
+    return True
+
+
+def _random_like_tensor(t: torch.Tensor) -> torch.Tensor:
+    if t.is_floating_point():
+        return torch.randn_like(t)
+    if t.dtype == torch.int64:
+        return torch.randint(low=0, high=10, size=t.shape, dtype=t.dtype)
+    return t.clone()
+
+
+def _generate_random_inputs(entry: dict):
+    args = entry.get("args", [])
+    kwargs = entry.get("kwargs", {})
+    new_args = []
+    for a in args:
+        if torch.is_tensor(a):
+            new_args.append(_random_like_tensor(a))
+        else:
+            new_args.append(a)
+    new_kwargs = {}
+    for k, v in kwargs.items():
+        if torch.is_tensor(v):
+            new_kwargs[k] = _random_like_tensor(v)
+        else:
+            new_kwargs[k] = v
+    return new_args, new_kwargs
+
+
+def _run_extra_validation(
+    function_name: str,
+    module,
+    entry: dict,
+    signature_info: dict,
+    extra_cases: int,
+) -> tuple[bool, str]:
+    func = _resolve_function(function_name)
+    if not func:
+        return True, ""
+    if not _is_safe_for_extra_tests(function_name, entry.get("args", []), entry.get("kwargs", {})):
+        return True, ""
+
+    for _ in range(extra_cases):
+        args, kwargs = _generate_random_inputs(entry)
+        normalized_args, remaining_kwargs = normalize_args_kwargs(
+            args, kwargs, signature_info
+        )
+        if remaining_kwargs:
+            return False, f"Extra validation failed: unmapped kwargs {list(remaining_kwargs.keys())}"
+        cuda_args = [move_to_cuda(item) for item in normalized_args]
+        try:
+            with torch.no_grad():
+                expected = func(*cuda_args)
+        except Exception as e:
+            return False, f"Extra validation failed calling PyTorch op: {e}"
+
+        try:
+            got = module.launch(*cuda_args)
+        except Exception as e:
+            return False, f"Extra validation failed calling kernel: {e}"
+
+        if expected.shape != got.shape:
+            return False, "Extra validation failed: output shape mismatch"
+        if expected.dtype != got.dtype:
+            return False, "Extra validation failed: output dtype mismatch"
+        if torch.is_tensor(expected):
+            if expected.is_floating_point():
+                ok = torch.allclose(got, expected, atol=1e-2, rtol=1e-1)
+            else:
+                ok = torch.equal(got, expected)
+            if not ok:
+                return False, "Extra validation failed: output mismatch"
+
+    return True, ""
 
 
 def validate_kernel(
@@ -345,8 +472,22 @@ def validate_kernel(
             if torch.is_tensor(ground_truth):
                 ground_truth = ground_truth.to(output_generated.device)
 
-            is_correct = torch.allclose(
-                output_generated, ground_truth, atol=1e-2, rtol=1e-1)
+            if torch.is_tensor(ground_truth):
+                if output_generated.shape != ground_truth.shape:
+                    raise ValueError(
+                        f"Output shape mismatch: got {list(output_generated.shape)}, expected {list(ground_truth.shape)}"
+                    )
+                if output_generated.dtype != ground_truth.dtype:
+                    raise ValueError(
+                        f"Output dtype mismatch: got {output_generated.dtype}, expected {ground_truth.dtype}"
+                    )
+
+            if torch.is_tensor(ground_truth) and not ground_truth.is_floating_point():
+                is_correct = torch.equal(output_generated, ground_truth)
+            else:
+                is_correct = torch.allclose(
+                    output_generated, ground_truth, atol=1e-2, rtol=1e-1
+                )
 
             if is_correct:
                 exec_success = True
@@ -368,14 +509,32 @@ def validate_kernel(
                 )
 
                 entry["generated-incorrect-output"] = output_generated
-                log_message += handle_output(analysis,
-                                             generated_cu_code, log_file_path, entry)
+                log_message += handle_output(
+                    analysis, generated_cu_code, log_file_path, entry
+                )
 
                 with open(log_file_path, "w") as f:
                     f.write(f"[Incorrect Output]:\n{log_message}")
         except Exception as e:
             exec_success = False
             log_message += f"Output Comparison Error (Exec Status=False):\n{e}"
+
+    # --- 5. Extra Validation (optional) ---
+    if exec_success:
+        extra_cases_env = os.environ.get("CGINS_EXTRA_VALIDATION_CASES", "0")
+        try:
+            extra_cases = int(extra_cases_env)
+        except Exception:
+            extra_cases = 0
+        if extra_cases > 0:
+            function_name = entry.get("function_name", "")
+            signature_info = entry.get("signature", {"params": [], "defaults": {}})
+            ok, extra_msg = _run_extra_validation(
+                function_name, module, entry, signature_info, extra_cases
+            )
+            if not ok:
+                exec_success = False
+                log_message += f"\n[Extra Validation Failed]\n{extra_msg}"
 
     # Final return
     return call_success, exec_success, log_message

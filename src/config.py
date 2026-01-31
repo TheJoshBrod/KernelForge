@@ -60,3 +60,25 @@ def apply_llm_config() -> bool:
             os.environ["GEMINI_MODEL"] = model
 
     return True
+
+
+def ensure_llm_config() -> str:
+    """Ensure LLM provider/model env vars are set from config or existing keys."""
+    apply_llm_config()
+
+    provider = str(os.environ.get("LLM_PROVIDER", "")).strip().lower()
+    if provider:
+        return provider
+
+    # Infer provider from available API keys (prefer OpenAI)
+    if os.environ.get("OPENAI_API_KEY"):
+        os.environ["LLM_PROVIDER"] = "openai"
+        return "openai"
+    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+        os.environ["LLM_PROVIDER"] = "gemini"
+        return "gemini"
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        os.environ["LLM_PROVIDER"] = "anthropic"
+        return "anthropic"
+
+    return ""
