@@ -86,7 +86,7 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
         <main
             className="flex min-h-screen flex-col items-center justify-center p-6 relative bg-zinc-950 text-zinc-100 selection:bg-zinc-800"
         >
-            <div className={"absolute top-2 right-6 " + ("hidden" if showSplash else "")}>
+            <div className="absolute top-2 right-6">
                 <a
                     onClick={lambda -> None { onNavigate("/settings");}}
                     className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white cursor-pointer"

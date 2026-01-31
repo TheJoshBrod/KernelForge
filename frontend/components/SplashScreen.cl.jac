@@ -1,7 +1,7 @@
 """Splash Screen Component"""
 
 import from ..assets.CGinSLogo { CGinSLogo }
-import from ..assets.SettingsIcon { SettingsIcon }
+
 
 def:pub SplashScreen(exiting: bool) -> any {
     return
