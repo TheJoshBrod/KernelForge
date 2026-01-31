@@ -188,7 +188,8 @@ def collect_ancestry(paths: dict, leaf_node: KernelNode, code_depth: int = 3) ->
                 "iteration": current.id,
                 "attempted": current.improvement_description,
                 "results": {"mean_time_ms": current.value},
-                "speedup_vs_baseline": speedup_vs_baseline
+                "speedup_vs_baseline": speedup_vs_baseline,
+                "speedup_vs_parent": current.speedup_vs_parent or 1.0
             })
         
         # Collect kernel code for only N ancestors (with iteration ID)

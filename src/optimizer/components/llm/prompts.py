@@ -267,14 +267,25 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
             results = entry.get('results', {})
             mean_time = results.get('mean_time_ms', 0.0)
             speedup_base = entry.get('speedup_vs_baseline', 1.0)
+            speedup_parent = entry.get('speedup_vs_parent', 1.0)
 
-            # Determine Outcome Icon based on comparison to best runtime
+            # Build outcome header with both speedup metrics
             if iter_num == best_iter:
-                outcome_header = f"**ITERATION {iter_num}: CURRENT BEST ({speedup_base:.2f}x vs Baseline)**"
+                base_label = f"CURRENT BEST ({speedup_base:.2f}x vs Baseline)"
             elif speedup_base < 1.0:
-                outcome_header = f"**ITERATION {iter_num}: REGRESSION ({speedup_base:.2f}x vs Baseline)**"
+                base_label = f"REGRESSION ({speedup_base:.2f}x vs Baseline)"
             else:
-                outcome_header = f"**ITERATION {iter_num}: IMPROVEMENT ({speedup_base:.2f}x vs Baseline)**"
+                base_label = f"IMPROVEMENT ({speedup_base:.2f}x vs Baseline)"
+            
+            # Add parent comparison if it's a regression vs parent
+            if speedup_parent < 1.0:
+                parent_label = f" - REGRESSION vs PARENT ({speedup_parent:.2f}x)"
+            elif speedup_parent > 1.0:
+                parent_label = f" - {speedup_parent:.2f}x vs Parent"
+            else:
+                parent_label = ""
+            
+            outcome_header = f"**ITERATION {iter_num}: {base_label}{parent_label}**"
 
             # Clean up the multi-line strategy text for indentation
             # We wrap it in a blockquote for visual distinction
@@ -283,7 +294,7 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
             block = f"""
 {outcome_header}
 - **Runtime:** {mean_time:.4f} ms
-- **Speedup vs Baseline:** {speedup_base:.2f}x
+- **Speedup vs Baseline:** {speedup_base:.2f}x | **vs Parent:** {speedup_parent:.2f}x
 - **Strategy & Rationale:**
 > {formatted_strategy}
 ---"""
