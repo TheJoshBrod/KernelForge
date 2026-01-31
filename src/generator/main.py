@@ -8,15 +8,16 @@ Walks through each operation in a benchmark to:
 """
 import argparse
 import glob
+import json
 import os
 import shutil
 import sys
 import tempfile
 from pathlib import Path
 
-from src.config import apply_llm_config
+from src.config import ensure_llm_config
 
-apply_llm_config()
+ensure_llm_config()
 
 import torch
 from tqdm import tqdm
@@ -25,14 +26,128 @@ import src.generator.generator as generator
 import src.generator.monitor as monitor
 import src.generator.prompts.prompts as prompts
 import src.generator.verifier as verify
+import src.generator.templates as templates
 from src.progress import update_job_progress, wait_if_paused, check_cancelled
 
 # Configuration
-MAX_ATTEMPTS = 5
+MAX_ATTEMPTS = int(os.environ.get("CGINS_MAX_ATTEMPTS", "8"))
 OUTPUT_BASE_DIR = Path("kernels/generated")
 
 
-def validate_with_retries(output_dir: Path, entry_files: list[str], conversation_history: list) -> bool:
+def _normalize_op_name(name: str) -> str:
+    return name.replace(".", "_").replace("/", "_")
+
+
+def _find_project_dir(io_dir: Path) -> Path | None:
+    for parent in [io_dir] + list(io_dir.parents):
+        if (parent / "config.json").exists() and (parent / "model.py").exists():
+            return parent
+    return None
+
+
+def _load_generator_config(project_dir: Path | None) -> dict:
+    if not project_dir:
+        return {}
+    config_path = project_dir / "config.json"
+    if not config_path.exists():
+        return {}
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    cfg = data.get("generator") if isinstance(data, dict) else None
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _op_set(names) -> set[str]:
+    out: set[str] = set()
+    if not names:
+        return out
+    for name in names:
+        if not name:
+            continue
+        out.add(_normalize_op_name(str(name)))
+    return out
+
+
+def _load_op_counts(io_dir: Path) -> dict:
+    summary_path = io_dir.parent / "summary.json"
+    if not summary_path.exists():
+        return {}
+    try:
+        data = json.loads(summary_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    counts = data.get("op_counts") if isinstance(data, dict) else None
+    if not isinstance(counts, dict):
+        return {}
+    return {_normalize_op_name(k): int(v) for k, v in counts.items()}
+
+
+def _write_failure_report(
+    op_dir: Path,
+    stage: str,
+    message: str,
+    extra: dict | None = None,
+) -> None:
+    report = {
+        "stage": stage,
+        "message": message,
+    }
+    if extra:
+        report.update(extra)
+    attempts_dir = op_dir / "attempts"
+    attempts_dir.mkdir(parents=True, exist_ok=True)
+    report_path = attempts_dir / "failure.json"
+    try:
+        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _validate_static_kernel(
+    cu_code: str, entry_files: list[str], op_dir: Path, tag: str
+) -> tuple[bool, str]:
+    kernel_dir = op_dir / "kernel"
+    kernel_dir.mkdir(parents=True, exist_ok=True)
+
+    for i, entry_file in enumerate(entry_files):
+        if not wait_if_paused():
+            return False, "Generation cancelled."
+        if check_cancelled():
+            return False, "Generation cancelled."
+
+        tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
+        log_file_loc = op_dir / "attempts" / f"log-{tag}-{i}.txt"
+        os.makedirs(log_file_loc.parent, exist_ok=True)
+
+        call_success, exec_success, feedback = verify.validate_kernel(
+            cu_code, entry_file, log_file_loc, tmpdir
+        )
+
+        if os.path.exists(tmpdir):
+            shutil.rmtree(tmpdir)
+
+        if not (call_success and exec_success):
+            with open(kernel_dir / f"kernel-{tag}-{i}.cu", "w") as f:
+                f.write(cu_code)
+            with open(op_dir / "attempts" / f"feedback-{tag}-{i}.txt", "w") as f:
+                f.write(feedback)
+            return False, feedback
+
+    with open(op_dir / "kernel.cu", "w", encoding="utf-8") as f:
+        f.write(cu_code)
+    with open(kernel_dir / f"kernel-{tag}-g.cu", "w") as f:
+        f.write(cu_code)
+    return True, ""
+
+
+def validate_with_retries(
+    output_dir: Path,
+    entry_files: list[str],
+    conversation_history: list,
+    function_name: str,
+) -> tuple[bool, str, str]:
     """
     Attempt to validate and fix kernel code up to MAX_ATTEMPTS times.
 
@@ -50,15 +165,27 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
     kernel_dir.mkdir(parents=True, exist_ok=True)
 
     # Try n times to go through entire test suite
-    for attempt in range(MAX_ATTEMPTS + 1):
+    try:
+        max_attempts = int(os.environ.get("CGINS_MAX_ATTEMPTS", str(MAX_ATTEMPTS)))
+    except Exception:
+        max_attempts = MAX_ATTEMPTS
+    last_feedback = ""
+    last_stage = "llm"
+    for attempt in range(max_attempts + 1):
         if not wait_if_paused():
-            return False
+            return False, "Generation paused/cancelled.", "control"
         if check_cancelled():
-            return False
+            return False, "Generation cancelled.", "control"
 
         # Generate kernel
+        provider = ensure_llm_config() or "openai"
+        if provider in {"openai", "gpt", "chatgpt"} and not os.environ.get("OPENAI_API_KEY"):
+            return False, "Missing OPENAI_API_KEY for LLM generation.", "llm_api"
+        if provider == "gemini" and not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
+            return False, "Missing GEMINI_API_KEY/GOOGLE_API_KEY for LLM generation.", "llm_api"
+        if provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
+            return False, "Missing ANTHROPIC_API_KEY for LLM generation.", "llm_api"
         try:
-            provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
             if provider == "anthropic":
                 cu_code = generator.anthropic_generator(conversation_history)
             elif provider == "gemini":
@@ -74,7 +201,9 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
                 {"role": "assistant", "content": cu_code})
         except Exception as e:
             print(f"Failed on attempt {attempt}\n{e}")
-            return False
+            last_feedback = f"LLM generation failed: {e}"
+            last_stage = "llm_api"
+            return False, last_feedback, last_stage
 
         tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
 
@@ -86,9 +215,9 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
         is_valid = True
         for i, entry_file in enumerate(tqdm(entry_files, desc="Input Tests")):
             if not wait_if_paused():
-                return False
+                return False, "Generation cancelled.", "control"
             if check_cancelled():
-                return False
+                return False, "Generation cancelled.", "control"
 
             # Validate current kernel with entry file
             log_file_loc = output_dir / "attempts" / f"log-{attempt}-{i}.txt"
@@ -106,8 +235,14 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
                 with open(kernel_dir / f"kernel-{attempt}-{i}.cu", "w") as f:
                     f.write(cu_code)
 
-                conversation_history.append(
-                    {"role": "user", "content": feedback})
+                repair = prompts.get_repair_prompt(
+                    function_name=function_name,
+                    attempt=attempt,
+                    feedback=feedback,
+                )
+                conversation_history.append({"role": "user", "content": repair})
+                last_feedback = feedback
+                last_stage = "llm_validate"
                 break
 
         # Delete tmp directory before next generation
@@ -121,12 +256,19 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
             with open(kernel_dir / f"kernel-{attempt}-g.cu", "w") as f:
                 f.write(cu_code)
 
-            return True
+            return True, "", "success"
 
-    return False
+    return False, last_feedback, last_stage
 
 
-def process_function(directory_name: str, entry_files: list[str], op_dir: Path):
+def process_function(
+    directory_name: str,
+    entry_files: list[str],
+    op_dir: Path,
+    *,
+    use_baseline: bool = True,
+    baseline_as_template: bool = True,
+):
     """
     Process all profiled calls for a given function.
 
@@ -182,15 +324,19 @@ def process_function(directory_name: str, entry_files: list[str], op_dir: Path):
         print(f"Failed to load any entries for {function_name}")
         return False
 
+    template = None
+    if baseline_as_template:
+        template = templates.template_for_prompt(function_name)
     prompt = prompts.generate_full_llm_prompt(
-        call_list, function_name, op_details)
+        call_list, function_name, op_details, template=template
+    )
     conversation_history.append({"role": "user", "content": prompt})
 
     call_list.clear()
 
     # Validate loop - pass entry files directly
-    success = validate_with_retries(
-        op_dir, entry_files, conversation_history
+    success, failure_msg, failure_stage = validate_with_retries(
+        op_dir, entry_files, conversation_history, function_name
     )
 
     # Track performance
@@ -198,6 +344,13 @@ def process_function(directory_name: str, entry_files: list[str], op_dir: Path):
         success_file = op_dir / "success"
         with open(success_file, "w") as f:
             f.write("passed")
+    else:
+        _write_failure_report(
+            op_dir,
+            failure_stage,
+            failure_msg or "Kernel validation failed.",
+            {"function": function_name},
+        )
 
     return success
 
@@ -219,25 +372,56 @@ def main():
     if args.out_dir:
         OUTPUT_BASE_DIR = Path(args.out_dir)
 
+    project_dir = _find_project_dir(Path(io_dir))
+    gen_cfg = _load_generator_config(project_dir)
+    skip_ops = _op_set(gen_cfg.get("skip_ops"))
+    only_ops = _op_set(gen_cfg.get("only_ops"))
+    max_ops = gen_cfg.get("max_ops")
+    use_baseline = bool(gen_cfg.get("use_baseline_kernels", True))
+    baseline_as_template = bool(gen_cfg.get("use_baseline_as_template", True))
+    if "extra_validation_cases" in gen_cfg:
+        os.environ["CGINS_EXTRA_VALIDATION_CASES"] = str(
+            gen_cfg.get("extra_validation_cases")
+        )
+    if "max_attempts" in gen_cfg:
+        os.environ["CGINS_MAX_ATTEMPTS"] = str(gen_cfg.get("max_attempts"))
+
     # Loop over all function directories
     function_dirs = sorted(glob.glob(os.path.join(io_dir, "*")))
-    jobs: list[tuple[str, list[str], str]] = []
+    jobs: list[tuple[str, list[str], str, str]] = []
 
     for func_dir in function_dirs:
         if not os.path.isdir(func_dir):
             continue
 
         function_name = os.path.basename(func_dir).replace("_", ".")
+        op_key = _normalize_op_name(function_name)
+        if skip_ops and op_key in skip_ops:
+            continue
+        if only_ops and op_key not in only_ops:
+            continue
         entry_files = sorted(glob.glob(os.path.join(func_dir, "entry_*.pt")))
         if not entry_files:
             continue
-        jobs.append((func_dir, entry_files, function_name))
+        jobs.append((func_dir, entry_files, function_name, op_key))
+
+    if max_ops:
+        try:
+            max_ops = int(max_ops)
+        except Exception:
+            max_ops = None
+    if max_ops:
+        op_counts = _load_op_counts(Path(io_dir))
+        jobs.sort(key=lambda j: op_counts.get(j[3], 0), reverse=True)
+        jobs = jobs[:max_ops]
 
     total_jobs = len(jobs)
     update_job_progress(0, total_jobs, "Starting generation")
 
     completed = 0
-    for func_dir, entry_files, function_name in tqdm(jobs, desc="Processing functions"):
+    for func_dir, entry_files, function_name, op_key in tqdm(
+        jobs, desc="Processing functions"
+    ):
         if not wait_if_paused():
             print("Generation cancelled.")
             return
@@ -247,8 +431,7 @@ def main():
         update_job_progress(completed, total_jobs, f"{function_name} ({completed + 1}/{total_jobs})")
         print(function_name)
 
-        op_dir = OUTPUT_BASE_DIR / "individual_op_kernels" / \
-            function_name.replace(".", "_")
+        op_dir = OUTPUT_BASE_DIR / "individual_op_kernels" / op_key
         op_dir.mkdir(parents=True, exist_ok=True)
 
         performance_file = op_dir / "success"
@@ -257,8 +440,42 @@ def main():
             update_job_progress(completed, total_jobs, function_name)
             continue
 
-        # Pass entry file paths directly
-        process_function(function_name, entry_files, op_dir)
+        if skip_ops and op_key in skip_ops:
+            skip_file = op_dir / "skip.json"
+            skip_file.write_text(
+                json.dumps(
+                    {"op": function_name, "reason": "skip_ops list"},
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            completed += 1
+            update_job_progress(completed, total_jobs, function_name)
+            continue
+
+        baseline_used = False
+        if use_baseline and templates.has_baseline_kernel(function_name):
+            baseline_code = templates.load_baseline_kernel(function_name)
+            if baseline_code:
+                baseline_used, baseline_error = _validate_static_kernel(
+                    baseline_code, entry_files, op_dir, "baseline"
+                )
+                if not baseline_used:
+                    _write_failure_report(
+                        op_dir,
+                        "baseline",
+                        baseline_error or "Baseline kernel failed validation.",
+                        {"function": function_name},
+                    )
+
+        if not baseline_used:
+            process_function(
+                function_name,
+                entry_files,
+                op_dir,
+                use_baseline=use_baseline,
+                baseline_as_template=baseline_as_template,
+            )
         if check_cancelled():
             print("Generation cancelled.")
             return
