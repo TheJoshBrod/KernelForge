@@ -1,10 +1,13 @@
 """Home Page Component"""
 
 import from react { useEffect, useState, useRef }
+import from .SplashScreen { SplashScreen }
 
 def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
     has projects: list = [];
     has loading: bool = True;
+    has showSplash: bool = True;
+    has exitingSplash: bool = False;
     has isDropdownOpen: bool = False;
     has searchQuery: str = "";
     has dropdownRef: any = useRef(None);
@@ -31,6 +34,10 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                 console.error("Failed to fetch projects", e);
             } finally {
                 loading = False;
+                setTimeout(lambda -> None {
+                    exitingSplash = True;
+                    setTimeout(lambda -> None { showSplash = False; }, 1000);
+                }, 2500);
             }
         } fetchProjects();},
         []
@@ -231,5 +238,6 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                     </div>
                 </div>
             </div>
+            { <SplashScreen exiting={exitingSplash} /> if showSplash else null }
         </main>;
 }
