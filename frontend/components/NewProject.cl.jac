@@ -7,6 +7,12 @@ import from "prismjs/components/prism-core" { highlight, languages }
 import "prismjs/components/prism-clike";
 import "prismjs/components/prism-python";
 import "prismjs/themes/prism-tomorrow.css";
+import "prismjs/themes/prism-tomorrow.css";
+import "prismjs/themes/prism-tomorrow.css";
+import from ..assets.SettingsIcon { SettingsIcon }
+import from ..assets.BackIcon { BackIcon }
+import from ..assets.UploadIcon { UploadIcon }
+import from ..assets.FolderIcon { FolderIcon }
 
 # Client-side helper for reading file as base64
 def fileToBase64(file: any) -> any {
@@ -112,22 +118,7 @@ class Model(nn.Module):
                     className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white cursor-pointer"
                     aria-label="Settings"
                 >
-                    <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    >
-                        <path
-                            d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-                        />
-                        <circle cx="12" cy="12" r="3" />
-                    </svg>
+                    <SettingsIcon />
                 </a>
             </div>
             <div className="absolute top-2 right-16 z-10">
@@ -136,21 +127,7 @@ class Model(nn.Module):
                     className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white bg-zinc-950/50 backdrop-blur-sm cursor-pointer"
                     aria-label="Go Back"
                 >
-                    <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    >
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="15" y1="9" x2="9" y2="15"></line>
-                        <line x1="9" y1="9" x2="15" y2="15"></line>
-                    </svg>
+                    <BackIcon />
                 </a>
             </div>
             <div className="w-1/2 flex flex-col border-r border-zinc-900">
@@ -229,24 +206,7 @@ class Model(nn.Module):
                                 className="w-full h-32 bg-zinc-900/50 border-2 border-dashed border-zinc-800 group-hover:border-zinc-600 rounded-xl flex flex-col items-center justify-center transition-all"
                             >
                                 <div className="p-3 rounded-full bg-zinc-900 mb-2">
-                                    <svg
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        width="24"
-                                        height="24"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        strokeWidth="2"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        className="text-zinc-400"
-                                    >
-                                        <path
-                                            d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
-                                        />
-                                        <polyline points="17 8 12 3 7 8" />
-                                        <line x1="12" x2="12" y1="3" y2="15" />
-                                    </svg>
+                                    <UploadIcon className="text-zinc-400" />
                                 </div>
                                 <p className="text-sm text-zinc-400 font-medium">
                                     {formData["weightsFile"].name
@@ -278,22 +238,7 @@ class Model(nn.Module):
                             <div
                                 className="w-full h-12 bg-zinc-900 border border-zinc-800 group-hover:border-zinc-600 rounded-lg px-4 flex items-center text-zinc-400 transition-all"
                             >
-                                <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    width="16"
-                                    height="16"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    className="mr-3"
-                                >
-                                    <path
-                                        d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
-                                    />
-                                </svg>
+                                <FolderIcon className="mr-3" />
                                 <span className="truncate">
                                     {f"{formData['validationSet'].length} files selected"
                                     if formData["validationSet"]

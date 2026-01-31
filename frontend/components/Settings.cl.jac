@@ -2,6 +2,7 @@
 
 import from react { useState, useEffect }
 import from ..context.ConfigContext { useConfig }
+import from ..assets.ChevronDownIcon { ChevronDownIcon }
 
 def:pub Settings(onNavigate: any, onReturn: any = None) -> any {
     config_ctx = useConfig();
@@ -111,19 +112,7 @@ def:pub Settings(onNavigate: any, onReturn: any = None) -> any {
                             <div
                                 className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500"
                             >
-                                <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    width="16"
-                                    height="16"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                >
-                                    <path d="m6 9 6 6 6-6" />
-                                </svg>
+                                <ChevronDownIcon />
                             </div>
                         </div>
                     </div>

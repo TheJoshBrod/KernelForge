@@ -1,7 +1,10 @@
 """Home Page Component"""
 
-import from react { useEffect, useState, useRef }
+import from react { useEffect, useState, useRef, useLayoutEffect }
 import from .SplashScreen { SplashScreen }
+import from ..assets.SettingsIcon { SettingsIcon }
+import from ..assets.ChevronDownIcon { ChevronDownIcon }
+import from ..assets.ArrowRightIcon { ArrowRightIcon }
 
 def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
     has projects: list = [];
@@ -11,6 +14,12 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
     has isDropdownOpen: bool = False;
     has searchQuery: str = "";
     has dropdownRef: any = useRef(None);
+
+    useLayoutEffect(lambda -> None {
+        if window.sessionStorage.getItem("splashShown") {
+            showSplash = False;
+        }
+    }, []);
 
     useEffect(
         lambda -> None { def handleClickOutside(event: any) -> None {
@@ -33,11 +42,19 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
             } except Exception as e {
                 console.error("Failed to fetch projects", e);
             } finally {
-                loading = False;
-                setTimeout(lambda -> None {
-                    exitingSplash = True;
-                    setTimeout(lambda -> None { showSplash = False; }, 1000);
-                }, 2500);
+                # Only run animation if we haven't shown it yet this session
+                if not window.sessionStorage.getItem("splashShown") {
+                     loading = False;
+                     setTimeout(lambda -> None {
+                         exitingSplash = True;
+                         setTimeout(lambda -> None {
+                             showSplash = False;
+                             window.sessionStorage.setItem("splashShown", "true");
+                         }, 1000);
+                     }, 2500);
+                } else {
+                    loading = False;
+                }
             }
         } fetchProjects();},
         []
@@ -69,28 +86,13 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
         <main
             className="flex min-h-screen flex-col items-center justify-center p-6 relative bg-zinc-950 text-zinc-100 selection:bg-zinc-800"
         >
-            <div className="absolute top-2 right-6">
+            <div className={"absolute top-2 right-6 " + ("hidden" if showSplash else "")}>
                 <a
                     onClick={lambda -> None { onNavigate("/settings");}}
                     className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white cursor-pointer"
                     aria-label="Settings"
                 >
-                    <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    >
-                        <path
-                            d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-                        />
-                        <circle cx="12" cy="12" r="3" />
-                    </svg>
+                    <SettingsIcon />
                 </a>
             </div>
             <div className="flex flex-col items-center w-full max-w-md space-y-12">
@@ -145,22 +147,11 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                                 onClick={lambda -> None { toggleDropdown();}}
                                 className="ml-2 focus:outline-none"
                             >
-                                <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    width="16"
-                                    height="16"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
+                                <ChevronDownIcon
                                     className={"text-zinc-500 transition-transform duration-200 " + (
                                         "rotate-180" if isDropdownOpen else ""
                                     )}
-                                >
-                                    <path d="m6 9 6 6 6-6" />
-                                </svg>
+                                />
                             </button>
                         </div>
                         {(
@@ -188,21 +179,9 @@ def:pub Home(onNavigate: any, getProjectsWalker: any) -> any {
                                                 <span>
                                                     {project.name}
                                                 </span>
-                                                <svg
-                                                    xmlns="http://www.w3.org/2000/svg"
-                                                    width="14"
-                                                    height="14"
-                                                    viewBox="0 0 24 24"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    strokeWidth="2"
-                                                    strokeLinecap="round"
-                                                    strokeLinejoin="round"
+                                                <ArrowRightIcon
                                                     className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500"
-                                                >
-                                                    <path d="M5 12h14" />
-                                                    <path d="m12 5 7 7-7 7" />
-                                                </svg>
+                                                />
                                             </div> for project in filteredProjects
                                         ]
                                     )}
