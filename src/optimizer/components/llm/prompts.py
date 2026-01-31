@@ -322,7 +322,6 @@ Below is the log of previous optimization attempts. Use this to determine what w
 
 **Source Code to Optimize (Selected Node)**
 The algorithm has selected this node for expansion. Your task is to create a NEW optimization starting from this code.
-This may or may not be the current best - the algorithm explores different branches to find better solutions.
 ```cpp
 {kernel_code}
 ```
@@ -330,8 +329,7 @@ This may or may not be the current best - the algorithm explores different branc
 **Instructions for the Output**
 1. **Review the History:** Look at the log above.
    - Identify which tools/techniques (e.g., shared memory, warp shuffles, unrolling) yielded the "BEST" results.
-   - **DO NOT** repeat strategies marked as "Regression" - they made performance WORSE.
-   - Focus on what made iteration {best_iter} successful.
+   - **DO NOT** repeat strategies marked as "Regression".
    
 2. **Architecture Strategy:** - You are optimizing for **{arch_name}**.
    - If previous attempts to use specific features (like aggressive unrolling) failed, try a different orthogonal approach (like memory vectorization).

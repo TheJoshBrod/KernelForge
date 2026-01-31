@@ -112,23 +112,6 @@ def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNod
         code_depth=settings.ancestor_code_depth
     )
 
-    # DEBUG: Log what's being passed to LLM
-    print("\n" + "="*60)
-    print("DEBUG: Data being passed to LLM")
-    print("="*60)
-    print(f"Improvement Log ({len(improvement_log)} entries):")
-    for entry in improvement_log:
-        print(f"  - Iter {entry['iteration']}: {entry['attempted'][:100]}..." if len(entry.get('attempted', '')) > 100 else f"  - Iter {entry['iteration']}: {entry['attempted']}")
-        print(f"    Results: {entry['results']}, Speedup: {entry['speedup_vs_baseline']:.2f}x")
-    print(f"\nAncestor Codes ({len(ancestor_codes)} files):")
-    for iter_id, code in ancestor_codes:
-        print(f"  - Iteration {iter_id}: {len(code)} chars, first 200 chars:")
-        print(f"    {code[:200].replace(chr(10), ' ')}...")
-    print("="*60 + "\n")
-
-    # Save current iteration number for debug prompt dump
-    paths["current_iteration"] = paths.get("current_iteration", 0)
-
     with tempfile.TemporaryDirectory() as tmpdir:
         paths["tmp_dir"] = Path(tmpdir)
 
@@ -280,26 +263,13 @@ def main():
             "op_dir": Path("kernels/generated/individual_op_kernels") / op_name,
         }
 
-        # MCTS Optimization Loop
-        for iteration in range(settings.mcts_iterations):
-            print(f"  Iteration {iteration + 1}/{settings.mcts_iterations}")
-            
-            # Select parent node using UCT
-            parent_node = mcts.choose_optimization(paths)
-            print(f"    Selected node {parent_node.id} (value: {parent_node.value:.4f}ms)")
-            
-            # Track iteration for debug prompt dump
-            paths["current_iteration"] = iteration + 1
-            
-            # Generate optimized kernel
-            new_node = optimize(gpu_specs, paths, parent_node)
-            
-            # Update tree if optimization succeeded
-            if new_node:
-                mcts.update_tree(paths, new_node)
-                print(f"    Created node {new_node.id} (value: {new_node.value:.4f}ms, speedup: {new_node.speedup_vs_parent:.2f}x)")
-            else:
-                print(f"    Optimization failed, no new node created")
+        # Select parent node then optimize off of it
+        parent_node = mcts.choose_optimization(paths)
+        new_node = optimize(gpu_specs, paths, parent_node)
+        
+        # Update tree with the new node (if optimization succeeded)
+        if new_node:
+            mcts.update_tree(paths, new_node)
 
 if __name__ == "__main__":
     main()

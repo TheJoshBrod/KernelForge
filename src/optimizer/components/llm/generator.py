@@ -117,17 +117,6 @@ def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, 
     msg = prompts.generate_gpu_optimization_prompt(
         gpu_specs.model_dump(), best_kernel_code, improvement_log, ancestor_codes)
 
-    # DEBUG: Save prompt to file on iteration 5
-    current_iter = paths.get("current_iteration", 0)
-    if current_iter == 5:
-        prompt_dump_path = paths["proj_dir"] / "debug_prompt_iter5.md"
-        with open(prompt_dump_path, "w") as f:
-            f.write("# System Prompt\n\n")
-            f.write(sys_prompt)
-            f.write("\n\n---\n\n# User Message\n\n")
-            f.write(msg)
-        print(f"\n*** DEBUG: Saved full prompt to {prompt_dump_path} ***\n")
-
     paths["attempt"] = 0
     feedback, is_valid, error = create_and_validate(llm, msg, model, paths)
     if is_valid:
