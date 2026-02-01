@@ -263,13 +263,14 @@ def main():
             "op_dir": Path("kernels/generated/individual_op_kernels") / op_name,
         }
 
-        # Select parent node then optimize off of it
-        parent_node = mcts.choose_optimization(paths)
-        new_node = optimize(gpu_specs, paths, parent_node)
-        
-        # Update tree with the new node (if optimization succeeded)
-        if new_node:
-            mcts.update_tree(paths, new_node)
-
+        for _ in range(100):
+            # Select parent node then optimize off of it
+            parent_node = mcts.choose_optimization(paths)
+            new_node = optimize(gpu_specs, paths, parent_node)
+            
+            # Update tree with the new node (if optimization succeeded)
+            if new_node:
+                mcts.update_tree(paths, new_node)
+        break
 if __name__ == "__main__":
     main()
