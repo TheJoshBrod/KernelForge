@@ -131,18 +131,31 @@ walker:pub GetOptimizationData {
 
     can return_data with `root entry {
         try {
-            # HARDCODED PATH AS REQUESTED BY USER FOR DEBUGGING
-            target_suffix = "kernels/optimized/NVIDIA_GeForce_GTX_1660_Ti_egr6dqhOEU/torch_nn_functional_linear/nodes";
+            # HARDCODED PROJECT PATH AS REQUESTED, DYNAMIC OP NAME
+            base_path = "kernels/optimized/NVIDIA_GeForce_GTX_1660_Ti_egr6dqhOEU";
             
-            # Try finding it relative to CWD (either root or frontend/)
-            nodes_dir = target_suffix;
-            if not path.exists(nodes_dir) {
-                # Try going up one level if we are in frontend/
-                nodes_dir = path.join("..", target_suffix);
+            # Helper to check existence
+            def check_exists(suffix: str) -> str {
+                if path.exists(suffix) { return suffix; }
+                up_one = path.join("..", suffix);
+                if path.exists(up_one) { return up_one; }
+                return "";
             }
+
+            # 1. Try exact match
+            target_suffix = path.join(base_path, self.opName, "nodes");
+            nodes_dir = check_exists(target_suffix);
             
-            if not path.exists(nodes_dir) {
-                 print(f"HARDCODED PATH NOT FOUND. Tried: {target_suffix} and ../{target_suffix}");
+            # 2. Try torch_nn_functional_ prefix (common pattern)
+            if not nodes_dir {
+                 target_suffix_prefixed = path.join(base_path, f"torch_nn_functional_{self.opName}", "nodes");
+                 nodes_dir = check_exists(target_suffix_prefixed);
+            }
+
+            if not nodes_dir {
+                 print(f"Path not found for op: {self.opName} (checked exact and torch_nn_functional_ prefix)");
+                 report {"nodes": []};
+                 disengage;
             }
 
             print(f"Reading from: {nodes_dir}");
