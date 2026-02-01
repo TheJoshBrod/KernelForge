@@ -125,6 +125,51 @@ walker:pub GetProjects {
     }
 }
 
+walker:pub GetOptimizationData {
+    has projectName: str;
+    has opName: str;
+
+    can return_data with `root entry {
+        try {
+            # HARDCODED PATH AS REQUESTED BY USER FOR DEBUGGING
+            target_suffix = "kernels/optimized/NVIDIA_GeForce_GTX_1660_Ti_egr6dqhOEU/torch_nn_functional_linear/nodes";
+            
+            # Try finding it relative to CWD (either root or frontend/)
+            nodes_dir = target_suffix;
+            if not path.exists(nodes_dir) {
+                # Try going up one level if we are in frontend/
+                nodes_dir = path.join("..", target_suffix);
+            }
+            
+            if not path.exists(nodes_dir) {
+                 print(f"HARDCODED PATH NOT FOUND. Tried: {target_suffix} and ../{target_suffix}");
+            }
+
+            print(f"Reading from: {nodes_dir}");
+
+            nodes_data = [];
+            if path.exists(nodes_dir) {
+                files = listdir(nodes_dir);
+                for file_name in files {
+                    if file_name.endswith(".json") {
+                        file_path = path.join(nodes_dir, file_name);
+                        with open(file_path, "r") as f {
+                            node_data_item = load(f);
+                            nodes_data.append(node_data_item);
+                        }
+                    }
+                }
+            }
+            
+            report {"nodes": nodes_data};
+
+        } except Exception as e {
+            print(f"Error getting optimization data: {e}");
+            report {"nodes": [], "error": str(e)};
+        }
+    }
+}
+
 cl {
     import from react { useState, useEffect }
     import from sonner { Toaster }
@@ -179,6 +224,13 @@ cl {
             return resp.reports[0] if resp.reports else {"projects": []};
         }
 
+        async def client_get_optimization_data(projectName: str, opName: str) -> dict {
+            console.log(f"Spawning GetOptimizationData for {projectName}, {opName}");
+            resp = await root spawn GetOptimizationData(projectName=projectName, opName=opName);
+            console.log("GetOptimizationData response:", resp);
+            return resp.reports[0] if resp.reports else {"nodes": []};
+        }
+
         def navigate(path: str) -> None {
             console.log(f"Navigating to {path}");
             if page != path {
@@ -230,6 +282,7 @@ cl {
                         projectName={project_name}
                         opName={op_name}
                         onNavigate={navigate}
+                        getOpDataWalker={client_get_optimization_data}
                     />
                     if is_op_details
                     else <Project name={project_name} onNavigate={navigate} />

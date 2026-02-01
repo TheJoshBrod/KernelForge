@@ -1,118 +1,124 @@
 """Op Details Component"""
 
-import from react { useState, useEffect }
-import from "reactflow" { default as ReactFlow, Background, Controls }
-import "reactflow/dist/style.css";
-import "reactflow/dist/style.css";
+import from react { useState, useEffect, useMemo, useCallback }
+import from "reactflow" { default as ReactFlow, Background, Controls, MarkerType, useNodesState, useEdgesState }
 import "reactflow/dist/style.css";
 import from ..assets.SettingsIcon { SettingsIcon }
 import from ..assets.BackIcon { BackIcon }
 
-# Mock data generator logic
-def getLayerData(layerName: str) -> dict {
-    # Simple deterministic variation based on layer name length
-    seed = layerName.length;
-    isEven = seed % 2 == 0;
-    edges = [];
-
-    baseNodes = [
-        {
-            "id": "1",
-            "position": {"x": 50, "y": 50},
-            "data": {"label": f"{layerName}_v1"},
-            "style": {"background": "#f97316", "color": "#fff"}
-        }
-    ];
-
-    if isEven {
-        baseNodes = baseNodes.concat(
-            [
-                {
-                    "id": "2",
-                    "position": {"x": 250, "y": 100},
-                    "data": {"label": "v2 (22ms)"},
-                    "style": {"background": "#22c55e", "color": "#fff"}
-                },
-                {
-                    "id": "3",
-                    "position": {"x": 450, "y": 150},
-                    "data": {"label": "v3 (15ms)"},
-                    "style": {"background": "#3b82f6", "color": "#fff"}
-                }
-            ]
-        );
-        edges = [
-            {"id": "e1-2", "source": "1", "target": "2", "animated": True},
-            {"id": "e2-3", "source": "2", "target": "3", "animated": True}
-        ];
-    } else {
-        baseNodes = baseNodes.concat(
-            [
-                {
-                    "id": "2",
-                    "position": {"x": 250, "y": 150},
-                    "data": {"label": "v2 (19ms)"},
-                    "style": {"background": "#22c55e", "color": "#fff"}
-                },
-                {
-                    "id": "3",
-                    "position": {"x": 450, "y": 50},
-                    "data": {"label": "v3 (17ms)"},
-                    "style": {"background": "#22c55e", "color": "#fff"}
-                },
-                {
-                    "id": "4",
-                    "position": {"x": 650, "y": 120},
-                    "data": {"label": "v4 (12ms)"},
-                    "style": {"background": "#3b82f6", "color": "#fff"}
-                }
-            ]
-        );
-        edges = [
-            {"id": "e1-2", "source": "1", "target": "2", "animated": True},
-            {"id": "e2-3", "source": "2", "target": "3", "animated": True},
-            {"id": "e3-4", "source": "3", "target": "4", "animated": True}
-        ];
-    }
-
-    return {"nodes": baseNodes, "edges": edges};
-}
-
-def:pub OpDetails(projectName: str, opName: str, onNavigate: any) -> any {
-    # Generate some layers based on opName (simulated)
-    has layers: list = [
-        f"{opName}1",
-        f"{opName}2",
-        f"{opName}3",
-        f"{opName}4",
-        f"{opName}5"
-    ];
-    has selectedLayer: str = layers[0];
-
-    # State for nodes and edges
+def:pub OpDetails(projectName: str, opName: str, onNavigate: any, getOpDataWalker: any) -> any {
+    # State for graph data - Idiomatic Jac
     has nodes: list = [];
     has edges: list = [];
+    has isLoading: bool = True;
+    
+    def onNodesChange(changes: any) -> None { return; }
+    def onEdgesChange(changes: any) -> None { return; }
 
-    # Effect to update graph when selectedLayer changes
-    useEffect(
-        lambda -> None { if selectedLayer {
-            data = getLayerData(selectedLayer);
-            nodes = data["nodes"];
-            edges = data["edges"];
-        }},
-        [selectedLayer]
-    );
+    console.log("OpDetails Render: isLoading =", isLoading, "nodes len:", nodes.length);
 
-    # Handle Escape key
-    useEffect(
-        lambda -> any { def handleKeyDown(event: any) -> None {
-            if event.key == "Escape" {
-                onNavigate(f"/project/{projectName}");
+    # Scale factors for visualization
+    X_SCALE = 150;
+    Y_SCALE = 50;
+
+    # Track mounting
+    useEffect(lambda -> None {
+        console.log("OpDetails: MOUNTED");
+    }, []);
+
+    # Fetch data on mount
+    async def fetchData() -> None {
+        try {
+            console.log("OpDetails: fetching data...");
+            isLoading = True;
+            data = await getOpDataWalker(projectName, opName);
+            console.log("OpDetails: received data", data);
+            
+            raw_nodes = data["nodes"];
+            if not raw_nodes {
+                raw_nodes = [];
             }
-        } window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
-            "keydown", handleKeyDown
-        );}; },
-        [projectName]
+            
+            if raw_nodes.length == 0 {
+                console.log("OpDetails: no nodes found");
+                nodes = [];
+                edges = [];
+                console.log("Setting isLoading False (empty nodes)");
+                isLoading = False;
+                return;
+            }
+
+            new_nodes = [];
+            new_edges = [];
+            
+            # Process nodes
+            processed_count = 0;
+            for node in raw_nodes {
+                processed_count += 1;
+                console.log(f"Processing node {processed_count}");
+                node_id = f"{node['id']}";
+                # Y axis: Time
+                val = node["value"];
+                if not val { val = 0.0; }
+                y_pos = (val) * 500; 
+                
+                # X axis
+                x_pos = node["id"] * 200;
+
+                improvement_desc = node["improvement_description"];
+                if not improvement_desc { improvement_desc = ""; }
+                
+                speedup = node["speedup_vs_parent"];
+                if not speedup { speedup = 0.0; }
+
+                new_nodes.push({
+                    "id": node_id,
+                    "position": {"x": x_pos, "y": y_pos},
+                    "data": {
+                        "label": f"ID: {node_id}\n{val}ms"
+                    },
+                    "style": {
+                        "background": "#10b981" if speedup > 1.0 else "#ef4444",
+                        "color": "#fff",
+                        "width": 150,
+                        "fontSize": "12px"
+                    }
+                });
+
+                # Process edges
+                parent_id = node["parent"];
+                if parent_id != -1 and parent_id != None {
+                        new_edges.push({
+                        "id": f"e{parent_id}-{node_id}",
+                        "source": f"{parent_id}",
+                        "target": node_id,
+                        "animated": True,
+                        "style": {"stroke": "#52525b"}
+                    });
+                }
+            }
+            
+            console.log("Setting nodes and edges:", new_nodes.length, new_edges.length);
+            if new_nodes.length > 0 {
+                console.log("First node:", new_nodes[0]);
+            }
+            nodes = new_nodes;
+            edges = new_edges;
+
+        } except Exception as e {
+            console.error("Failed to fetch graph data:", e);
+        } finally {
+            console.log("Finally: Setting isLoading False");
+            isLoading = False;
+        }
+    }
+
+    # Fetch data on mount
+    useEffect(
+        lambda -> None {
+            fetchData();
+        },
+        [projectName, opName]
     );
 
     return
@@ -135,98 +141,41 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any) -> any {
                     <BackIcon />
                 </a>
             </div>
-            <div
-                className="w-1/4 border-r border-zinc-900 flex flex-col p-4 space-y-6"
-            >
-                <div>
-                    <h2 className="text-xl font-bold mb-4 text-zinc-100">
-                        Layers:
-                    </h2>
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            placeholder="Search..."
-                            className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm focus:outline-none focus:border-zinc-700 transition-colors"
-                        />
-                        <button
-                            className="bg-zinc-800 hover:bg-zinc-700 hover:text-white px-4 py-2 rounded text-sm font-medium transition-colors"
-                        >
-                            Filter
-                        </button>
-                    </div>
-                </div>
-                <div
-                    className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar"
-                >
-                    {[
-                        <button
-                            key={layer}
-                            onClick={(
-                                lambda l: str  -> any { return lambda -> None { selectedLayer = l;}; }
-                            )(
-                                layer
-                            )}
-                            className={"w-full text-left border rounded px-4 py-3 text-sm font-mono transition-all " + (
-                                "bg-zinc-800 border-zinc-600 text-white"
-                                if selectedLayer == layer
-                                else "bg-zinc-900/50 hover:bg-zinc-800 border-zinc-800/50 text-zinc-300"
-                            )}
-                        >
-                            {layer}
-                        </button> for layer in layers
-                    ]}
-                </div>
-                <div className="space-y-4 pt-4 border-t border-zinc-900">
-                    <button
-                        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded shadow-lg shadow-blue-900/20 transition-all"
-                    >
-                        New Layer
-                    </button>
-                </div>
-            </div>
-            <main className="w-3/4 p-8 overflow-y-auto">
-                <h1 className="text-3xl font-bold text-center mb-12 tracking-tight">
-                    Optimizing Layer:
-                    <span className="text-emerald-400">
-                        {selectedLayer}
-                    </span>
+
+            <main className="w-full h-screen p-8 flex flex-col">
+                <h1 className="text-3xl font-bold text-center mb-4 tracking-tight">
+                    Optimization Graph: <span className="text-emerald-400">{opName}</span>
                 </h1>
-                <div className="grid grid-cols-1 gap-8 mb-12">
-                    <div className="space-y-6">
-                        <h3
-                            className="text-xl font-semibold border-b border-zinc-800 pb-2"
-                        >
-                            Kernel Refinement Graph:
-                        </h3>
-                        <div
-                            className="h-[500px] bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 relative"
-                        >
-                            <h4
-                                className="absolute top-4 left-4 text-sm font-medium text-zinc-400 z-10"
-                            >
-                                Y-Axis: Execution Time (Lower is better) | X-Axis: Generation
-                            </h4>
-                            <ReactFlow
-                                nodes={nodes}
-                                edges={edges}
-                                fitView={True}
-                                className="bg-zinc-900/30"
-                                nodesConnectable={False}
-                                nodesDraggable={True}
-                                panOnDrag={True}
-                                zoomOnScroll={True}
-                                zoomOnPinch={True}
-                                zoomOnDoubleClick={True}
-                                proOptions={{"hideAttribution": True}}
-                            >
-                                <Background color="#27272a" gap={16} />
-                                <Controls
-                                    className="bg-zinc-800 border-zinc-700 fill-zinc-400"
-                                />
-                            </ReactFlow>
-                        </div>
-                    </div>
+                
+                {<div className="flex-1 rounded-xl border border-zinc-800 bg-zinc-900/30 relative overflow-hidden">
+                    <h4 className="absolute top-4 left-4 text-sm font-medium text-zinc-400 z-10 bg-zinc-950/50 px-2 py-1 rounded">
+                        Y-Axis: Execution Time (ms) | X-Axis: Iteration ID
+                    </h4>
+                     <ReactFlow
+                        nodes={nodes}
+                        edges={edges}
+                        onNodesChange={onNodesChange}
+                        onEdgesChange={onEdgesChange}
+                        fitView={True}
+                        className="bg-zinc-900/30"
+                        nodesConnectable={False}
+                        nodesDraggable={True} 
+                    >
+                        <Background color="#27272a" gap={16} />
+                        <Controls className="bg-zinc-800 border-zinc-700 fill-zinc-400" />
+                    </ReactFlow>
                 </div>
+                if not isLoading else 
+                <div className="flex-1 flex items-center justify-center text-zinc-500 animate-pulse flex-col">
+                    Loading optimization data...
+                    <br />
+                    <span className="text-xs text-zinc-600 mt-2">
+                        Debug: isLoading is {f"{isLoading}"}
+                    </span>
+                    <span className="text-xs text-zinc-700 mt-1 max-w-md text-center">
+                        Accessing: kernels/optimized/NVIDIA_GeForce_GTX_1660_Ti_egr6dqhOEU/...
+                    </span>
+                </div>}
             </main>
         </div>;
 }
