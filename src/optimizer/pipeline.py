@@ -96,37 +96,53 @@ def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNod
         gpu_specs (GPUSpecs): GPU specs
         paths (dict[str, Path]): paths to directories
         parent_node (KernelNode): node to optimize off of
+    
+    Returns:
+        KernelNode or None: The newly created node if successful, None otherwise
     """
 
     # Create attempts directory
     (paths["proj_dir"] / "attempts").mkdir(parents=True, exist_ok=True)
     (paths["proj_dir"] / "nodes").mkdir(parents=True, exist_ok=True)
 
-    # Iterative refinement loop
-    # Step 1. Generate:
-    #   Generate kernel: Via LLM generate new kernel using the gpu specs & previously found best kernel
-    #   Verification loop: Check if new kernel can handle expected input/output pairs, if not attempt to fix (max 3 times)
-    # Step 2. Profile:
-    #   Profile Kernel: Run kernel and measure inference time and memory management
-    #   Log kernel: If kernel performs better, have LLM attempt to explain what this improvement did better and give extra context (max 3 times)
-
-    # TODO: Add improvement log
-    improvement_log = []
+    # Collect improvement history from tree (walk from parent to root)
+    improvement_log, ancestor_codes = mcts.collect_ancestry(
+        paths, 
+        parent_node, 
+        code_depth=settings.ancestor_code_depth
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         paths["tmp_dir"] = Path(tmpdir)
 
+        # Read the actual kernel code from file path
+        kernel_code_path = Path(parent_node.code)
+        if kernel_code_path.exists():
+            kernel_code = kernel_code_path.read_text()
+        else:
+            print(f"\t\tError: Kernel code file not found: {kernel_code_path}")
+            return None
+
         # Kernel Generation
-        print("\tBeginning generation...")
+        print(f"\tBeginning generation (history: {len(improvement_log)} entries)...")
         improvement_description, is_valid = generator.generate(
-            parent_node.code, gpu_specs, improvement_log, paths)
+            kernel_code, gpu_specs, improvement_log, paths, ancestor_codes=ancestor_codes)
         print("\tFinished generation.")
         print(f"\t\t- Status: {is_valid}")
 
-        # If its valid, log it
+        # If its valid, log it and return the new node
         if is_valid:
             log_entry = save_iteration(
                 paths, parent_node, improvement_description, str(paths["proj_dir"] / "attempts" / f"kernel_{parent_node.id}.cu"))
+            
+            # Load and return the newly created node
+            new_node_id = len(list((paths["proj_dir"] / "nodes").glob("*.json"))) - 1
+            new_node_path = paths["proj_dir"] / "nodes" / f"{new_node_id}.json"
+            if new_node_path.exists():
+                with open(new_node_path, 'r') as f:
+                    return mcts.KernelNode.model_validate(json.load(f))
+    
+    return None
 
 
 def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path):
@@ -247,13 +263,14 @@ def main():
             "op_dir": Path("kernels/generated/individual_op_kernels") / op_name,
         }
 
-        # Select parent node then optimize off of it
-        # mcts.choose_optimization might need C constant which is default in settings now.
-        parent_node = mcts.choose_optimization(paths)
-        optimize(gpu_specs, paths, parent_node)
-        
-        # Pass paths to update_tree (it handles dict now)
-        mcts.update_tree(paths, parent_node)
-
+        for _ in range(100):
+            # Select parent node then optimize off of it
+            parent_node = mcts.choose_optimization(paths)
+            new_node = optimize(gpu_specs, paths, parent_node)
+            
+            # Update tree with the new node (if optimization succeeded)
+            if new_node:
+                mcts.update_tree(paths, new_node)
+        break
 if __name__ == "__main__":
     main()
