@@ -7,31 +7,37 @@ import from ..assets.SettingsIcon { SettingsIcon }
 import from ..assets.BackIcon { BackIcon }
 
 def:pub OpDetails(projectName: str, opName: str, onNavigate: any, getOpDataWalker: any) -> any {
+    # Layout State
+    has layers: list = [
+        opName,
+        f"{opName}_v1",
+        f"{opName}_v2"
+    ];
+    has selectedLayer: str = opName;
+    
     # State for graph data - Idiomatic Jac
     has nodes: list = [];
     has edges: list = [];
     has isLoading: bool = True;
-    
+
     def onNodesChange(changes: any) -> None { return; }
     def onEdgesChange(changes: any) -> None { return; }
-
-    console.log("OpDetails Render: isLoading =", isLoading, "nodes len:", nodes.length);
 
     # Scale factors for visualization
     X_SCALE = 150;
     Y_SCALE = 50;
 
-    # Track mounting
-    useEffect(lambda -> None {
-        console.log("OpDetails: MOUNTED");
-    }, []);
-
-    # Fetch data on mount
+    # Fetch data on layer change
     async def fetchData() -> None {
         try {
-            console.log("OpDetails: fetching data...");
+            console.log(f"OpDetails: fetching data for {selectedLayer}...");
             isLoading = True;
-            data = await getOpDataWalker(projectName, opName);
+            
+            # Using selectedLayer as the opName for the walker to allow switching
+            # Note: For now, this might only work if the folder name matches selectedLayer
+            # Since we have a hardcoded path in the walker, it might ignore this arg,
+            # but we pass it anyway for future dynamic support.
+            data = await getOpDataWalker(projectName, selectedLayer);
             console.log("OpDetails: received data", data);
             
             raw_nodes = data["nodes"];
@@ -43,7 +49,6 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any, getOpDataWalke
                 console.log("OpDetails: no nodes found");
                 nodes = [];
                 edges = [];
-                console.log("Setting isLoading False (empty nodes)");
                 isLoading = False;
                 return;
             }
@@ -55,7 +60,6 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any, getOpDataWalke
             processed_count = 0;
             for node in raw_nodes {
                 processed_count += 1;
-                console.log(f"Processing node {processed_count}");
                 node_id = f"{node['id']}";
                 # Y axis: Time
                 val = node["value"];
@@ -65,9 +69,6 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any, getOpDataWalke
                 # X axis
                 x_pos = node["id"] * 200;
 
-                improvement_desc = node["improvement_description"];
-                if not improvement_desc { improvement_desc = ""; }
-                
                 speedup = node["speedup_vs_parent"];
                 if not speedup { speedup = 0.0; }
 
@@ -98,27 +99,22 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any, getOpDataWalke
                 }
             }
             
-            console.log("Setting nodes and edges:", new_nodes.length, new_edges.length);
-            if new_nodes.length > 0 {
-                console.log("First node:", new_nodes[0]);
-            }
             nodes = new_nodes;
             edges = new_edges;
 
         } except Exception as e {
             console.error("Failed to fetch graph data:", e);
         } finally {
-            console.log("Finally: Setting isLoading False");
             isLoading = False;
         }
     }
 
-    # Fetch data on mount
+    # Fetch data on selection change
     useEffect(
         lambda -> None {
             fetchData();
         },
-        [projectName, opName]
+        [selectedLayer]
     );
 
     return
@@ -142,40 +138,108 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any, getOpDataWalke
                 </a>
             </div>
 
-            <main className="w-full h-screen p-8 flex flex-col">
-                <h1 className="text-3xl font-bold text-center mb-4 tracking-tight">
-                    Optimization Graph: <span className="text-emerald-400">{opName}</span>
-                </h1>
-                
-                {<div className="flex-1 rounded-xl border border-zinc-800 bg-zinc-900/30 relative overflow-hidden">
-                    <h4 className="absolute top-4 left-4 text-sm font-medium text-zinc-400 z-10 bg-zinc-950/50 px-2 py-1 rounded">
-                        Y-Axis: Execution Time (ms) | X-Axis: Iteration ID
-                    </h4>
-                     <ReactFlow
-                        nodes={nodes}
-                        edges={edges}
-                        onNodesChange={onNodesChange}
-                        onEdgesChange={onEdgesChange}
-                        fitView={True}
-                        className="bg-zinc-900/30"
-                        nodesConnectable={False}
-                        nodesDraggable={True} 
-                    >
-                        <Background color="#27272a" gap={16} />
-                        <Controls className="bg-zinc-800 border-zinc-700 fill-zinc-400" />
-                    </ReactFlow>
+
+            <div
+                className="w-1/4 border-r border-zinc-900 flex flex-col p-4 space-y-6"
+            >
+                <div>
+                    <h2 className="text-xl font-bold mb-4 text-zinc-100">
+                        Layers:
+                    </h2>
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            placeholder="Search..."
+                            className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm focus:outline-none focus:border-zinc-700 transition-colors"
+                        />
+                        <button
+                            className="bg-zinc-800 hover:bg-zinc-700 hover:text-white px-4 py-2 rounded text-sm font-medium transition-colors"
+                        >
+                            Filter
+                        </button>
+                    </div>
                 </div>
-                if not isLoading else 
-                <div className="flex-1 flex items-center justify-center text-zinc-500 animate-pulse flex-col">
-                    Loading optimization data...
-                    <br />
-                    <span className="text-xs text-zinc-600 mt-2">
-                        Debug: isLoading is {f"{isLoading}"}
+                <div
+                    className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar"
+                >
+                    {[
+                        <button
+                            key={layer}
+                            onClick={(
+                                lambda l: str  -> any { return lambda -> None { selectedLayer = l;}; }
+                            )(
+                                layer
+                            )}
+                            className={"w-full text-left border rounded px-4 py-3 text-sm font-mono transition-all " + (
+                                "bg-zinc-800 border-zinc-600 text-white"
+                                if selectedLayer == layer
+                                else "bg-zinc-900/50 hover:bg-zinc-800 border-zinc-800/50 text-zinc-300"
+                            )}
+                        >
+                            {layer}
+                        </button> for layer in layers
+                    ]}
+                </div>
+                <div className="space-y-4 pt-4 border-t border-zinc-900">
+                    <button
+                        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded shadow-lg shadow-blue-900/20 transition-all"
+                    >
+                        New Layer
+                    </button>
+                </div>
+            </div>
+
+
+            <main className="w-3/4 p-8 overflow-y-auto">
+                <h1 className="text-3xl font-bold text-center mb-12 tracking-tight">
+                    Optimizing Layer:
+                    <span className="text-emerald-400">
+                        {selectedLayer}
                     </span>
-                    <span className="text-xs text-zinc-700 mt-1 max-w-md text-center">
-                        Accessing: kernels/optimized/NVIDIA_GeForce_GTX_1660_Ti_egr6dqhOEU/...
-                    </span>
-                </div>}
+                </h1>
+                <div className="grid grid-cols-1 gap-8 mb-12">
+                    <div className="space-y-6">
+                        <h3
+                            className="text-xl font-semibold border-b border-zinc-800 pb-2"
+                        >
+                            Kernel Refinement Graph:
+                        </h3>
+                        
+                        {<div
+                            className="h-[500px] bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 relative"
+                        >
+                            <h4
+                                className="absolute top-4 left-4 text-sm font-medium text-zinc-400 z-10 bg-zinc-950/50 px-2 py-1 rounded"
+                            >
+                                Y-Axis: Execution Time (Higher is Better) | X-Axis: Generation
+                            </h4>
+                            <ReactFlow
+                                nodes={nodes}
+                                edges={edges}
+                                onNodesChange={onNodesChange}
+                                onEdgesChange={onEdgesChange}
+                                fitView={True}
+                                className="bg-zinc-900/30"
+                                nodesConnectable={False}
+                                nodesDraggable={True}
+                                panOnDrag={True}
+                                zoomOnScroll={True}
+                                zoomOnPinch={True}
+                                zoomOnDoubleClick={True}
+                                proOptions={{"hideAttribution": True}}
+                            >
+                                <Background color="#27272a" gap={16} />
+                                <Controls
+                                    className="bg-zinc-800 border-zinc-700 fill-zinc-400"
+                                />
+                            </ReactFlow>
+                        </div>
+                        if not isLoading else
+                        <div className="h-[500px] flex items-center justify-center text-zinc-500 animate-pulse bg-zinc-900/10 rounded-xl border border-zinc-800">
+                            Loading optimization data for {selectedLayer}...
+                        </div>}
+                    </div>
+                </div>
             </main>
         </div>;
 }
