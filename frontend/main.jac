@@ -4,6 +4,7 @@ import from json { load, dump }
 import from pathlib { Path }
 import from base64 { b64decode }
 import from os { path, makedirs, listdir }
+import from shutil { rmtree }
 import from datetime { datetime }
 import torch;
 
@@ -99,6 +100,27 @@ walker:pub CreateProject {
         } except Exception as e {
             print(f"Error creating project: {e}");
             report {"error": "Failed to create project", "success": False};
+        }
+    }
+}
+
+walker:pub DeleteProject {
+    has projectName: str;
+
+    can delete with `root entry {
+        try {
+            projects_dir = "projects";
+            project_path = path.join(projects_dir, self.projectName);
+
+            if path.exists(project_path) {
+                rmtree(project_path);
+                report {"success": True, "name": self.projectName};
+            } else {
+                report {"error": "Project not found", "success": False};
+            }
+        } except Exception as e {
+            print(f"Error deleting project: {e}");
+            report {"error": str(e), "success": False};
         }
     }
 }
@@ -275,6 +297,11 @@ cl {
             return resp.reports[0] if resp.reports else {};
         }
 
+        async def client_delete_project(projectName: str) -> dict {
+            resp = await root spawn DeleteProject(projectName=projectName);
+            return resp.reports[0] if resp.reports else {};
+        }
+
         async def client_get_projects() -> dict {
             resp = await root spawn GetProjects();
             return resp.reports[0] if resp.reports else {"projects": []};
@@ -331,6 +358,7 @@ cl {
                         onNavigate={navigate}
                         getProjectsWalker={client_get_projects}
                         getSystemInfoWalker={client_get_system_info}
+                        deleteProjectWalker={client_delete_project}
                     />
                     if page == "/" or page == ""
                     else <Settings onNavigate={navigate} onReturn={go_back} getSystemInfoWalker={client_get_system_info} />
