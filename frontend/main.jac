@@ -8,7 +8,9 @@ import from datetime { datetime }
 import torch;
 
 glob config_store: dict = {
-         "llm_info": {"model": "", "apikey": "", "provider": "anthropic"}
+         "llm_info": {"model": "", "apikey": "", "provider": "anthropic"},
+         "api_keys": {"openai": "", "gemini": "", "anthropic": ""},
+         "selected_gpu_index": 0
      };
 
 glob config_path: str = Path("config.json");
@@ -192,11 +194,24 @@ walker:pub GetSystemInfo {
                 gpus = [];
                 for i in range(count) {
                     device_name = torch.cuda.get_device_name(i);
+                    props = torch.cuda.get_device_properties(i);
                     # Convert bytes to GB
-                    total_memory = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3);
+                    total_memory = props.total_memory / (1024 ** 3);
+                    
+                    arch_name = "Unknown";
+                    if props.major == 3 { arch_name = "Kepler"; }
+                    elif props.major == 5 { arch_name = "Maxwell"; }
+                    elif props.major == 6 { arch_name = "Pascal"; }
+                    elif props.major == 7 { arch_name = "Volta" if props.minor == 0 else "Turing"; }
+                    elif props.major == 8 { arch_name = "Ampere" if props.minor < 9 else "Ada Lovelace"; }
+                    elif props.major == 9 { arch_name = "Hopper"; }
+                    elif props.major == 10 { arch_name = "Blackwell"; }
+
                     gpus.append({
                         "name": device_name,
-                        "memory": f"{total_memory:.1f} GB"
+                        "memory": f"{total_memory:.1f} GB",
+                        "compute_capability": f"v{props.major}.{props.minor} {arch_name}",
+                        "sm_count": props.multi_processor_count
                     });
                 }
                 report {
@@ -319,7 +334,7 @@ cl {
                         getSystemInfoWalker={client_get_system_info}
                     />
                     if page == "/" or page == ""
-                    else <Settings onNavigate={navigate} onReturn={go_back} />
+                    else <Settings onNavigate={navigate} onReturn={go_back} getSystemInfoWalker={client_get_system_info} />
                     if page == "/settings"
                     else <NewProject
                         onNavigate={navigate}

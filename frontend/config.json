@@ -2,6 +2,12 @@
   "llm_info": {
     "model": "",
     "apikey": "",
-    "provider": ""
-  }
+    "provider": "anthropic"
+  },
+  "api_keys": {
+    "openai": "",
+    "gemini": "",
+    "anthropic": ""
+  },
+  "selected_gpu_index": 0
 }

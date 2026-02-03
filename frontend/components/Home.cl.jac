@@ -3,11 +3,13 @@
 import from react { useEffect, useState, useRef, useLayoutEffect }
 import from .SplashScreen { SplashScreen }
 import from ..assets.SettingsIcon { SettingsIcon }
+import from ..context.ConfigContext { useConfig }
 import from ..assets.ArrowRightIcon { ArrowRightIcon }
 import from ..assets.CGinSLogo { CGinSLogo }
 
 
 def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any) -> any {
+    config = useConfig().config;
     has projects: list = [];
     has loading: bool = True;
     has showSplash: bool = True;
@@ -136,7 +138,8 @@ def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any) 
                                             <span className="text-zinc-700">|</span>
                                             <span>{gpu["memory"]} VRAM</span>
                                         </div>
-                                        for gpu in systemInfo["gpus"]
+                                        for gpu in [systemInfo["gpus"][config["selected_gpu_index"] if "selected_gpu_index" in config else 0]]
+                                        if systemInfo["gpus"] and systemInfo["gpus"].length > (config["selected_gpu_index"] if "selected_gpu_index" in config else 0)
                                     ]
                                 )
                                 if systemInfo and "available" in systemInfo and systemInfo["available"] and "gpus" in systemInfo
