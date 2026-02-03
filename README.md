@@ -15,7 +15,7 @@
 
 - [System Architecture](docs/system-architecture.md)
 - [Motivation](docs/motivation.md)
-- [Paper](docs/paper.pdf)
+- [Paper](docs/CGinS-Paper.pdf)
 
 ## Installation
 
@@ -61,13 +61,12 @@ Once the project has been bundled, open [localhost:8000](localhost:8000) to acce
 
 ## Project Structure
 
-```
-GinS/
+CGinS/
 ├── benchmarks/         # Data and scripts for profiling models
 ├── frontend/           # Frontend tool to interact with tool
 ├── kernels/            # Output directory for generated CUDA code
+├── docs/               # Documentation
 ├── src/
 │   ├── generator/      # Pipeline for ensuring kernel correctness
 │   └── optimizer/      # Pipeline for performance tuning
 └── requirements.txt    # Python dependencies
-```
