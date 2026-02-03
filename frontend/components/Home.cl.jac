@@ -3,11 +3,14 @@
 import from react { useEffect, useState, useRef, useLayoutEffect }
 import from .SplashScreen { SplashScreen }
 import from ..assets.SettingsIcon { SettingsIcon }
+import from ..assets.XIcon { XIcon }
+import from ..context.ConfigContext { useConfig }
 import from ..assets.ArrowRightIcon { ArrowRightIcon }
 import from ..assets.CGinSLogo { CGinSLogo }
 
 
-def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any) -> any {
+def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any, deleteProjectWalker: any = None) -> any {
+    config = useConfig().config;
     has projects: list = [];
     has loading: bool = True;
     has showSplash: bool = True;
@@ -16,6 +19,27 @@ def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any) 
     has searchQuery: str = "";
     has dropdownRef: any = useRef(None);
     has systemInfo: dict = {};
+    has projectToDelete: str = "";  # Track which project is pending deletion
+
+    # ... (rest of effects)
+
+    def deleteProject(projectName: str, e: any) -> None {
+        e.stopPropagation();
+        async def runDelete -> None {
+            if deleteProjectWalker {
+                await deleteProjectWalker(projectName);
+                # Refresh projects
+                if getProjectsWalker {
+                    data = await getProjectsWalker();
+                    projects = data["projects"] if data and "projects" in data else [];
+                }
+            }
+            projectToDelete = "";
+        }
+        runDelete();
+    }
+
+
 
     useLayoutEffect(lambda -> None {
         if window.sessionStorage.getItem("splashShown") {
@@ -136,7 +160,8 @@ def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any) 
                                             <span className="text-zinc-700">|</span>
                                             <span>{gpu["memory"]} VRAM</span>
                                         </div>
-                                        for gpu in systemInfo["gpus"]
+                                        for gpu in [systemInfo["gpus"][config["selected_gpu_index"] if "selected_gpu_index" in config else 0]]
+                                        if systemInfo["gpus"] and systemInfo["gpus"].length > (config["selected_gpu_index"] if "selected_gpu_index" in config else 0)
                                     ]
                                 )
                                 if systemInfo and "available" in systemInfo and systemInfo["available"] and "gpus" in systemInfo
@@ -154,7 +179,7 @@ def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any) 
                     
                     <div className="flex flex-col gap-4 w-full max-w-md">
                         <button
-                            className="w-full h-14 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 text-zinc-100 font-medium rounded-lg transition-all duration-200 ease-in-out shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)] text-lg"
+                            className="w-full h-14 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 text-zinc-100 font-medium rounded-lg transition-all duration-200 ease-in-out shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)] text-lg cursor-not-allowed"
                         >
                             Upload Full Model
                         </button>
@@ -163,7 +188,7 @@ def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any) 
                             className="w-full cursor-pointer"
                         >
                             <button
-                                className="w-full h-14 flex items-center justify-center text-zinc-300 font-medium rounded-lg transition-all duration-200 rainbow-shadow text-lg"
+                                className="w-full h-14 flex items-center justify-center text-zinc-300 font-medium rounded-lg transition-all duration-200 rainbow-shadow text-lg cursor-pointer hover:text-white"
                             >
                                 Upload Weights
                             </button>
@@ -206,7 +231,31 @@ def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any) 
                                             className="w-full text-left px-4 py-3 hover:bg-zinc-900/50 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer text-sm flex items-center justify-between group border-b border-zinc-900 last:border-0 shrink-0"
                                         >
                                             <span>{project.name}</span>
-                                            <ArrowRightIcon className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-600 h-4 w-4" />
+                                            {
+                                                <div className="flex items-center gap-2" onClick={lambda e: any -> None { e.stopPropagation(); }}>
+                                                    <span className="text-xs text-red-500 font-bold animate-pulse mr-2">Permanently Delete Project?</span>
+                                                    <button
+                                                        onClick={lambda e: any -> None { deleteProject(project.name, e); }}
+                                                        className="text-red-500 hover:text-red-400 p-1 rounded hover:bg-red-500/10 transition-colors"
+                                                    >
+                                                        <XIcon className="w-4 h-4" />
+                                                    </button>
+                                                    <button
+                                                        onClick={lambda e: any -> None { e.stopPropagation(); projectToDelete = ""; }}
+                                                        className="text-zinc-500 hover:text-zinc-300 text-xs hover:underline"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                                if projectToDelete == project.name
+                                                else
+                                                <button
+                                                    onClick={lambda e: any -> None { e.stopPropagation(); projectToDelete = project.name; }}
+                                                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-500/10 text-zinc-600 hover:text-red-500 transition-all"
+                                                >
+                                                    <XIcon className="w-4 h-4" />
+                                                </button>
+                                            }
                                         </div> 
                                         for project in filteredProjects[:10]
                                     ]

@@ -7,7 +7,10 @@ glob ConfigContext = createContext();
 
 def:pub ConfigProvider(children: any, getConfig: any, saveConfig: any) -> any {
     state = useState(
-        {"llm_info": {"model": "", "apikey": "", "provider": "anthropic"}}
+        {
+             "api_keys": {"openai": "", "gemini": "", "anthropic": ""},
+             "selected_gpu_index": 0
+        }
     );
     config = state[0];
     setConfig = state[1];
@@ -25,8 +28,7 @@ def:pub ConfigProvider(children: any, getConfig: any, saveConfig: any) -> any {
                 setConfig(
                     lambda prev: any  -> any { return {
                         ** prev,
-                        ** data,
-                        "llm_info": {** prev["llm_info"], ** data["llm_info"]}
+                        ** data
                     }; }
                 );
             } except (error) {

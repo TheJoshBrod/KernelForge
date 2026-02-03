@@ -22,4 +22,5 @@ node_modules/
 *.session
 *.session.*
 
+# Personal user info
 config.json

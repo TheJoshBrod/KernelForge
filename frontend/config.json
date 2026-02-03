@@ -1,7 +1,8 @@
 {
-  "llm_info": {
-    "model": "",
-    "apikey": "",
-    "provider": ""
-  }
+  "api_keys": {
+    "openai": "",
+    "gemini": "",
+    "anthropic": ""
+  },
+  "selected_gpu_index": 0
 }
