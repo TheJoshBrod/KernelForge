@@ -5,6 +5,7 @@ import from pathlib { Path }
 import from base64 { b64decode }
 import from os { path, makedirs, listdir }
 import from datetime { datetime }
+import torch;
 
 glob config_store: dict = {
          "llm_info": {"model": "", "apikey": "", "provider": "anthropic"}
@@ -183,6 +184,34 @@ walker:pub GetOptimizationData {
     }
 }
 
+walker:pub GetSystemInfo {
+    can return_info with `root entry {
+        try {
+            if torch.cuda.is_available() {
+                count = torch.cuda.device_count();
+                gpus = [];
+                for i in range(count) {
+                    device_name = torch.cuda.get_device_name(i);
+                    # Convert bytes to GB
+                    total_memory = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3);
+                    gpus.append({
+                        "name": device_name,
+                        "memory": f"{total_memory:.1f} GB"
+                    });
+                }
+                report {
+                    "available": True,
+                    "gpus": gpus
+                };
+            } else {
+                report {"available": False, "error": "No CUDA device detected"};
+            }
+        } except Exception as e {
+            report {"available": False, "error": str(e)};
+        }
+    }
+}
+
 cl {
     import from react { useState, useEffect }
     import from sonner { Toaster }
@@ -244,6 +273,11 @@ cl {
             return resp.reports[0] if resp.reports else {"nodes": []};
         }
 
+        async def client_get_system_info() -> dict {
+            resp = await root spawn GetSystemInfo();
+            return resp.reports[0] if resp.reports else {};
+        }
+
         def navigate(path: str) -> None {
             console.log(f"Navigating to {path}");
             if page != path {
@@ -282,6 +316,7 @@ cl {
                     {<Home
                         onNavigate={navigate}
                         getProjectsWalker={client_get_projects}
+                        getSystemInfoWalker={client_get_system_info}
                     />
                     if page == "/" or page == ""
                     else <Settings onNavigate={navigate} onReturn={go_back} />
