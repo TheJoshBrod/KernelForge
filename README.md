@@ -61,6 +61,7 @@ Once the project has been bundled, open [localhost:8000](localhost:8000) to acce
 
 ## Project Structure
 
+```
 CGinS/
 ├── benchmarks/         # Data and scripts for profiling models
 ├── frontend/           # Frontend tool to interact with tool
@@ -70,3 +71,4 @@ CGinS/
 │   ├── generator/      # Pipeline for ensuring kernel correctness
 │   └── optimizer/      # Pipeline for performance tuning
 └── requirements.txt    # Python dependencies
+```
