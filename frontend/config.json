@@ -1,9 +1,4 @@
 {
-  "llm_info": {
-    "model": "",
-    "apikey": "",
-    "provider": "anthropic"
-  },
   "api_keys": {
     "openai": "",
     "gemini": "",

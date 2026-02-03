@@ -8,7 +8,6 @@ import from datetime { datetime }
 import torch;
 
 glob config_store: dict = {
-         "llm_info": {"model": "", "apikey": "", "provider": "anthropic"},
          "api_keys": {"openai": "", "gemini": "", "anthropic": ""},
          "selected_gpu_index": 0
      };
