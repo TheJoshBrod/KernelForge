@@ -1,41 +1,48 @@
-# src
+# CGinS Source (`src`)
 
-This directory contains the main code for the generator and optimizer.
+This directory contains the core Python logic for the **Generator** (Correctness) and **Optimizer** (Performance) pipelines.
+
+## Structure
 
 ```
 src/
-├── README.md
-├── generator/
-│   ├── generator.py
-│   ├── improvement.py
-│   ├── logger.py
-│   ├── main.py
-│   ├── monitor.py
-│   ├── prompts
-│   │   ├── GeneratorSystemPrompt.md
-│   │   ├── __pycache__
-│   │   │   └── prompts.cpython-312.pyc
-│   │   └── prompts.py
-│   └── verifier.py
-└── optimizer/
-    ├── generate_all_optimized_kernels.py
-    ├── generate_text_input.py
-    └── optimize_kernel.py
+├── generator/          # Correctness Pipeline
+│   ├── generator.py        # LLM interaction & kernel generation
+│   ├── verifier.py         # JIT compilation & output validation
+│   ├── main.py             # Entry point for generator pipeline
+│   └── prompts/            # System prompts for LLMs
+└── optimizer/          # Performance Pipeline
+    ├── pipeline.py         # Main optimization loop & MCTS driver
+    ├── core/               # MCTS & Tree logic
+    │   ├── mcts.py
+    │   └── types.py
+    └── components/
+        └── hardware/       # Profiling & Hardware specs
+            └── profiler.py
 ```
 
-## Generator
+## 1. Generator Pipeline
+**Location:** `src/generator/`
 
-This directory contains the pipeline for generating initial batches of validate kernels. These kernels are only tested for correctness, NOT PERFORMANCE. 
+Responsible for producing an initial set of *correct* CUDA kernels for a given operator. It uses an iterative LLM-driven loop to generate code, compile it, and verify its output against PyTorch ground truth.
 
-The purpose of this pipeline is to generate your initial batch of correct kernel to allow for few-shot prompting later in the optimizer stage. 
+**Usage:**
+```bash
+python3 -m src.generator.main <input_torch_dir>
+```
 
-To run the pipeline run the `generate.sh` file in the top level directory with appropriate flags
+## 2. Optimizer Pipeline
+**Location:** `src/optimizer/`
 
-## Optimizer
+Responsible for taking a correct kernel and optimizing it for specific hardware. It uses Monte Carlo Tree Search (MCTS) to explore optimization strategies (tiling, unrolling, etc.) and benchmarks them on the target GPU.
 
-This directory contains the pipeline for generating secondary batches of kernels that are optimized for your specific hardware. These kernels can be configured to optimize for varying heuristics: inference time, GPU utilization, etc. 
+**Usage:**
+```bash
+python3 -m src.optimizer.pipeline <input_torch_dir> <optional_project_name>
+```
 
-The purpose of this pipeline is to improve the initial batch of correct kernel using the validated kernels previously generated for few-shot prompting. 
+## Key Components
 
-To run the pipeline run the `optimize.sh` file in the top level directory with appropriate flags
-
+-   **`verifier.py`**: Handles dynamic C++ extension compilation (`torch.utils.cpp_extension`) to validate generated CUDA code.
+-   **`profiler.py`**: Benchmarks kernel execution time (`mean_time_ms`) to guide the optimization search.
+-   **`mcts.py`**: Implements the search algorithm to navigate the space of possible kernel optimizations.
