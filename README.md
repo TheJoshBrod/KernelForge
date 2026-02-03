@@ -12,30 +12,12 @@ The core innovation is a persistent learning architecture where agents maintain 
 
 **Key Results:**
 - Up to 4x optimization speedups over baseline generation through autonomous iterative refinement
-- Performance within 10% of native PyTorch implementations on production workloads
+- Performance up to 33% faster than native PyTorch implementations on production workloads
 - Automated correctness validation with precision threshold of 1e-5 per element
 - Two-tiered feedback mechanism:
    - Generation-verification cycle with up to 3 self-debugging attempts per kernel
    - Performance profiling loop measuring real hardware metrics to guide optimization
 - Self-improving agents that autonomously explore optimization strategies, learn from failures, and converge toward optimal solutions through iterative reasoning
-
-## How It Works
-
-The system operates in two main phases:
-
-### 1. Generator (Correctness)
-The **Generator** pipeline focuses on producing *correct* CUDA kernels.
-- **Profiling**: Intercepts PyTorch operator calls to record input data and attributes.
-- **LLM Generation**: Prompts an LLM (Claude, Gemini, OpenAI) to write a CUDA kernel for the specific operation.
-- **Validation Loop**: Compiles and runs the kernel against the original PyTorch output. Errors are fed back to the LLM for correction.
-- **Output**: A set of validated, functionally correct kernels.
-
-### 2. Optimizer (Performance) (WIP)
-The **Optimizer** pipeline refines the validated kernels for specific hardware.
-- **Analysis**: Takes valid kernels and applies hardware-specific optimization strategies (e.g., loop unrolling, shared memory usage).
-- **Tuning**: Can optimize for different metrics (inference latency, GPU utilization).
-- **Benchmarking**: Verifies that the new kernel is not only correct but faster than the baseline.
-- **Logging**: The LLM provides context of what it tried differently and stores the performance of the new kernel to be passed along
 
 ## Installation
 
