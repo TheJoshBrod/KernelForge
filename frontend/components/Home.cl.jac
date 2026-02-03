@@ -127,25 +127,24 @@ def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any) 
                             Agentic PyTorch Model Optimizer
                         </p>
                         {
-                            <div className="flex items-center gap-2 text-xs text-zinc-600 font-mono pt-1">
+                            <div className="flex flex-col gap-1 pt-1">
                                 {(
-                                    <span className="w-2 h-2 rounded-full bg-green-500/50 block shadow-[0_0_8px_rgba(34,197,94,0.4)] animate-pulse"></span>
+                                    [
+                                        <div className="flex items-center gap-2 text-xs text-zinc-600 font-mono" key={index}>
+                                            <span className="w-2 h-2 rounded-full bg-green-500/50 block shadow-[0_0_8px_rgba(34,197,94,0.4)] animate-pulse"></span>
+                                            <span>{gpu["name"]}</span>
+                                            <span className="text-zinc-700">|</span>
+                                            <span>{gpu["memory"]} VRAM</span>
+                                        </div>
+                                        for gpu in systemInfo["gpus"]
+                                    ]
                                 )
-                                if systemInfo and "available" in systemInfo and systemInfo["available"]
+                                if systemInfo and "available" in systemInfo and systemInfo["available"] and "gpus" in systemInfo
                                 else (
-                                    <span className="w-2 h-2 rounded-full bg-red-500/50 block shadow-[0_0_8px_rgba(239,68,68,0.4)] animate-pulse"></span>
-                                )}
-                                
-                                {(
-                                    <div className="flex items-center gap-2">
-                                        <span>{systemInfo["gpu_name"]}</span>
-                                        <span className="text-zinc-700">|</span>
-                                        <span>{systemInfo["gpu_memory"]} VRAM</span>
+                                    <div className="flex items-center gap-2 text-xs text-zinc-600 font-mono">
+                                        <span className="w-2 h-2 rounded-full bg-red-500/50 block shadow-[0_0_8px_rgba(239,68,68,0.4)] animate-pulse"></span>
+                                        <span>NVIDIA GPU not found</span>
                                     </div>
-                                )
-                                if systemInfo and "available" in systemInfo and systemInfo["available"]
-                                else (
-                                    <span>NVIDIA GPU not found</span>
                                 )}
                             </div>
                             if systemInfo

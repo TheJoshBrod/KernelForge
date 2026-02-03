@@ -188,16 +188,23 @@ walker:pub GetSystemInfo {
     can return_info with `root entry {
         try {
             if torch.cuda.is_available() {
-                device_name = torch.cuda.get_device_name(0);
-                # Convert bytes to GB
-                total_memory = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3);
+                count = torch.cuda.device_count();
+                gpus = [];
+                for i in range(count) {
+                    device_name = torch.cuda.get_device_name(i);
+                    # Convert bytes to GB
+                    total_memory = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3);
+                    gpus.append({
+                        "name": device_name,
+                        "memory": f"{total_memory:.1f} GB"
+                    });
+                }
                 report {
-                    "gpu_name": device_name,
-                    "gpu_memory": f"{total_memory:.1f} GB",
-                    "available": True
+                    "available": True,
+                    "gpus": gpus
                 };
             } else {
-                report {"available": False, "error": "No CUDA device found"};
+                report {"available": False, "error": "No CUDA device detected"};
             }
         } except Exception as e {
             report {"available": False, "error": str(e)};
