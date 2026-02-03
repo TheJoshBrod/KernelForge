@@ -2,6 +2,7 @@
 
 import from react { useEffect, useState, useRef, useLayoutEffect }
 import from .SplashScreen { SplashScreen }
+import from .MatrixBackground { MatrixBackground }
 import from ..assets.SettingsIcon { SettingsIcon }
 import from ..assets.XIcon { XIcon }
 import from ..context.ConfigContext { useConfig }
@@ -122,9 +123,10 @@ def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any, 
 
     return
         <main
-            className="flex min-h-screen flex-col items-center justify-center p-6 relative bg-zinc-950 text-zinc-100 selection:bg-zinc-800"
+            className="flex min-h-screen flex-col items-center justify-center p-6 relative bg-zinc-950 text-zinc-100 selection:bg-zinc-800 overflow-hidden"
         >
-            <div className="absolute top-2 right-6">
+            <MatrixBackground />
+            <div className="absolute top-2 right-6 z-10">
                 <a
                     onClick={lambda -> None { onNavigate("/settings");}}
                     className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white cursor-pointer"
@@ -134,7 +136,7 @@ def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any, 
                 </a>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-16 w-full max-w-6xl items-start">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-16 w-full max-w-6xl items-start z-10">
                 <div className="flex flex-col space-y-12 pt-8">
                     <div className="text-left space-y-2">
                         <div className="flex items-center gap-2">

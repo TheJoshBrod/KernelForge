@@ -1,5 +1,6 @@
 """Splash Screen Component"""
 
+import from .MatrixBackground { MatrixBackground }
 import from ..assets.CGinSLogo { CGinSLogo }
 
 
@@ -8,8 +9,9 @@ def:pub SplashScreen(exiting: bool) -> any {
         <div
             className={f"fixed inset-0 z-50 flex flex-col items-center justify-center bg-zinc-950 transition-all duration-1000 ease-in-out {('opacity-0 pointer-events-none' if exiting else 'opacity-100')}"}
         >
+            <MatrixBackground />
             <div
-                className={f"transition-all duration-1000 ease-in-out transform flex flex-col items-center {('scale-75 -translate-y-24' if exiting else 'scale-100')}"}
+                className={f"relative z-10 transition-all duration-1000 ease-in-out transform flex flex-col items-center {('scale-75 -translate-y-24' if exiting else 'scale-100')}"}
             >
                 <h1
                     className="text-8xl font-bold tracking-tighter bg-gradient-to-b from-white to-zinc-400 bg-clip-text text-transparent"
