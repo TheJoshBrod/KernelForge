@@ -1,6 +1,6 @@
 """Splash Screen Component"""
 
-import from .MatrixBackground { MatrixBackground }
+import from .backdrops.MatrixBackground { MatrixBackground }
 import from ..assets.CGinSLogo { CGinSLogo }
 
 
