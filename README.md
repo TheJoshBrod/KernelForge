@@ -4,7 +4,7 @@
 
 **Key Results:**
 - Up to 4x optimization speedups over baseline generation through autonomous iterative refinement
-- Performance within 10% of native PyTorch implementations on production workloads
+- Performance up to 33% faster than native PyTorch implementations on production workloads
 - Automated correctness validation with precision threshold of 1e-5 per element
 - Two-tiered feedback mechanism:
    - Generation-verification cycle with up to 3 self-debugging attempts per kernel
