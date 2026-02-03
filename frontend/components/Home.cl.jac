@@ -130,7 +130,7 @@ def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any) 
                             <div className="flex flex-col gap-1 pt-1">
                                 {(
                                     [
-                                        <div className="flex items-center gap-2 text-xs text-zinc-600 font-mono" key={index}>
+                                        <div className="flex items-center gap-2 text-xs text-zinc-600 font-mono" key={gpu["name"]}>
                                             <span className="w-2 h-2 rounded-full bg-green-500/50 block shadow-[0_0_8px_rgba(34,197,94,0.4)] animate-pulse"></span>
                                             <span>{gpu["name"]}</span>
                                             <span className="text-zinc-700">|</span>
