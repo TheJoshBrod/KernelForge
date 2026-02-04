@@ -39,6 +39,7 @@ def:pub Project -> any {
         advIterations: int = 3,
         advPatience: int = 2,
         advMinImprove: float = 0.0,
+        advSpeedupPct: float = 5.0,
         advGenAttempts: int = 4,
         advImage: str = "cgins-codex:latest",
         targetDevice: str = "cuda",
@@ -239,7 +240,38 @@ def:pub Project -> any {
                     "iterations": advIterations,
                     "patience": advPatience,
                     "minImproveMs": advMinImprove,
+                    "minSpeedupPct": advSpeedupPct,
                     "genAttempts": advGenAttempts,
+                    "image": advImage,
+                    "targetDevice": targetDevice
+                }
+            );
+            await refreshStatus();
+        }
+    }
+
+    async def handleOptimizeAdvanced -> None {
+        if name {
+            ops_to_use = [];
+            if selectedOps.length > 0 {
+                ops_to_use = selectedOps;
+            } else {
+                for op in ops {
+                    if op and op["name"] {
+                        ops_to_use = ops_to_use.concat([op["name"]]);
+                    }
+                }
+            }
+            await jacSpawn(
+                "StartOptimizeAdvanced",
+                "",
+                {
+                    "projectName": name,
+                    "ops": ops_to_use,
+                    "iterations": advIterations,
+                    "patience": advPatience,
+                    "minImproveMs": advMinImprove,
+                    "minSpeedupPct": advSpeedupPct,
                     "image": advImage,
                     "targetDevice": targetDevice
                 }
@@ -373,6 +405,7 @@ def:pub Project -> any {
         {"key": "profile", "label": "Profile"},
         {"key": "generate", "label": "Generate"},
         {"key": "generate_adv", "label": "Adv Generate"},
+        {"key": "optimize_adv", "label": "Adv Optimize"},
         {"key": "optimize", "label": "Optimize"},
         {"key": "benchmark", "label": "Benchmark"}
     ];
@@ -397,6 +430,7 @@ def:pub Project -> any {
             (
                 item["key"] == "generate"
                 or item["key"] == "generate_adv"
+                or item["key"] == "optimize_adv"
                 or item["key"] == "optimize"
                 or item["key"] == "benchmark"
             )
@@ -409,6 +443,7 @@ def:pub Project -> any {
         if (
             item["key"] == "generate"
             or item["key"] == "generate_adv"
+            or item["key"] == "optimize_adv"
             or item["key"] == "optimize"
         ) {
             if job and job["status"] == "running" {
@@ -476,6 +511,65 @@ def:pub Project -> any {
                 </div>
             ]
         );
+    }
+
+    def _job_time(job: dict) -> float {
+        if job
+        and "progress" in job
+        and job["progress"]
+        and "updated_at" in job["progress"] {
+            return Number(job["progress"]["updated_at"]);
+        }
+        if job and "finished_at" in job {
+            return Number(job["finished_at"]);
+        }
+        if job and "started_at" in job {
+            return Number(job["started_at"]);
+        }
+        return 0.0;
+    }
+
+    def _usage_available(usage: dict) -> bool {
+        return usage
+        and (
+            "input_tokens" in usage
+            or "output_tokens" in usage
+            or "reasoning_tokens" in usage
+            or "cached_tokens" in usage
+        );
+    }
+
+    def _usage_value(usage: dict, key: str) -> int {
+        if usage and key in usage {
+            return usage[key];
+        }
+        return 0;
+    }
+
+    def _usage_label(key: str) -> str {
+        if key == "optimize_adv" {
+            return "Adv Optimize";
+        }
+        if key == "generate_adv" {
+            return "Adv Generate";
+        }
+        return key;
+    }
+
+    usageData = {};
+    usageJob = "";
+    usageTime = 0.0;
+    for key in ["optimize_adv", "generate_adv"] {
+        job = status[key] if status and key in status else {};
+        usage = job["usage"] if job and "usage" in job else {};
+        if _usage_available(usage) {
+            t = _job_time(job);
+            if t >= usageTime {
+                usageTime = t;
+                usageData = usage;
+                usageJob = key;
+            }
+        }
     }
 
     bench_job = status["benchmark"];
@@ -857,6 +951,19 @@ def:pub Project -> any {
                             className="input"
                         />
                         <label className="input-label">
+                            Target speedup (%)
+                        </label>
+                        <input
+                            type="number"
+                            min="0"
+                            step="0.1"
+                            value={advSpeedupPct}
+                            onChange={lambda e: any  -> None { advSpeedupPct = Number(
+                                e.target.value
+                            );}}
+                            className="input"
+                        />
+                        <label className="input-label">
                             Generate attempts
                         </label>
                         <input
@@ -915,6 +1022,11 @@ def:pub Project -> any {
                             label="Advanced Generate"
                             onClick={lambda -> None { handleGenerateAdvanced();}}
                             variant="primary"
+                        />
+                        <GlowButton
+                            label="Advanced Optimize"
+                            onClick={lambda -> None { handleOptimizeAdvanced();}}
+                            variant="secondary"
                         />
                     </div>
                 </div>
@@ -1049,7 +1161,54 @@ def:pub Project -> any {
                             </button>
                         </div>
                         <div className="panel-body status-list">
-                            {statusRows}
+                            {<div className="usage-summary">
+                                <div className="usage-header">
+                                    <span className="usage-title">
+                                        Latest token usage
+                                    </span>
+                                    <span className="usage-source">
+                                        {_usage_label(usageJob)}
+                                    </span>
+                                </div>
+                                <div className="usage-grid">
+                                    <div className="usage-card">
+                                        <span className="usage-label">
+                                            Input
+                                        </span>
+                                        <span className="usage-value">
+                                            {_usage_value(usageData, "input_tokens")}
+                                        </span>
+                                    </div>
+                                    <div className="usage-card">
+                                        <span className="usage-label">
+                                            Output
+                                        </span>
+                                        <span className="usage-value">
+                                            {_usage_value(usageData, "output_tokens")}
+                                        </span>
+                                    </div>
+                                    <div className="usage-card">
+                                        <span className="usage-label">
+                                            Reasoning
+                                        </span>
+                                        <span className="usage-value">
+                                            {_usage_value(
+                                                usageData, "reasoning_tokens"
+                                            )}
+                                        </span>
+                                    </div>
+                                    <div className="usage-card">
+                                        <span className="usage-label">
+                                            Cached
+                                        </span>
+                                        <span className="usage-value">
+                                            {_usage_value(usageData, "cached_tokens")}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            if usageJob
+                            else <span></span>}{statusRows}
                         </div>
                     </div>
                 </div>
