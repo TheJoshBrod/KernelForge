@@ -1,6 +1,6 @@
 """Splash Screen Component"""
 
-import from .backdrops.MatrixBackground { MatrixBackground }
+import from .backdrops.CrashingWaveBackground { CrashingWaveBackground }
 import from ..assets.CGinSLogo { CGinSLogo }
 
 
@@ -9,7 +9,7 @@ def:pub SplashScreen(exiting: bool) -> any {
         <div
             className={f"fixed inset-0 z-50 flex flex-col items-center justify-center bg-zinc-950 transition-all duration-1000 ease-in-out {('opacity-0 pointer-events-none' if exiting else 'opacity-100')}"}
         >
-            <MatrixBackground />
+            <CrashingWaveBackground />
             <div
                 className={f"relative z-10 transition-all duration-1000 ease-in-out transform flex flex-col items-center {('scale-75 -translate-y-24' if exiting else 'scale-100')}"}
             >
