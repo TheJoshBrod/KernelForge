@@ -123,7 +123,7 @@ def:pub Project(name: str, onNavigate: any) -> any {
                             'relu',
                             'batch_norm',
                             'dropout',
-                            'embedding'
+                            'max_pool2d'
                         ]
                     ]}
                 </div>

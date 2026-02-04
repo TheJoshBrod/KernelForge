@@ -2,6 +2,7 @@
 
 import from react { useState, useEffect, useMemo, useCallback }
 import from "reactflow" { default as ReactFlow, Background, Controls, MarkerType, useNodesState, useEdgesState }
+import from "recharts" { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine }
 import "reactflow/dist/style.css";
 import from ..assets.SettingsIcon { SettingsIcon }
 import from ..assets.BackIcon { BackIcon }
@@ -18,14 +19,19 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any, getOpDataWalke
     # State for graph data - Idiomatic Jac
     has nodes: list = [];
     has edges: list = [];
+    has chartData: list = [];
+    has minTime: float = 0.0;
+    
+
+    
     has isLoading: bool = True;
 
     def onNodesChange(changes: any) -> None { return; }
     def onEdgesChange(changes: any) -> None { return; }
 
     # Scale factors for visualization
-    X_SCALE = 150;
-    Y_SCALE = 50;
+    X_SCALE = 300;
+    Y_SCALE = 150;
 
     # Fetch data on layer change
     async def fetchData() -> None {
@@ -56,51 +62,149 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any, getOpDataWalke
             new_nodes = [];
             new_edges = [];
             
-            # Process nodes
-            processed_count = 0;
-            for node in raw_nodes {
-                processed_count += 1;
-                node_id = f"{node['id']}";
-                # Y axis: Time
-                val = node["value"];
-                if not val { val = 0.0; }
-                y_pos = (val) * 500; 
-                
-                # X axis
-                x_pos = node["id"] * 200;
+            # Build Tree Structure
+            node_map = {};
+            children_map = {};
+            roots = [];
 
-                speedup = node["speedup_vs_parent"];
+            for node_data in raw_nodes {
+                nid = node_data["id"];
+                node_map[nid] = node_data;
+                pid = node_data["parent"];
+                
+                if pid not in children_map {
+                    children_map[pid] = [];
+                }
+                
+                if pid != -1 and pid != None {
+                    children_map[pid].push(nid);
+                } else {
+                    roots.push(nid);
+                }
+                
+                # Initialize empty children list for this node if not present
+                if nid not in children_map {
+                    children_map[nid] = [];
+                }
+            }
+            console.log(f"OpDetails: Found {roots.length} roots", roots);
+            console.log("OpDetails: Children map keys", children_map);
+
+            # Layout Algorithm (Recursive)
+            visited = {};
+            positions = {};
+            leaf_y_counter = [0]; # Mutable list to act as non-local
+
+            def traverse_layout(curr_id: int, depth: int) -> float {
+                # console.log(f"Traversing {curr_id} at depth {depth}");
+                visited[curr_id] = True;
+                children = children_map[curr_id];
+                
+                my_y = 0.0;
+                
+                if not children or children.length == 0 {
+                    # Leaf Node
+                    my_y = leaf_y_counter[0] * Y_SCALE;
+                    leaf_y_counter[0] += 1;
+                } else {
+                    # Parent Node - process children first
+                    child_ys = [];
+                    for child_id in children {
+                        child_ys.push(traverse_layout(child_id, depth + 1));
+                    }
+                    # Center parent vertically relative to children
+                    if child_ys.length > 0 {
+                        avg_y = 0.0;
+                        for y_val in child_ys { avg_y += y_val; }
+                        my_y = avg_y / child_ys.length;
+                    } else {
+                        # Should be covered by 'if not children', but fallback
+                         my_y = leaf_y_counter[0] * Y_SCALE;
+                         leaf_y_counter[0] += 1;
+                    }
+                }
+                
+                positions[curr_id] = {"x": depth * X_SCALE, "y": my_y};
+                return my_y;
+            }
+
+            # Run layout from all roots
+            for root_id in roots {
+                traverse_layout(root_id, 0);
+            }
+
+            # Generate ReactFlow Nodes and Edges
+            new_chart_data = [];
+            
+            for nid in Object.keys(node_map) {
+                node_data = node_map[nid];
+                pos = positions[nid];
+                if not pos { continue; } # Skip if not reachable (shouldn't happen)
+                
+                node_id = f"{nid}";
+                val = node_data["value"];
+                if not val { val = 0.0; }
+                
+                # Calculate depth from X position
+                depth = pos["x"] / X_SCALE;
+                new_chart_data.push({"x": depth, "y": val, "id": nid});
+
+                speedup = node_data["speedup_vs_parent"];
                 if not speedup { speedup = 0.0; }
+
+                # Label Logic
+                label_text = f"ID: {nid}\n{val:.4f}ms";
+                if speedup != 1.0 and speedup != 0.0 {
+                   label_text += f"\n{speedup:.2f}x"; 
+                }
 
                 new_nodes.push({
                     "id": node_id,
-                    "position": {"x": x_pos, "y": y_pos},
+                    "position": pos,
                     "data": {
-                        "label": f"ID: {node_id}\n{val}ms"
+                        "label": label_text
                     },
                     "style": {
-                        "background": "#10b981" if speedup > 1.0 else "#ef4444",
+                        "background": "#10b981" if speedup > 1.0 else "#ef4444" if speedup < 1.0 else "#3b82f6",
                         "color": "#fff",
-                        "width": 150,
-                        "fontSize": "12px"
-                    }
+                        "width": 140,
+                        "fontSize": "12px",
+                        "borderRadius": "8px",
+                        "border": "1px solid #27272a",
+                        "padding": "4px"
+                    },
+                     "sourcePosition": "right",
+                     "targetPosition": "left"
                 });
 
-                # Process edges
-                parent_id = node["parent"];
-                if parent_id != -1 and parent_id != None {
-                        new_edges.push({
-                        "id": f"e{parent_id}-{node_id}",
-                        "source": f"{parent_id}",
+                # Edges
+                pid = node_data["parent"];
+                if pid != -1 and pid != None {
+                    new_edges.push({
+                        "id": f"e{pid}-{nid}",
+                        "source": f"{pid}",
                         "target": node_id,
-                        "animated": True,
-                        "style": {"stroke": "#52525b"}
+                        "type": "smoothstep", 
+                        "animated": False,
+                        "style": {"stroke": "#71717a", "strokeWidth": 2}
                     });
                 }
             }
             
             nodes = new_nodes;
             edges = new_edges;
+            chartData = new_chart_data;
+            
+            # Calculate Min Time
+            if new_chart_data.length > 0 {
+                 min_val = new_chart_data[0]["y"];
+                 for d in new_chart_data {
+                     if d["y"] < min_val {
+                         min_val = d["y"];
+                     }
+                 }
+                 minTime = min_val;
+            }
 
         } except Exception as e {
             console.error("Failed to fetch graph data:", e);
@@ -108,6 +212,8 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any, getOpDataWalke
             isLoading = False;
         }
     }
+
+
 
     # Fetch data on selection change
     useEffect(
@@ -238,6 +344,24 @@ def:pub OpDetails(projectName: str, opName: str, onNavigate: any, getOpDataWalke
                         <div className="h-[500px] flex items-center justify-center text-zinc-500 animate-pulse bg-zinc-900/10 rounded-xl border border-zinc-800">
                             Loading optimization data for {selectedLayer}...
                         </div>}
+                        <div className="mt-8">
+                            <h3 className="text-xl font-semibold border-b border-zinc-800 pb-2 mb-4">
+                                Performance vs Depth:
+                            </h3>
+                            <div className="h-[300px] w-full bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 select-none">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <ScatterChart margin={{"top": 20, "right": 20, "bottom": 20, "left": 20}}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#444" />
+                                        <XAxis type="number" dataKey="x" name="Depth" stroke="#888" label={{"value": "Tree Depth", "position": "insideBottom", "offset": -10, "fill": "#888"}} />
+                                        <YAxis type="number" dataKey="y" name="Time" unit="ms" stroke="#888" label={{"value": "Time (ms)", "angle": -90, "position": "insideLeft", "fill": "#888"}} />
+                                        <Tooltip cursor={{"strokeDasharray": "3 3"}} contentStyle={{"backgroundColor": "#27272a", "borderColor": "#52525b", "color": "#f4f4f5"}} />
+                                        <Scatter name="Nodes" data={chartData} fill="#10b981" />
+                                        <ReferenceLine y={minTime} stroke="blue" strokeDasharray="3 3" label={{"value": f"Min Found: {minTime:.4f}", "fill": "blue", "position": "insideBottomRight"}} />
+                                        <ReferenceLine y={0.0116} stroke="orange" strokeDasharray="3 3" label={{"value": "PyTorch (0.0116)", "fill": "orange", "position": "insideTopRight"}} />
+                                    </ScatterChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </main>
