@@ -326,5 +326,3 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
 3. **Generate Code:** Preserve `launch(...)` signature.
 """
     return prompt.strip()
-
-    return prompt.strip()
