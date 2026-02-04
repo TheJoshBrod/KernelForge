@@ -64,3 +64,6 @@ Icon
 .jac/*
 jac.md
 
+
+# Local secrets
+frontend/config.json
