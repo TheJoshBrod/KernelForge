@@ -122,8 +122,9 @@ def update_tree(paths: dict, new_node: KernelNode):
         if current.id not in parent.children_ids:
             parent.children_ids.append(current.id)
 
-        # 2. Update visits
-        parent.visits += 1
+        # 2. Only update the immediate parent's visits, not all ancestors
+        if current.id == new_node.id:
+             parent.visits += 1
 
         # 3. Update best_subtree_value
         parent_best = parent.best_subtree_value if parent.best_subtree_value is not None else parent.value
