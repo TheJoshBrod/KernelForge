@@ -25,6 +25,17 @@ Rules:
 - Do NOT require .is_cuda(); tensors are CPU.
 - Keep torch::Tensor launch(...) signature unchanged.
 """
+    elif target == "mps":
+        prompt += """
+
+TARGET DEVICE: MPS (Apple Silicon)
+
+Rules:
+- Generate a CPU/MPS-compatible C++ extension (no CUDA headers, no __global__ kernels).
+- Do NOT call cuda APIs or use CUDA-specific checks.
+- Do NOT require .is_cuda(); tensors are MPS.
+- Keep torch::Tensor launch(...) signature unchanged.
+"""
     elif target == "cuda":
         prompt += """
 
@@ -41,6 +52,8 @@ def _target_device() -> str:
     value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
     if value in {"gpu", "cuda"}:
         return "cuda"
+    if value == "mps":
+        return "mps"
     if value == "cpu":
         return "cpu"
     return ""

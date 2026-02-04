@@ -176,16 +176,16 @@ def _find_optimized_dir(project_name: str) -> str {
 
 def _detect_hardware -> dict {
     try {
-        code = "import json, torch; info={'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count() if torch.cuda.is_available() else 0, 'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else '', 'cuda_version': torch.version.cuda or ''}; print(json.dumps(info))";
+        code = "import json, torch; info={'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count() if torch.cuda.is_available() else 0, 'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else '', 'cuda_version': torch.version.cuda or '', 'mps_available': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available(), 'mps_built': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_built()}; print(json.dumps(info))";
         out = subprocess.check_output([sys.executable, "-c", code], cwd=repo_root);
         text = out.decode("utf-8").strip();
         if text {
             return loads(text);
         }
     } except Exception as e {
-        return {"cuda_available": False, "error": str(e)};
+        return {"cuda_available": False, "mps_available": False, "error": str(e)};
     }
-    return {"cuda_available": False};
+    return {"cuda_available": False, "mps_available": False};
 }
 
 def _export_project_zip(project_name: str, ops: list = None) -> dict {
@@ -504,6 +504,14 @@ walker:pub CreateProject {
             }
 
             # Save config.json
+            hw = _detect_hardware();
+            target_device = "cpu";
+            if hw and "mps_available" in hw and hw["mps_available"] {
+                target_device = "mps";
+            } elif hw and "cuda_available" in hw and hw["cuda_available"] {
+                target_device = "cuda";
+            }
+
             config = {
                 "validation_dir": validation_dir,
                 "created_at": datetime.now().isoformat(),
@@ -515,7 +523,7 @@ walker:pub CreateProject {
                     "use_baseline_as_template": True,
                     "max_attempts": 8,
                     "extra_validation_cases": 1,
-                    "target_device": "cuda"
+                    "target_device": target_device
                 },
                 "profile": {"allow_ops": [], "skip_ops": [], "skip_prefixes": []}
             };
@@ -699,6 +707,8 @@ walker:pub StartGenerateAdvanced {
             target_device = (self.targetDevice or "cuda").lower();
             if target_device == "gpu" or target_device == "cuda" {
                 target_device = "cuda";
+            } elif target_device == "mps" {
+                target_device = "mps";
             } elif target_device != "cpu" {
                 target_device = "cuda";
             }
@@ -873,6 +883,8 @@ walker:pub StartOptimizeAdvanced {
             target_device = (self.targetDevice or "cuda").lower();
             if target_device == "gpu" or target_device == "cuda" {
                 target_device = "cuda";
+            } elif target_device == "mps" {
+                target_device = "mps";
             } elif target_device != "cpu" {
                 target_device = "cuda";
             }

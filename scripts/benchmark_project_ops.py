@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -37,8 +38,27 @@ def get_torch_func(op_name: str):
     return getattr(F, func_name, None)
 
 
+def _resolve_device() -> str:
+    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    if value == "mps":
+        return "mps"
+    if value in {"gpu", "cuda"}:
+        return "cuda"
+    if value == "cpu":
+        return "cpu"
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _sync_device(device: str) -> None:
+    if device == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize()
+    elif device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+        torch.mps.synchronize()
+
+
 def measure_pytorch(func, inputs, repeats: int = 10) -> float:
     timings = []
+    device = _resolve_device()
 
     # Warmup
     for args, kwargs in inputs:
@@ -46,21 +66,32 @@ def measure_pytorch(func, inputs, repeats: int = 10) -> float:
             func(*args, **kwargs)
         except Exception:
             pass
-    torch.cuda.synchronize()
+    _sync_device(device)
 
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-
-    for args, kwargs in inputs:
-        start.record()
-        for _ in range(repeats):
-            try:
-                func(*args, **kwargs)
-            except Exception:
-                pass
-        end.record()
-        torch.cuda.synchronize()
-        timings.append(start.elapsed_time(end) / repeats)
+    if device == "cuda":
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        for args, kwargs in inputs:
+            start.record()
+            for _ in range(repeats):
+                try:
+                    func(*args, **kwargs)
+                except Exception:
+                    pass
+            end.record()
+            torch.cuda.synchronize()
+            timings.append(start.elapsed_time(end) / repeats)
+    else:
+        for args, kwargs in inputs:
+            start_time = time.perf_counter()
+            for _ in range(repeats):
+                try:
+                    func(*args, **kwargs)
+                except Exception:
+                    pass
+            _sync_device(device)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+            timings.append(elapsed_ms / repeats)
 
     return float(np.mean(timings)) if timings else 0.0
 
@@ -68,6 +99,7 @@ def measure_pytorch(func, inputs, repeats: int = 10) -> float:
 def measure_kernel(kernel_dir: Path, inputs, repeats: int = 10) -> float:
     module = get_module(kernel_dir, baseline=True)
     timings = []
+    device = _resolve_device()
 
     # Warmup
     for args, kwargs in inputs:
@@ -75,21 +107,32 @@ def measure_kernel(kernel_dir: Path, inputs, repeats: int = 10) -> float:
             module.launch(*args, **kwargs)
         except TypeError:
             module.launch(*args)
-    torch.cuda.synchronize()
+    _sync_device(device)
 
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-
-    for args, kwargs in inputs:
-        start.record()
-        for _ in range(repeats):
-            try:
-                module.launch(*args, **kwargs)
-            except TypeError:
-                module.launch(*args)
-        end.record()
-        torch.cuda.synchronize()
-        timings.append(start.elapsed_time(end) / repeats)
+    if device == "cuda":
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        for args, kwargs in inputs:
+            start.record()
+            for _ in range(repeats):
+                try:
+                    module.launch(*args, **kwargs)
+                except TypeError:
+                    module.launch(*args)
+            end.record()
+            torch.cuda.synchronize()
+            timings.append(start.elapsed_time(end) / repeats)
+    else:
+        for args, kwargs in inputs:
+            start_time = time.perf_counter()
+            for _ in range(repeats):
+                try:
+                    module.launch(*args, **kwargs)
+                except TypeError:
+                    module.launch(*args)
+            _sync_device(device)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+            timings.append(elapsed_ms / repeats)
 
     return float(np.mean(timings)) if timings else 0.0
 
@@ -108,8 +151,12 @@ def main() -> int:
     parser.add_argument("--max-files", type=int, default=50)
     args = parser.parse_args()
 
-    if not torch.cuda.is_available():
+    target_device = _resolve_device()
+    if target_device == "cuda" and not torch.cuda.is_available():
         print("CUDA not available; benchmark requires a GPU.")
+        return 1
+    if target_device == "mps" and not (hasattr(torch, "backends") and torch.backends.mps.is_available()):
+        print("MPS not available; benchmark requires Apple Silicon.")
         return 1
 
     project_dir = Path("projects") / args.project
@@ -235,7 +282,9 @@ def main() -> int:
     out_path = out_dir / "op_benchmarks.json"
     payload = {
         "project": args.project,
-        "device": torch.cuda.get_device_name(0),
+        "device": torch.cuda.get_device_name(0)
+        if target_device == "cuda" and torch.cuda.is_available()
+        else ("Apple MPS" if target_device == "mps" else "CPU"),
         "results": results,
     }
     out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

@@ -18,7 +18,27 @@ from transformers import AutoModelForImageClassification
 from transformers import AutoModelForSequenceClassification
 from transformers import AutoTokenizer
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def _resolve_device() -> torch.device:
+    target = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    if target == "mps" and hasattr(torch, "backends") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    if target in {"gpu", "cuda"} and torch.cuda.is_available():
+        return torch.device("cuda")
+    if target == "cpu":
+        return torch.device("cpu")
+    if hasattr(torch, "backends") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _sync_device() -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elif device.type == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+        torch.mps.synchronize()
+
+
+device = _resolve_device()
 
 
 # ****************************
@@ -95,9 +115,14 @@ TIMING_STATS = {}  # Track execution times with CUDA events
 # *******************************
 
 def move_to_cuda(item):
-    """Recursively move tensors to CUDA and make them contiguous."""
+    """Recursively move tensors to device and make them contiguous."""
     if torch.is_tensor(item):
-        item = item.cuda() if not item.is_cuda else item
+        if device.type == "cuda":
+            item = item.cuda() if not item.is_cuda else item
+        elif device.type == "mps":
+            item = item.to("mps")
+        else:
+            item = item.cpu()
         return item.contiguous()
     elif isinstance(item, (list, tuple)):
         return type(item)(move_to_cuda(x) for x in item)
@@ -146,23 +171,28 @@ def time_kernel_execution(kernel_fn, *args, num_warmup=3):
         _ = kernel_fn(*args)
 
     # Synchronize before timing
-    torch.cuda.synchronize()
+    _sync_device()
 
-    # Create CUDA events
-    start_event = torch.cuda.Event(enable_timing=True)
-    end_event = torch.cuda.Event(enable_timing=True)
+    if device.type == "cuda":
+        # Create CUDA events
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
 
-    # Time the execution
-    start_event.record()
-    result = kernel_fn(*args)
-    end_event.record()
+        # Time the execution
+        start_event.record()
+        result = kernel_fn(*args)
+        end_event.record()
 
-    # Wait for completion
-    torch.cuda.synchronize()
+        # Wait for completion
+        torch.cuda.synchronize()
 
-    # Get elapsed time in milliseconds
-    elapsed_time = start_event.elapsed_time(end_event)
-
+        # Get elapsed time in milliseconds
+        elapsed_time = start_event.elapsed_time(end_event)
+    else:
+        start_time = time.perf_counter()
+        result = kernel_fn(*args)
+        _sync_device()
+        elapsed_time = (time.perf_counter() - start_time) * 1000.0
     return result, elapsed_time
 
 
@@ -209,17 +239,22 @@ def wrap_function(module, func_name):
                 normalized_args, remaining_kwargs = normalize_args_kwargs(
                     args, kwargs, params, defaults)
 
-                # Move tensors to CUDA AND make them contiguous
+                # Move tensors to device AND make them contiguous
                 cuda_args = []
                 for item in normalized_args:
                     if torch.is_tensor(item):
-                        item = item.cuda() if not item.is_cuda else item
+                        if device.type == "cuda":
+                            item = item.cuda() if not item.is_cuda else item
+                        elif device.type == "mps":
+                            item = item.to("mps")
+                        else:
+                            item = item.cpu()
                         item = item.contiguous()
                         cuda_args.append(item)
                     else:
                         cuda_args.append(move_to_cuda(item))
 
-                # Time the custom kernel execution using CUDA events
+                # Time the custom kernel execution using device timing
                 if run_standard or run_optimized:
                     model = CUSTOM_KERNELS[key]
                 else:
@@ -265,7 +300,7 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
     """Runs Image Classification model from HuggingFace's Transformer library."""
     processor = AutoImageProcessor.from_pretrained(model_name)
     model = AutoModelForImageClassification.from_pretrained(model_name)
-    device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device_str = device.type
     model.to(device_str)
 
     image_paths = glob.glob("benchmarks/data/images/*.JPEG")
@@ -311,7 +346,7 @@ def profile_text_model(model_name: str = "bert-base-uncased"):
             "This model is performing well."
         ]
 
-    device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device_str = device.type
     model.to(device_str)
 
     for text in text_samples:

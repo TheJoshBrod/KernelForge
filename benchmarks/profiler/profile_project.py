@@ -384,7 +384,10 @@ def main():
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower() == "mps" and hasattr(torch, "backends") and torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
     config = load_project_config(project_dir)
     _load_profile_filters(config)
