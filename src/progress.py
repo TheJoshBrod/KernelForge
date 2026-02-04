@@ -43,6 +43,23 @@ def update_job_progress(current: int, total: int, message: str | None = None) ->
         return
 
 
+def update_job_usage(usage: dict) -> None:
+    state_path = os.environ.get("CGINS_STATE_PATH")
+    job_key = os.environ.get("CGINS_JOB_KEY")
+    if not state_path or not job_key:
+        return
+
+    try:
+        state_file = Path(state_path)
+        state = _load_state(state_file)
+        job_state = dict(state.get(job_key, {}))
+        job_state["usage"] = usage or {}
+        state[job_key] = job_state
+        _save_state(state_file, state)
+    except Exception:
+        return
+
+
 def _get_job_state() -> dict:
     state_path = os.environ.get("CGINS_STATE_PATH")
     job_key = os.environ.get("CGINS_JOB_KEY")

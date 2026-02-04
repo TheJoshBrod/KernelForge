@@ -20,7 +20,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.progress import update_job_progress, wait_if_paused, check_cancelled
+from src.progress import (
+    update_job_progress,
+    update_job_usage,
+    wait_if_paused,
+    check_cancelled,
+)
 from src.config import ensure_llm_config
 
 
@@ -122,6 +127,39 @@ def _benchmark(project: str, ops: list[str]) -> dict:
     return {r.get("op"): r for r in results if isinstance(r, dict)}
 
 
+def _merge_usage(total: dict, delta: dict) -> dict:
+    if not delta:
+        return total
+    for key in ("input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens"):
+        if key in delta and delta[key] is not None:
+            total[key] = int(total.get(key, 0)) + int(delta[key])
+    return total
+
+
+def _latest_metrics(attempts_dir: Path) -> dict:
+    if not attempts_dir.exists():
+        return {}
+    metrics_files = sorted(
+        attempts_dir.glob("codex-*.metrics.json"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if not metrics_files:
+        return {}
+    try:
+        return json.loads(metrics_files[-1].read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _record_usage(work_dir: Path, totals: dict) -> dict:
+    metrics = _latest_metrics(work_dir / "attempts")
+    usage = metrics.get("usage") if isinstance(metrics, dict) else {}
+    if isinstance(usage, dict) and usage:
+        totals = _merge_usage(totals, usage)
+        update_job_usage(totals)
+    return totals
+
+
 def _verify(project: str, op: str) -> bool:
     cmd = [
         sys.executable,
@@ -195,8 +233,10 @@ def _optimize_op(
     iterations: int,
     patience: int,
     min_improve_ms: float,
+    min_speedup_pct: float,
     model: str | None,
     sandbox: str | None,
+    usage_totals: dict,
 ) -> None:
     kernel_dir = _generated_root(project) / op
     kernel_path = kernel_dir / "kernel.cu"
@@ -217,6 +257,8 @@ def _optimize_op(
         best_ms = baseline.get("kernel_ms")
 
     no_improve = 0
+    target_speedup = 1.0 + (max(min_speedup_pct, 0.0) / 100.0)
+
     for attempt in range(1, iterations + 1):
         if not wait_if_paused() or check_cancelled():
             print("Optimization cancelled.")
@@ -239,6 +281,7 @@ def _optimize_op(
                 + " (lower is better)."
 
         ok = _run_codex(work_dir, prompt, model=model, sandbox=sandbox)
+        usage_totals = _record_usage(work_dir, usage_totals)
         if not ok:
             print(f"[optimize] codex exec failed for {op} attempt {attempt}")
             no_improve += 1
@@ -263,6 +306,7 @@ def _optimize_op(
 
         results = _benchmark(project, [op]).get(op, {})
         kernel_ms = results.get("kernel_ms") if results else None
+        pytorch_ms = results.get("pytorch_ms") if results else None
         if kernel_ms is None:
             no_improve += 1
             _write_kernel(kernel_path, best_kernel)
@@ -277,6 +321,15 @@ def _optimize_op(
                 _write_kernel(kernel_path, best_kernel)
                 no_improve += 1
 
+        if best_ms is not None and pytorch_ms:
+            best_speedup = pytorch_ms / best_ms
+            if best_speedup >= target_speedup:
+                print(
+                    f"[optimize] target reached for {op}: "
+                    f"{best_speedup:.3f}x (target {target_speedup:.3f}x)"
+                )
+                break
+
         if patience > 0 and no_improve >= patience:
             print(f"[optimize] no improvement in {patience} attempts; stopping.")
             break
@@ -288,10 +341,12 @@ def main() -> int:
     parser.add_argument("--ops", default=None, help="Comma-separated op list")
     parser.add_argument("--ops-file", default=None, help="JSON file containing ops list")
     parser.add_argument("--optimize", action="store_true", help="Run Codex optimization loop")
+    parser.add_argument("--optimize-only", action="store_true", help="Skip generation and optimize existing kernels")
     parser.add_argument("--benchmark", action="store_true", help="Run benchmark after generation")
     parser.add_argument("--opt-iterations", type=int, default=3)
     parser.add_argument("--opt-patience", type=int, default=2)
     parser.add_argument("--opt-min-improve-ms", type=float, default=0.0)
+    parser.add_argument("--opt-min-speedup-pct", type=float, default=5.0)
     parser.add_argument("--codex-model", default=None)
     parser.add_argument("--codex-sandbox", default="workspace-write")
     parser.add_argument("--generate-attempts", type=int, default=3)
@@ -323,56 +378,71 @@ def main() -> int:
         print("No ops provided.")
         return 2
 
-    # One-shot Codex generation
-    update_job_progress(0, len(ops), "Starting Codex generation")
-    io_dir = _project_dir(project) / "io" / "individual_ops"
-    out_dir = _project_dir(project) / "kernels" / "generated"
+    usage_totals: dict = {}
 
-    env = os.environ.copy()
-    env["CGINS_CODEX_GENERATE"] = "1"
-    env["CGINS_CODEX_REPAIR"] = "1"
-    env["CGINS_CODEX_MAX_ATTEMPTS"] = str(max(args.generate_attempts, 1))
-    env["CGINS_MAX_ATTEMPTS"] = str(max(args.generate_attempts, 1))
-    env["CGINS_CODEX_GENERATE_OPS"] = ",".join(ops)
-    env["CGINS_CODEX_REPAIR_OPS"] = ",".join(ops)
-    if args.codex_model:
-        env["CGINS_CODEX_MODEL"] = args.codex_model
-    if args.codex_sandbox:
-        env["CGINS_CODEX_SANDBOX"] = args.codex_sandbox
+    if args.optimize_only:
+        args.optimize = True
+        missing = _missing_kernels(project, ops)
+        if missing:
+            preview = ", ".join(missing[:6])
+            suffix = f" (+{len(missing) - 6} more)" if len(missing) > 6 else ""
+            print(f"Missing kernels for {len(missing)} ops: {preview}{suffix}")
+            update_job_progress(
+                0, len(ops), f"Missing kernels for {len(missing)} ops"
+            )
+            return 1
+        update_job_progress(0, len(ops), "Starting optimization")
+    else:
+        # One-shot Codex generation
+        update_job_progress(0, len(ops), "Starting Codex generation")
+        io_dir = _project_dir(project) / "io" / "individual_ops"
+        out_dir = _project_dir(project) / "kernels" / "generated"
 
-    gen_cmd = [
-        sys.executable,
-        "-m",
-        "src.generator.main",
-        "--io-dir",
-        str(io_dir),
-        "--out-dir",
-        str(out_dir),
-        "--only-ops",
-        ",".join(ops),
-    ]
+        env = os.environ.copy()
+        env["CGINS_CODEX_GENERATE"] = "1"
+        env["CGINS_CODEX_REPAIR"] = "1"
+        env["CGINS_CODEX_MAX_ATTEMPTS"] = str(max(args.generate_attempts, 1))
+        env["CGINS_MAX_ATTEMPTS"] = str(max(args.generate_attempts, 1))
+        env["CGINS_CODEX_GENERATE_OPS"] = ",".join(ops)
+        env["CGINS_CODEX_REPAIR_OPS"] = ",".join(ops)
+        if args.codex_model:
+            env["CGINS_CODEX_MODEL"] = args.codex_model
+        if args.codex_sandbox:
+            env["CGINS_CODEX_SANDBOX"] = args.codex_sandbox
 
-    if _run(gen_cmd, env=env) != 0:
-        print("Generation failed.")
-        update_job_progress(0, len(ops), "Generation failed")
-        return 1
+        gen_cmd = [
+            sys.executable,
+            "-m",
+            "src.generator.main",
+            "--io-dir",
+            str(io_dir),
+            "--out-dir",
+            str(out_dir),
+            "--only-ops",
+            ",".join(ops),
+        ]
 
-    missing = _missing_kernels(project, ops)
-    if missing:
-        preview = ", ".join(missing[:6])
-        suffix = f" (+{len(missing) - 6} more)" if len(missing) > 6 else ""
-        print(f"Missing kernels for {len(missing)} ops: {preview}{suffix}")
-        update_job_progress(
-            0, len(ops), f"Missing kernels for {len(missing)} ops"
-        )
-        return 1
+        if _run(gen_cmd, env=env) != 0:
+            print("Generation failed.")
+            update_job_progress(0, len(ops), "Generation failed")
+            return 1
 
-    update_job_progress(len(ops), len(ops), "Generation complete")
+        missing = _missing_kernels(project, ops)
+        if missing:
+            preview = ", ".join(missing[:6])
+            suffix = f" (+{len(missing) - 6} more)" if len(missing) > 6 else ""
+            print(f"Missing kernels for {len(missing)} ops: {preview}{suffix}")
+            update_job_progress(
+                0, len(ops), f"Missing kernels for {len(missing)} ops"
+            )
+            return 1
 
-    if args.benchmark:
-        update_job_progress(0, len(ops), "Benchmarking generated kernels")
-        _benchmark(project, ops)
-        update_job_progress(len(ops), len(ops), "Benchmark complete")
+        update_job_progress(len(ops), len(ops), "Generation complete")
+
+        if args.benchmark:
+            update_job_progress(0, len(ops), "Benchmarking generated kernels")
+            _benchmark(project, ops)
+            update_job_progress(len(ops), len(ops), "Benchmark complete")
 
     if args.optimize:
         update_job_progress(0, len(ops), "Starting Codex optimization")
@@ -387,10 +457,13 @@ def main() -> int:
                 iterations=max(args.opt_iterations, 1),
                 patience=max(args.opt_patience, 0),
                 min_improve_ms=max(args.opt_min_improve_ms, 0.0),
+                min_speedup_pct=max(args.opt_min_speedup_pct, 0.0),
                 model=args.codex_model,
                 sandbox=args.codex_sandbox,
+                usage_totals=usage_totals,
             )
         update_job_progress(len(ops), len(ops), "Optimization complete")
+        update_job_usage(usage_totals)
 
     return 0
 
