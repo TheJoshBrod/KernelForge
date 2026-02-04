@@ -3,6 +3,7 @@
 import from react { useEffect }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate, useParams }
+import from .Mascot { Mascot }
 
 def:pub OpDetails -> any {
     navigate = useNavigate();
@@ -97,6 +98,7 @@ def:pub OpDetails -> any {
     gen_logs = generated["logs"] if generated and "logs" in generated else [];
     opt_kernels = optimized["kernels"] if optimized and "kernels" in optimized else [];
     opt_logs = optimized["logs"] if optimized and "logs" in optimized else [];
+    files_label = f"{gen_kernels.length} gen / {opt_kernels.length} opt";
 
     genKernelButtons = [];
     for f in gen_kernels {
@@ -105,7 +107,7 @@ def:pub OpDetails -> any {
                 <button
                     key={f["path"]}
                     onClick={lambda -> None { openFile(f);}}
-                    className="w-full text-left border border-zinc-800/60 bg-zinc-900/40 hover:bg-zinc-800 text-xs font-mono px-3 py-2 rounded transition-all"
+                    className="file-button"
                 >
                     {f["name"]}
                 </button>
@@ -120,7 +122,7 @@ def:pub OpDetails -> any {
                 <button
                     key={f["path"]}
                     onClick={lambda -> None { openFile(f);}}
-                    className="w-full text-left border border-zinc-800/60 bg-zinc-900/40 hover:bg-zinc-800 text-xs font-mono px-3 py-2 rounded transition-all"
+                    className="file-button"
                 >
                     {f["name"]}
                 </button>
@@ -135,7 +137,7 @@ def:pub OpDetails -> any {
                 <button
                     key={f["path"]}
                     onClick={lambda -> None { openFile(f);}}
-                    className="w-full text-left border border-zinc-800/60 bg-zinc-900/40 hover:bg-zinc-800 text-xs font-mono px-3 py-2 rounded transition-all"
+                    className="file-button"
                 >
                     {f["name"]}
                 </button>
@@ -150,7 +152,7 @@ def:pub OpDetails -> any {
                 <button
                     key={f["path"]}
                     onClick={lambda -> None { openFile(f);}}
-                    className="w-full text-left border border-zinc-800/60 bg-zinc-900/40 hover:bg-zinc-800 text-xs font-mono px-3 py-2 rounded transition-all"
+                    className="file-button"
                 >
                     {f["name"]}
                 </button>
@@ -160,168 +162,214 @@ def:pub OpDetails -> any {
 
     hasSelected = selectedFile and "name" in selectedFile;
 
+    skeletonFiles = [];
+    for i in [0, 1, 2, 3, 4] {
+        skeletonFiles = skeletonFiles.concat(
+            [<div key={i} className="skeleton skeleton-line"></div>]
+        );
+    }
+
     if loading {
         return
-            <div
-                className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-100"
-            >
-                <p>
-                    Loading op details...
-                </p>
+            <div className="app-shell">
+                <aside className="sidebar">
+                    <div className="panel sidebar-panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Loading op details
+                            </span>
+                        </div>
+                        <div className="panel-body">
+                            {skeletonFiles}
+                        </div>
+                    </div>
+                </aside>
+                <main className="content">
+                    <div className="panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                File preview
+                            </span>
+                        </div>
+                        <div className="panel-body">
+                            <div className="skeleton skeleton-block"></div>
+                        </div>
+                    </div>
+                </main>
             </div>;
     }
 
     if errorMsg {
         return
-            <div
-                className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 text-zinc-100 gap-4"
-            >
-                <p className="text-sm text-zinc-400">
-                    {errorMsg}
-                </p>
-                <button
-                    onClick={lambda -> None { navigate("/project/" + projectName);}}
-                    className="px-4 py-2 rounded bg-zinc-800 hover:bg-zinc-700 text-sm"
-                >
-                    Back to Project
-                </button>
+            <div className="app-shell">
+                <main className="content">
+                    <div className="panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Error
+                            </span>
+                        </div>
+                        <div className="panel-body">
+                            <p className="table-muted">
+                                {errorMsg}
+                            </p>
+                            <button
+                                onClick={lambda -> None { navigate(
+                                    "/project/" + projectName
+                                );}}
+                                className="ghost-button"
+                            >
+                                Back to Project
+                            </button>
+                        </div>
+                    </div>
+                </main>
             </div>;
     }
 
     return
-        <div className="flex min-h-screen bg-zinc-950 text-zinc-100 font-sans">
-            <div className="absolute top-2 right-6">
-                <a
-                    onClick={lambda -> None { navigate("/settings");}}
-                    className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white cursor-pointer"
-                    aria-label="Settings"
-                >
-                    <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    >
-                        <path
-                            d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-                        />
-                        <circle cx="12" cy="12" r="3" />
-                    </svg>
-                </a>
-            </div>
-            <div className="absolute top-2 right-16 z-10">
-                <a
-                    onClick={lambda -> None { navigate("/project/" + projectName);}}
-                    className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white bg-zinc-950/50 backdrop-blur-sm cursor-pointer"
-                    aria-label="Go Back"
-                >
-                    <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    >
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="15" y1="9" x2="9" y2="15"></line>
-                        <line x1="9" y1="9" x2="15" y2="15"></line>
-                    </svg>
-                </a>
-            </div>
-            <aside
-                className="w-1/3 border-r border-zinc-900 flex flex-col p-6 space-y-8"
-            >
-                <div>
-                    <h2 className="text-xl font-bold text-zinc-100">
-                        {opName}
-                    </h2>
-                    <p className="text-xs text-zinc-500 mt-1">
-                        Profiled calls: {profile["count"]
-                        if profile and "count" in profile
-                        else 0}
-                    </p>
+        <div className="app-shell">
+            <aside className="sidebar">
+                <div className="sidebar-header">
+                    <div className="brand">
+                        <Mascot variant="logo" />
+                        <div className="brand-meta">
+                            <span>
+                                Op Details
+                            </span>
+                            <span className="brand-tag">
+                                {opName}
+                            </span>
+                        </div>
+                    </div>
+                    <div className="sidebar-actions">
+                        <button
+                            onClick={lambda -> None { navigate(
+                                "/project/" + projectName
+                            );}}
+                            className="ghost-button"
+                        >
+                            Back
+                        </button>
+                        <button
+                            onClick={lambda -> None { navigate("/settings");}}
+                            className="ghost-button"
+                        >
+                            Settings
+                        </button>
+                    </div>
                 </div>
-                <div className="space-y-3">
-                    <h3 className="text-sm uppercase tracking-wider text-zinc-500">
-                        Generated Kernels
-                    </h3>
-                    <div className="space-y-2">
+                <div className="panel sidebar-panel">
+                    <div className="panel-header">
+                        <span className="panel-title">
+                            Profile summary
+                        </span>
+                        <span className="table-muted">
+                            Calls: {profile["count"]
+                            if profile and "count" in profile
+                            else 0}
+                        </span>
+                    </div>
+                    <div className="panel-body">
+                        <p className="table-muted">
+                            Select a kernel or log to inspect below.
+                        </p>
+                    </div>
+                </div>
+                <div className="panel sidebar-panel">
+                    <div className="panel-header">
+                        <span className="panel-title">
+                            Generated kernels
+                        </span>
+                    </div>
+                    <div className="panel-body">
                         {genKernelButtons
                         if genKernelButtons.length > 0
-                        else <p className="text-xs text-zinc-600">
+                        else <p className="table-muted">
                             No generated kernels yet.
                         </p>}
                     </div>
                 </div>
-                <div className="space-y-3">
-                    <h3 className="text-sm uppercase tracking-wider text-zinc-500">
-                        Generation Logs
-                    </h3>
-                    <div className="space-y-2">
+                <div className="panel sidebar-panel">
+                    <div className="panel-header">
+                        <span className="panel-title">
+                            Generation logs
+                        </span>
+                    </div>
+                    <div className="panel-body">
                         {genLogButtons
                         if genLogButtons.length > 0
-                        else <p className="text-xs text-zinc-600">
+                        else <p className="table-muted">
                             No generation logs yet.
                         </p>}
                     </div>
                 </div>
-                <div className="space-y-3">
-                    <h3 className="text-sm uppercase tracking-wider text-zinc-500">
-                        Optimized Kernels
-                    </h3>
-                    <div className="space-y-2">
+                <div className="panel sidebar-panel">
+                    <div className="panel-header">
+                        <span className="panel-title">
+                            Optimized kernels
+                        </span>
+                    </div>
+                    <div className="panel-body">
                         {optKernelButtons
                         if optKernelButtons.length > 0
-                        else <p className="text-xs text-zinc-600">
+                        else <p className="table-muted">
                             No optimized kernels yet.
                         </p>}
                     </div>
                 </div>
-                <div className="space-y-3">
-                    <h3 className="text-sm uppercase tracking-wider text-zinc-500">
-                        Optimization Logs
-                    </h3>
-                    <div className="space-y-2">
+                <div className="panel sidebar-panel">
+                    <div className="panel-header">
+                        <span className="panel-title">
+                            Optimization logs
+                        </span>
+                    </div>
+                    <div className="panel-body">
                         {optLogButtons
                         if optLogButtons.length > 0
-                        else <p className="text-xs text-zinc-600">
+                        else <p className="table-muted">
                             No optimization logs yet.
                         </p>}
                     </div>
                 </div>
             </aside>
-            <main className="w-2/3 p-8 overflow-y-auto">
-                <div className="mb-6">
-                    <h3 className="text-lg font-semibold">
-                        File Preview
-                    </h3>
-                    <p className="text-xs text-zinc-500">
-                        {selectedFile["name"]
-                        if hasSelected
-                        else "Select a kernel or log to preview."}
-                    </p>
+            <main className="content">
+                <div className="page-header">
+                    <div>
+                        <h1 className="page-title">
+                            {opName}
+                        </h1>
+                        <div className="badge-row">
+                            <span className="badge">
+                                Project: {projectName}
+                            </span>
+                            <span className="badge">
+                                Files: {files_label}
+                            </span>
+                        </div>
+                    </div>
+                    <Mascot variant="cta" />
                 </div>
-                <div
-                    className="bg-zinc-900/40 border border-zinc-800 rounded-xl p-4 min-h-[400px]"
-                >
-                    {<pre
-                        className="whitespace-pre-wrap text-xs text-zinc-200 font-mono"
-                    >
-                        {fileContent}
-                    </pre>
-                    if hasSelected
-                    else <p className="text-sm text-zinc-500">
-                        No file selected.
-                    </p>}
+                <div className="panel">
+                    <div className="panel-header">
+                        <span className="panel-title">
+                            File preview
+                        </span>
+                        <span className="table-muted">
+                            {selectedFile["name"]
+                            if hasSelected
+                            else "Select a kernel or log"}
+                        </span>
+                    </div>
+                    <div className="panel-body">
+                        {<pre className="code-block">
+                            {fileContent}
+                        </pre>
+                        if hasSelected
+                        else <p className="table-muted">
+                            No file selected.
+                        </p>}
+                    </div>
                 </div>
             </main>
         </div>;
