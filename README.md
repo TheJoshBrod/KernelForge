@@ -148,6 +148,130 @@ python -m src.optimizer.optimize_ops projects/<project_name>/io/individual_ops <
 python scripts/benchmark_project_ops.py --project <project_name>
 `
 
+### Containerized GPU Worker (safe mode)
+
+This repo includes a GPU worker image designed for running untrusted kernels inside a locked-down container.
+
+Build the image:
+```bash
+docker build -f docker/worker/Dockerfile -t cgins-worker:latest .
+```
+
+Recommended safe run flags (example):
+```bash
+docker run --rm --gpus all \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=4g \
+  --cap-drop=ALL \
+  --security-opt=no-new-privileges \
+  --pids-limit=512 \
+  --memory=64g \
+  --cpus=16 \
+  -v /abs/path/to/projects/<name>:/work/project:rw \
+  -v /abs/path/to/CGinS:/work/cgins:ro \
+  -v /abs/path/to/datasets:/work/datasets:ro \
+  -e LLM_PROVIDER=openai \
+  -e OPENAI_API_KEY=... \
+  -e OPENAI_MODEL=... \
+  cgins-worker:latest \
+  bash
+```
+
+Enable container mode for background jobs (used by the UI job runner):
+```bash
+export CGINS_USE_CONTAINER=1
+export CGINS_DOCKER_IMAGE=cgins-worker:latest
+export CGINS_DOCKER_DATASETS_DIR=/abs/path/to/datasets
+```
+
+Optional hardening environment variables:
+```bash
+export CGINS_DOCKER_READ_ONLY=1
+export CGINS_DOCKER_DROP_CAPS=1
+export CGINS_DOCKER_NETWORK=bridge
+export CGINS_DOCKER_MEMORY=64g
+export CGINS_DOCKER_CPUS=16
+export CGINS_DOCKER_PIDS_LIMIT=512
+```
+
+### Codex Workspace Utilities
+
+Prepare a per-op Codex workspace:
+```bash
+python scripts/codex_prepare_workspace.py --project <project_name> --op <op_name>
+```
+
+Run a Codex attempt with structured logs:
+```bash
+python scripts/codex_exec.py --work-dir projects/<project_name>/kernels/generated/individual_op_kernels/<op>/work --prompt-file TASK.md
+```
+
+Validate a single op:
+```bash
+python scripts/verify_one_op.py --project <project_name> --op <op_name>
+```
+
+### Codex Integration (Generation + Optimization)
+
+Enable Codex as a repair helper (M2):
+```bash
+export CGINS_CODEX_REPAIR=1
+```
+
+Enable Codex as the primary generator for selected ops (M3):
+```bash
+export CGINS_CODEX_GENERATE=1
+export CGINS_CODEX_GENERATE_OPS=torch_nn_functional_gelu,torch_nn_functional_layer_norm
+```
+
+Enable Codex for optimization (M3):
+```bash
+export CGINS_CODEX_OPTIMIZE=1
+export CGINS_CODEX_OPTIMIZE_OPS=torch_nn_functional_gelu,torch_nn_functional_layer_norm
+```
+
+Optional knobs:
+```bash
+export CGINS_CODEX_MODEL=<model-name>
+export CGINS_CODEX_SANDBOX=workspace-write
+export CGINS_CODEX_MAX_ATTEMPTS=3
+```
+
+### Advanced Generate (GPU-first)
+
+The UI includes an **Advanced Generate** flow designed for GPU kernels by default.
+
+Key behaviors:
+- **GPU default**: Advanced Generate targets CUDA unless you explicitly switch to CPU.
+- **Hardware detect**: Use the Detect Hardware button to confirm CUDA availability (auto-falls back to CPU if unavailable).
+- **Generate attempts**: Control how many generation attempts the Codex loop can take per op before failing.
+- **Per-op inputs required**: Advanced Generate requires profiled input/output entries in
+  `projects/<project_name>/io/individual_ops/<op>/entry_*.pt`.
+
+Environment knobs (optional):
+```bash
+export CGINS_TARGET_DEVICE=cuda        # cuda or cpu (default: cuda)
+export CGINS_MAX_ATTEMPTS=4            # validation attempts for non-Codex
+export CGINS_CODEX_MAX_ATTEMPTS=4      # Codex attempts per op
+```
+
+### Runtime Loader (1-liner)
+
+Load a `.cgins.zip` and compile all exported kernels:
+```bash
+python scripts/load_export.py /path/to/project.cgins.zip
+```
+
+Or use the API:
+```bash
+python - <<'PY'
+from src.runtime_loader import load_export
+
+modules = load_export("/path/to/project.cgins.zip")
+print(modules.keys())
+PY
+```
+
 ### Sample model + weights
 
 Use the included CGinS mini model for testing:

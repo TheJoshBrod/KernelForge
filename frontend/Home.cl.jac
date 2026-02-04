@@ -3,6 +3,9 @@
 import from react { useEffect }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
+import from .GlowButton { GlowButton }
+import from .Mascot { Mascot }
+import from .IllustratedCard { IllustratedCard }
 
 def:pub Home -> any {
     navigate = useNavigate();
@@ -61,7 +64,7 @@ def:pub Home -> any {
                 <a
                     key={project["name"]}
                     onClick={lambda -> None { navigate("/project/" + project["name"]);}}
-                    className="text-blue-400 hover:text-blue-300 transition-colors text-sm hover:underline underline-offset-4 cursor-pointer"
+                    className="nav-link"
                 >
                     {project["name"]}
                 </a>
@@ -70,112 +73,257 @@ def:pub Home -> any {
     }
 
     return
-        <main
-            className="flex min-h-screen flex-col items-center justify-center p-6 relative bg-zinc-950 text-zinc-100 selection:bg-zinc-800"
-        >
-            <div className="absolute top-2 right-6">
-                <a
-                    onClick={lambda -> None { navigate("/settings");}}
-                    className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white cursor-pointer"
-                    aria-label="Settings"
-                >
-                    <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    >
-                        <path
-                            d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-                        />
-                        <circle cx="12" cy="12" r="3" />
-                    </svg>
-                </a>
-            </div>
-            <div className="flex flex-col items-center w-full max-w-md space-y-12">
-                <div className="text-center space-y-2">
-                    <h1
-                        className="text-6xl font-bold tracking-tighter bg-gradient-to-b from-white to-zinc-400 bg-clip-text text-transparent"
-                    >
-                        CGinS
-                    </h1>
-                    <p
-                        className="text-zinc-500 font-medium tracking-wide uppercase text-sm"
-                    >
-                        New Project
-                    </p>
-                </div>
-                <div className="flex flex-col sm:flex-row gap-4 w-full">
-                    <button
-                        onClick={lambda -> None { navigate("/new-project");}}
-                        className="flex-1 h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-medium rounded-lg transition-all duration-200 ease-in-out shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_25px_rgba(255,255,255,0.2)]"
-                    >
-                        Upload Full Model
-                    </button>
-                    <a
-                        onClick={lambda -> None { navigate("/new-project");}}
-                        className="flex-1 cursor-pointer"
-                    >
-                        <button
-                            className="w-full h-12 flex items-center justify-center bg-transparent border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-900 text-zinc-300 font-medium rounded-lg transition-all duration-200"
-                        >
-                            Upload Weights
-                        </button>
-                    </a>
-                </div>
-                <div className="w-full space-y-2 relative group">
-                    <div
-                        className="text-xs font-semibold text-zinc-500 uppercase tracking-wider ml-1"
-                    >
-                        Load Existing
+        <main className="page">
+            <div className="container">
+                <header className="navbar">
+                    <div className="brand">
+                        <Mascot variant="logo" />
+                        <div className="brand-meta">
+                            <span>
+                                CGinS
+                            </span>
+                            <span className="brand-tag">
+                                CUDA Ghost in the Shell
+                            </span>
+                        </div>
                     </div>
-                    <div className="relative">
-                        <select
-                            defaultValue=""
-                            onChange={handleProjectSelect}
-                            className="w-full h-12 appearance-none bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 rounded-lg px-4 text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all cursor-pointer"
+                    <div className="nav-links">
+                        <a
+                            className="nav-link"
+                            onClick={lambda -> None { navigate("/settings");}}
                         >
-                            <option value="" disabled>
-                                Select a project to load...
-                            </option>
-                            {projectOptions}
-                        </select>
-                        <div
-                            className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500"
+                            Settings
+                        </a>
+                        <a
+                            className="nav-link"
+                            onClick={lambda -> None { navigate("/new-project");}}
                         >
-                            <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                width="16"
-                                height="16"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
+                            New Project
+                        </a>
+                        <a className="nav-link" href="#existing">
+                            Load Existing
+                        </a>
+                    </div>
+                    <GlowButton
+                        label="Start New Project"
+                        onClick={lambda -> None { navigate("/new-project");}}
+                        variant="primary"
+                        className="glow-button--compact"
+                    />
+                </header>
+            </div>
+            <section className="hero-splash">
+                <div className="container hero-grid">
+                    <div className="hero-copy">
+                        <span className="eyebrow reveal delay-1">
+                            GPU Kernel Studio
+                        </span>
+                        <h1 className="hero-title reveal delay-2">
+                            Make CUDA kernels feel effortless, precise, and cute.
+                        </h1>
+                        <p className="hero-sub reveal delay-3">
+                            CGinS profiles your model, generates correct CUDA kernels, anditerates toward GPU-native performance with a workflow that feelshandcrafted and calm.
+                        </p>
+                        <div className="hero-actions reveal delay-4">
+                            <GlowButton
+                                label="Upload Full Model"
+                                onClick={lambda -> None { navigate("/new-project");}}
+                                variant="primary"
+                            />
+                            <button
+                                className="ghost-button"
+                                onClick={lambda -> None { navigate("/new-project");}}
                             >
-                                <path d="m6 9 6 6 6-6" />
-                            </svg>
+                                Upload Weights
+                            </button>
+                        </div>
+                        <div className="hero-badges">
+                            <span className="badge">
+                                GPU-aware generation
+                            </span>
+                            <span className="badge">
+                                Correctness-first validation
+                            </span>
+                            <span className="badge">
+                                Export-ready kernels
+                            </span>
+                        </div>
+                    </div>
+                    <div className="hero-visual">
+                        <div className="mascot-halo"></div>
+                        <div className="hero-orbits">
+                            <span className="orb-one"></span>
+                            <span className="orb-two"></span>
+                            <span className="orb-three"></span>
+                        </div>
+                        <Mascot
+                            variant="hero"
+                            ambient={True}
+                            className="reveal delay-3"
+                        />
+                    </div>
+                </div>
+            </section>
+            <section className="section">
+                <div className="container">
+                    <h2 className="section-title">
+                        CGinS feels like a studio
+                    </h2>
+                    <p className="section-sub">
+                        A calm, structured flow that turns profiling, generation, and exportinto a repeatable, premium experience.
+                    </p>
+                    <div className="feature-grid">
+                        <IllustratedCard
+                            title="Profile in context"
+                            text="Capture real operator inputs and focus on the kernels that move your model forward."
+                            icon={<span>
+                                ⚡
+                            </span>}
+                            tag="profile"
+                        />
+                        <IllustratedCard
+                            title="Generate with guardrails"
+                            text="Automated checks keep every kernel aligned with PyTorch outputs before moving on."
+                            icon={<span>
+                                ✓
+                            </span>}
+                            tag="validate"
+                        />
+                        <IllustratedCard
+                            title="Optimize with intent"
+                            text="Compare each iteration and keep only the best-performing kernel for your GPU."
+                            icon={<span>
+                                ⤴
+                            </span>}
+                            tag="optimize"
+                        />
+                        <IllustratedCard
+                            title="Export-ready"
+                            text="Ship the winning kernels, metadata, and logs in one exportable package."
+                            icon={<span>
+                                ⬚
+                            </span>}
+                            tag="export"
+                        />
+                    </div>
+                </div>
+            </section>
+            <section className="section" id="existing">
+                <div className="container">
+                    <h2 className="section-title">
+                        Start in minutes
+                    </h2>
+                    <p className="section-sub">
+                        Upload a model or resume a project with your existing kernels.
+                    </p>
+                    <div className="quickstart-grid">
+                        <div className="card">
+                            <h3 className="card-title">
+                                New project
+                            </h3>
+                            <p className="card-text">
+                                Bring your model code and optional weights. CGinS handlesprofiling and kernel generation end-to-end.
+                            </p>
+                            <div className="hero-actions">
+                                <GlowButton
+                                    label="Create Project"
+                                    onClick={lambda -> None { navigate("/new-project");}}
+                                    variant="primary"
+                                />
+                                <button
+                                    className="ghost-button"
+                                    onClick={lambda -> None { navigate("/new-project");}}
+                                >
+                                    Upload Weights
+                                </button>
+                            </div>
+                        </div>
+                        <div className="card">
+                            <h3 className="card-title">
+                                Load existing
+                            </h3>
+                            <p className="card-text">
+                                Pick up where you left off. Jump directly into your latestkernels and benchmarks.
+                            </p>
+                            <div>
+                                <select
+                                    defaultValue=""
+                                    onChange={handleProjectSelect}
+                                    className="select-field"
+                                >
+                                    <option value="" disabled>
+                                        Select a project...
+                                    </option>
+                                    {projectOptions}
+                                </select>
+                            </div>
+                            <div className="recent-links">
+                                {recentLinks
+                                if hasRecent
+                                else <span className="card-text">
+                                    {"Loading projects..."
+                                    if loading
+                                    else "No recent projects yet."}
+                                </span>}
+                            </div>
                         </div>
                     </div>
                 </div>
-                <div className="w-full flex flex-col items-center space-y-3 pt-4">
-                    <h3 className="text-sm font-medium text-zinc-400">
-                        Recent Projects
-                    </h3>
-                    <div className="flex flex-col gap-2 text-center">
-                        {recentLinks
-                        if hasRecent
-                        else <p className="text-zinc-600 text-xs italic">
-                            No recently accessed projects
-                        </p>}
+            </section>
+            <section className="section">
+                <div className="container">
+                    <div className="story-row">
+                        <div className="story-panel">
+                            <h2 className="section-title">
+                                A sweet, serious workflow
+                            </h2>
+                            <p>
+                                CGinS blends a cozy UI with production-grade tooling. Everykernel keeps a log of what improved, what failed, and whatshipped, so your team stays confident and aligned.
+                            </p>
+                            <p>
+                                Think of it as a CUDA studio: a place where you tune, test, andexport without losing the human touch.
+                            </p>
+                        </div>
+                        <div className="hero-visual">
+                            <div className="mascot-halo"></div>
+                            <Mascot variant="cta" ambient={True} />
+                        </div>
                     </div>
                 </div>
-            </div>
+            </section>
+            <section className="section">
+                <div className="container">
+                    <div className="quote">
+                        <p className="quote-text">
+                            “CGinS gives us a GPU-native workflow without waiting onhand-written kernels.”
+                        </p>
+                        <div className="quote-author">
+                            — ML Infrastructure Team
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <section className="section">
+                <div className="container">
+                    <div className="cta">
+                        <div>
+                            <h2 className="cta-title">
+                                Ready to ship faster kernels?
+                            </h2>
+                            <p className="cta-text">
+                                Spin up a new project and start generating CUDA kernels inminutes.
+                            </p>
+                        </div>
+                        <div className="hero-actions">
+                            <GlowButton
+                                label="Start New Project"
+                                onClick={lambda -> None { navigate("/new-project");}}
+                                variant="primary"
+                            />
+                            <Mascot variant="cta" ambient={True} />
+                        </div>
+                    </div>
+                </div>
+            </section>
         </main>;
 }

@@ -1,4 +1,5 @@
 """File to construct and pull prompts."""
+import os
 import torch
 
 
@@ -12,7 +13,37 @@ def get_system_prompt() -> str:
     prompt = ""
     with open("src/generator/prompts/GeneratorSystemPrompt.md") as f:
         prompt = f.read()
+    target = _target_device()
+    if target == "cpu":
+        prompt += """
+
+TARGET DEVICE: CPU
+
+Rules:
+- Generate a CPU-only C++ extension (no CUDA headers, no __global__ kernels).
+- Do NOT call cuda APIs or use CUDA-specific checks.
+- Do NOT require .is_cuda(); tensors are CPU.
+- Keep torch::Tensor launch(...) signature unchanged.
+"""
+    elif target == "cuda":
+        prompt += """
+
+TARGET DEVICE: CUDA
+
+Rules:
+- Generate a CUDA kernel and CUDA-aware C++ wrapper.
+- Enforce .is_cuda() checks for tensor inputs.
+"""
     return prompt
+
+
+def _target_device() -> str:
+    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    if value in {"gpu", "cuda"}:
+        return "cuda"
+    if value == "cpu":
+        return "cpu"
+    return ""
 
 
 def _merge_dynamic_dims(values_list):
@@ -45,11 +76,13 @@ def _summarize_scalar(values: list):
 
 
 def _tensor_stats(value: torch.Tensor) -> dict:
+    target = _target_device()
+    device = target or str(value.device)
     return {
         "dtype": str(value.dtype),
         "shape": list(value.shape),
         "stride": list(value.stride()),
-        "device": str(value.device),
+        "device": device,
         "contiguous": bool(value.is_contiguous()),
         "requires_grad": bool(value.requires_grad),
         "numel": int(value.numel()),
@@ -133,10 +166,12 @@ def generate_function_spec_from_calls(call_list, function_name):
 
             # Record Shape (for Tensors)
             if isinstance(value, torch.Tensor):
+                target = _target_device()
+                device = target or str(value.device)
                 param_stats[name]["shapes"].append(list(value.shape))
                 param_stats[name]["strides"].append(list(value.stride()))
                 param_stats[name]["dtypes"].add(str(value.dtype))
-                param_stats[name]["devices"].add(str(value.device))
+                param_stats[name]["devices"].add(device)
                 param_stats[name]["contiguous"].add(bool(value.is_contiguous()))
                 param_stats[name]["requires_grad"].add(bool(value.requires_grad))
                 param_stats[name]["numel"].add(int(value.numel()))
@@ -274,6 +309,9 @@ Defaults: {function_spec['signature']['defaults']}
 
 **Parameters:**
 """
+    target = _target_device()
+    if target:
+        prompt += f"\nTarget device: {target}\n"
 
     # List all parameters
     for i, param in enumerate(function_spec['parameters'], 1):
