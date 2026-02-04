@@ -206,6 +206,8 @@ def _target_device() -> str:
     value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
     if value in {"gpu", "cuda"}:
         return "cuda"
+    if value == "mps":
+        return "mps"
     if value == "cpu":
         return "cpu"
     return "cuda"
@@ -216,6 +218,14 @@ def move_to_target(item):
     if target == "cpu":
         if torch.is_tensor(item):
             return item.cpu()
+        if isinstance(item, (list, tuple)):
+            return type(item)(move_to_target(x) for x in item)
+        if isinstance(item, dict):
+            return {k: move_to_target(v) for k, v in item.items()}
+        return item
+    if target == "mps":
+        if torch.is_tensor(item):
+            return item.to("mps")
         if isinstance(item, (list, tuple)):
             return type(item)(move_to_target(x) for x in item)
         if isinstance(item, dict):
@@ -378,7 +388,7 @@ def validate_kernel(
                 verbose=True,
                 with_cuda=False
             )
-        else:
+        elif target_device == "cuda":
             module = load_inline(
                 name=f"generated_module_{os.path.basename(tmpdir)}",
                 cpp_sources=cpp_source,
@@ -387,6 +397,15 @@ def validate_kernel(
                 build_directory=tmpdir,
                 verbose=True,
                 with_cuda=True
+            )
+        else:
+            module = load_inline(
+                name=f"generated_module_{os.path.basename(tmpdir)}",
+                cpp_sources=generated_cu_code,
+                functions=['launch'],
+                build_directory=tmpdir,
+                verbose=True,
+                with_cuda=False
             )
         call_success = True
 
@@ -430,11 +449,17 @@ def validate_kernel(
         if _target_device() == "cuda":
             # Ensure all CUDA operations complete
             torch.cuda.synchronize()
+        elif _target_device() == "mps":
+            if hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+                torch.mps.synchronize()
 
         # Move to same device as ground truth if needed
         if _target_device() == "cuda":
             if not output_generated.is_cuda:
                 output_generated = output_generated.cuda()
+        elif _target_device() == "mps":
+            if torch.is_tensor(output_generated) and output_generated.device.type != "mps":
+                output_generated = output_generated.to("mps")
         else:
             if torch.is_tensor(output_generated):
                 output_generated = output_generated.cpu()

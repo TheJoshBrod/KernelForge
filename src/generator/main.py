@@ -566,6 +566,8 @@ def main():
         target_device = cfg_device
     if target_device in {"gpu", "cuda"}:
         target_device = "cuda"
+    elif target_device == "mps":
+        target_device = "mps"
     elif target_device == "cpu":
         target_device = "cpu"
     else:
@@ -573,6 +575,10 @@ def main():
     if target_device == "cuda" and not torch.cuda.is_available():
         print("CUDA not available; falling back to CPU target for generation.")
         target_device = "cpu"
+    if target_device == "mps":
+        if not (hasattr(torch, "backends") and torch.backends.mps.is_available()):
+            print("MPS not available; falling back to CPU target for generation.")
+            target_device = "cpu"
     os.environ["CGINS_TARGET_DEVICE"] = target_device
     skip_ops = _op_set(gen_cfg.get("skip_ops"))
     only_ops = _op_set(gen_cfg.get("only_ops"))
@@ -589,7 +595,7 @@ def main():
     env_baseline_template = _bool_env("CGINS_USE_BASELINE_TEMPLATE")
     if env_baseline_template is not None:
         baseline_as_template = env_baseline_template
-    if target_device == "cpu":
+    if target_device in {"cpu", "mps"}:
         use_baseline = False
         baseline_as_template = False
     if "extra_validation_cases" in gen_cfg:

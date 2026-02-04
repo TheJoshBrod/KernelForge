@@ -15,7 +15,10 @@ from transformers import AutoModelForSequenceClassification
 from transformers import AutoTokenizer
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower() == "mps" and hasattr(torch, "backends") and torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 SKIP_FUNCTIONS = [
     "has_torch_function",
@@ -145,7 +148,7 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
     print(f"Loading {model_name}...")
     processor = AutoImageProcessor.from_pretrained(model_name)
     model = AutoModelForImageClassification.from_pretrained(model_name)
-    device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device_str = device.type
     model.to(device_str)
 
     # ****************************
@@ -166,9 +169,9 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
             id2label = config.id2label
 
             inputs = {k: v.to(device_str) for k, v in inputs.items()}
-
+            profiler_device = "cuda" if device_str == "cuda" else "cpu"
             # Run model
-            with profiler.profile(record_shapes=True, use_device=device_str) as prof:
+            with profiler.profile(record_shapes=True, use_device=profiler_device) as prof:
                 with profiler.record_function("forward"):
                     with torch.no_grad():
                         with torch.no_grad():
@@ -190,7 +193,10 @@ def profile_image_model(model_name: str = "facebook/convnext-tiny-224"):
             for func_name, entries in calls.items():
                 save_entries(func_name, entries)
             calls.clear()
-            torch.cuda.empty_cache()
+            if device_str == "cuda":
+                torch.cuda.empty_cache()
+            elif device_str == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                torch.mps.empty_cache()
 
 
 def profile_text_model(model_name: str = "bert-base-uncased"):
@@ -242,7 +248,7 @@ def profile_text_model(model_name: str = "bert-base-uncased"):
         ]
 
     print(f"Running {model_name}...")
-    device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device_str = device.type
     model.to(device_str)
 
     for text in tqdm.tqdm(text_samples, desc="Text Samples"):
@@ -250,9 +256,10 @@ def profile_text_model(model_name: str = "bert-base-uncased"):
         inputs = tokenizer(text, return_tensors="pt",
                            truncation=True, max_length=256)
         inputs = {k: v.to(device_str) for k, v in inputs.items()}
+        profiler_device = "cuda" if device_str == "cuda" else "cpu"
 
         # Profile model
-        with profiler.profile(record_shapes=True, use_device=device_str) as prof:
+        with profiler.profile(record_shapes=True, use_device=profiler_device) as prof:
             with profiler.record_function("forward"):
                 with torch.no_grad():
                     outputs = model(**inputs)
@@ -275,7 +282,10 @@ def profile_text_model(model_name: str = "bert-base-uncased"):
         for func_name, entries in calls.items():
             save_entries(func_name, entries)
         calls.clear()
-        torch.cuda.empty_cache()
+        if device_str == "cuda":
+            torch.cuda.empty_cache()
+        elif device_str == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+            torch.mps.empty_cache()
 
     print("Done.")
 

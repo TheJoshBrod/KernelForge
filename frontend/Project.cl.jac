@@ -179,7 +179,11 @@ def:pub Project -> any {
             if resp and resp.reports and resp.reports.length > 0
             else {};
             hardwareInfo = data or {};
-            if hardwareInfo and "cuda_available" in hardwareInfo {
+            if hardwareInfo
+            and "mps_available" in hardwareInfo
+            and hardwareInfo["mps_available"] {
+                targetDevice = "mps";
+            } elif hardwareInfo and "cuda_available" in hardwareInfo {
                 if not hardwareInfo["cuda_available"] {
                     targetDevice = "cpu";
                 } else {
@@ -194,7 +198,7 @@ def:pub Project -> any {
         }
     }
 
-    useEffect(lambda -> None { refreshAll();}, [name]);
+    useEffect(lambda -> None { refreshAll();detectHardware();}, [name]);
     useEffect(
         lambda -> None { timer = setInterval(lambda -> None { refreshStatus();}, 4000);return lambda -> None { clearInterval(
             timer
@@ -767,7 +771,11 @@ def:pub Project -> any {
     }
 
     hardwareStatus = "";
-    if hardwareInfo and "cuda_available" in hardwareInfo {
+    if hardwareInfo
+    and "mps_available" in hardwareInfo
+    and hardwareInfo["mps_available"] {
+        hardwareStatus = "MPS: Apple Silicon";
+    } elif hardwareInfo and "cuda_available" in hardwareInfo {
         if hardwareInfo["cuda_available"] {
             gpu_name = hardwareInfo["device_name"]
             if "device_name" in hardwareInfo
@@ -978,6 +986,20 @@ def:pub Project -> any {
                         <label className="input-label">
                             Target device
                         </label>
+                        {<label className="checkbox-row">
+                            <input
+                                type="radio"
+                                checked={targetDevice == "mps"}
+                                onChange={lambda e: any  -> None { targetDevice = "mps";}}
+                            />
+                            <span>
+                                Apple MPS
+                            </span>
+                        </label>
+                        if hardwareInfo
+                        and "mps_available" in hardwareInfo
+                        and hardwareInfo["mps_available"]
+                        else <span></span>}
                         <label className="checkbox-row">
                             <input
                                 type="radio"

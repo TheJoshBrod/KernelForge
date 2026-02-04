@@ -202,7 +202,9 @@ def main() -> int:
                 env["TMP"] = str(project_tmp)
                 env["TEMP"] = str(project_tmp)
 
-            use_container = args.use_container or _bool_env("CGINS_USE_CONTAINER", False)
+    use_container = args.use_container or _bool_env("CGINS_USE_CONTAINER", False)
+    if sys.platform == "darwin":
+        use_container = False
             if use_container:
                 docker_cmd = _build_docker_cmd(
                     cmd,
@@ -220,6 +222,8 @@ def main() -> int:
                     env=env,
                 )
             else:
+                if sys.platform == "darwin":
+                    print("macOS detected; running job locally (Docker disabled).")
                 proc = subprocess.Popen(
                     cmd,
                     cwd=args.cwd,

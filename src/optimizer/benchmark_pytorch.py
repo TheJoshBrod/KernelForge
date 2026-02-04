@@ -14,6 +14,25 @@ import torch.nn.functional as F
 from src.optimizer.components.hardware.profiler import load_batch, get_gpu_specs
 
 
+def _resolve_device() -> str:
+    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    if value == "mps" and hasattr(torch, "backends") and torch.backends.mps.is_available():
+        return "mps"
+    if value in {"gpu", "cuda"} and torch.cuda.is_available():
+        return "cuda"
+    if value == "cpu":
+        return "cpu"
+    if hasattr(torch, "backends") and torch.backends.mps.is_available():
+        return "mps"
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _sync_device(device: str) -> None:
+    if device == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize()
+    elif device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+        torch.mps.synchronize()
+
 def get_optimized_dir_path():
     """Finds the optimization directory for coverage."""
     # Try to find the specific directory we've been working with
@@ -58,34 +77,44 @@ def get_pytorch_func(op_name):
     }
     return mapping.get(op_name)
 
-
 def measure_pytorch(func, inputs):
     """Measures execution time of pytorch function."""
     timings = []
-
+    device = _resolve_device()
+    
     # Warmup
     for args, kwargs in inputs:
         try:
             func(*args, **kwargs)
         except Exception as e:
-            pass  # Ignore warmup errors
-    torch.cuda.synchronize()
-
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-
-    for args, kwargs in inputs:
-        start.record()
-        for _ in range(10):
-            try:
-                func(*args, **kwargs)
-            except Exception as e:
-                # print(f"Error running pytorch func: {e}")
-                pass
-        end.record()
-        torch.cuda.synchronize()
-        timings.append(start.elapsed_time(end) / 10)
-
+            pass # Ignore warmup errors
+    _sync_device(device)
+    
+    if device == "cuda":
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        
+        for args, kwargs in inputs:
+            start.record()
+            for _ in range(10):
+                try:
+                    func(*args, **kwargs)
+                except Exception as e:
+                    pass
+            end.record()
+            torch.cuda.synchronize()
+            timings.append(start.elapsed_time(end) / 10)
+    else:
+        for args, kwargs in inputs:
+            start_time = time.perf_counter()
+            for _ in range(10):
+                try:
+                    func(*args, **kwargs)
+                except Exception as e:
+                    pass
+            _sync_device(device)
+            timings.append(((time.perf_counter() - start_time) * 1000.0) / 10)
+        
     return float(np.mean(timings))
 
 

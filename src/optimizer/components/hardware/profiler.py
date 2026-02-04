@@ -4,13 +4,27 @@ Uses pynvml, pycuda, and torch to analyze GPU diagnostic statistics and architec
 """
 import glob
 import os
+import time
 from pathlib import Path
 
 import numpy as np
-import pycuda.driver as cuda
+try:
+    import pycuda.driver as cuda
+except Exception:
+    cuda = None
 import torch
-from pynvml import *
-from pynvml import NVMLError_NotSupported
+try:
+    from pynvml import *  # type: ignore
+    from pynvml import NVMLError_NotSupported  # type: ignore
+    NVML_AVAILABLE = True
+except Exception:
+    NVML_AVAILABLE = False
+
+    class NVMLError(Exception):
+        pass
+
+    class NVMLError_NotSupported(Exception):
+        pass
 from torch.profiler import profile
 from torch.profiler import ProfilerActivity
 from torch.utils.cpp_extension import load_inline
@@ -54,6 +68,14 @@ def get_gpu_specs(device_index: int = 0) -> GPUSpecs:
     # -------------------------
     # NVML: Physical hardware
     # -------------------------
+    if cuda is None or not NVML_AVAILABLE:
+        return {
+            "gpu_name": "Unknown",
+            "compute_capability": "unknown",
+            "cuda_available": False,
+            "notes": "CUDA/NVML not available (likely non-CUDA device)",
+        }
+
     nvmlInit()
     handle = nvmlDeviceGetHandleByIndex(device_index)
 
@@ -171,7 +193,12 @@ def get_module(kernel_path: Path, baseline: bool):
         # Baseline case: compile the kernel now
         # Use a consistent module name based on the directory
         module_name = kernel_path.name
+    else:
+        # Already compiled case: load existing module
+        module_name = so_files[0].stem
 
+    target_device = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    if target_device in {"gpu", "cuda"} or target_device == "":
         module = load_inline(
             name=module_name,
             cpp_sources=cpp_source,
@@ -181,20 +208,15 @@ def get_module(kernel_path: Path, baseline: bool):
             verbose=False,
             with_cuda=True
         )
-        return module
-
-    # Already compiled case: load existing module
-    module_name = so_files[0].stem
-
-    module = load_inline(
-        name=module_name,
-        cpp_sources=cpp_source,
-        cuda_sources=cuda_source,
-        functions=['launch'],
-        build_directory=str(kernel_path),
-        verbose=False,
-        with_cuda=True
-    )
+    else:
+        module = load_inline(
+            name=module_name,
+            cpp_sources=cuda_source,
+            functions=['launch'],
+            build_directory=str(kernel_path),
+            verbose=False,
+            with_cuda=False
+        )
     return module
 
 
@@ -227,21 +249,42 @@ def get_input_files(io_dir: Path) -> list:
     return pt_files
 
 
+def _target_device() -> str:
+    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    if value in {"gpu", "cuda"}:
+        return "cuda"
+    if value == "mps":
+        return "mps"
+    if value == "cpu":
+        return "cpu"
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _sync_device(device: str) -> None:
+    if device == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize()
+    elif device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+        torch.mps.synchronize()
+
+
 def load_batch(pt_files: list) -> list[tuple[list[any], dict[str, any]]]:
     """Loads a batch of .pt files into GPU memory"""
     inputs = []
+    device = _target_device()
     for pt_file in pt_files:
         try:
             entry = torch.load(pt_file, map_location='cpu')
 
-            # Move to GPU
+            # Move to target device
             args = [
-                arg.cuda() if isinstance(arg, torch.Tensor) else arg
+                (arg.to("mps") if device == "mps" else (arg.cuda() if device == "cuda" else arg.cpu()))
+                if isinstance(arg, torch.Tensor) else arg
                 for arg in entry['args']
             ]
 
             kwargs = {
-                k: v.cuda() if isinstance(v, torch.Tensor) else v
+                k: (v.to("mps") if device == "mps" else (v.cuda() if device == "cuda" else v.cpu()))
+                if isinstance(v, torch.Tensor) else v
                 for k, v in entry['kwargs'].items()
             }
 
@@ -270,7 +313,9 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
     module = get_module(kernel_path, baseline)
 
     input_dir = paths["io_dir"]
-    torch.cuda.set_device(device_index)
+    target_device = _target_device()
+    if target_device == "cuda" and torch.cuda.is_available():
+        torch.cuda.set_device(device_index)
 
     # Batching logic to prevent OOM
     all_files = get_input_files(input_dir)
@@ -292,24 +337,34 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
                 module.launch(*args, **kwargs)
             except TypeError:
                 module.launch(*args)
-        torch.cuda.synchronize()
+        _sync_device(target_device)
 
         # Measure
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-
-        for args, kwargs in inputs:
-            start.record()
-            for _ in range(10):
-                try:
-                    module.launch(*args, **kwargs)
-                except TypeError:
-                    module.launch(*args)
-            end.record()
-            torch.cuda.synchronize()
-
-            elapsed_ms = start.elapsed_time(end) / 10
-            timings.append(elapsed_ms)
+        if target_device == "cuda":
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            for args, kwargs in inputs:
+                start.record()
+                for _ in range(10):
+                    try:
+                        module.launch(*args, **kwargs)
+                    except TypeError:
+                        module.launch(*args)
+                end.record()
+                torch.cuda.synchronize()
+                elapsed_ms = start.elapsed_time(end) / 10
+                timings.append(elapsed_ms)
+        else:
+            for args, kwargs in inputs:
+                start_time = time.perf_counter()
+                for _ in range(10):
+                    try:
+                        module.launch(*args, **kwargs)
+                    except TypeError:
+                        module.launch(*args)
+                _sync_device(target_device)
+                elapsed_ms = (time.perf_counter() - start_time) * 1000.0 / 10
+                timings.append(elapsed_ms)
 
         # Profile run (for detailed metrics)
         for args, kwargs in inputs:
@@ -317,11 +372,14 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
                 module.launch(*args, **kwargs)
             except TypeError:
                 module.launch(*args)
-            torch.cuda.synchronize()
+            _sync_device(target_device)
 
         # Cleanup VRAM
         del inputs
-        torch.cuda.empty_cache()
+        if target_device == "cuda":
+            torch.cuda.empty_cache()
+        elif target_device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+            torch.mps.empty_cache()
 
     stats = {
         'mean_time_ms': float(np.mean(timings)),

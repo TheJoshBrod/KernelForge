@@ -111,6 +111,10 @@ You will be provided with:
 -----------------------------------------------
  REQUIRED BEHAVIOR RULES
 -----------------------------------------------
+- **MPS (Apple Silicon) Compatibility:**
+  - If target device is MPS, do NOT include CUDA headers or CUDA intrinsics.
+  - Do NOT call cuda APIs or use CUDA-specific checks (e.g., `cudaGetLastError`).
+  - Do NOT require `.is_cuda()`; tensors are MPS.
 - **Wrapper Function:**
   - Name the function `launch`.
   - Arguments MUST be `torch::Tensor` for tensors.
