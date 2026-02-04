@@ -4,6 +4,7 @@ import from react { useEffect, useState, useRef, useLayoutEffect }
 import from .SplashScreen { SplashScreen }
 import from .backdrops.MatrixBackground { MatrixBackground }
 import from .backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from .backdrops.CrashingWaveBackground { CrashingWaveBackground }
 import from ..assets.SettingsIcon { SettingsIcon }
 import from ..assets.XIcon { XIcon }
 import from ..context.ConfigContext { useConfig }
@@ -15,7 +16,8 @@ def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any, 
     config = useConfig().config;
     # Randomly pick background ONCE on mount
     backgroundRef = useRef(Math.random());
-    useMatrix = backgroundRef.current > 0.5;
+    bgChoice = 0 if backgroundRef.current < 0.33 else (1 if backgroundRef.current < 0.66 else 2);
+    useMatrix = bgChoice == 0;
     has projects: list = [];
     has loading: bool = True;
     has showSplash: bool = True;
@@ -129,7 +131,7 @@ def:pub Home(onNavigate: any, getProjectsWalker: any, getSystemInfoWalker: any, 
         <main
             className="flex min-h-screen flex-col items-center justify-center p-6 relative bg-zinc-950 text-zinc-100 selection:bg-zinc-800 overflow-hidden"
         >
-            {<MatrixBackground /> if useMatrix else <GameOfLifeBackground />}
+            {<MatrixBackground /> if bgChoice == 0 else (<GameOfLifeBackground /> if bgChoice == 1 else <CrashingWaveBackground />)}
             <div className="absolute top-2 right-6 z-10">
                 <a
                     onClick={lambda -> None { onNavigate("/settings");}}
