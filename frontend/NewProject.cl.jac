@@ -4,10 +4,10 @@ import from react { useEffect }
 import from sonner { toast }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
-import from ..assets.SettingsIcon { SettingsIcon }
-import from ..assets.BackIcon { BackIcon }
-import from ..assets.UploadIcon { UploadIcon }
-import from ..assets.FolderIcon { FolderIcon }
+import from "@jac-client/assets/SettingsIcon" { SettingsIcon }
+import from "@jac-client/assets/BackIcon" { BackIcon }
+import from "@jac-client/assets/UploadIcon" { UploadIcon }
+import from "@jac-client/assets/FolderIcon" { FolderIcon }
 
 # Client-side helper for reading file as base64
 def fileToBase64(file: any) -> any {

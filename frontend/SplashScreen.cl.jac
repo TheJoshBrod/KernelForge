@@ -1,7 +1,7 @@
 """Splash Screen Component"""
 
 import from "backdrops/CrashingWaveBackground" { CrashingWaveBackground }
-import from ..assets.CGinSLogo { CGinSLogo }
+import from "@jac-client/assets/CGinSLogo" { CGinSLogo }
 
 def:pub SplashScreen(exiting: bool) -> any {
     return
