@@ -18,29 +18,25 @@ def:pub Mascot(
     videoRef = useRef(None);
 
     useEffect(
-        lambda -> None {
-            try {
-                mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-                reduceMotion = mq.matches;
-                def onChange(e: any) -> None {
-                    reduceMotion = e.matches;
-                }
-                if mq and mq.addEventListener {
-                    mq.addEventListener("change", onChange);
-                }
-                if not isTouch {
-                    isTouch = ("ontouchstart" in window)
-                        or (navigator.maxTouchPoints and navigator.maxTouchPoints > 0);
-                }
-                return lambda -> None {
-                    if mq and mq.removeEventListener {
-                        mq.removeEventListener("change", onChange);
-                    }
-                };
-            } except Exception as e {
-                return None;
+        lambda -> None { try {
+            mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+            reduceMotion = mq.matches;
+            def onChange(e: any) -> None {
+                reduceMotion = e.matches;
             }
-        },
+            if mq and mq.addEventListener {
+                mq.addEventListener("change", onChange);
+            }
+            if not isTouch {
+                isTouch = ("ontouchstart" in window)
+                or (navigator.maxTouchPoints and navigator.maxTouchPoints > 0);
+            }
+            return lambda -> None { if mq and mq.removeEventListener {
+                mq.removeEventListener("change", onChange);
+            }};
+        } except Exception as e {
+            return lambda -> None { };
+        }},
         []
     );
 
@@ -87,8 +83,22 @@ def:pub Mascot(
     }
 
     playing = isHovered and videoReady;
-    classes = "mascot mascot--" + variant + (" is-playing" if playing else "")
-        + (" " + className if className else "");
+    classes = f"mascot mascot--{variant}";
+    if playing {
+        classes += " is-playing";
+    }
+    if className {
+        classes += f" {className}";
+    }
+    ambientMarkup = (
+        <div className="mascot-ambient">
+            <span className="ambient-one"></span>
+            <span className="ambient-two"></span>
+            <span className="ambient-three"></span>
+        </div>
+    )
+    if ambient
+    else None;
 
     return
         <div
@@ -97,11 +107,7 @@ def:pub Mascot(
             onMouseEnter={handleEnter}
             onMouseLeave={handleLeave}
         >
-            {<div className="mascot-ambient">
-                <span className="ambient-one"></span>
-                <span className="ambient-two"></span>
-                <span className="ambient-three"></span>
-            </div> if ambient else None}
+            {ambientMarkup}
             <div className="mascot-media">
                 <img
                     className="mascot-img"

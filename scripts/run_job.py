@@ -202,9 +202,10 @@ def main() -> int:
                 env["TMP"] = str(project_tmp)
                 env["TEMP"] = str(project_tmp)
 
-    use_container = args.use_container or _bool_env("CGINS_USE_CONTAINER", False)
-    if sys.platform == "darwin":
-        use_container = False
+            use_container = args.use_container or _bool_env("CGINS_USE_CONTAINER", False)
+            if sys.platform == "darwin":
+                use_container = False
+
             if use_container:
                 docker_cmd = _build_docker_cmd(
                     cmd,
