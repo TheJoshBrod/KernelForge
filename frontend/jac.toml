@@ -6,6 +6,7 @@ entry-point = "main.jac"
 
 [dependencies.npm]
 jac-client-node = "1.0.4"
+"@jac-client/utils" = "latest"
 recharts = "latest"
 sonner = "latest"
 react-router-dom = "latest"
@@ -23,7 +24,6 @@ watchdog = ">=3.0.0"
 
 [serve]
 base_route_app = "app"
-
 
 [plugins.client.vite]
 plugins = ["tailwindcss()"]
