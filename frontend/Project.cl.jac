@@ -15,13 +15,15 @@ import from recharts {
     Legend,
     ResponsiveContainer
 }
+import from .GlowButton { GlowButton }
+import from .Mascot { Mascot }
 
 def:pub Project -> any {
     navigate = useNavigate();
     params = useParams();
     raw_name = params.projectName;
     name = raw_name or "";
-    COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
+    COLORS = ['#80a830', '#b0e068', '#d8f2a2', '#f4f9ea'];
 
     has ops: list = [],
         loading: bool = True,
@@ -31,7 +33,19 @@ def:pub Project -> any {
         downloading: bool = False,
         benchResults: list = [],
         benchLoading: bool = False,
-        selectedOps: list = [];
+        selectedOps: list = [],
+        advOptimize: bool = True,
+        advBenchmark: bool = True,
+        advIterations: int = 3,
+        advPatience: int = 2,
+        advMinImprove: float = 0.0,
+        advGenAttempts: int = 4,
+        advImage: str = "cgins-codex:latest",
+        targetDevice: str = "cuda",
+        hardwareInfo: dict = {},
+        hardwareLoading: bool = False,
+        advLog: str = "",
+        advLogLoading: bool = False;
 
     def format_op(raw: str) -> str {
         raw_text = raw or "";
@@ -74,12 +88,50 @@ def:pub Project -> any {
                 if resp and resp.reports and resp.reports.length > 0
                 else {};
                 status = data or {};
+                adv_job = data["generate_adv"]
+                if data and "generate_adv" in data
+                else {};
+                if adv_job and adv_job["status"] {
+                    await refreshAdvLog();
+                }
             } else {
                 status = {};
             }
         } except (error) {
             console.error("Failed to fetch status:", error);
             status = {};
+        }
+    }
+
+    async def refreshAdvLog -> None {
+        if not name {
+            return;
+        }
+        advLogLoading = True;
+        try {
+            rel_path = f"projects/{name}/logs/generate_adv.log";
+            resp = await jacSpawn(
+                "ReadRepoFile", "", {"projectName": name, "relPath": rel_path}
+            );
+            data = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else {};
+            if data and data["success"] {
+                content = data["content"] if data and "content" in data else "";
+                max_len = 6000;
+                if content and content.length > max_len {
+                    advLog = content.slice(content.length - max_len);
+                } else {
+                    advLog = content or "";
+                }
+            } else {
+                advLog = "";
+            }
+        } except (error) {
+            console.error("Failed to fetch advanced log:", error);
+            advLog = "";
+        } finally {
+            advLogLoading = False;
         }
     }
 
@@ -118,6 +170,29 @@ def:pub Project -> any {
         await refreshBench();
     }
 
+    async def detectHardware -> None {
+        hardwareLoading = True;
+        try {
+            resp = await jacSpawn("DetectHardware", "", {});
+            data = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else {};
+            hardwareInfo = data or {};
+            if hardwareInfo and "cuda_available" in hardwareInfo {
+                if not hardwareInfo["cuda_available"] {
+                    targetDevice = "cpu";
+                } else {
+                    targetDevice = "cuda";
+                }
+            }
+        } except (error) {
+            console.error("Failed to detect hardware:", error);
+            hardwareInfo = {};
+        } finally {
+            hardwareLoading = False;
+        }
+    }
+
     useEffect(lambda -> None { refreshAll();}, [name]);
     useEffect(
         lambda -> None { timer = setInterval(lambda -> None { refreshStatus();}, 4000);return lambda -> None { clearInterval(
@@ -136,6 +211,39 @@ def:pub Project -> any {
     async def handleGenerate -> None {
         if name {
             await jacSpawn("StartGenerate", "", {"projectName": name});
+            await refreshStatus();
+        }
+    }
+
+    async def handleGenerateAdvanced -> None {
+        if name {
+            ops_to_use = [];
+            if selectedOps.length > 0 {
+                ops_to_use = selectedOps;
+            } else {
+                for op in ops {
+                    if op and op["name"] {
+                        ops_to_use = ops_to_use.concat([op["name"]]);
+                    }
+                }
+            }
+            advLog = "";
+            await jacSpawn(
+                "StartGenerateAdvanced",
+                "",
+                {
+                    "projectName": name,
+                    "ops": ops_to_use,
+                    "optimize": advOptimize,
+                    "benchmark": advBenchmark,
+                    "iterations": advIterations,
+                    "patience": advPatience,
+                    "minImproveMs": advMinImprove,
+                    "genAttempts": advGenAttempts,
+                    "image": advImage,
+                    "targetDevice": targetDevice
+                }
+            );
             await refreshStatus();
         }
     }
@@ -249,7 +357,7 @@ def:pub Project -> any {
                     {
                         "name": format_op(op["name"]),
                         "value": op["count"],
-                        "fill": COLORS[0]
+                        "fill": COLORS[count]
                     }
                 ]
             );
@@ -264,6 +372,7 @@ def:pub Project -> any {
     statusItems = [
         {"key": "profile", "label": "Profile"},
         {"key": "generate", "label": "Generate"},
+        {"key": "generate_adv", "label": "Adv Generate"},
         {"key": "optimize", "label": "Optimize"},
         {"key": "benchmark", "label": "Benchmark"}
     ];
@@ -287,6 +396,7 @@ def:pub Project -> any {
         show_progress = (
             (
                 item["key"] == "generate"
+                or item["key"] == "generate_adv"
                 or item["key"] == "optimize"
                 or item["key"] == "benchmark"
             )
@@ -296,33 +406,37 @@ def:pub Project -> any {
         message = job["message"] if job and "message" in job else "";
         progress_text = f"{current}/{total}" if total > 0 else "working...";
         controls = <span></span>;
-        if item["key"] == "generate" or item["key"] == "optimize" {
+        if (
+            item["key"] == "generate"
+            or item["key"] == "generate_adv"
+            or item["key"] == "optimize"
+        ) {
             if job and job["status"] == "running" {
-                controls = <div className="flex gap-2 text-xs">
+                controls = <div className="status-controls">
                     <button
                         onClick={lambda -> None { setJobControl(item["key"], "pause");}}
-                        className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
+                        className="chip-button"
                     >
                         Pause
                     </button>
                     <button
                         onClick={lambda -> None { setJobControl(item["key"], "cancel");}}
-                        className="px-2 py-1 rounded bg-red-900/60 hover:bg-red-900"
+                        className="chip-button chip-danger"
                     >
                         Cancel
                     </button>
                 </div>;
             } elif job and job["status"] == "paused" {
-                controls = <div className="flex gap-2 text-xs">
+                controls = <div className="status-controls">
                     <button
                         onClick={lambda -> None { setJobControl(item["key"], "resume");}}
-                        className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700"
+                        className="chip-button"
                     >
                         Resume
                     </button>
                     <button
                         onClick={lambda -> None { setJobControl(item["key"], "cancel");}}
-                        className="px-2 py-1 rounded bg-red-900/60 hover:bg-red-900"
+                        className="chip-button chip-danger"
                     >
                         Cancel
                     </button>
@@ -331,31 +445,27 @@ def:pub Project -> any {
         }
         statusRows = statusRows.concat(
             [
-                <div key={item["key"]} className="text-sm text-zinc-300 space-y-1">
-                    <div className="flex items-center justify-between">
-                        <span>
+                <div key={item["key"]} className="status-row">
+                    <div className="status-row-header">
+                        <span className="status-label">
                             {item["label"]}
                         </span>
-                        <span className="font-mono text-xs text-zinc-500">
+                        <span className="status-pill">
                             {status_label(item["key"])}
                         </span>
                     </div>
-                    {<div className="space-y-1">
-                        <div
-                            className="h-2 w-full rounded bg-zinc-800 overflow-hidden"
-                        >
+                    {<div className="status-progress">
+                        <div className="progress-track">
                             <div
-                                className="h-2 bg-emerald-500"
+                                className="progress-fill"
                                 style={{"width": bar_width}}
                             ></div>
                         </div>
-                        <div
-                            className="flex justify-between text-[10px] text-zinc-500"
-                        >
+                        <div className="progress-meta">
                             <span>
                                 {progress_text}
                             </span>
-                            <span className="truncate max-w-[140px]">
+                            <span className="progress-message">
                                 {message}
                             </span>
                         </div>
@@ -409,7 +519,7 @@ def:pub Project -> any {
                 <a
                     key={op["name"]}
                     onClick={lambda -> None { navigate(path);}}
-                    className="block w-full text-left bg-zinc-900/50 hover:bg-zinc-800 border border-zinc-800/50 rounded px-4 py-3 text-sm font-mono text-zinc-300 transition-all cursor-pointer"
+                    className="op-item"
                 >
                     {format_op(op["name"])}
                 </a>
@@ -418,17 +528,36 @@ def:pub Project -> any {
         hasOps = True;
     }
 
+    opSelectItems = [];
+    hasOpSelect = False;
+    for op in filtered_ops {
+        op_name = op["name"];
+        checked = selectedOps.includes(op_name);
+        opSelectItems = opSelectItems.concat(
+            [
+                <label key={op_name} className="checkbox-row">
+                    <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={lambda e: any  -> None { toggleOpSelection(op_name);}}
+                    />
+                    <span className="mono">
+                        {format_op(op_name)}
+                    </span>
+                </label>
+            ]
+        );
+        hasOpSelect = True;
+    }
+
     for row in operatorFreqData {
         operatorRows = operatorRows.concat(
             [
-                <tr
-                    key={row["operator"]}
-                    className="hover:bg-zinc-800/50 transition-colors"
-                >
-                    <td className="px-6 py-3 font-mono text-zinc-300">
+                <tr key={row["operator"]} className="table-row">
+                    <td className="table-cell mono">
                         {row["operator"]}
                     </td>
-                    <td className="px-6 py-3 text-zinc-300">
+                    <td className="table-cell">
                         {row["freq"]}
                     </td>
                 </tr>
@@ -447,8 +576,27 @@ def:pub Project -> any {
             }
             selectedOps = new_list;
         } else {
-            selectedOps = selectedOps.concat([op_name]);
+            new_list = [];
+            for o in selectedOps {
+                new_list = new_list.concat([o]);
+            }
+            new_list = new_list.concat([op_name]);
+            selectedOps = new_list;
         }
+    }
+
+    def selectAllOps -> None {
+        all_ops = [];
+        for op in ops {
+            if op and op["name"] {
+                all_ops = all_ops.concat([op["name"]]);
+            }
+        }
+        selectedOps = all_ops;
+    }
+
+    def clearSelectedOps -> None {
+        selectedOps = [];
     }
 
     benchRows = [];
@@ -460,19 +608,19 @@ def:pub Project -> any {
         kernel_error = r["kernel_error"] if r and "kernel_error" in r else "";
         kernel_ms = r["kernel_ms"];
         kernel_text = "n/a";
-        kernel_class = "text-zinc-400";
+        kernel_class = "table-muted";
         if kernel_status == "ok" {
             kernel_text = f"{kernel_ms:.6f}" if kernel_ms else "0";
-            kernel_class = "text-zinc-300";
+            kernel_class = "";
         } elif kernel_status == "missing" {
             kernel_text = "missing";
-            kernel_class = "text-zinc-500";
+            kernel_class = "table-muted";
         } elif kernel_status == "error" {
             kernel_text = "error";
-            kernel_class = "text-red-400";
+            kernel_class = "table-error";
         } elif kernel_status == "skipped" {
             kernel_text = "skipped";
-            kernel_class = "text-zinc-500";
+            kernel_class = "table-muted";
         }
         speedup_text = (
             f"{speedup:.2f}x" if (kernel_status == "ok" and speedup) else "n/a"
@@ -487,31 +635,29 @@ def:pub Project -> any {
         checked = selectedOps.includes(op_name);
         benchRows = benchRows.concat(
             [
-                <tr key={op_name} className="hover:bg-zinc-800/50 transition-colors">
-                    <td className="px-4 py-2 font-mono text-xs text-zinc-200">
+                <tr key={op_name} className="table-row">
+                    <td className="table-cell mono">
                         {format_op(op_name)}
                     </td>
-                    <td className="px-4 py-2 text-xs text-zinc-400">
+                    <td className="table-cell">
                         {r["pytorch_ms"]}
                     </td>
-                    <td className={"px-4 py-2 text-xs " + kernel_class}>
+                    <td className={"table-cell " + kernel_class}>
                         <span title={kernel_error}>
                             {kernel_text}
                         </span>
                     </td>
-                    <td className="px-4 py-2 text-xs">
+                    <td className="table-cell">
                         <span
-                            className={(
-                                "text-emerald-400" if is_win else "text-zinc-500"
-                            )}
+                            className={("status-success" if is_win else "table-muted")}
                         >
                             {speedup_text}
                         </span>
                     </td>
-                    <td className="px-4 py-2 text-xs text-zinc-500">
+                    <td className="table-cell table-muted">
                         {source_text}
                     </td>
-                    <td className="px-4 py-2 text-xs text-center">
+                    <td className="table-cell text-center">
                         <input
                             type="checkbox"
                             checked={checked}
@@ -526,356 +672,561 @@ def:pub Project -> any {
         hasBench = True;
     }
 
+    hardwareStatus = "";
+    if hardwareInfo and "cuda_available" in hardwareInfo {
+        if hardwareInfo["cuda_available"] {
+            gpu_name = hardwareInfo["device_name"]
+            if "device_name" in hardwareInfo
+            else "";
+            count = hardwareInfo["device_count"]
+            if "device_count" in hardwareInfo
+            else 0;
+            suffix = f" x{count}" if count and count > 1 else "";
+            hardwareStatus = f"CUDA: {gpu_name}{suffix}";
+        } else {
+            hardwareStatus = "CUDA not detected";
+        }
+    }
+
+    skeletonOps = [];
+    for i in [0, 1, 2, 3, 4, 5] {
+        skeletonOps = skeletonOps.concat(
+            [<div key={i} className="skeleton skeleton-line"></div>]
+        );
+    }
+
     return
-        <div className="flex min-h-screen bg-zinc-950 text-zinc-100 font-sans">
-            <div className="absolute top-2 right-6">
-                <a
-                    onClick={lambda -> None { navigate("/settings");}}
-                    className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white cursor-pointer"
-                    aria-label="Settings"
-                >
-                    <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    >
-                        <path
-                            d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-                        />
-                        <circle cx="12" cy="12" r="3" />
-                    </svg>
-                </a>
-            </div>
-            <div className="absolute top-2 right-16 z-10">
-                <a
-                    onClick={lambda -> None { navigate("/");}}
-                    className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white bg-zinc-950/50 backdrop-blur-sm cursor-pointer"
-                    aria-label="Go Back"
-                >
-                    <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    >
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="15" y1="9" x2="9" y2="15"></line>
-                        <line x1="9" y1="9" x2="15" y2="15"></line>
-                    </svg>
-                </a>
-            </div>
-            <aside
-                className="w-1/4 border-r border-zinc-900 flex flex-col p-4 space-y-6"
-            >
-                <div>
-                    <h2 className="text-xl font-bold mb-4 text-zinc-100">
-                        Operators:
-                    </h2>
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={lambda e: any  -> None { searchQuery = e.target.value;}}
-                            placeholder="Search..."
-                            className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm focus:outline-none focus:border-zinc-700 transition-colors"
-                        />
+        <div className="app-shell">
+            <aside className="sidebar">
+                <div className="sidebar-header">
+                    <div className="brand">
+                        <Mascot variant="logo" />
+                        <div className="brand-meta">
+                            <span>
+                                Project
+                            </span>
+                            <span className="brand-tag">
+                                {name}
+                            </span>
+                        </div>
+                    </div>
+                    <div className="sidebar-actions">
+                        <button
+                            onClick={lambda -> None { navigate("/");}}
+                            className="ghost-button"
+                        >
+                            Home
+                        </button>
+                        <button
+                            onClick={lambda -> None { navigate("/settings");}}
+                            className="ghost-button"
+                        >
+                            Settings
+                        </button>
+                    </div>
+                </div>
+                <div className="panel sidebar-panel">
+                    <div className="panel-header">
+                        <span className="panel-title">
+                            Operators
+                        </span>
                         <button
                             onClick={lambda -> None { refreshOps();}}
-                            className="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded text-sm font-medium transition-colors"
+                            className="chip-button"
                         >
                             Refresh
                         </button>
                     </div>
+                    <div className="panel-body">
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={lambda e: any  -> None { searchQuery = e.target.value;}}
+                            placeholder="Search ops..."
+                            className="input"
+                        />
+                        <div className="op-list">
+                            {skeletonOps
+                            if loading
+                            else <p className="table-muted">
+                                No ops profiled yet. Run the profiling step.
+                            </p>
+                            if not hasOps
+                            else opLinks}
+                        </div>
+                    </div>
                 </div>
-                <div
-                    className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar"
-                >
-                    {<p className="text-sm text-zinc-500 px-2">
-                        Loading ops...
-                    </p>
-                    if loading
-                    else <p className="text-sm text-zinc-500 px-2">
-                        No ops profiled yet. Run the profiling step.
-                    </p>
-                    if not hasOps
-                    else opLinks}
+                <div className="panel sidebar-panel">
+                    <div className="panel-header">
+                        <span className="panel-title">
+                            Advanced Selection
+                        </span>
+                        <span className="table-muted">
+                            {selectedOps.length}selected
+                        </span>
+                    </div>
+                    <div className="panel-body">
+                        <div className="button-row">
+                            <button
+                                onClick={lambda -> None { selectAllOps();}}
+                                className="chip-button"
+                            >
+                                Select All
+                            </button>
+                            <button
+                                onClick={lambda -> None { clearSelectedOps();}}
+                                className="chip-button"
+                            >
+                                Clear
+                            </button>
+                        </div>
+                        <div className="checkbox-list">
+                            {<p className="table-muted">
+                                No ops to select yet.
+                            </p>
+                            if not hasOpSelect
+                            else opSelectItems}
+                        </div>
+                    </div>
                 </div>
-                <div className="space-y-4 pt-4 border-t border-zinc-900">
-                    <button
-                        onClick={lambda -> None { handleProfile();}}
-                        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded shadow-lg shadow-blue-900/20 transition-all"
-                    >
-                        Profile Model
-                    </button>
-                    <button
-                        onClick={lambda -> None { handleGenerate();}}
-                        className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded shadow-lg shadow-indigo-900/20 transition-all"
-                    >
-                        Generate Kernels
-                    </button>
-                    <button
-                        onClick={lambda -> None { handleOptimize();}}
-                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded shadow-lg shadow-emerald-900/20 transition-all"
-                    >
-                        Optimize Kernels
-                    </button>
-                    <button
-                        onClick={lambda -> None { handleBenchmark();}}
-                        className="w-full bg-amber-500 hover:bg-amber-400 text-white font-bold py-3 rounded shadow-lg shadow-amber-900/20 transition-all"
-                    >
-                        Benchmark
-                    </button>
-                    <button
-                        onClick={lambda -> None { handleExport();}}
-                        className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded shadow-lg shadow-zinc-900/20 transition-all"
-                    >
-                        Export .cgins
-                    </button>
-                    {<button
-                        onClick={lambda -> None { handleDownloadExport();}}
-                        disabled={downloading}
-                        className="w-full bg-zinc-900 hover:bg-zinc-800 text-white font-bold py-3 rounded shadow-lg shadow-zinc-900/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {"Downloading..." if downloading else "Download Export"}
-                    </button>
-                    if exportPath
-                    else <span></span>}
-                    {<p className="text-xs text-zinc-500 break-all">
-                        {exportPath}
-                    </p>
-                    if exportPath
-                    else <span></span>}
+                <div className="panel sidebar-panel">
+                    <div className="panel-header">
+                        <span className="panel-title">
+                            Advanced Generate
+                        </span>
+                        <span className="table-muted">
+                            Codex loop
+                        </span>
+                    </div>
+                    <div className="panel-body">
+                        <label className="checkbox-row">
+                            <input
+                                type="checkbox"
+                                checked={advBenchmark}
+                                onChange={lambda e: any  -> None { advBenchmark = not advBenchmark;}}
+                            />
+                            <span>
+                                Benchmark after generate
+                            </span>
+                        </label>
+                        <label className="checkbox-row">
+                            <input
+                                type="checkbox"
+                                checked={advOptimize}
+                                onChange={lambda e: any  -> None { advOptimize = not advOptimize;}}
+                            />
+                            <span>
+                                Optimize with Codex loop
+                            </span>
+                        </label>
+                        <label className="input-label">
+                            Optimize iterations
+                        </label>
+                        <input
+                            type="number"
+                            min="1"
+                            value={advIterations}
+                            onChange={lambda e: any  -> None { advIterations = Number(
+                                e.target.value
+                            );}}
+                            className="input"
+                        />
+                        <label className="input-label">
+                            No-improve patience
+                        </label>
+                        <input
+                            type="number"
+                            min="1"
+                            value={advPatience}
+                            onChange={lambda e: any  -> None { advPatience = Number(
+                                e.target.value
+                            );}}
+                            className="input"
+                        />
+                        <label className="input-label">
+                            Min improve (ms)
+                        </label>
+                        <input
+                            type="number"
+                            min="0"
+                            step="0.001"
+                            value={advMinImprove}
+                            onChange={lambda e: any  -> None { advMinImprove = Number(
+                                e.target.value
+                            );}}
+                            className="input"
+                        />
+                        <label className="input-label">
+                            Generate attempts
+                        </label>
+                        <input
+                            type="number"
+                            min="1"
+                            value={advGenAttempts}
+                            onChange={lambda e: any  -> None { advGenAttempts = Number(
+                                e.target.value
+                            );}}
+                            className="input"
+                        />
+                        <label className="input-label">
+                            Target device
+                        </label>
+                        <label className="checkbox-row">
+                            <input
+                                type="radio"
+                                checked={targetDevice == "cuda"}
+                                onChange={lambda e: any  -> None { targetDevice = "cuda";}}
+                            />
+                            <span>
+                                GPU (CUDA)
+                            </span>
+                        </label>
+                        <label className="checkbox-row">
+                            <input
+                                type="radio"
+                                checked={targetDevice == "cpu"}
+                                onChange={lambda e: any  -> None { targetDevice = "cpu";}}
+                            />
+                            <span>
+                                CPU
+                            </span>
+                        </label>
+                        <button
+                            onClick={lambda -> None { detectHardware();}}
+                            className="ghost-button"
+                        >
+                            {"Detecting..." if hardwareLoading else "Detect Hardware"}
+                        </button>
+                        {<p className="table-muted">
+                            {hardwareStatus}
+                        </p>
+                        if hardwareStatus
+                        else <span></span>}
+                        <label className="input-label">
+                            Docker image
+                        </label>
+                        <input
+                            type="text"
+                            value={advImage}
+                            onChange={lambda e: any  -> None { advImage = e.target.value;}}
+                            className="input"
+                        />
+                        <GlowButton
+                            label="Advanced Generate"
+                            onClick={lambda -> None { handleGenerateAdvanced();}}
+                            variant="primary"
+                        />
+                    </div>
+                </div>
+                <div className="panel sidebar-panel">
+                    <div className="panel-header">
+                        <span className="panel-title">
+                            Pipeline
+                        </span>
+                        <span className="table-muted">
+                            Actions
+                        </span>
+                    </div>
+                    <div className="panel-body button-stack">
+                        <GlowButton
+                            label="Profile Model"
+                            onClick={lambda -> None { handleProfile();}}
+                            variant="primary"
+                        />
+                        <button
+                            onClick={lambda -> None { handleGenerate();}}
+                            className="ghost-button"
+                        >
+                            Generate Kernels
+                        </button>
+                        <button
+                            onClick={lambda -> None { handleOptimize();}}
+                            className="ghost-button"
+                        >
+                            Optimize Kernels
+                        </button>
+                        <button
+                            onClick={lambda -> None { handleBenchmark();}}
+                            className="ghost-button"
+                        >
+                            Benchmark
+                        </button>
+                        <button
+                            onClick={lambda -> None { handleExport();}}
+                            className="ghost-button"
+                        >
+                            Export .cgins
+                        </button>
+                        {<button
+                            onClick={lambda -> None { handleDownloadExport();}}
+                            disabled={downloading}
+                            className="ghost-button"
+                        >
+                            {"Downloading..." if downloading else "Download Export"}
+                        </button>
+                        if exportPath
+                        else <span></span>}
+                        {<p className="table-muted break-all">
+                            {exportPath}
+                        </p>
+                        if exportPath
+                        else <span></span>}
+                    </div>
                 </div>
             </aside>
-            <main className="w-3/4 p-8 overflow-y-auto">
-                <h1 className="text-3xl font-bold text-center mb-12 tracking-tight">
-                    Project: {name}
-                </h1>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
-                    <div className="space-y-6">
-                        <h3
-                            className="text-xl font-semibold border-b border-zinc-800 pb-2"
-                        >
-                            Model Info:
-                        </h3>
-                        <div
-                            className="h-64 bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 flex flex-col items-center"
-                        >
-                            <h4 className="text-sm font-medium text-zinc-400 mb-2">
-                                PyTorch Operator Usage %
-                            </h4>
-                            {<p className="text-sm text-zinc-500">
+            <main className="content">
+                <div className="page-header">
+                    <div>
+                        <h1 className="page-title">
+                            Project: {name}
+                        </h1>
+                        <div className="badge-row">
+                            <span className="badge">
+                                Ops: {ops.length}
+                            </span>
+                            <span className="badge">
+                                Benchmarks: {benchResults.length}
+                            </span>
+                        </div>
+                    </div>
+                    <Mascot variant="cta" />
+                </div>
+                <div className="panel-grid">
+                    <div className="panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Operator usage
+                            </span>
+                            <span className="table-muted">
+                                Top 4 ops
+                            </span>
+                        </div>
+                        <div className="panel-body">
+                            {<div className="skeleton skeleton-block"></div>
+                            if loading
+                            else <p className="table-muted">
                                 No profiling data yet.
                             </p>
                             if not hasPie
-                            else <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                    <Pie
-                                        data={pieData}
-                                        innerRadius={60}
-                                        outerRadius={80}
-                                        paddingAngle={5}
-                                        dataKey="value"
-                                    />
-                                    <Tooltip
-                                        contentStyle={{
-                                            "backgroundColor": '#18181b',
-                                            "borderColor": '#27272a',
-                                            "borderRadius": '8px'
-                                        }}
-                                        itemStyle={{"color": '#e4e4e7'}}
-                                    />
-                                    <Legend
-                                        layout="vertical"
-                                        verticalAlign="middle"
-                                        align="right"
-                                    />
-                                </PieChart>
-                            </ResponsiveContainer>}
+                            else <div className="chart-wrap">
+                                <ResponsiveContainer width="100%" height={220}>
+                                    <PieChart>
+                                        <Pie
+                                            data={pieData}
+                                            innerRadius={55}
+                                            outerRadius={80}
+                                            paddingAngle={4}
+                                            dataKey="value"
+                                        />
+                                        <Tooltip
+                                            contentStyle={{
+                                                "backgroundColor": '#ffffff',
+                                                "borderColor": '#e6eaf0',
+                                                "borderRadius": '8px'
+                                            }}
+                                            itemStyle={{"color": '#0b0f14'}}
+                                        />
+                                        <Legend
+                                            layout="vertical"
+                                            verticalAlign="middle"
+                                            align="right"
+                                        />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>}
                         </div>
-                        <div
-                            className="overflow-hidden rounded-xl border border-zinc-800"
-                        >
-                            <table className="w-full text-sm text-left">
-                                <thead
-                                    className="bg-zinc-900 text-zinc-400 font-medium uppercase text-xs"
-                                >
-                                    <tr>
-                                        <th className="px-6 py-3">
-                                            Operator
-                                        </th>
-                                        <th className="px-6 py-3">
-                                            Freq
-                                        </th>
-                                    </tr>
-                                </thead>
-                                <tbody
-                                    className="divide-y divide-zinc-800 bg-zinc-900/50"
-                                >
-                                    {operatorRows}
-                                </tbody>
-                            </table>
-                        </div>
-                        <div
-                            className="overflow-hidden rounded-xl border border-zinc-800"
-                        >
-                            <div
-                                className="flex items-center justify-between px-4 py-3 bg-zinc-900 text-zinc-400 text-xs uppercase font-medium"
+                    </div>
+                    <div className="panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Pipeline status
+                            </span>
+                            <button
+                                onClick={lambda -> None { refreshStatus();}}
+                                className="chip-button"
                             >
+                                Refresh
+                            </button>
+                        </div>
+                        <div className="panel-body status-list">
+                            {statusRows}
+                        </div>
+                    </div>
+                </div>
+                <div className="panel">
+                    <div className="panel-header">
+                        <span className="panel-title">
+                            Operator frequency
+                        </span>
+                        <span className="table-muted">
+                            All operators
+                        </span>
+                    </div>
+                    <div className="panel-body">
+                        <table className="table">
+                            <thead className="table-head">
+                                <tr>
+                                    <th className="table-cell">
+                                        Operator
+                                    </th>
+                                    <th className="table-cell">
+                                        Freq
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {operatorRows}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div className="panel">
+                    <div className="panel-header">
+                        <span className="panel-title">
+                            Benchmark results
+                        </span>
+                        <button
+                            onClick={lambda -> None { refreshBench();}}
+                            className="chip-button"
+                        >
+                            Refresh
+                        </button>
+                    </div>
+                    <div className="panel-body">
+                        {<div className="skeleton skeleton-block"></div>
+                        if benchLoading
+                        else <p className="table-muted">
+                            No benchmark data yet. Run the Benchmark step.
+                        </p>
+                        if not hasBench
+                        else <table className="table">
+                            <thead className="table-head">
+                                <tr>
+                                    <th className="table-cell">
+                                        Op
+                                    </th>
+                                    <th className="table-cell">
+                                        PyTorch (ms)
+                                    </th>
+                                    <th className="table-cell">
+                                        Kernel (ms)
+                                    </th>
+                                    <th className="table-cell">
+                                        Speedup
+                                    </th>
+                                    <th className="table-cell">
+                                        Source
+                                    </th>
+                                    <th className="table-cell text-center">
+                                        Export
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {benchRows}
+                            </tbody>
+                        </table>}{<div className="status-progress">
+                            <div className="progress-track">
+                                <div
+                                    className="progress-fill"
+                                    style={{"width": bench_bar_width}}
+                                ></div>
+                            </div>
+                            <div className="progress-meta">
                                 <span>
-                                    Benchmark Results
+                                    {bench_progress_text}
                                 </span>
-                                <button
-                                    onClick={lambda -> None { refreshBench();}}
-                                    className="text-xs text-zinc-300 hover:text-white"
-                                >
-                                    Refresh
-                                </button>
+                                <span className="progress-message">
+                                    {bench_message}
+                                </span>
                             </div>
-                            {<div
-                                className="px-4 py-3 border-b border-zinc-800/60 space-y-1"
-                            >
-                                <div
-                                    className="h-2 w-full rounded bg-zinc-800 overflow-hidden"
-                                >
-                                    <div
-                                        className="h-2 bg-amber-400"
-                                        style={{"width": bench_bar_width}}
-                                    ></div>
-                                </div>
-                                <div
-                                    className="flex justify-between text-[10px] text-zinc-500"
-                                >
-                                    <span>
-                                        {bench_progress_text}
-                                    </span>
-                                    <span className="truncate max-w-[140px]">
-                                        {bench_message}
-                                    </span>
-                                </div>
-                            </div>
-                            if show_bench_progress
-                            else <span></span>}
-                            {<p className="px-4 py-4 text-sm text-zinc-500">
-                                Running benchmark...
-                            </p>
-                            if benchLoading
-                            else <p className="px-4 py-4 text-sm text-zinc-500">
-                                No benchmark data yet. Run the Benchmark step.
-                            </p>
-                            if not hasBench
-                            else <table className="w-full text-xs text-left">
-                                <thead className="bg-zinc-900/60 text-zinc-500">
-                                    <tr>
-                                        <th className="px-4 py-2">
-                                            Op
-                                        </th>
-                                        <th className="px-4 py-2">
-                                            PyTorch (ms)
-                                        </th>
-                                        <th className="px-4 py-2">
-                                            Kernel (ms)
-                                        </th>
-                                        <th className="px-4 py-2">
-                                            Speedup
-                                        </th>
-                                        <th className="px-4 py-2">
-                                            Source
-                                        </th>
-                                        <th className="px-4 py-2 text-center">
-                                            Export
-                                        </th>
-                                    </tr>
-                                </thead>
-                                <tbody
-                                    className="divide-y divide-zinc-800 bg-zinc-900/50"
-                                >
-                                    {benchRows}
-                                </tbody>
-                            </table>}
                         </div>
-                        <p className="text-xs text-zinc-500">
+                        if show_bench_progress
+                        else <span></span>}
+                    </div>
+                    <div className="panel-footer">
+                        <p className="table-muted">
                             Default export includes ops where kernel beats PyTorch.
                         </p>
-                        <p className="text-xs text-zinc-500">
+                        <p className="table-muted">
                             Kernel errors are shown as "error" (see benchmark log for details).
                         </p>
                     </div>
-                    <div className="space-y-6">
-                        <h3
-                            className="text-xl font-semibold border-b border-zinc-800 pb-2"
-                        >
-                            Pipeline Status:
-                        </h3>
-                        <div
-                            className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3"
-                        >
-                            {statusRows}
+                </div>
+                <div className="panel-grid">
+                    <div className="panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Advanced generate log
+                            </span>
                             <button
-                                onClick={lambda -> None { refreshStatus();}}
-                                className="mt-2 w-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-2 rounded transition-all"
+                                onClick={lambda -> None { refreshAdvLog();}}
+                                className="chip-button"
                             >
-                                Refresh Status
+                                Refresh
                             </button>
                         </div>
-                        <div
-                            className="h-64 bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 flex flex-col items-center"
-                        >
-                            <h4 className="text-sm font-medium text-zinc-400 mb-2">
-                                Time (ms) vs. Version
-                            </h4>
-                            {<p className="text-sm text-zinc-500">
+                        <div className="panel-body">
+                            {<div className="skeleton skeleton-block"></div>
+                            if advLogLoading
+                            else <pre className="code-block">
+                                {advLog or "No log yet."}
+                            </pre>}
+                        </div>
+                    </div>
+                    <div className="panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Time vs. version
+                            </span>
+                            <span className="table-muted">
+                                Optimization
+                            </span>
+                        </div>
+                        <div className="panel-body">
+                            {<p className="table-muted">
                                 No optimization data yet.
                             </p>
                             if not hasBar
-                            else <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={barData}>
-                                    <CartesianGrid
-                                        strokeDasharray="3 3"
-                                        stroke="#27272a"
-                                        vertical={False}
-                                    />
-                                    <XAxis
-                                        dataKey="name"
-                                        stroke="#71717a"
-                                        tick={{"fill": '#71717a', "fontSize": 12}}
-                                        axisLine={False}
-                                        tickLine={False}
-                                    />
-                                    <YAxis
-                                        stroke="#71717a"
-                                        tick={{"fill": '#71717a', "fontSize": 12}}
-                                        axisLine={False}
-                                        tickLine={False}
-                                    />
-                                    <Tooltip
-                                        cursor={{"fill": '#27272a'}}
-                                        contentStyle={{
-                                            "backgroundColor": '#18181b',
-                                            "borderColor": '#27272a',
-                                            "borderRadius": '8px'
-                                        }}
-                                        itemStyle={{"color": '#e4e4e7'}}
-                                    />
-                                    <Bar
-                                        dataKey="time"
-                                        radius={[4, 4, 0, 0]}
-                                        barSize={40}
-                                        fill="#3b82f6"
-                                    />
-                                </BarChart>
-                            </ResponsiveContainer>}
+                            else <div className="chart-wrap">
+                                <ResponsiveContainer width="100%" height={220}>
+                                    <BarChart data={barData}>
+                                        <CartesianGrid
+                                            strokeDasharray="3 3"
+                                            stroke="#e6eaf0"
+                                            vertical={False}
+                                        />
+                                        <XAxis
+                                            dataKey="name"
+                                            stroke="#94a3b8"
+                                            tick={{"fill": '#94a3b8', "fontSize": 12}}
+                                            axisLine={False}
+                                            tickLine={False}
+                                        />
+                                        <YAxis
+                                            stroke="#94a3b8"
+                                            tick={{"fill": '#94a3b8', "fontSize": 12}}
+                                            axisLine={False}
+                                            tickLine={False}
+                                        />
+                                        <Tooltip
+                                            cursor={{"fill": '#f1f5f2'}}
+                                            contentStyle={{
+                                                "backgroundColor": '#ffffff',
+                                                "borderColor": '#e6eaf0',
+                                                "borderRadius": '8px'
+                                            }}
+                                            itemStyle={{"color": '#0b0f14'}}
+                                        />
+                                        <Bar
+                                            dataKey="time"
+                                            radius={[6, 6, 0, 0]}
+                                            barSize={32}
+                                            fill="#80a830"
+                                        />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>}
                         </div>
                     </div>
                 </div>

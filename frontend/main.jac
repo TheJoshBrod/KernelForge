@@ -27,6 +27,43 @@ def _ensure_dir(dir_path: str) -> None {
     }
 }
 
+def _apply_llm_env_from_config(cfg: dict) -> None {
+    if not cfg {
+        return;
+    }
+    llm = cfg["llm_info"] if cfg and "llm_info" in cfg else {};
+    provider = llm["provider"] if llm and "provider" in llm else "";
+    model = llm["model"] if llm and "model" in llm else "";
+    apikey = llm["apikey"] if llm and "apikey" in llm else "";
+
+    if provider {
+        os.environ["LLM_PROVIDER"] = provider;
+    }
+    if provider == "openai" {
+        if apikey {
+            os.environ["OPENAI_API_KEY"] = apikey;
+        }
+        if model {
+            os.environ["OPENAI_MODEL"] = model;
+        }
+    } elif provider == "anthropic" {
+        if apikey {
+            os.environ["ANTHROPIC_API_KEY"] = apikey;
+        }
+        if model {
+            os.environ["ANTHROPIC_MODEL"] = model;
+        }
+    } elif provider == "gemini" {
+        if apikey {
+            os.environ["GOOGLE_API_KEY"] = apikey;
+            os.environ["GEMINI_API_KEY"] = apikey;
+        }
+        if model {
+            os.environ["GEMINI_MODEL"] = model;
+        }
+    }
+}
+
 def _read_state(project_name: str) -> dict {
     state_path = path.join(_project_dir(project_name), "state.json");
     if not path.exists(state_path) {
@@ -81,6 +118,37 @@ def _start_job(project_name: str, job_key: str, cmd: list, log_name: str) -> dic
     return {"success": True, "pid": proc.pid, "log": log_path};
 }
 
+def _start_job_container(
+    project_name: str, job_key: str, cmd: list, log_name: str, image: str
+) -> dict {
+    project_dir = _project_dir(project_name);
+    logs_dir = path.join(project_dir, "logs");
+    _ensure_dir(logs_dir);
+    state_path = path.join(project_dir, "state.json");
+    log_path = path.join(logs_dir, log_name);
+
+    runner = path.join(repo_root, "scripts", "run_job.py");
+    full_cmd = [
+        sys.executable,
+        runner,
+        "--state-path",
+        state_path,
+        "--job-key",
+        job_key,
+        "--log-path",
+        log_path,
+        "--cwd",
+        repo_root,
+        "--use-container",
+        "--container-image",
+        image,
+        "--"
+    ] + cmd;
+
+    proc = subprocess.Popen(full_cmd, cwd=repo_root);
+    return {"success": True, "pid": proc.pid, "log": log_path};
+}
+
 def _find_optimized_dir(project_name: str) -> str {
     base_dir = path.join(repo_root, "kernels", "optimized");
     if not path.exists(base_dir) {
@@ -104,6 +172,20 @@ def _find_optimized_dir(project_name: str) -> str {
         }
     }
     return best_dir;
+}
+
+def _detect_hardware -> dict {
+    try {
+        code = "import json, torch; info={'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count() if torch.cuda.is_available() else 0, 'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else '', 'cuda_version': torch.version.cuda or ''}; print(json.dumps(info))";
+        out = subprocess.check_output([sys.executable, "-c", code], cwd=repo_root);
+        text = out.decode("utf-8").strip();
+        if text {
+            return loads(text);
+        }
+    } except Exception as e {
+        return {"cuda_available": False, "error": str(e)};
+    }
+    return {"cuda_available": False};
 }
 
 def _export_project_zip(project_name: str, ops: list = None) -> dict {
@@ -432,7 +514,8 @@ walker:pub CreateProject {
                     "use_baseline_kernels": True,
                     "use_baseline_as_template": True,
                     "max_attempts": 8,
-                    "extra_validation_cases": 1
+                    "extra_validation_cases": 1,
+                    "target_device": "cuda"
                 },
                 "profile": {"allow_ops": [], "skip_ops": [], "skip_prefixes": []}
             };
@@ -469,6 +552,13 @@ walker:pub GetProjects {
             print(f"Error listing projects: {e}");
             report {"projects": []};
         }
+    }
+}
+
+walker:pub DetectHardware {
+    can return_hw with `root entry {
+        info = _detect_hardware();
+        report info;
     }
 }
 
@@ -577,6 +667,180 @@ walker:pub StartGenerate {
         ];
         result = _start_job(self.projectName, "generate", cmd, "generate.log");
         report result;
+    }
+}
+
+walker:pub StartGenerateAdvanced {
+    has projectName: str,
+        ops: list = [],
+        optimize: bool = False,
+        benchmark: bool = True,
+        iterations: int = 3,
+        patience: int = 2,
+        minImproveMs: float = 0.0,
+        genAttempts: int = 4,
+        image: str = "cgins-codex:latest",
+        targetDevice: str = "cuda";
+
+    can run with `root entry {
+        try {
+            cfg = {};
+            try {
+                with open(config_path, "r") as f {
+                    cfg = load(f);
+                }
+            } except Exception as e {
+                print(f"Error loading config: {e}");
+                cfg = config_store;
+            }
+            _apply_llm_env_from_config(cfg);
+
+            target_device = (self.targetDevice or "cuda").lower();
+            if target_device == "gpu" or target_device == "cuda" {
+                target_device = "cuda";
+            } elif target_device != "cpu" {
+                target_device = "cuda";
+            }
+            os.environ["CGINS_TARGET_DEVICE"] = target_device;
+            try {
+                project_cfg_path = path.join(
+                    _project_dir(self.projectName), "config.json"
+                );
+                project_cfg = {};
+                if path.exists(project_cfg_path) {
+                    with open(project_cfg_path, "r") as f {
+                        project_cfg = load(f);
+                    }
+                }
+                gen_cfg = project_cfg["generator"]
+                if project_cfg and "generator" in project_cfg
+                else {};
+                gen_cfg["target_device"] = target_device;
+                project_cfg["generator"] = gen_cfg;
+                with open(project_cfg_path, "w") as f {
+                    dump(project_cfg, f, indent=2);
+                }
+            } except Exception as e {
+                print(f"Failed to persist target device: {e}");
+            }
+
+            ops_list = [];
+            ops_total = 0;
+            for o in self.ops {
+                if o {
+                    ops_list.append(str(o));
+                    ops_total = ops_total + 1;
+                }
+            }
+            if ops_total == 0 {
+                _update_job_state(
+                    self.projectName,
+                    "generate_adv",
+                    {"status": "error", "message": "No ops selected or discovered."}
+                );
+                report {"success": False, "error": "No ops selected or discovered."};
+                disengage;
+            }
+            io_root = path.join(_project_dir(self.projectName), "io", "individual_ops");
+            missing_inputs = [];
+            missing_total = 0;
+            for op_name in ops_list {
+                op_dir = path.join(io_root, str(op_name));
+                has_entry = False;
+                if path.exists(op_dir) {
+                    for fname in listdir(op_dir) {
+                        if fname.endswith(".pt") {
+                            has_entry = True;
+                            break;
+                        }
+                    }
+                }
+                if not has_entry {
+                    missing_inputs.append(op_name);
+                    missing_total = missing_total + 1;
+                }
+            }
+            if missing_total > 0 {
+                error_msg = (
+                    f"Missing input entries for {missing_total} ops. " + "Run Profile first."
+                );
+                _update_job_state(
+                    self.projectName,
+                    "generate_adv",
+                    {"status": "error", "message": error_msg}
+                );
+                report {"success": False, "error": error_msg};
+                disengage;
+            }
+
+            now_ts = datetime.now().timestamp();
+            _update_job_state(
+                self.projectName,
+                "generate_adv",
+                {
+                    "status": "running",
+                    "started_at": now_ts,
+                    "message": f"Queued advanced generation ({target_device})",
+                    "progress": {
+                        "current": 0,
+                        "total": ops_total,
+                        "percent": 0.0,
+                        "updated_at": now_ts
+                    }
+                }
+            );
+
+            ops_rel = path.join("projects", self.projectName, "ops_selected.json");
+            ops_path = path.join(repo_root, ops_rel);
+            try {
+                with open(ops_path, "w") as f {
+                    dump(ops_list, f, indent=2);
+                }
+            } except Exception as e {
+                print(f"Failed to write ops list: {e}");
+            }
+
+            cmd = [
+                "python3",
+                "scripts/codex_advanced_generate.py",
+                "--project",
+                self.projectName,
+                "--ops-file",
+                ops_rel
+            ];
+            if self.optimize {
+                cmd.append("--optimize");
+            }
+            if self.benchmark {
+                cmd.append("--benchmark");
+            }
+            if self.iterations > 0 {
+                cmd.append("--opt-iterations");
+                cmd.append(str(self.iterations));
+            }
+            if self.patience > 0 {
+                cmd.append("--opt-patience");
+                cmd.append(str(self.patience));
+            }
+            if self.genAttempts > 0 {
+                cmd.append("--generate-attempts");
+                cmd.append(str(self.genAttempts));
+            }
+            cmd.append("--opt-min-improve-ms");
+            cmd.append(str(self.minImproveMs));
+            result = _start_job_container(
+                self.projectName, "generate_adv", cmd, "generate_adv.log", self.image
+            );
+            report result;
+        } except Exception as e {
+            print(f"StartGenerateAdvanced failed: {e}");
+            _update_job_state(
+                self.projectName,
+                "generate_adv",
+                {"status": "error", "message": f"StartGenerateAdvanced failed: {e}"}
+            );
+            report {"success": False, "error": "StartGenerateAdvanced failed."};
+        }
     }
 }
 
@@ -826,9 +1090,7 @@ cl {
         return
             <Router>
                 <ConfigProvider>
-                    <div
-                        className="bg-zinc-950 min-h-screen text-zinc-100 font-sans antialiased"
-                    >
+                    <div className="min-h-screen font-sans antialiased">
                         <Routes>
                             <Route path="/" element={<Home />} />
                             <Route path="/settings" element={<Settings />} />

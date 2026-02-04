@@ -28,6 +28,7 @@ import src.generator.prompts.prompts as prompts
 import src.generator.verifier as verify
 import src.generator.templates as templates
 from src.progress import update_job_progress, wait_if_paused, check_cancelled
+from src import codex_utils
 
 # Configuration
 MAX_ATTEMPTS = int(os.environ.get("CGINS_MAX_ATTEMPTS", "8"))
@@ -68,6 +69,55 @@ def _op_set(names) -> set[str]:
             continue
         out.add(_normalize_op_name(str(name)))
     return out
+
+
+def _bool_env(name: str) -> bool | None:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _codex_model() -> str | None:
+    return os.environ.get("CGINS_CODEX_MODEL") or os.environ.get("OPENAI_MODEL")
+
+
+def _codex_sandbox() -> str:
+    return os.environ.get("CGINS_CODEX_SANDBOX", "workspace-write")
+
+
+def _codex_attempts(default: int = 3) -> int:
+    try:
+        return int(os.environ.get("CGINS_CODEX_MAX_ATTEMPTS", str(default)))
+    except Exception:
+        return default
+
+
+def _build_codex_prompt(
+    base_prompt: str,
+    function_name: str,
+    op_key: str,
+    project_dir: Path | None,
+    *,
+    feedback: str | None = None,
+    mode: str = "generate",
+) -> str:
+    parts = [
+        f"Mode: {mode}",
+        "Edit kernel.cu only.",
+        "Keep the torch::Tensor launch(...) signature exactly unchanged.",
+    ]
+    if project_dir:
+        parts.append(
+            f"After edits, run: python scripts/verify_one_op.py --project {project_dir.name} --op {op_key}"
+        )
+    if feedback:
+        parts.append("Previous validation error:\n" + feedback)
+    parts.append(
+        "Specification (use as the source of truth; do NOT output tags, just edit kernel.cu):\n"
+        + base_prompt
+    )
+    return "\n\n".join(parts)
 
 
 def _load_op_counts(io_dir: Path) -> dict:
@@ -147,6 +197,10 @@ def validate_with_retries(
     entry_files: list[str],
     conversation_history: list,
     function_name: str,
+    *,
+    op_key: str,
+    project_dir: Path | None,
+    template: str | None,
 ) -> tuple[bool, str, str]:
     """
     Attempt to validate and fix kernel code up to MAX_ATTEMPTS times.
@@ -171,39 +225,123 @@ def validate_with_retries(
         max_attempts = MAX_ATTEMPTS
     last_feedback = ""
     last_stage = "llm"
-    for attempt in range(max_attempts + 1):
+
+    base_prompt = conversation_history[0]["content"] if conversation_history else ""
+    use_codex_generate = codex_utils.op_enabled(
+        "CGINS_CODEX_GENERATE", "CGINS_CODEX_GENERATE_OPS", op_key
+    )
+    use_codex_repair = codex_utils.op_enabled(
+        "CGINS_CODEX_REPAIR", "CGINS_CODEX_REPAIR_OPS", op_key
+    )
+    codex_work_dir = output_dir / "work"
+    codex_seed = template or "// TODO: implement kernel.cu\n"
+    codex_max_attempts = _codex_attempts()
+    codex_model = _codex_model()
+    codex_sandbox = _codex_sandbox()
+
+    attempts_total = codex_max_attempts if use_codex_generate else max_attempts + 1
+    def _run_codex_repair(feedback: str, attempt_idx: int) -> tuple[bool, str, str]:
+        repair_prompt = _build_codex_prompt(
+            base_prompt,
+            function_name,
+            op_key,
+            project_dir,
+            feedback=feedback,
+            mode="repair",
+        )
+        codex_utils.prepare_work_dir(codex_work_dir, cu_code, task=repair_prompt)
+        ok, err = codex_utils.run_codex(
+            codex_work_dir, repair_prompt, model=codex_model, sandbox=codex_sandbox
+        )
+        if ok:
+            try:
+                repaired = (codex_work_dir / "kernel.cu").read_text(encoding="utf-8")
+            except Exception as exc:
+                repaired = ""
+                err = f"Codex repair read failed: {exc}"
+            if repaired:
+                # Re-validate repaired kernel from scratch
+                repair_tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
+                repaired_ok = True
+                for j, entry_file in enumerate(tqdm(entry_files, desc="Repair Tests")):
+                    log_file_loc = output_dir / "attempts" / f"log-repair-{attempt_idx}-{j}.txt"
+                    os.makedirs(log_file_loc.parent, exist_ok=True)
+                    call_success, exec_success, repair_feedback = verify.validate_kernel(
+                        repaired, entry_file, log_file_loc, repair_tmpdir
+                    )
+                    repaired_ok = repaired_ok and call_success and exec_success
+                    if not repaired_ok:
+                        with open(kernel_dir / f"kernel-repair-{attempt_idx}-{j}.cu", "w") as f:
+                            f.write(repaired)
+                        return False, repair_feedback, "codex_repair"
+                if os.path.exists(repair_tmpdir):
+                    shutil.rmtree(repair_tmpdir)
+                if repaired_ok:
+                    with open(kernel_dir / f"kernel-repair-{attempt_idx}-g.cu", "w") as f:
+                        f.write(repaired)
+                    with open(output_dir / "kernel.cu", "w", encoding="utf-8") as f:
+                        f.write(repaired)
+                    return True, "", "success"
+        return False, err or feedback, "codex_repair"
+
+    for attempt in range(attempts_total):
         if not wait_if_paused():
             return False, "Generation paused/cancelled.", "control"
         if check_cancelled():
             return False, "Generation cancelled.", "control"
 
         # Generate kernel
-        provider = ensure_llm_config() or "openai"
-        if provider in {"openai", "gpt", "chatgpt"} and not os.environ.get("OPENAI_API_KEY"):
-            return False, "Missing OPENAI_API_KEY for LLM generation.", "llm_api"
-        if provider == "gemini" and not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
-            return False, "Missing GEMINI_API_KEY/GOOGLE_API_KEY for LLM generation.", "llm_api"
-        if provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
-            return False, "Missing ANTHROPIC_API_KEY for LLM generation.", "llm_api"
-        try:
-            if provider == "anthropic":
-                cu_code = generator.anthropic_generator(conversation_history)
-            elif provider == "gemini":
-                cu_code = generator.gemini_generator(conversation_history)
-            elif provider in {"openai", "gpt", "chatgpt"}:
-                cu_code = generator.chatgpt_generator(conversation_history)
-            else:
-                raise ValueError(
-                    f"Unknown LLM provider: {provider}. Supported: anthropic, gemini, openai"
-                )
+        if use_codex_generate:
+            prompt = _build_codex_prompt(
+                base_prompt,
+                function_name,
+                op_key,
+                project_dir,
+                feedback=last_feedback if attempt > 0 else None,
+                mode="generate",
+            )
+            codex_utils.prepare_work_dir(codex_work_dir, codex_seed, task=prompt)
+            ok, err = codex_utils.run_codex(
+                codex_work_dir, prompt, model=codex_model, sandbox=codex_sandbox
+            )
+            if not ok:
+                last_feedback = err or "Codex generation failed."
+                last_stage = "codex_generate"
+                continue
+            try:
+                cu_code = (codex_work_dir / "kernel.cu").read_text(encoding="utf-8")
+                codex_seed = cu_code
+            except Exception as e:
+                last_feedback = f"Codex output read failed: {e}"
+                last_stage = "codex_generate"
+                continue
+        else:
+            provider = ensure_llm_config() or "openai"
+            if provider in {"openai", "gpt", "chatgpt"} and not os.environ.get("OPENAI_API_KEY"):
+                return False, "Missing OPENAI_API_KEY for LLM generation.", "llm_api"
+            if provider == "gemini" and not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
+                return False, "Missing GEMINI_API_KEY/GOOGLE_API_KEY for LLM generation.", "llm_api"
+            if provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
+                return False, "Missing ANTHROPIC_API_KEY for LLM generation.", "llm_api"
+            try:
+                if provider == "anthropic":
+                    cu_code = generator.anthropic_generator(conversation_history)
+                elif provider == "gemini":
+                    cu_code = generator.gemini_generator(conversation_history)
+                elif provider in {"openai", "gpt", "chatgpt"}:
+                    cu_code = generator.chatgpt_generator(conversation_history)
+                else:
+                    raise ValueError(
+                        f"Unknown LLM provider: {provider}. Supported: anthropic, gemini, openai"
+                    )
 
-            conversation_history.append(
-                {"role": "assistant", "content": cu_code})
-        except Exception as e:
-            print(f"Failed on attempt {attempt}\n{e}")
-            last_feedback = f"LLM generation failed: {e}"
-            last_stage = "llm_api"
-            return False, last_feedback, last_stage
+                conversation_history.append(
+                    {"role": "assistant", "content": cu_code})
+            except Exception as e:
+                print(f"Failed on attempt {attempt}\n{e}")
+                last_feedback = f"LLM generation failed: {e}"
+                last_stage = "llm_api"
+                return False, last_feedback, last_stage
 
         tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
 
@@ -235,14 +373,41 @@ def validate_with_retries(
                 with open(kernel_dir / f"kernel-{attempt}-{i}.cu", "w") as f:
                     f.write(cu_code)
 
-                repair = prompts.get_repair_prompt(
-                    function_name=function_name,
-                    attempt=attempt,
-                    feedback=feedback,
-                )
-                conversation_history.append({"role": "user", "content": repair})
-                last_feedback = feedback
-                last_stage = "llm_validate"
+                if use_codex_generate:
+                    if use_codex_repair:
+                        repaired_ok, repair_feedback, repair_stage = _run_codex_repair(
+                            feedback, attempt
+                        )
+                        if repaired_ok:
+                            return True, "", "success"
+                        last_feedback = repair_feedback
+                        last_stage = repair_stage
+                    else:
+                        last_feedback = feedback
+                        last_stage = "codex_validate"
+                elif use_codex_repair and not use_codex_generate:
+                    repaired_ok, repair_feedback, repair_stage = _run_codex_repair(
+                        feedback, attempt
+                    )
+                    if repaired_ok:
+                        return True, "", "success"
+                    last_feedback = repair_feedback
+                    last_stage = repair_stage
+                    repair = prompts.get_repair_prompt(
+                        function_name=function_name,
+                        attempt=attempt,
+                        feedback=last_feedback,
+                    )
+                    conversation_history.append({"role": "user", "content": repair})
+                else:
+                    repair = prompts.get_repair_prompt(
+                        function_name=function_name,
+                        attempt=attempt,
+                        feedback=feedback,
+                    )
+                    conversation_history.append({"role": "user", "content": repair})
+                    last_feedback = feedback
+                    last_stage = "llm_validate"
                 break
 
         # Delete tmp directory before next generation
@@ -268,6 +433,7 @@ def process_function(
     *,
     use_baseline: bool = True,
     baseline_as_template: bool = True,
+    project_dir: Path | None = None,
 ):
     """
     Process all profiled calls for a given function.
@@ -334,9 +500,17 @@ def process_function(
 
     call_list.clear()
 
+    op_key = _normalize_op_name(function_name)
+
     # Validate loop - pass entry files directly
     success, failure_msg, failure_stage = validate_with_retries(
-        op_dir, entry_files, conversation_history, function_name
+        op_dir,
+        entry_files,
+        conversation_history,
+        function_name,
+        op_key=op_key,
+        project_dir=project_dir,
+        template=template,
     )
 
     # Track performance
@@ -361,6 +535,18 @@ def main():
     parser.add_argument("io_dir", nargs="?", help="Path to profiled ops directory")
     parser.add_argument("--io-dir", dest="io_dir_opt", default=None, help="Path to profiled ops directory")
     parser.add_argument("--out-dir", dest="out_dir", default=None, help="Base output directory for kernels")
+    parser.add_argument(
+        "--only-ops",
+        dest="only_ops",
+        default=None,
+        help="Comma-separated op names to generate (overrides config only_ops)",
+    )
+    parser.add_argument(
+        "--skip-ops",
+        dest="skip_ops",
+        default=None,
+        help="Comma-separated op names to skip (extends config skip_ops)",
+    )
     args = parser.parse_args()
 
     io_dir = args.io_dir_opt or args.io_dir
@@ -374,11 +560,38 @@ def main():
 
     project_dir = _find_project_dir(Path(io_dir))
     gen_cfg = _load_generator_config(project_dir)
+    target_device = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    if not target_device:
+        cfg_device = str(gen_cfg.get("target_device", "")).strip().lower() if isinstance(gen_cfg, dict) else ""
+        target_device = cfg_device
+    if target_device in {"gpu", "cuda"}:
+        target_device = "cuda"
+    elif target_device == "cpu":
+        target_device = "cpu"
+    else:
+        target_device = "cuda"
+    if target_device == "cuda" and not torch.cuda.is_available():
+        print("CUDA not available; falling back to CPU target for generation.")
+        target_device = "cpu"
+    os.environ["CGINS_TARGET_DEVICE"] = target_device
     skip_ops = _op_set(gen_cfg.get("skip_ops"))
     only_ops = _op_set(gen_cfg.get("only_ops"))
+    if args.only_ops:
+        only_ops = _op_set(str(args.only_ops).split(","))
+    if args.skip_ops:
+        skip_ops = skip_ops.union(_op_set(str(args.skip_ops).split(",")))
     max_ops = gen_cfg.get("max_ops")
     use_baseline = bool(gen_cfg.get("use_baseline_kernels", True))
     baseline_as_template = bool(gen_cfg.get("use_baseline_as_template", True))
+    env_use_baseline = _bool_env("CGINS_USE_BASELINE_KERNELS")
+    if env_use_baseline is not None:
+        use_baseline = env_use_baseline
+    env_baseline_template = _bool_env("CGINS_USE_BASELINE_TEMPLATE")
+    if env_baseline_template is not None:
+        baseline_as_template = env_baseline_template
+    if target_device == "cpu":
+        use_baseline = False
+        baseline_as_template = False
     if "extra_validation_cases" in gen_cfg:
         os.environ["CGINS_EXTRA_VALIDATION_CASES"] = str(
             gen_cfg.get("extra_validation_cases")
@@ -453,14 +666,15 @@ def main():
             update_job_progress(completed, total_jobs, function_name)
             continue
 
-        baseline_used = False
+        baseline_code = None
+        baseline_ok = False
         if use_baseline and templates.has_baseline_kernel(function_name):
             baseline_code = templates.load_baseline_kernel(function_name)
             if baseline_code:
-                baseline_used, baseline_error = _validate_static_kernel(
+                baseline_ok, baseline_error = _validate_static_kernel(
                     baseline_code, entry_files, op_dir, "baseline"
                 )
-                if not baseline_used:
+                if not baseline_ok:
                     _write_failure_report(
                         op_dir,
                         "baseline",
@@ -468,14 +682,47 @@ def main():
                         {"function": function_name},
                     )
 
-        if not baseline_used:
-            process_function(
-                function_name,
-                entry_files,
-                op_dir,
-                use_baseline=use_baseline,
-                baseline_as_template=baseline_as_template,
-            )
+        codex_enabled = codex_utils.op_enabled(
+            "CGINS_CODEX_GENERATE", "CGINS_CODEX_GENERATE_OPS", op_key
+        )
+
+        if baseline_ok and not codex_enabled:
+            success_file = op_dir / "success"
+            with open(success_file, "w") as f:
+                f.write("passed")
+            completed += 1
+            update_job_progress(completed, total_jobs, function_name)
+            continue
+
+        success = process_function(
+            function_name,
+            entry_files,
+            op_dir,
+            use_baseline=use_baseline,
+            baseline_as_template=baseline_as_template,
+            project_dir=project_dir,
+        )
+        if not success and baseline_ok:
+            if baseline_code:
+                with open(op_dir / "kernel.cu", "w", encoding="utf-8") as f:
+                    f.write(baseline_code)
+            success_file = op_dir / "success"
+            with open(success_file, "w") as f:
+                f.write("passed")
+            try:
+                fallback_note = op_dir / "attempts" / "fallback.json"
+                fallback_note.write_text(
+                    json.dumps(
+                        {
+                            "function": function_name,
+                            "reason": "codex_failed_fallback_to_baseline",
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
         if check_cancelled():
             print("Generation cancelled.")
             return

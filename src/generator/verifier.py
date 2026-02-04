@@ -119,7 +119,6 @@ def handle_output(traceback_error: str, cu_code: str, log_file_path: Path, input
     input_and_output["correct-output"] = input_and_output["output"]
     del input_and_output["output"]
 
-<<<<<<< HEAD
     raw_error = _short_error(traceback_error)
 
     provider = _get_provider()
@@ -203,6 +202,28 @@ def move_to_cuda(item):
     return item
 
 
+def _target_device() -> str:
+    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    if value in {"gpu", "cuda"}:
+        return "cuda"
+    if value == "cpu":
+        return "cpu"
+    return "cuda"
+
+
+def move_to_target(item):
+    target = _target_device()
+    if target == "cpu":
+        if torch.is_tensor(item):
+            return item.cpu()
+        if isinstance(item, (list, tuple)):
+            return type(item)(move_to_target(x) for x in item)
+        if isinstance(item, dict):
+            return {k: move_to_target(v) for k, v in item.items()}
+        return item
+    return move_to_cuda(item)
+
+
 def _resolve_function(function_name: str):
     if not function_name:
         return None
@@ -275,15 +296,15 @@ def _run_extra_validation(
         )
         if remaining_kwargs:
             return False, f"Extra validation failed: unmapped kwargs {list(remaining_kwargs.keys())}"
-        cuda_args = [move_to_cuda(item) for item in normalized_args]
+        target_args = [move_to_target(item) for item in normalized_args]
         try:
             with torch.no_grad():
-                expected = func(*cuda_args)
+                expected = func(*target_args)
         except Exception as e:
             return False, f"Extra validation failed calling PyTorch op: {e}"
 
         try:
-            got = module.launch(*cuda_args)
+            got = module.launch(*target_args)
         except Exception as e:
             return False, f"Extra validation failed calling kernel: {e}"
 
@@ -333,8 +354,10 @@ def validate_kernel(
         # Also add python executable dir to PATH to ensure ninja is found
         import sys
         python_bin_dir = os.path.dirname(sys.executable)
-        os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
-        os.environ["PATH"] = f"{python_bin_dir}:/usr/local/cuda-12.1/bin:{os.environ['PATH']}"
+        target_device = _target_device()
+        if target_device == "cuda":
+            os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
+            os.environ["PATH"] = f"{python_bin_dir}:/usr/local/cuda-12.1/bin:{os.environ['PATH']}"
 
         # Extract function signature for load_inline
         # Looking for: torch::Tensor launch(...)
@@ -346,15 +369,25 @@ def validate_kernel(
 
         cpp_source = match.group(1) + ";"
 
-        module = load_inline(
-            name=f"generated_module_{os.path.basename(tmpdir)}",
-            cpp_sources=cpp_source,
-            cuda_sources=generated_cu_code,
-            functions=['launch'],
-            build_directory=tmpdir,
-            verbose=True,
-            with_cuda=True
-        )
+        if target_device == "cpu":
+            module = load_inline(
+                name=f"generated_module_{os.path.basename(tmpdir)}",
+                cpp_sources=generated_cu_code,
+                functions=['launch'],
+                build_directory=tmpdir,
+                verbose=True,
+                with_cuda=False
+            )
+        else:
+            module = load_inline(
+                name=f"generated_module_{os.path.basename(tmpdir)}",
+                cpp_sources=cpp_source,
+                cuda_sources=generated_cu_code,
+                functions=['launch'],
+                build_directory=tmpdir,
+                verbose=True,
+                with_cuda=True
+            )
         call_success = True
 
     except Exception as e:
@@ -388,18 +421,23 @@ def validate_kernel(
         if remaining_kwargs:
             print(f"Warning: Unmapped kwargs: {list(remaining_kwargs.keys())}")
 
-        # Move tensors to CUDA, keep scalars as-is
-        cuda_args = [move_to_cuda(item) for item in normalized_args]
+        # Move tensors to target device, keep scalars as-is
+        target_args = [move_to_target(item) for item in normalized_args]
 
         # Call with ONLY positional args (load_inline doesn't support kwargs)
-        output_generated = module.launch(*cuda_args)
+        output_generated = module.launch(*target_args)
 
-        # Ensure all CUDA operations complete
-        torch.cuda.synchronize()
+        if _target_device() == "cuda":
+            # Ensure all CUDA operations complete
+            torch.cuda.synchronize()
 
         # Move to same device as ground truth if needed
-        if not output_generated.is_cuda:
-            output_generated = output_generated.cuda()
+        if _target_device() == "cuda":
+            if not output_generated.is_cuda:
+                output_generated = output_generated.cuda()
+        else:
+            if torch.is_tensor(output_generated):
+                output_generated = output_generated.cpu()
 
         # Kernel executed without a runtime error
         runtime_success = True
@@ -413,7 +451,7 @@ def validate_kernel(
         input_info = {
             "original_args_count": len(args) if "args" in locals() else 0,
             "original_kwargs": list(kwargs.keys()) if "kwargs" in locals() else [],
-            "normalized_args_count": len(cuda_args) if "cuda_args" in locals() else 0,
+            "normalized_args_count": len(target_args) if "target_args" in locals() else 0,
             "signature_params": signature_info.get("params", []) if "signature_info" in locals() else [],
             "args": [
                 {
@@ -422,7 +460,7 @@ def validate_kernel(
                     "shape": list(a.shape) if torch.is_tensor(a) else None,
                     "type": type(a).__name__,
                 }
-                for idx, a in enumerate(cuda_args) if "cuda_args" in locals()
+                for idx, a in enumerate(target_args) if "target_args" in locals()
             ],
         }
 
