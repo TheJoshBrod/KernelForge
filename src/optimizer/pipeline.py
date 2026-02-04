@@ -247,6 +247,7 @@ def main():
         if not op_dir_path.is_dir():
             continue
 
+
         op_name = op_dir_path.name
         print(f"Optimizing {op_name}...")
 
@@ -263,6 +264,8 @@ def main():
             "op_dir": Path("kernels/generated/individual_op_kernels") / op_name,
         }
 
+        mcts._NODE_CACHE.clear()
+
         for _ in range(100):
             # Select parent node then optimize off of it
             parent_node = mcts.choose_optimization(paths)
@@ -271,6 +274,6 @@ def main():
             # Update tree with the new node (if optimization succeeded)
             if new_node:
                 mcts.update_tree(paths, new_node)
-        break
+
 if __name__ == "__main__":
     main()
