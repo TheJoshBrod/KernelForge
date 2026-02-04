@@ -49,6 +49,16 @@ def choose_optimization(paths: dict, C: float = settings.mcts_c_constant) -> Ker
 
         # ---- Traverse using UCT until leaf ----
         while current.children_ids:
+            # Progressive Widening:
+            # If we haven't explored enough width at this depth relative to visits, force a new branch
+            # Limit = k * N^alpha
+            max_children = math.floor(current.visits ** 0.5)
+            
+            # If we have fewer children than the limit allows, we should branch here
+            if len(current.children_ids) <= max_children:
+                # Treat as leaf -> Caller will generate a new child for this node
+                break
+
             best_child_node = None
             best_score = float("inf")
 
@@ -122,9 +132,8 @@ def update_tree(paths: dict, new_node: KernelNode):
         if current.id not in parent.children_ids:
             parent.children_ids.append(current.id)
 
-        # 2. Only update the immediate parent's visits, not all ancestors
-        if current.id == new_node.id:
-             parent.visits += 1
+        # 2. Update visits (propagate up to all ancestors)
+        parent.visits += 1
 
         # 3. Update best_subtree_value
         parent_best = parent.best_subtree_value if parent.best_subtree_value is not None else parent.value
