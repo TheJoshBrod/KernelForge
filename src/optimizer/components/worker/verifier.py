@@ -11,44 +11,58 @@ import queue
 from pathlib import Path
 
 import torch
-from byllm.lib import by  # type: ignore
-from byllm.lib import Model  # type: ignore
+
+BYLLM_AVAILABLE = False
+try:
+    from byllm.lib import by  # type: ignore
+    from byllm.lib import Model  # type: ignore
+    BYLLM_AVAILABLE = True
+except Exception:
+    by = None
+    Model = None
 from torch.utils.cpp_extension import load_inline
 from src.optimizer.config.settings import settings
 
-llm = Model(model_name=settings.llm_model_name)
+if BYLLM_AVAILABLE and Model is not None and by is not None:
+    llm = Model(model_name=settings.llm_model_name)
 
+    @by(llm)
+    def summarize_issue_with_traceback(
+        traceback_error: str,
+        cu_code: str,
+        input_and_output: dict
+    ) -> str:
+        """
+        Analyze CUDA kernel compilation or runtime errors and provide actionable fix suggestions.
 
-@by(llm)
-def summarize_issue_with_traceback(
-    traceback_error: str,
-    cu_code: str,
-    input_and_output: dict
-) -> str:
-    """
-    Analyze CUDA kernel compilation or runtime errors and provide actionable fix suggestions.
+        Important:
+        - The caller-side argument formatting is already correct and MUST NOT be modified.
+        - The issue will always be internal to the CUDA kernel code (argument order, typing,
+            indexing, launch signature, or parameter handling).
 
-    Important:
-    - The caller-side argument formatting is already correct and MUST NOT be modified.
-    - The issue will always be internal to the CUDA kernel code (argument order, typing,
-        indexing, launch signature, or parameter handling).
+        The input_and_output dict contains:
+        - args: List of positional arguments (normalized from kwargs if applicable)
+        - signature: Dict with 'params' (parameter names in order) and 'defaults'
+        - output or correct-output: Expected output tensor
 
-    The input_and_output dict contains:
-    - args: List of positional arguments (normalized from kwargs if applicable)
-    - signature: Dict with 'params' (parameter names in order) and 'defaults'
-    - output or correct-output: Expected output tensor
+        The CUDA kernel's launch() function MUST accept arguments in exactly this order:
+        {', '.join(input_and_output.get('signature', {}).get('params', ['arg0', 'arg1', '...']))}
 
-    The CUDA kernel's launch() function MUST accept arguments in exactly this order:
-    {', '.join(input_and_output.get('signature', {}).get('params', ['arg0', 'arg1', '...']))}
+        Provide specific recommendations for:
+        1. Correct argument ordering and types in the kernel launch() signature
+        2. Correct parameter use inside the CUDA code
+        3. Indexing, pointer arithmetic, and shape-related issues
 
-    Provide specific recommendations for:
-    1. Correct argument ordering and types in the kernel launch() signature
-    2. Correct parameter use inside the CUDA code
-    3. Indexing, pointer arithmetic, and shape-related issues
-
-    Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
-    Only CUDA-side fixes are relevant.
-    """
+        Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
+        Only CUDA-side fixes are relevant.
+        """
+else:
+    def summarize_issue_with_traceback(
+        traceback_error: str,
+        cu_code: str,
+        input_and_output: dict
+    ) -> str:
+        return traceback_error
 
 
 def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:

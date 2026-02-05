@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CGinS — CUDA Ghost in the Shell</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="page">
+    <div class="container">
+      <header class="navbar">
+        <div class="brand">
+          <img src="assets/ghost.svg" alt="Ghost" class="mascot mascot--logo" />
+          <div class="brand-meta">
+            <span>CGinS</span>
+            <span class="brand-tag">CUDA Ghost in the Shell</span>
+          </div>
+        </div>
+        <div class="nav-links">
+          <a class="nav-link" href="#features">Features</a>
+          <a class="nav-link" href="#existing">Load Existing</a>
+          <a class="nav-link" href="#cta">Get Started</a>
+        </div>
+        <button class="glow-button glow-button--compact" type="button">Start New Project</button>
+      </header>
+    </div>
+
+    <section class="hero-splash">
+      <div class="container hero-grid">
+        <div class="hero-copy">
+          <span class="eyebrow">GPU Kernel Studio</span>
+          <h1 class="hero-title">Make CUDA kernels feel effortless, precise, and cute.</h1>
+          <p class="hero-sub">CGinS profiles your model, generates correct CUDA kernels, and iterates toward GPU-native performance with a workflow that feels handcrafted and calm.</p>
+          <div class="hero-actions">
+            <button class="glow-button" type="button">Upload Full Model</button>
+            <button class="ghost-button" type="button">Upload Weights</button>
+          </div>
+          <div class="hero-badges">
+            <span class="badge">GPU-aware generation</span>
+            <span class="badge">Correctness-first validation</span>
+            <span class="badge">Export-ready kernels</span>
+          </div>
+        </div>
+        <div class="hero-visual">
+          <div class="mascot-halo"></div>
+          <div class="hero-orbits">
+            <span class="orb-one"></span>
+            <span class="orb-two"></span>
+            <span class="orb-three"></span>
+          </div>
+          <div class="mascot mascot--hero is-playing">
+            <div class="mascot-media">
+              <img class="mascot-img" src="assets/mascot.png" alt="CGinS Mascot" />
+              <video class="mascot-video" src="assets/mascot.mp4" muted loop playsinline></video>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="container">
+        <h2 class="section-title">CGinS feels like a studio</h2>
+        <p class="section-sub">A calm, structured flow that turns profiling, generation, and export into a repeatable, premium experience.</p>
+        <div class="feature-grid">
+          <div class="card illustrated-card">
+            <div class="card-icon">⚡</div>
+            <h3 class="card-title">Profile in context</h3>
+            <p class="card-text">Capture real operator inputs and focus on the kernels that move your model forward.</p>
+            <span class="card-tag">profile</span>
+          </div>
+          <div class="card illustrated-card">
+            <div class="card-icon">✓</div>
+            <h3 class="card-title">Generate with guardrails</h3>
+            <p class="card-text">Automated checks keep every kernel aligned with PyTorch outputs before moving on.</p>
+            <span class="card-tag">validate</span>
+          </div>
+          <div class="card illustrated-card">
+            <div class="card-icon">⤴</div>
+            <h3 class="card-title">Optimize with intent</h3>
+            <p class="card-text">Compare each iteration and keep only the best-performing kernel for your GPU.</p>
+            <span class="card-tag">optimize</span>
+          </div>
+          <div class="card illustrated-card">
+            <div class="card-icon">⬚</div>
+            <h3 class="card-title">Export-ready</h3>
+            <p class="card-text">Ship the winning kernels, metadata, and logs in one exportable package.</p>
+            <span class="card-tag">export</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="existing">
+      <div class="container">
+        <h2 class="section-title">Start in minutes</h2>
+        <p class="section-sub">Upload a model or resume a project with your existing kernels.</p>
+        <div class="quickstart-grid">
+          <div class="card">
+            <h3 class="card-title">New project</h3>
+            <p class="card-text">Bring your model code and optional weights. CGinS handles profiling and kernel generation end-to-end.</p>
+            <div class="hero-actions">
+              <button class="glow-button" type="button">Create Project</button>
+              <button class="ghost-button" type="button">Upload Weights</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Load existing</h3>
+            <p class="card-text">Pick up where you left off. Jump directly into your latest kernels and benchmarks.</p>
+            <select class="select-field">
+              <option value="">Select a project...</option>
+            </select>
+            <div class="recent-links">
+              <span class="card-text">Recent projects appear here.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="cta">
+      <div class="container">
+        <div class="cta">
+          <div>
+            <h2 class="cta-title">Ready to ship faster kernels?</h2>
+            <p class="cta-text">Spin up a new project and start generating CUDA kernels in minutes.</p>
+          </div>
+          <div class="hero-actions">
+            <button class="glow-button" type="button">Start New Project</button>
+            <img src="assets/ghost.svg" alt="Ghost" style="width:64px;height:64px" />
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -15,6 +15,7 @@ import from recharts {
     Legend,
     ResponsiveContainer
 }
+import from "backdrops/GameOfLifeBackground" { GameOfLifeBackground }
 import from .GlowButton { GlowButton }
 import from .Mascot { Mascot }
 
@@ -23,7 +24,7 @@ def:pub Project -> any {
     params = useParams();
     raw_name = params.projectName;
     name = raw_name or "";
-    COLORS = ['#80a830', '#b0e068', '#d8f2a2', '#f4f9ea'];
+    COLORS = ['#86e6a9', '#5bbbd3', '#b7f0d0', '#d8f3ff'];
 
     has ops: list = [],
         loading: bool = True,
@@ -407,6 +408,7 @@ def:pub Project -> any {
 
     statusItems = [
         {"key": "profile", "label": "Profile"},
+        {"key": "prepare", "label": "Prepare"},
         {"key": "generate", "label": "Generate"},
         {"key": "generate_adv", "label": "Adv Generate"},
         {"key": "optimize_adv", "label": "Adv Optimize"},
@@ -799,549 +801,491 @@ def:pub Project -> any {
 
     return
         <div className="app-shell">
-            <aside className="sidebar">
-                <div className="sidebar-header">
-                    <div className="brand">
-                        <Mascot variant="logo" />
-                        <div className="brand-meta">
-                            <span>
-                                Project
-                            </span>
-                            <span className="brand-tag">
-                                {name}
-                            </span>
-                        </div>
-                    </div>
-                    <div className="sidebar-actions">
-                        <button
-                            onClick={lambda -> None { navigate("/");}}
-                            className="ghost-button"
-                        >
-                            Home
-                        </button>
-                        <button
-                            onClick={lambda -> None { navigate("/settings");}}
-                            className="ghost-button"
-                        >
-                            Settings
-                        </button>
-                    </div>
-                </div>
-                <div className="panel sidebar-panel">
-                    <div className="panel-header">
-                        <span className="panel-title">
-                            Operators
-                        </span>
-                        <button
-                            onClick={lambda -> None { refreshOps();}}
-                            className="chip-button"
-                        >
-                            Refresh
-                        </button>
-                    </div>
-                    <div className="panel-body">
-                        <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={lambda e: any  -> None { searchQuery = e.target.value;}}
-                            placeholder="Search ops..."
-                            className="input"
-                        />
-                        <div className="op-list">
-                            {skeletonOps
-                            if loading
-                            else <p className="table-muted">
-                                No ops profiled yet. Run the profiling step.
-                            </p>
-                            if not hasOps
-                            else opLinks}
-                        </div>
-                    </div>
-                </div>
-                <div className="panel sidebar-panel">
-                    <div className="panel-header">
-                        <span className="panel-title">
-                            Advanced Selection
-                        </span>
-                        <span className="table-muted">
-                            {selectedOps.length}selected
-                        </span>
-                    </div>
-                    <div className="panel-body">
-                        <div className="button-row">
-                            <button
-                                onClick={lambda -> None { selectAllOps();}}
-                                className="chip-button"
-                            >
-                                Select All
-                            </button>
-                            <button
-                                onClick={lambda -> None { clearSelectedOps();}}
-                                className="chip-button"
-                            >
-                                Clear
-                            </button>
-                        </div>
-                        <div className="checkbox-list">
-                            {<p className="table-muted">
-                                No ops to select yet.
-                            </p>
-                            if not hasOpSelect
-                            else opSelectItems}
-                        </div>
-                    </div>
-                </div>
-                <div className="panel sidebar-panel">
-                    <div className="panel-header">
-                        <span className="panel-title">
-                            Advanced Generate
-                        </span>
-                        <span className="table-muted">
-                            Codex loop
-                        </span>
-                    </div>
-                    <div className="panel-body">
-                        <label className="checkbox-row">
-                            <input
-                                type="checkbox"
-                                checked={advBenchmark}
-                                onChange={lambda e: any  -> None { advBenchmark = not advBenchmark;}}
-                            />
-                            <span>
-                                Benchmark after generate
-                            </span>
-                        </label>
-                        <label className="checkbox-row">
-                            <input
-                                type="checkbox"
-                                checked={advOptimize}
-                                onChange={lambda e: any  -> None { advOptimize = not advOptimize;}}
-                            />
-                            <span>
-                                Optimize with Codex loop
-                            </span>
-                        </label>
-                        <label className="input-label">
-                            Optimize iterations
-                        </label>
-                        <input
-                            type="number"
-                            min="1"
-                            value={advIterations}
-                            onChange={lambda e: any  -> None { advIterations = Number(
-                                e.target.value
-                            );}}
-                            className="input"
-                        />
-                        <label className="input-label">
-                            No-improve patience
-                        </label>
-                        <input
-                            type="number"
-                            min="1"
-                            value={advPatience}
-                            onChange={lambda e: any  -> None { advPatience = Number(
-                                e.target.value
-                            );}}
-                            className="input"
-                        />
-                        <label className="input-label">
-                            Min improve (ms)
-                        </label>
-                        <input
-                            type="number"
-                            min="0"
-                            step="0.001"
-                            value={advMinImprove}
-                            onChange={lambda e: any  -> None { advMinImprove = Number(
-                                e.target.value
-                            );}}
-                            className="input"
-                        />
-                        <label className="input-label">
-                            Target speedup (%)
-                        </label>
-                        <input
-                            type="number"
-                            min="0"
-                            step="0.1"
-                            value={advSpeedupPct}
-                            onChange={lambda e: any  -> None { advSpeedupPct = Number(
-                                e.target.value
-                            );}}
-                            className="input"
-                        />
-                        <label className="input-label">
-                            Generate attempts
-                        </label>
-                        <input
-                            type="number"
-                            min="1"
-                            value={advGenAttempts}
-                            onChange={lambda e: any  -> None { advGenAttempts = Number(
-                                e.target.value
-                            );}}
-                            className="input"
-                        />
-                        <label className="input-label">
-                            Target device
-                        </label>
-                        {<label className="checkbox-row">
-                            <input
-                                type="radio"
-                                checked={targetDevice == "mps"}
-                                onChange={lambda e: any  -> None { targetDevice = "mps";}}
-                            />
-                            <span>
-                                Apple MPS
-                            </span>
-                        </label>
-                        if hardwareInfo
-                        and "mps_available" in hardwareInfo
-                        and hardwareInfo["mps_available"]
-                        else <span></span>}
-                        <label className="checkbox-row">
-                            <input
-                                type="radio"
-                                checked={targetDevice == "cuda"}
-                                onChange={lambda e: any  -> None { targetDevice = "cuda";}}
-                            />
-                            <span>
-                                GPU (CUDA)
-                            </span>
-                        </label>
-                        <label className="checkbox-row">
-                            <input
-                                type="radio"
-                                checked={targetDevice == "cpu"}
-                                onChange={lambda e: any  -> None { targetDevice = "cpu";}}
-                            />
-                            <span>
-                                CPU
-                            </span>
-                        </label>
-                        <button
-                            onClick={lambda -> None { detectHardware();}}
-                            className="ghost-button"
-                        >
-                            {"Detecting..." if hardwareLoading else "Detect Hardware"}
-                        </button>
-                        {<p className="table-muted">
-                            {hardwareStatus}
-                        </p>
-                        if hardwareStatus
-                        else <span></span>}
-                        <label className="input-label">
-                            Docker image
-                        </label>
-                        <input
-                            type="text"
-                            value={advImage}
-                            onChange={lambda e: any  -> None { advImage = e.target.value;}}
-                            className="input"
-                        />
-                        <GlowButton
-                            label="Advanced Generate"
-                            onClick={lambda -> None { handleGenerateAdvanced();}}
-                            variant="primary"
-                        />
-                        <GlowButton
-                            label="Advanced Optimize"
-                            onClick={lambda -> None { handleOptimizeAdvanced();}}
-                            variant="secondary"
-                        />
-                    </div>
-                </div>
-                <div className="panel sidebar-panel">
-                    <div className="panel-header">
-                        <span className="panel-title">
-                            Pipeline
-                        </span>
-                        <span className="table-muted">
-                            Actions
-                        </span>
-                    </div>
-                    <div className="panel-body button-stack">
-                        <GlowButton
-                            label="Profile Model"
-                            onClick={lambda -> None { handleProfile();}}
-                            variant="primary"
-                        />
-                        <button
-                            onClick={lambda -> None { handleGenerate();}}
-                            className="ghost-button"
-                        >
-                            Generate Kernels
-                        </button>
-                        <button
-                            onClick={lambda -> None { handleOptimize();}}
-                            className="ghost-button"
-                        >
-                            Optimize Kernels
-                        </button>
-                        <button
-                            onClick={lambda -> None { handleBenchmark();}}
-                            className="ghost-button"
-                        >
-                            Benchmark
-                        </button>
-                        <button
-                            onClick={lambda -> None { handleExport();}}
-                            className="ghost-button"
-                        >
-                            Export .cgins
-                        </button>
-                        {<button
-                            onClick={lambda -> None { handleDownloadExport();}}
-                            disabled={downloading}
-                            className="ghost-button"
-                        >
-                            {"Downloading..." if downloading else "Download Export"}
-                        </button>
-                        if exportPath
-                        else <span></span>}
-                        {<p className="table-muted break-all">
-                            {exportPath}
-                        </p>
-                        if exportPath
-                        else <span></span>}
-                    </div>
-                </div>
-            </aside>
-            <main className="content">
-                <div className="page-header">
-                    <div>
-                        <h1 className="page-title">
-                            Project: {name}
-                        </h1>
-                        <div className="badge-row">
-                            <span className="badge">
-                                Ops: {ops.length}
-                            </span>
-                            <span className="badge">
-                                Benchmarks: {benchResults.length}
-                            </span>
-                        </div>
-                    </div>
-                    <Mascot variant="cta" />
-                </div>
-                <div className="panel-grid">
-                    <div className="panel">
-                        <div className="panel-header">
-                            <span className="panel-title">
-                                Operator usage
-                            </span>
-                            <span className="table-muted">
-                                Top 4 ops
-                            </span>
-                        </div>
-                        <div className="panel-body">
-                            {<div className="skeleton skeleton-block"></div>
-                            if loading
-                            else <p className="table-muted">
-                                No profiling data yet.
-                            </p>
-                            if not hasPie
-                            else <div className="chart-wrap">
-                                <ResponsiveContainer width="100%" height={220}>
-                                    <PieChart>
-                                        <Pie
-                                            data={pieData}
-                                            innerRadius={55}
-                                            outerRadius={80}
-                                            paddingAngle={4}
-                                            dataKey="value"
-                                        />
-                                        <Tooltip
-                                            contentStyle={{
-                                                "backgroundColor": '#ffffff',
-                                                "borderColor": '#e6eaf0',
-                                                "borderRadius": '8px'
-                                            }}
-                                            itemStyle={{"color": '#0b0f14'}}
-                                        />
-                                        <Legend
-                                            layout="vertical"
-                                            verticalAlign="middle"
-                                            align="right"
-                                        />
-                                    </PieChart>
-                                </ResponsiveContainer>
-                            </div>}
-                        </div>
-                    </div>
-                    <div className="panel">
-                        <div className="panel-header">
-                            <span className="panel-title">
-                                Pipeline status
-                            </span>
-                            <button
-                                onClick={lambda -> None { refreshStatus();}}
-                                className="chip-button"
-                            >
-                                Refresh
-                            </button>
-                        </div>
-                        <div className="panel-body status-list">
-                            {<div className="usage-summary">
-                                <div className="usage-header">
-                                    <span className="usage-title">
-                                        Latest token usage
-                                    </span>
-                                    <span className="usage-source">
-                                        {_usage_label(usageJob)}
-                                    </span>
-                                </div>
-                                <div className="usage-grid">
-                                    <div className="usage-card">
-                                        <span className="usage-label">
-                                            Input
-                                        </span>
-                                        <span className="usage-value">
-                                            {_usage_value(usageData, "input_tokens")}
-                                        </span>
-                                    </div>
-                                    <div className="usage-card">
-                                        <span className="usage-label">
-                                            Output
-                                        </span>
-                                        <span className="usage-value">
-                                            {_usage_value(usageData, "output_tokens")}
-                                        </span>
-                                    </div>
-                                    <div className="usage-card">
-                                        <span className="usage-label">
-                                            Reasoning
-                                        </span>
-                                        <span className="usage-value">
-                                            {_usage_value(
-                                                usageData, "reasoning_tokens"
-                                            )}
-                                        </span>
-                                    </div>
-                                    <div className="usage-card">
-                                        <span className="usage-label">
-                                            Cached
-                                        </span>
-                                        <span className="usage-value">
-                                            {_usage_value(usageData, "cached_tokens")}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                            if usageJob
-                            else <span></span>}{statusRows}
-                        </div>
-                    </div>
-                </div>
-                <div className="panel">
-                    <div className="panel-header">
-                        <span className="panel-title">
-                            Operator frequency
-                        </span>
-                        <span className="table-muted">
-                            All operators
-                        </span>
-                    </div>
-                    <div className="panel-body">
-                        <table className="table">
-                            <thead className="table-head">
-                                <tr>
-                                    <th className="table-cell">
-                                        Operator
-                                    </th>
-                                    <th className="table-cell">
-                                        Freq
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {operatorRows}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                <div className="panel">
-                    <div className="panel-header">
-                        <span className="panel-title">
-                            Benchmark results
-                        </span>
-                        <button
-                            onClick={lambda -> None { refreshBench();}}
-                            className="chip-button"
-                        >
-                            Refresh
-                        </button>
-                    </div>
-                    <div className="panel-body">
-                        {<div className="skeleton skeleton-block"></div>
-                        if benchLoading
-                        else <p className="table-muted">
-                            No benchmark data yet. Run the Benchmark step.
-                        </p>
-                        if not hasBench
-                        else <table className="table">
-                            <thead className="table-head">
-                                <tr>
-                                    <th className="table-cell">
-                                        Op
-                                    </th>
-                                    <th className="table-cell">
-                                        PyTorch (ms)
-                                    </th>
-                                    <th className="table-cell">
-                                        Kernel (ms)
-                                    </th>
-                                    <th className="table-cell">
-                                        Speedup
-                                    </th>
-                                    <th className="table-cell">
-                                        Source
-                                    </th>
-                                    <th className="table-cell text-center">
-                                        Export
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {benchRows}
-                            </tbody>
-                        </table>}{<div className="status-progress">
-                            <div className="progress-track">
-                                <div
-                                    className="progress-fill"
-                                    style={{"width": bench_bar_width}}
-                                ></div>
-                            </div>
-                            <div className="progress-meta">
+            <GameOfLifeBackground />
+            <div className="app-backdrop"></div>
+            <div className="app-layout app-content-layer">
+                <aside className="sidebar">
+                    <div className="sidebar-header">
+                        <div className="brand">
+                            <Mascot variant="logo" ambient={True} />
+                            <div className="brand-meta">
                                 <span>
-                                    {bench_progress_text}
+                                    Project
                                 </span>
-                                <span className="progress-message">
-                                    {bench_message}
+                                <span className="brand-tag">
+                                    {name}
                                 </span>
                             </div>
                         </div>
-                        if show_bench_progress
-                        else <span></span>}
+                        <div className="sidebar-actions">
+                            <button
+                                onClick={lambda -> None { navigate("/");}}
+                                className="ghost-button"
+                            >
+                                Home
+                            </button>
+                            <button
+                                onClick={lambda -> None { navigate("/settings");}}
+                                className="ghost-button"
+                            >
+                                Settings
+                            </button>
+                        </div>
                     </div>
-                    <div className="panel-footer">
-                        <p className="table-muted">
-                            Default export includes ops where kernel beats PyTorch.
-                        </p>
-                        <p className="table-muted">
-                            Kernel errors are shown as "error" (see benchmark log for details).
-                        </p>
+                    <div className="panel sidebar-panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Operators
+                            </span>
+                            <button
+                                onClick={lambda -> None { refreshOps();}}
+                                className="chip-button"
+                            >
+                                Refresh
+                            </button>
+                        </div>
+                        <div className="panel-body">
+                            <input
+                                type="text"
+                                value={searchQuery}
+                                onChange={lambda e: any  -> None { searchQuery = e.target.value;}}
+                                placeholder="Search ops..."
+                                className="input"
+                            />
+                            <div className="op-list">
+                                {skeletonOps
+                                if loading
+                                else <p className="table-muted">
+                                    No ops profiled yet. Run the profiling step.
+                                </p>
+                                if not hasOps
+                                else opLinks}
+                            </div>
+                        </div>
                     </div>
-                </div>
-                <div className="panel-grid">
+                    <div className="panel sidebar-panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Advanced Selection
+                            </span>
+                            <span className="table-muted">
+                                {selectedOps.length}selected
+                            </span>
+                        </div>
+                        <div className="panel-body">
+                            <div className="button-row">
+                                <button
+                                    onClick={lambda -> None { selectAllOps();}}
+                                    className="chip-button"
+                                >
+                                    Select All
+                                </button>
+                                <button
+                                    onClick={lambda -> None { clearSelectedOps();}}
+                                    className="chip-button"
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                            <div className="checkbox-list">
+                                {<p className="table-muted">
+                                    No ops to select yet.
+                                </p>
+                                if not hasOpSelect
+                                else opSelectItems}
+                            </div>
+                        </div>
+                    </div>
+                    <div className="panel sidebar-panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Advanced Generate
+                            </span>
+                            <span className="table-muted">
+                                Codex loop
+                            </span>
+                        </div>
+                        <div className="panel-body">
+                            <label className="checkbox-row">
+                                <input
+                                    type="checkbox"
+                                    checked={advBenchmark}
+                                    onChange={lambda e: any  -> None { advBenchmark = not advBenchmark;}}
+                                />
+                                <span>
+                                    Benchmark after generate
+                                </span>
+                            </label>
+                            <label className="checkbox-row">
+                                <input
+                                    type="checkbox"
+                                    checked={advOptimize}
+                                    onChange={lambda e: any  -> None { advOptimize = not advOptimize;}}
+                                />
+                                <span>
+                                    Optimize with Codex loop
+                                </span>
+                            </label>
+                            <label className="input-label">
+                                Optimize iterations
+                            </label>
+                            <input
+                                type="number"
+                                min="1"
+                                value={advIterations}
+                                onChange={lambda e: any  -> None { advIterations = Number(
+                                    e.target.value
+                                );}}
+                                className="input"
+                            />
+                            <label className="input-label">
+                                No-improve patience
+                            </label>
+                            <input
+                                type="number"
+                                min="1"
+                                value={advPatience}
+                                onChange={lambda e: any  -> None { advPatience = Number(
+                                    e.target.value
+                                );}}
+                                className="input"
+                            />
+                            <label className="input-label">
+                                Min improve (ms)
+                            </label>
+                            <input
+                                type="number"
+                                min="0"
+                                step="0.001"
+                                value={advMinImprove}
+                                onChange={lambda e: any  -> None { advMinImprove = Number(
+                                    e.target.value
+                                );}}
+                                className="input"
+                            />
+                            <label className="input-label">
+                                Target speedup (%)
+                            </label>
+                            <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={advSpeedupPct}
+                                onChange={lambda e: any  -> None { advSpeedupPct = Number(
+                                    e.target.value
+                                );}}
+                                className="input"
+                            />
+                            <label className="input-label">
+                                Generate attempts
+                            </label>
+                            <input
+                                type="number"
+                                min="1"
+                                value={advGenAttempts}
+                                onChange={lambda e: any  -> None { advGenAttempts = Number(
+                                    e.target.value
+                                );}}
+                                className="input"
+                            />
+                            <label className="input-label">
+                                Target device
+                            </label>
+                            {<label className="checkbox-row">
+                                <input
+                                    type="radio"
+                                    checked={targetDevice == "mps"}
+                                    onChange={lambda e: any  -> None { targetDevice = "mps";}}
+                                />
+                                <span>
+                                    Apple MPS
+                                </span>
+                            </label>
+                            if hardwareInfo
+                            and "mps_available" in hardwareInfo
+                            and hardwareInfo["mps_available"]
+                            else <span></span>}
+                            <label className="checkbox-row">
+                                <input
+                                    type="radio"
+                                    checked={targetDevice == "cuda"}
+                                    onChange={lambda e: any  -> None { targetDevice = "cuda";}}
+                                />
+                                <span>
+                                    GPU (CUDA)
+                                </span>
+                            </label>
+                            <label className="checkbox-row">
+                                <input
+                                    type="radio"
+                                    checked={targetDevice == "cpu"}
+                                    onChange={lambda e: any  -> None { targetDevice = "cpu";}}
+                                />
+                                <span>
+                                    CPU
+                                </span>
+                            </label>
+                            <button
+                                onClick={lambda -> None { detectHardware();}}
+                                className="ghost-button"
+                            >
+                                {"Detecting..."
+                                if hardwareLoading
+                                else "Detect Hardware"}
+                            </button>
+                            {<p className="table-muted">
+                                {hardwareStatus}
+                            </p>
+                            if hardwareStatus
+                            else <span></span>}
+                            <label className="input-label">
+                                Docker image
+                            </label>
+                            <input
+                                type="text"
+                                value={advImage}
+                                onChange={lambda e: any  -> None { advImage = e.target.value;}}
+                                className="input"
+                            />
+                            <GlowButton
+                                label="Advanced Generate"
+                                onClick={lambda -> None { handleGenerateAdvanced();}}
+                                variant="primary"
+                            />
+                            <GlowButton
+                                label="Advanced Optimize"
+                                onClick={lambda -> None { handleOptimizeAdvanced();}}
+                                variant="secondary"
+                            />
+                        </div>
+                    </div>
+                    <div className="panel sidebar-panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Pipeline
+                            </span>
+                            <span className="table-muted">
+                                Actions
+                            </span>
+                        </div>
+                        <div className="panel-body button-stack">
+                            <GlowButton
+                                label="Profile Model"
+                                onClick={lambda -> None { handleProfile();}}
+                                variant="primary"
+                            />
+                            <button
+                                onClick={lambda -> None { handleGenerate();}}
+                                className="ghost-button"
+                            >
+                                Generate Kernels
+                            </button>
+                            <button
+                                onClick={lambda -> None { handleOptimize();}}
+                                className="ghost-button"
+                            >
+                                Optimize Kernels
+                            </button>
+                            <button
+                                onClick={lambda -> None { handleBenchmark();}}
+                                className="ghost-button"
+                            >
+                                Benchmark
+                            </button>
+                            <button
+                                onClick={lambda -> None { handleExport();}}
+                                className="ghost-button"
+                            >
+                                Export .cgins
+                            </button>
+                            {<button
+                                onClick={lambda -> None { handleDownloadExport();}}
+                                disabled={downloading}
+                                className="ghost-button"
+                            >
+                                {"Downloading..." if downloading else "Download Export"}
+                            </button>
+                            if exportPath
+                            else <span></span>}
+                            {<p className="table-muted break-all">
+                                {exportPath}
+                            </p>
+                            if exportPath
+                            else <span></span>}
+                        </div>
+                    </div>
+                </aside>
+                <main className="content">
+                    <div className="page-header">
+                        <div>
+                            <h1 className="page-title">
+                                Project: {name}
+                            </h1>
+                            <div className="badge-row">
+                                <span className="badge">
+                                    Ops: {ops.length}
+                                </span>
+                                <span className="badge">
+                                    Benchmarks: {benchResults.length}
+                                </span>
+                            </div>
+                        </div>
+                        <Mascot variant="cta" ambient={True} />
+                    </div>
+                    <div className="panel-grid">
+                        <div className="panel">
+                            <div className="panel-header">
+                                <span className="panel-title">
+                                    Operator usage
+                                </span>
+                                <span className="table-muted">
+                                    Top 4 ops
+                                </span>
+                            </div>
+                            <div className="panel-body">
+                                {<div className="skeleton skeleton-block"></div>
+                                if loading
+                                else <p className="table-muted">
+                                    No profiling data yet.
+                                </p>
+                                if not hasPie
+                                else <div className="chart-wrap">
+                                    <ResponsiveContainer width="100%" height={220}>
+                                        <PieChart>
+                                            <Pie
+                                                data={pieData}
+                                                innerRadius={55}
+                                                outerRadius={80}
+                                                paddingAngle={4}
+                                                dataKey="value"
+                                            />
+                                            <Tooltip
+                                                cursor={{
+                                                    "fill": 'rgba(15, 23, 32, 0.6)'
+                                                }}
+                                                contentStyle={{
+                                                    "backgroundColor": '#0b1218',
+                                                    "borderColor": '#1f2a36',
+                                                    "borderRadius": '10px'
+                                                }}
+                                                itemStyle={{"color": '#e6f2ff'}}
+                                                labelStyle={{"color": '#9fb1c7'}}
+                                            />
+                                            <Legend
+                                                layout="vertical"
+                                                verticalAlign="middle"
+                                                align="right"
+                                                wrapperStyle={{"color": '#dbe7f3'}}
+                                            />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>}
+                            </div>
+                        </div>
+                        <div className="panel">
+                            <div className="panel-header">
+                                <span className="panel-title">
+                                    Pipeline status
+                                </span>
+                                <button
+                                    onClick={lambda -> None { refreshStatus();}}
+                                    className="chip-button"
+                                >
+                                    Refresh
+                                </button>
+                            </div>
+                            <div className="panel-body status-list">
+                                {<div className="usage-summary">
+                                    <div className="usage-header">
+                                        <span className="usage-title">
+                                            Latest token usage
+                                        </span>
+                                        <span className="usage-source">
+                                            {_usage_label(usageJob)}
+                                        </span>
+                                    </div>
+                                    <div className="usage-grid">
+                                        <div className="usage-card">
+                                            <span className="usage-label">
+                                                Input
+                                            </span>
+                                            <span className="usage-value">
+                                                {_usage_value(
+                                                    usageData, "input_tokens"
+                                                )}
+                                            </span>
+                                        </div>
+                                        <div className="usage-card">
+                                            <span className="usage-label">
+                                                Output
+                                            </span>
+                                            <span className="usage-value">
+                                                {_usage_value(
+                                                    usageData, "output_tokens"
+                                                )}
+                                            </span>
+                                        </div>
+                                        <div className="usage-card">
+                                            <span className="usage-label">
+                                                Reasoning
+                                            </span>
+                                            <span className="usage-value">
+                                                {_usage_value(
+                                                    usageData, "reasoning_tokens"
+                                                )}
+                                            </span>
+                                        </div>
+                                        <div className="usage-card">
+                                            <span className="usage-label">
+                                                Cached
+                                            </span>
+                                            <span className="usage-value">
+                                                {_usage_value(
+                                                    usageData, "cached_tokens"
+                                                )}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                                if usageJob
+                                else <span></span>}{statusRows}
+                            </div>
+                        </div>
+                    </div>
                     <div className="panel">
                         <div className="panel-header">
                             <span className="panel-title">
-                                Advanced generate log
+                                Operator frequency
+                            </span>
+                            <span className="table-muted">
+                                All operators
+                            </span>
+                        </div>
+                        <div className="panel-body">
+                            <table className="table">
+                                <thead className="table-head">
+                                    <tr>
+                                        <th className="table-cell">
+                                            Operator
+                                        </th>
+                                        <th className="table-cell">
+                                            Freq
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {operatorRows}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div className="panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Benchmark results
                             </span>
                             <button
-                                onClick={lambda -> None { refreshAdvLog();}}
+                                onClick={lambda -> None { refreshBench();}}
                                 className="chip-button"
                             >
                                 Refresh
@@ -1349,68 +1293,152 @@ def:pub Project -> any {
                         </div>
                         <div className="panel-body">
                             {<div className="skeleton skeleton-block"></div>
-                            if advLogLoading
-                            else <pre className="code-block">
-                                {advLog or "No log yet."}
-                            </pre>}
-                        </div>
-                    </div>
-                    <div className="panel">
-                        <div className="panel-header">
-                            <span className="panel-title">
-                                Time vs. version
-                            </span>
-                            <span className="table-muted">
-                                Optimization
-                            </span>
-                        </div>
-                        <div className="panel-body">
-                            {<p className="table-muted">
-                                No optimization data yet.
+                            if benchLoading
+                            else <p className="table-muted">
+                                No benchmark data yet. Run the Benchmark step.
                             </p>
-                            if not hasBar
-                            else <div className="chart-wrap">
-                                <ResponsiveContainer width="100%" height={220}>
-                                    <BarChart data={barData}>
-                                        <CartesianGrid
-                                            strokeDasharray="3 3"
-                                            stroke="#e6eaf0"
-                                            vertical={False}
-                                        />
-                                        <XAxis
-                                            dataKey="name"
-                                            stroke="#94a3b8"
-                                            tick={{"fill": '#94a3b8', "fontSize": 12}}
-                                            axisLine={False}
-                                            tickLine={False}
-                                        />
-                                        <YAxis
-                                            stroke="#94a3b8"
-                                            tick={{"fill": '#94a3b8', "fontSize": 12}}
-                                            axisLine={False}
-                                            tickLine={False}
-                                        />
-                                        <Tooltip
-                                            cursor={{"fill": '#f1f5f2'}}
-                                            contentStyle={{
-                                                "backgroundColor": '#ffffff',
-                                                "borderColor": '#e6eaf0',
-                                                "borderRadius": '8px'
-                                            }}
-                                            itemStyle={{"color": '#0b0f14'}}
-                                        />
-                                        <Bar
-                                            dataKey="time"
-                                            radius={[6, 6, 0, 0]}
-                                            barSize={32}
-                                            fill="#80a830"
-                                        />
-                                    </BarChart>
-                                </ResponsiveContainer>
-                            </div>}
+                            if not hasBench
+                            else <table className="table">
+                                <thead className="table-head">
+                                    <tr>
+                                        <th className="table-cell">
+                                            Op
+                                        </th>
+                                        <th className="table-cell">
+                                            PyTorch (ms)
+                                        </th>
+                                        <th className="table-cell">
+                                            Kernel (ms)
+                                        </th>
+                                        <th className="table-cell">
+                                            Speedup
+                                        </th>
+                                        <th className="table-cell">
+                                            Source
+                                        </th>
+                                        <th className="table-cell text-center">
+                                            Export
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {benchRows}
+                                </tbody>
+                            </table>}{<div className="status-progress">
+                                <div className="progress-track">
+                                    <div
+                                        className="progress-fill"
+                                        style={{"width": bench_bar_width}}
+                                    ></div>
+                                </div>
+                                <div className="progress-meta">
+                                    <span>
+                                        {bench_progress_text}
+                                    </span>
+                                    <span className="progress-message">
+                                        {bench_message}
+                                    </span>
+                                </div>
+                            </div>
+                            if show_bench_progress
+                            else <span></span>}
+                        </div>
+                        <div className="panel-footer">
+                            <p className="table-muted">
+                                Default export includes ops where kernel beats PyTorch.
+                            </p>
+                            <p className="table-muted">
+                                Kernel errors are shown as "error" (see benchmark log for details).
+                            </p>
                         </div>
                     </div>
-                </div>
-            </main>
+                    <div className="panel-grid">
+                        <div className="panel">
+                            <div className="panel-header">
+                                <span className="panel-title">
+                                    Advanced generate log
+                                </span>
+                                <button
+                                    onClick={lambda -> None { refreshAdvLog();}}
+                                    className="chip-button"
+                                >
+                                    Refresh
+                                </button>
+                            </div>
+                            <div className="panel-body">
+                                {<div className="skeleton skeleton-block"></div>
+                                if advLogLoading
+                                else <pre className="code-block">
+                                    {advLog or "No log yet."}
+                                </pre>}
+                            </div>
+                        </div>
+                        <div className="panel">
+                            <div className="panel-header">
+                                <span className="panel-title">
+                                    Time vs. version
+                                </span>
+                                <span className="table-muted">
+                                    Optimization
+                                </span>
+                            </div>
+                            <div className="panel-body">
+                                {<p className="table-muted">
+                                    No optimization data yet.
+                                </p>
+                                if not hasBar
+                                else <div className="chart-wrap">
+                                    <ResponsiveContainer width="100%" height={220}>
+                                        <BarChart data={barData}>
+                                            <CartesianGrid
+                                                strokeDasharray="3 3"
+                                                stroke="rgba(148, 163, 184, 0.18)"
+                                                vertical={False}
+                                            />
+                                            <XAxis
+                                                dataKey="name"
+                                                stroke="#8fa1b5"
+                                                tick={{
+                                                    "fill": '#8fa1b5',
+                                                    "fontSize": 12
+                                                }}
+                                                axisLine={False}
+                                                tickLine={False}
+                                            />
+                                            <YAxis
+                                                stroke="#8fa1b5"
+                                                tick={{
+                                                    "fill": '#8fa1b5',
+                                                    "fontSize": 12
+                                                }}
+                                                axisLine={False}
+                                                tickLine={False}
+                                            />
+                                            <Tooltip
+                                                cursor={{
+                                                    "fill": 'rgba(15, 23, 32, 0.6)'
+                                                }}
+                                                contentStyle={{
+                                                    "backgroundColor": '#0b1218',
+                                                    "borderColor": '#1f2a36',
+                                                    "borderRadius": '10px'
+                                                }}
+                                                itemStyle={{"color": '#e6f2ff'}}
+                                                labelStyle={{"color": '#9fb1c7'}}
+                                            />
+                                            <Bar
+                                                dataKey="time"
+                                                radius={[6, 6, 0, 0]}
+                                                barSize={32}
+                                                fill="#86e6a9"
+                                            />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>}
+                            </div>
+                        </div>
+                    </div>
+                </main>
+            </div>
         </div>;
 }

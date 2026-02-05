@@ -3,6 +3,7 @@
 import from react { useEffect }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
+import from "backdrops/GameOfLifeBackground" { GameOfLifeBackground }
 import from .ConfigContext { useConfig }
 
 def:pub Settings -> any {
@@ -73,12 +74,14 @@ def:pub Settings -> any {
 
     if loading {
         return
-            <div
-                className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-100"
-            >
-                <p>
-                    Loading settings...
-                </p>
+            <div className="app-shell app-shell--center settings-shell">
+                <GameOfLifeBackground />
+                <div className="app-backdrop"></div>
+                <div className="app-content-layer">
+                    <p>
+                        Loading settings...
+                    </p>
+                </div>
             </div>;
     }
 
@@ -90,14 +93,14 @@ def:pub Settings -> any {
     }
 
     testMessage = "";
-    testTone = "text-zinc-400";
+    testTone = "tone-muted";
     hasLatency = False;
     latencyValue = 0;
     hasResponse = False;
     responseValue = "";
     if apiTest and "success" in apiTest {
         if apiTest["success"] {
-            testTone = "text-emerald-400";
+            testTone = "tone-success";
             testMessage = "Success";
             if "latency_ms" in apiTest {
                 hasLatency = True;
@@ -108,31 +111,27 @@ def:pub Settings -> any {
                 responseValue = apiTest["response"];
             }
         } else {
-            testTone = "text-red-400";
+            testTone = "tone-error";
             testMessage = apiTest["error"] if "error" in apiTest else "API test failed";
         }
     }
 
     return
-        <main
-            className="flex min-h-screen flex-col items-center justify-center p-6 bg-zinc-900 text-zinc-100 selection:bg-zinc-700"
-        >
-            <div
-                className="w-full max-w-md space-y-8 bg-zinc-950 p-8 rounded-xl border border-zinc-800 shadow-2xl"
-            >
-                <div className="text-center space-y-2">
-                    <h1 className="text-3xl font-bold tracking-tight text-white">
+        <main className="app-shell app-shell--center settings-shell">
+            <GameOfLifeBackground />
+            <div className="app-backdrop"></div>
+            <div className="settings-card panel app-content-layer">
+                <div className="settings-header">
+                    <h1 className="settings-title">
                         Settings
                     </h1>
-                    <p className="text-zinc-500 text-sm">
+                    <p className="settings-subtitle">
                         Configure your Model Provider
                     </p>
                 </div>
-                <div className="space-y-6">
-                    <div className="space-y-2">
-                        <label
-                            className="text-xs font-semibold text-zinc-400 uppercase tracking-wider"
-                        >
+                <div className="form-stack">
+                    <div className="form-field">
+                        <label className="input-label">
                             Model Provider
                         </label>
                         <div className="relative">
@@ -144,17 +143,15 @@ def:pub Settings -> any {
                                     "provider", e.target.value
                                 );}}
                                 placeholder="openai, anthropic, gemini, ..."
-                                className="w-full h-12 appearance-none bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-lg px-4 text-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                                className="input"
                             />
                             <datalist id="provider-list">
                                 {providerOptions}
                             </datalist>
                         </div>
                     </div>
-                    <div className="space-y-2">
-                        <label
-                            className="text-xs font-semibold text-zinc-400 uppercase tracking-wider"
-                        >
+                    <div className="form-field">
+                        <label className="input-label">
                             Model Name
                         </label>
                         <input
@@ -164,13 +161,11 @@ def:pub Settings -> any {
                                 "model", e.target.value
                             );}}
                             placeholder="e.g. claude-3-opus-20240229"
-                            className="w-full h-12 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-lg px-4 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                            className="input"
                         />
                     </div>
-                    <div className="space-y-2">
-                        <label
-                            className="text-xs font-semibold text-zinc-400 uppercase tracking-wider"
-                        >
+                    <div className="form-field">
+                        <label className="input-label">
                             API Key
                         </label>
                         <input
@@ -180,20 +175,20 @@ def:pub Settings -> any {
                                 "apikey", e.target.value
                             );}}
                             placeholder="sk-..."
-                            className="w-full h-12 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-lg px-4 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all font-mono text-sm"
+                            className="input input--mono"
                         />
                     </div>
                 </div>
-                <div className="pt-4 space-y-3">
+                <div className="settings-actions-block">
                     <button
                         onClick={handleTest}
                         disabled={apiTesting}
-                        className="w-full h-11 bg-zinc-900 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800 text-zinc-200 font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="app-button app-button--secondary app-button--full"
                     >
                         {("Testing..." if apiTesting else "Test API Connection")}
                     </button>
                     {testMessage
-                    and <div className={"text-xs " + testTone}>
+                    and <div className={"settings-test " + testTone}>
                         <span>
                             {testMessage}
                         </span>
@@ -206,17 +201,17 @@ def:pub Settings -> any {
                             {" - "}{responseValue}
                         </span>}
                     </div>}
-                    <div className="flex gap-4">
+                    <div className="settings-actions">
                         <button
                             onClick={handleReturn}
-                            className="flex-1 h-12 bg-transparent border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-900 text-zinc-300 font-bold rounded-lg transition-all"
+                            className="app-button app-button--ghost app-button--wide"
                         >
                             Return
                         </button>
                         <button
                             onClick={handleSave}
                             disabled={saving}
-                            className="flex-1 h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="app-button app-button--primary app-button--wide"
                         >
                             {("Saving..." if saving else "Save Changes")}
                         </button>
