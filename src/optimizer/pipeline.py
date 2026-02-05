@@ -244,7 +244,7 @@ def main():
     proj_dir = create_project(gpu_specs, io_parent_dir)
 
     for op_dir_path in proj_dir.iterdir():
-        if not op_dir_path.is_dir():
+        if not op_dir_path.is_dir() or "max" not in str(op_dir_path):
             continue
 
 
