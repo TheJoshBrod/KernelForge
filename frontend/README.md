@@ -14,16 +14,17 @@ This GUI allows users to manage projects, upload models/weights, view optimizati
 
 ```
 frontend/
-├── main.jac              # Main application entry point & backend logic
 ├── jac.toml              # Project configuration
-├── config.json           # User settings
-├── components/           # UI Components (.cl.jac)
-│   ├── Home.cl.jac           # Dashboard & Project List
-│   ├── Project.cl.jac        # Project Details View
-│   ├── OpDetails.cl.jac      # Optimization Graph & Details
-│   ├── NewProject.cl.jac     # Creation Wizard
-│   ├── Settings.cl.jac       # Configuration Page
-│   └── ...
+├── main.jac              # Main application entry & walkers
+├── ConfigContext.cl.jac  # Config context provider
+├── Home.cl.jac           # Home page
+├── NewProject.cl.jac     # Project upload page
+├── OpDetails.cl.jac      # Op details page
+├── Project.cl.jac        # Project page
+├── Settings.cl.jac       # Settings page
+├── SplashScreen.cl.jac   # Splash screen
+├── Button.cl.jac         # Shared UI component
+├── backdrops/            # Animated background components
 ├── assets/               # Static assets (Icons, Logos)
 └── styles.css            # Global styles (Tailwind utilities)
 ```
