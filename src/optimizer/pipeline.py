@@ -282,7 +282,7 @@ def create_new_root(gpu_specs: GPUSpecs, paths: dict[str, Path]) -> KernelNode:
             "value": current_stats['mean_time_ms'],
             "speedup_vs_parent": 1.0,
             "improvement_description": "Initial",
-            "code": str(paths["proj_dir"] / "attempts" / f"kernel_{next_id}.cu"),
+            "code": f"{paths['proj_dir'].name}/attempts/kernel_{next_id}.cu",
             "visits": 1
         }
         node = KernelNode.model_validate(node_data)
@@ -407,20 +407,24 @@ Examples:
     # Collect GPU specs first to get name
     gpu_specs = gpu.get_gpu_specs()
 
-    # Create project (or resume if exists/provided)
     # Temporarily set sys.argv for get_project_dir compatibility
     if args.project_name:
         sys.argv = [sys.argv[0], str(args.io_dir), args.project_name]
-    proj_dir = create_project(gpu_specs, io_parent_dir)
 
-    # Handle --new-root flag
+    # Handle --new-root flag (before create_project - no need to init all operators)
     if args.new_root:
         op_name = args.new_root
+        proj_dir = get_project_dir(gpu_specs.gpu_name)
         op_dir_path = proj_dir / op_name
         
         if not op_dir_path.exists():
             print(f"Error: Operator '{op_name}' not found in project.")
-            print(f"Available operators: {[d.name for d in proj_dir.iterdir() if d.is_dir()]}")
+            print(f"Expected path: {op_dir_path}")
+            sys.exit(1)
+        
+        # Check if operator has at least node 0 (baseline)
+        if not (op_dir_path / "nodes" / "0.json").exists():
+            print(f"Error: Operator '{op_name}' has no baseline node. Run normal optimization first.")
             sys.exit(1)
         
         io_dir = io_parent_dir / op_name
@@ -440,12 +444,14 @@ Examples:
         if new_root:
             print(f"\nSuccess! Created new root: Node {new_root.id}")
             print(f"  Runtime: {new_root.value:.4f} ms")
-            print(f"  Strategy: {new_root.improvement_description[:100]}...")
         else:
             print("\nFailed to create new root.")
             sys.exit(1)
         
         sys.exit(0)
+
+    # Normal operation: Create project (or resume if exists/provided)
+    proj_dir = create_project(gpu_specs, io_parent_dir)
 
     # Normal optimization loop
     for op_dir_path in proj_dir.iterdir():
