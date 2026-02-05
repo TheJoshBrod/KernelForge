@@ -271,12 +271,21 @@ def get_existing_roots(paths: dict) -> list[dict]:
             if node.get("parent") != -1:
                 continue
             
-            # Read the kernel code
-            code_path = Path(node.get("code", ""))
+            # Read the kernel code - handle both absolute and relative paths
+            code_path_str = node.get("code", "")
+            code_path = Path(code_path_str)
+            
+            # If relative path, resolve from project parent directory
+            if not code_path.is_absolute():
+                # e.g., "torch_nn_functional_embedding/attempts/kernel_0.cu"
+                # proj_dir is like ".../NVIDIA.../torch_nn_functional_embedding"
+                # so parent is ".../NVIDIA..." and we join with relative path
+                code_path = paths["proj_dir"].parent / code_path_str
+            
             if code_path.exists():
                 code_preview = code_path.read_text()[:4000]  # First 4KB
             else:
-                code_preview = "// Code file not found"
+                code_preview = f"// Code file not found: {code_path}"
             
             roots.append({
                 "id": node["id"],

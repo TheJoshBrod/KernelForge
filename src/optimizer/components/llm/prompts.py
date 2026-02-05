@@ -377,7 +377,7 @@ implementation. Consider different:
 """
         for root in existing_roots:
             roots_section += f"""
-### Root {root['id']} ({root['runtime_ms']:.4f} ms)
+### Root {root['id']}
 
 ```cpp
 {root['code_preview']}
