@@ -6,12 +6,17 @@ Walks through each operation in a benchmark to:
 2. Generate CUDA kernel code
 3. Validate correctness through iterative refinement
 """
+import argparse
 import glob
 import os
 import shutil
 import sys
 import tempfile
 from pathlib import Path
+
+from src.config import apply_llm_config
+
+apply_llm_config()
 
 import torch
 from tqdm import tqdm
@@ -20,6 +25,7 @@ import src.generator.generator as generator
 import src.generator.monitor as monitor
 import src.generator.prompts.prompts as prompts
 import src.generator.verifier as verify
+from src.progress import update_job_progress, wait_if_paused, check_cancelled
 
 # Configuration
 MAX_ATTEMPTS = 5
@@ -45,6 +51,10 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
 
     # Try n times to go through entire test suite
     for attempt in range(MAX_ATTEMPTS + 1):
+        if not wait_if_paused():
+            return False
+        if check_cancelled():
+            return False
 
         # Generate kernel
         try:
@@ -53,9 +63,12 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
                 cu_code = generator.anthropic_generator(conversation_history)
             elif provider == "gemini":
                 cu_code = generator.gemini_generator(conversation_history)
+            elif provider in {"openai", "gpt", "chatgpt"}:
+                cu_code = generator.chatgpt_generator(conversation_history)
             else:
                 raise ValueError(
-                    f"Unknown LLM provider: {provider}. Supported: anthropic, gemini")
+                    f"Unknown LLM provider: {provider}. Supported: anthropic, gemini, openai"
+                )
 
             conversation_history.append(
                 {"role": "assistant", "content": cu_code})
@@ -72,6 +85,10 @@ def validate_with_retries(output_dir: Path, entry_files: list[str], conversation
         # For each generated kernel validate ALL input/output
         is_valid = True
         for i, entry_file in enumerate(tqdm(entry_files, desc="Input Tests")):
+            if not wait_if_paused():
+                return False
+            if check_cancelled():
+                return False
 
             # Validate current kernel with entry file
             log_file_loc = output_dir / "attempts" / f"log-{attempt}-{i}.txt"
@@ -187,26 +204,48 @@ def process_function(directory_name: str, entry_files: list[str], op_dir: Path):
 
 def main():
     """Main entry point: load benchmarks and process each one."""
-    if len(sys.argv) < 2:
-        print("Usage: python main.py <benchmark_dir>")
+    parser = argparse.ArgumentParser(description="Generate kernels from profiled ops.")
+    parser.add_argument("io_dir", nargs="?", help="Path to profiled ops directory")
+    parser.add_argument("--io-dir", dest="io_dir_opt", default=None, help="Path to profiled ops directory")
+    parser.add_argument("--out-dir", dest="out_dir", default=None, help="Base output directory for kernels")
+    args = parser.parse_args()
+
+    io_dir = args.io_dir_opt or args.io_dir
+    if not io_dir:
+        print("Usage: python -m src.generator.main <io_dir> [--out-dir <dir>]")
         sys.exit(1)
 
-    # Loop over all function directories
-    function_dirs = sorted(glob.glob(os.path.join(sys.argv[1], "*")))
+    global OUTPUT_BASE_DIR
+    if args.out_dir:
+        OUTPUT_BASE_DIR = Path(args.out_dir)
 
-    for func_dir in tqdm(function_dirs, desc="Processing functions"):
+    # Loop over all function directories
+    function_dirs = sorted(glob.glob(os.path.join(io_dir, "*")))
+    jobs: list[tuple[str, list[str], str]] = []
+
+    for func_dir in function_dirs:
         if not os.path.isdir(func_dir):
             continue
 
         function_name = os.path.basename(func_dir).replace("_", ".")
-        print(function_name)
-
-        # Get all entry files
         entry_files = sorted(glob.glob(os.path.join(func_dir, "entry_*.pt")))
-
         if not entry_files:
-            print(f"No entry files found for {function_name}, skipping...")
             continue
+        jobs.append((func_dir, entry_files, function_name))
+
+    total_jobs = len(jobs)
+    update_job_progress(0, total_jobs, "Starting generation")
+
+    completed = 0
+    for func_dir, entry_files, function_name in tqdm(jobs, desc="Processing functions"):
+        if not wait_if_paused():
+            print("Generation cancelled.")
+            return
+        if check_cancelled():
+            print("Generation cancelled.")
+            return
+        update_job_progress(completed, total_jobs, f"{function_name} ({completed + 1}/{total_jobs})")
+        print(function_name)
 
         op_dir = OUTPUT_BASE_DIR / "individual_op_kernels" / \
             function_name.replace(".", "_")
@@ -214,10 +253,17 @@ def main():
 
         performance_file = op_dir / "success"
         if performance_file.exists():
+            completed += 1
+            update_job_progress(completed, total_jobs, function_name)
             continue
 
         # Pass entry file paths directly
         process_function(function_name, entry_files, op_dir)
+        if check_cancelled():
+            print("Generation cancelled.")
+            return
+        completed += 1
+        update_job_progress(completed, total_jobs, function_name)
 
 
 if __name__ == "__main__":
