@@ -1,17 +1,19 @@
-import os
 import sys
 import json
-import math
 import random
 import string
+import argparse
 import tempfile
 from pathlib import Path
 
 import src.optimizer.components.llm.generator as generator
+import src.optimizer.components.llm.prompts as opt_prompts
 import src.optimizer.components.hardware.profiler as gpu
 import src.optimizer.core.mcts as mcts
+import src.generator.prompts.prompts as gen_prompts
 from src.optimizer.core.types import KernelNode, GPUSpecs
 from src.optimizer.config.settings import settings
+import torch
 
 
 
@@ -133,7 +135,154 @@ def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNod
     return None
 
 
-def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path, optional_proj_name: str = None, ssh_config: dict = None):
+def create_new_root(gpu_specs: GPUSpecs, paths: dict[str, Path]) -> KernelNode:
+    """Generate a fresh kernel as an independent root node.
+    
+    Creates a new optimization tree separate from existing ones by generating
+    a kernel from scratch with a different approach.
+    
+    Args:
+        gpu_specs: GPU architecture specifications
+        paths: Dictionary containing project paths
+        
+    Returns:
+        The newly created root KernelNode, or None if generation failed
+    """
+    from src.llm_tools import GenModel
+    
+    # Get next available node ID
+    next_id = len(list((paths["proj_dir"] / "nodes").glob("*.json")))
+    
+    # Get existing roots to show LLM for diversity
+    existing_roots = mcts.get_existing_roots(paths)
+    print(f"\tFound {len(existing_roots)} existing root(s)")
+    
+    # Load operator specification from entry files (same as generator)
+    op_name = paths["proj_dir"].name
+    entry_files = sorted(paths["io_dir"].glob("entry_*.pt"))
+    
+    if entry_files:
+        # Load all entry files to get function calls (same as generator main.py)
+        call_list = []
+        for entry_file in entry_files:
+            try:
+                entry = torch.load(entry_file, map_location='cpu', weights_only=False)
+                call_list.append(entry)
+            except Exception as e:
+                print(f"\t\tWarning: Error loading {entry_file}: {e}")
+                continue
+        
+        if call_list:
+            # Get function name from first entry
+            function_name = call_list[0].get("function_name", op_name)
+            operator_spec = gen_prompts.generate_function_spec_from_calls(call_list, function_name)
+        else:
+            operator_spec = {"function_name": op_name, "parameters": [], "num_calls": 0}
+    else:
+        # Fallback minimal spec
+        operator_spec = {"function_name": op_name, "parameters": [], "num_calls": 0}
+    
+    # Generate prompt with existing roots for diversity guidance
+    prompt = opt_prompts.generate_new_root_prompt(
+        operator_spec,
+        existing_roots
+    )
+    
+    # Get generator system prompt
+    sys_prompt = gen_prompts.get_system_prompt()
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        paths["tmp_dir"] = Path(tmpdir)
+        
+        # DEBUG: Save prompt for inspection
+        (paths["proj_dir"] / "attempts").mkdir(parents=True, exist_ok=True)
+        prompt_path = paths["proj_dir"] / "attempts" / f"new_root_prompt_{next_id}.md"
+        with open(prompt_path, "w") as f:
+            f.write("# System Prompt\n\n")
+            f.write(sys_prompt)
+            f.write("\n\n---\n\n# User Message\n\n")
+            f.write(prompt)
+        print(f"\t\tSaved prompt to: {prompt_path}")
+        
+        # Generate kernel using LLM with retry logic
+        llm = GenModel(sys_prompt)
+        
+        # Initial attempt
+        feedback, code = generator.extract_feedback_and_code(
+            llm.chat(prompt, settings.llm_model_name)
+        )
+        
+        if code is None:
+            print("\t\tError: Failed to extract code from LLM response")
+            return None
+        
+        # Write to tmp for validation
+        (paths["tmp_dir"] / "kernel.cu").write_text(code)
+        
+        # Validate the kernel with retries
+        import src.optimizer.components.worker.verifier as verifier
+        is_valid, error = verifier.validate_kernel(code, paths)
+        
+        # Retry loop on validation failure
+        attempt = 0
+        while not is_valid and attempt < settings.retry_limit:
+            attempt += 1
+            print(f"\t\tValidation failed, retry {attempt}/{settings.retry_limit}...")
+            
+            # Save failed attempt to garbage dump
+            dump_dir = paths["proj_dir"] / "garbage_dump"
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            (dump_dir / f"new_root_{next_id}_attempt{attempt}.cu").write_text(code)
+            
+            # Send error back to LLM for correction
+            feedback, code = generator.extract_feedback_and_code(
+                llm.chat(error, settings.llm_model_name)
+            )
+            
+            if code is None:
+                print(f"\t\tRetry {attempt}: Failed to extract code")
+                continue
+            
+            # Validate the new attempt
+            (paths["tmp_dir"] / "kernel.cu").write_text(code)
+            is_valid, error = verifier.validate_kernel(code, paths)
+        
+        if not is_valid:
+            print(f"\t\tValidation failed after {settings.retry_limit} retries: {error}")
+            dump_dir = paths["proj_dir"] / "garbage_dump"
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            (dump_dir / f"new_root_{next_id}_final_failed.cu").write_text(code)
+            return None
+        
+        # Profile the kernel
+        print("\t\tProfiling new root kernel...")
+        current_stats, _ = gpu.profile_kernel(paths)
+        
+        # Create root node (parent = -1)
+        node_data = {
+            "id": next_id,
+            "parent": -1,  # Root marker
+            "value": current_stats['mean_time_ms'],
+            "speedup_vs_parent": 1.0,
+            "improvement_description": "Initial",
+            "code": str(paths["proj_dir"] / "attempts" / f"kernel_{next_id}.cu"),
+            "visits": 1
+        }
+        node = KernelNode.model_validate(node_data)
+        
+        # Save node
+        (paths["proj_dir"] / "nodes").mkdir(parents=True, exist_ok=True)
+        with open(paths["proj_dir"] / "nodes" / f"{next_id}.json", "w") as f:
+            f.write(node.model_dump_json(indent=4, by_alias=True))
+        
+        # Save kernel code
+        (paths["proj_dir"] / "attempts" / f"kernel_{next_id}.cu").write_text(code)
+        
+        print(f"\t\tCreated new root: Node {next_id} ({current_stats['mean_time_ms']:.4f} ms)")
+        return node
+
+
+def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path):
     """Creates a new optimization project for each individual operator kernel.
     """
     # Output directory (access via dot notation now)
@@ -211,55 +360,147 @@ def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path, optional_proj_name:
 
 def main():
     """Calls optimization pipeline on each kernel."""
-    
-    # Needs argument parsing
-    import argparse
-    parser = argparse.ArgumentParser(description="CGinS Optimization Pipeline")
-    parser.add_argument("io_dir", type=str, help="Directory containing IO pairs")
-    parser.add_argument("proj_name", type=str, nargs="?", default=None, help="Optional project name")
-    parser.add_argument("--remote", type=str, help="Path to configuration JSON for remote remote execution")
-    
+    global next_id
+
+    parser = argparse.ArgumentParser(
+        description="CUDA Kernel Optimizer Pipeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Normal optimization run
+  python3 -m src.optimizer.pipeline benchmarks/profiler/individual_ops project_name
+  
+  # Create a new independent root for a specific operator
+  python3 -m src.optimizer.pipeline benchmarks/profiler/individual_ops project_name --new-root torch_nn_functional_embedding
+
+  # Run using remote SSH configuration
+  python3 -m src.optimizer.pipeline benchmarks/profiler/individual_ops project_name --remote config.json
+"""
+    )
+
+    parser.add_argument(
+        "io_dir",
+        type=Path,
+        help="Directory containing input/output torch files"
+    )
+
+    parser.add_argument(
+        "project_name",
+        nargs="?",
+        default=None,
+        help="Optional project name"
+    )
+
+    parser.add_argument(
+        "--new-root",
+        type=str,
+        metavar="OP_NAME",
+        help="Create a new independent root for the specified operator (no optimization)"
+    )
+
+    parser.add_argument(
+        "--remote",
+        type=Path,
+        help="Path to configuration JSON for remote execution"
+    )
+
     args = parser.parse_args()
-    
-    io_parent_dir = Path(args.io_dir)
-    optional_proj_name = args.proj_name
-    
+    io_parent_dir = args.io_dir
+    optional_proj_name = args.project_name
+
     ssh_config = None
-    
+
+    # -----------------------
+    # GPU SPEC COLLECTION
+    # -----------------------
     if args.remote:
-        config_path = Path(args.remote)
+        config_path = args.remote
+
         if not config_path.exists():
             print(f"Error: Config file not found: {config_path}")
             sys.exit(1)
-            
+
         with open(config_path, "r") as f:
             remote_config = json.load(f)
-            
-        # Get active SSH config
+
         connections = remote_config.get("ssh_connections", [])
         active_idx = remote_config.get("active_ssh_index", -1)
-        
+
         if 0 <= active_idx < len(connections):
             ssh_config = connections[active_idx]
-            print(f"remote Mode: Using SSH connection to {ssh_config.get('host')}")
+            print(f"Remote mode: Using SSH connection to {ssh_config.get('host')}")
         else:
             print("Error: Invalid active_ssh_index in remote config.")
             sys.exit(1)
-            
-        # Collect GPU specs remotely
+
         print("Retrieving remote GPU specs...")
         gpu_specs = gpu.get_remote_gpu_specs(ssh_config)
+
     else:
-        # Collect GPU specs locally
         gpu_specs = gpu.get_gpu_specs()
 
-    # Create project (or resume if exists/provided)
-    proj_dir = create_project(gpu_specs, io_parent_dir, optional_proj_name, ssh_config)
+    # -----------------------
+    # PROJECT CREATION
+    # -----------------------
 
+    # Maintain compatibility if create_project expects sys.argv layout
+    if optional_proj_name:
+        sys.argv = [sys.argv[0], str(io_parent_dir), optional_proj_name]
+
+    proj_dir = create_project(
+        gpu_specs,
+        io_parent_dir,
+        optional_proj_name,
+        ssh_config
+    )
+
+    # -----------------------
+    # NEW ROOT HANDLING
+    # -----------------------
+
+    if args.new_root:
+        create_new_root(proj_dir, args.new_root)
+        print(f"Created new independent root for operator: {args.new_root}")
+        return
+
+    # Handle --new-root flag
+    if args.new_root:
+        op_name = args.new_root
+        op_dir_path = proj_dir / op_name
+        
+        if not op_dir_path.exists():
+            print(f"Error: Operator '{op_name}' not found in project.")
+            print(f"Available operators: {[d.name for d in proj_dir.iterdir() if d.is_dir()]}")
+            sys.exit(1)
+        
+        io_dir = io_parent_dir / op_name
+        if not io_dir.exists():
+            print(f"Error: IO directory not found for '{op_name}'")
+            sys.exit(1)
+        
+        paths = {
+            "proj_dir": op_dir_path,
+            "io_dir": io_dir,
+            "op_dir": Path("kernels/generated/individual_op_kernels") / op_name,
+        }
+        
+        print(f"Creating new root for {op_name}...")
+        new_root = create_new_root(gpu_specs, paths)
+        
+        if new_root:
+            print(f"\nSuccess! Created new root: Node {new_root.id}")
+            print(f"  Runtime: {new_root.value:.4f} ms")
+            print(f"  Strategy: {new_root.improvement_description[:100]}...")
+        else:
+            print("\nFailed to create new root.")
+            sys.exit(1)
+        
+        sys.exit(0)
+
+    # Normal optimization loop
     for op_dir_path in proj_dir.iterdir():
         if not op_dir_path.is_dir() or "max" not in str(op_dir_path):
             continue
-
 
         op_name = op_dir_path.name
         print(f"Optimizing {op_name}...")

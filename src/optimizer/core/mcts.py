@@ -246,3 +246,46 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
                 h["speedup_vs_baseline"] = 0.0
 
     return history, codes
+
+
+def get_existing_roots(paths: dict) -> list[dict]:
+    """Get all root nodes with their kernel code for diversity guidance.
+    
+    Used when creating new roots to show the LLM what approaches already exist.
+    
+    Args:
+        paths: Dictionary containing project paths
+        
+    Returns:
+        List of dicts with {id, runtime_ms, code_preview} sorted by runtime (best first)
+    """
+    node_path: Path = paths["proj_dir"] / "nodes"
+    roots = []
+    
+    for file in node_path.glob("*.json"):
+        try:
+            with open(file, 'r') as f:
+                node = json.load(f)
+            
+            # Only include root nodes (parent == -1)
+            if node.get("parent") != -1:
+                continue
+            
+            # Read the kernel code
+            code_path = Path(node.get("code", ""))
+            if code_path.exists():
+                code_preview = code_path.read_text()[:4000]  # First 4KB
+            else:
+                code_preview = "// Code file not found"
+            
+            roots.append({
+                "id": node["id"],
+                "runtime_ms": node.get("value", 0.0),
+                "code_preview": code_preview
+            })
+        except Exception as e:
+            print(f"Warning: Error loading root node from {file}: {e}")
+            continue
+    
+    # Sort by runtime (best/fastest first)
+    return sorted(roots, key=lambda x: x["runtime_ms"])
