@@ -387,7 +387,7 @@ def _run_llm_test(provider: str, model: str, apikey: str) -> dict {
 walker:pub GetConfig {
     can return_config with `root entry {
         try {
-            with open(config_path, "r") as f {
+            with open("config.json", "r") as f {
                 config = load(f);
                 report config ;
             }
@@ -403,7 +403,7 @@ walker:pub SaveConfig {
 
     can update_config with `root entry {
         try {
-            with open(config_path, "w") as f {
+            with open("config.json", "w") as f {
                 dump(self.cfg, f, indent=2);
                 global config_store;
                 config_store = self.cfg;
@@ -1297,10 +1297,10 @@ walker:pub GetProjectBenchmarks {
 cl import from react { useEffect }
 cl import from sonner { Toaster }
 cl import from "react-router-dom" { BrowserRouter as Router, Routes, Route }
-cl import from .ConfigContext { ConfigProvider }
+cl import from .context.ConfigContext { ConfigProvider }
 cl import from .Home { Home }
 cl import from .Project { Project }
-cl import from .Settings { Settings }
+cl import from .components.Settings { Settings }
 cl import from .NewProject { NewProject }
 cl import from .OpDetails { OpDetails }
 cl import "./styles.css";

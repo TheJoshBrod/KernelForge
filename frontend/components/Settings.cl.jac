@@ -4,7 +4,7 @@ import from react { useEffect }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
 import from "backdrops/GameOfLifeBackground" { GameOfLifeBackground }
-import from .ConfigContext { useConfig }
+import from ..context.ConfigContext { useConfig }
 
 def:pub Settings -> any {
     navigate = useNavigate();
