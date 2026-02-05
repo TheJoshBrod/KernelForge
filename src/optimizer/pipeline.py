@@ -78,7 +78,7 @@ def save_iteration(paths: dict, parent_info: KernelNode, improvement_description
             "speedup_vs_parent": log_entry['speedup_vs_parent'],
             "improvement_description": improvement_description,
             "parent": parent_info.id,
-            "code": str(paths["proj_dir"] / "attempts" / f"kernel_{next_id}.cu"),
+            "code": str(Path(paths["proj_dir"].name) / "attempts" / f"kernel_{next_id}.cu"),
             "visits": 1
         }
         # Validate and dump with Pydantic
@@ -117,6 +117,9 @@ def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNod
 
         # Read the actual kernel code from file path
         kernel_code_path = Path(parent_node.code)
+        if not kernel_code_path.is_absolute():
+            kernel_code_path = paths["proj_dir"].parent / kernel_code_path
+
         if kernel_code_path.exists():
             kernel_code = kernel_code_path.read_text()
         else:
@@ -208,7 +211,7 @@ def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path):
                 "speedup_vs_parent": 1.0,
                 "improvement_description": "Initial",
                 "parent": -1,
-                "code": str(proj_op_dir / "attempts" / "kernel_0.cu"),
+                "code": str(Path(proj_op_dir.name) / "attempts" / "kernel_0.cu"),
                 "visits": 1
             }
             node = KernelNode.model_validate(node_data)

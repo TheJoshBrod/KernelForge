@@ -164,3 +164,85 @@ def update_tree(paths: dict, new_node: KernelNode):
 
         # Move Up
         current = parent
+
+def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -> tuple[list[dict], list[tuple[int, str]]]:
+    """
+    Walks up the tree from start_node to the root to collect:
+    1. The improvement log (metadata for all nodes in the path).
+    2. The source code (only for the last 'code_depth' nodes).
+    
+    Returns:
+        (improvement_log, ancestor_codes)
+        - improvement_log is sorted Chronologically (Root -> Leaf)
+        - ancestor_codes is sorted Chronologically (Oldest -> Newest)
+    """
+    history = []
+    codes = []
+    current = start_node
+    
+    # 1. Traverse Bottom-Up (Child -> Parent -> Root)
+    while current:
+        # --- Collect Metadata ---
+        # Ensure we have a valid runtime for metrics
+        runtime = current.value if current.value is not None else float('inf')
+        
+        entry = {
+            "iteration": current.id,
+            "attempted": current.improvement_description or "Baseline",
+            "results": {
+                "mean_time_ms": runtime
+            },
+            "speedup_vs_parent": getattr(current, "speedup_vs_parent", 1.0) or 1.0
+        }
+        history.append(entry)
+
+        # --- Collect Code (Sliding Window) ---
+        if len(codes) < code_depth:
+            try:
+                code_path = Path(current.code)
+                # Handle relative paths if necessary, though absolute is safer
+                if not code_path.is_absolute():
+                     code_path = paths["proj_dir"].parent / code_path
+
+                if code_path.exists():
+                    codes.append((current.id, code_path.read_text()))
+                else:
+                    # Fallback if file is missing (shouldn't happen)
+                    codes.append((current.id, "// Error: Code file not found on disk."))
+            except Exception as e:
+                codes.append((current.id, f"// Error reading code: {e}"))
+
+        # --- Move to Parent ---
+        if current.parent_id == -1 or current.parent_id is None:
+            break
+
+        # Try to load parent from memory cache first
+        if current.parent_id in _NODE_CACHE:
+            current = _NODE_CACHE[current.parent_id]
+        else:
+            p_path = paths["proj_dir"] / "nodes" / f"{current.parent_id}.json"
+            if p_path.exists():
+                try:
+                    with open(p_path, 'r') as f:
+                        current = KernelNode.model_validate(json.load(f))
+                except Exception as e:
+                    raise RuntimeError(f"CRITICAL: Corrupted parent node file at {p_path}") from e
+            else:
+                raise FileNotFoundError(f"CRITICAL: Orphaned node detected. Parent file {p_path} is missing for child {current.id}")
+
+    # 2. Reorder (Root -> Child)
+    history.reverse()
+    codes.reverse()
+
+    # 3. Calculate "Speedup vs Baseline"
+    if history:
+        baseline_time = history[0]["results"]["mean_time_ms"]
+        
+        for h in history:
+            current_time = h["results"]["mean_time_ms"]
+            if current_time > 0 and baseline_time > 0:
+                h["speedup_vs_baseline"] = baseline_time / current_time
+            else:
+                h["speedup_vs_baseline"] = 0.0
+
+    return history, codes
