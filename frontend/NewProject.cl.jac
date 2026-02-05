@@ -9,6 +9,18 @@ import from "@jac-client/assets/BackIcon" { BackIcon }
 import from "@jac-client/assets/UploadIcon" { UploadIcon }
 import from "@jac-client/assets/FolderIcon" { FolderIcon }
 
+def LoadingGhostIcon(className: str = "") -> any {
+    return
+        <svg viewBox="0 0 120 120" className={className} fill="currentColor">
+            <path
+                d="M 60 10 C 30 10 10 40 10 70 L 10 100 C 10 110 30 110 30 100 C 30 110 50 110 50 100 C 50 110 70 110 70 100 C 70 110 90 110 90 100 C 90 110 110 110 110 100 L 110 70 C 110 40 90 10 60 10 Z"
+            />
+            <circle cx="45" cy="50" r="5" fill="#0b0f14" />
+            <circle cx="75" cy="50" r="5" fill="#0b0f14" />
+            <ellipse cx="60" cy="70" rx="4" ry="3" fill="#0b0f14" opacity="0.2" />
+        </svg>;
+}
+
 # Client-side helper for reading file as base64
 def fileToBase64(file: any) -> any {
     def executor(resolve: any, reject: any) -> None {
@@ -39,7 +51,8 @@ def:pub NewProject -> any {
             "weightsFile": None,
             "validationZip": None
         },
-        isSubmitting: bool = False;
+        isSubmitting: bool = False,
+        submitStage: str = "";
 
     def handleInputChange(field: str, value: any) -> None {
         newFormData = {
@@ -91,21 +104,25 @@ def:pub NewProject -> any {
         }
 
         isSubmitting = True;
+        submitStage = "Preparing project files";
 
         try {
             weights_b64 = "";
             if formData["weightsFile"] {
+                submitStage = "Encoding weights";
                 weights_b64 = await fileToBase64(formData["weightsFile"]);
             }
 
             validation_b64 = "";
             validation_name = "";
             if formData["validationZip"] {
+                submitStage = "Encoding validation set";
                 validation_b64 = await fileToBase64(formData["validationZip"]);
                 validation_name = formData["validationZip"].name;
             }
 
             # Call the walker passed from parent
+            submitStage = "Creating project";
             resp = await jacSpawn(
                 "CreateProject",
                 "",
@@ -123,24 +140,49 @@ def:pub NewProject -> any {
             else None;
 
             if result and result["success"] {
+                submitStage = "Finalizing";
                 toast.success("Project created successfully");
                 navigate("/project/" + result["name"]);
             } else {
                 error_msg = result["error"] if result else "Failed to create project";
                 toast.error(error_msg);
                 isSubmitting = False;
+                submitStage = "";
             }
         } except Exception as e {
             console.error(e);
             toast.error("An error occurred while creating the project");
             isSubmitting = False;
+            submitStage = "";
         }
+    }
+
+    loadingOverlay = None;
+    if isSubmitting {
+        loadingOverlay = <div className="project-loading">
+            <div className="project-loading-card">
+                <LoadingGhostIcon className="project-loading-ghost" />
+                <div className="project-loading-title">
+                    Creating Project
+                </div>
+                <div className="project-loading-stage">
+                    {submitStage or "Working on it..."}
+                </div>
+                <div className="project-loading-bar">
+                    <span className="project-loading-bar-fill"></span>
+                </div>
+                <div className="project-loading-foot">
+                    Large weights or validation zips may take a moment.
+                </div>
+            </div>
+        </div>;
     }
 
     return
         <main
             className="flex h-screen bg-zinc-950 text-zinc-100 overflow-hidden relative"
         >
+            {loadingOverlay}
             <div className="absolute top-2 right-6">
                 <a
                     onClick={lambda -> None { navigate("/settings");}}

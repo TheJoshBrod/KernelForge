@@ -484,23 +484,7 @@ walker:pub CreateProject {
 
             validation_dir = self.validationSetPath;
             if self.validationZipB64 {
-                data_dir = path.join(project_path, "data");
-                _ensure_dir(data_dir);
-                zip_path = path.join(data_dir, "validation.zip");
-                try {
-                    zip_bytes = b64decode(self.validationZipB64);
-                    with open(zip_path, "wb") as f {
-                        f.write(zip_bytes);
-                    }
-                    validation_extract = path.join(data_dir, "validation");
-                    _ensure_dir(validation_extract);
-                    with ZipFile(zip_path, "r") as zipf {
-                        zipf.extractall(validation_extract);
-                    }
-                    validation_dir = path.relpath(validation_extract, project_path);
-                } except Exception as e {
-                    print(f"Error extracting validation zip: {e}");
-                }
+                validation_dir = path.join("data", "validation");
             }
 
             # Save config.json
@@ -531,7 +515,75 @@ walker:pub CreateProject {
                 dump(config, f, indent=2);
             }
 
-            report {"success": True, "name": self.projectName} ;
+            prepare_result = None;
+            profile_result = None;
+            has_assets = False;
+            uploads_dir = path.join(project_path, ".uploads");
+            _ensure_dir(uploads_dir);
+
+            weights_b64_path = "";
+            validation_b64_path = "";
+            validation_name_path = "";
+            if self.weightsFileB64 {
+                weights_b64_path = path.join(uploads_dir, "weights.b64");
+                with open(weights_b64_path, "w") as f {
+                    f.write(self.weightsFileB64);
+                }
+                has_assets = True;
+            }
+            if self.validationZipB64 {
+                validation_b64_path = path.join(uploads_dir, "validation.b64");
+                with open(validation_b64_path, "w") as f {
+                    f.write(self.validationZipB64);
+                }
+                validation_name_path = path.join(uploads_dir, "validation.name");
+                with open(validation_name_path, "w") as f {
+                    f.write(self.validationZipName);
+                }
+                has_assets = True;
+            }
+
+            if has_assets {
+                _update_job_state(
+                    self.projectName,
+                    "profile",
+                    {"status": "queued", "message": "Preparing assets"}
+                );
+                prepare_cmd = [
+                    sys.executable,
+                    path.join(repo_root, "scripts", "prepare_project_assets.py"),
+                    "--project",
+                    self.projectName,
+                    "--weights-b64-path",
+                    weights_b64_path,
+                    "--validation-b64-path",
+                    validation_b64_path,
+                    "--validation-name-path",
+                    validation_name_path
+                ];
+                prepare_result = _start_job(
+                    self.projectName, "prepare", prepare_cmd, "prepare.log"
+                );
+            } else {
+                profile_cmd = [
+                    sys.executable,
+                    path.join(
+                        repo_root, "benchmarks", "profiler", "profile_project.py"
+                    ),
+                    "--project",
+                    self.projectName
+                ];
+                profile_result = _start_job(
+                    self.projectName, "profile", profile_cmd, "profile.log"
+                );
+            }
+
+            report {
+                "success": True,
+                "name": self.projectName,
+                "profile": profile_result,
+                "prepare": prepare_result
+            } ;
         } except Exception as e {
             print(f"Error creating project: {e}");
             report {"error": "Failed to create project", "success": False} ;

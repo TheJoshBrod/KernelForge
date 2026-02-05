@@ -8,8 +8,15 @@ import re
 from pathlib import Path
 
 import torch
-from byllm.lib import by  # type: ignore
-from byllm.lib import Model  # type: ignore
+
+BYLLM_AVAILABLE = False
+try:
+    from byllm.lib import by  # type: ignore
+    from byllm.lib import Model  # type: ignore
+    BYLLM_AVAILABLE = True
+except Exception:
+    by = None
+    Model = None
 from torch.utils.cpp_extension import load_inline
 from src.config import ensure_llm_config
 
@@ -65,6 +72,8 @@ def _summarize_with_byllm(
     input_and_output: dict,
     model_name: str,
 ) -> str:
+    if not BYLLM_AVAILABLE or Model is None or by is None:
+        return traceback_error
     llm = Model(model_name=model_name)
 
     @by(llm)
@@ -106,6 +115,8 @@ def summarize_issue_with_traceback(
     cu_code: str,
     input_and_output: dict,
 ) -> str:
+    if not BYLLM_AVAILABLE:
+        return traceback_error
     provider = _get_provider()
     if not provider or provider in {"openai", "gpt", "chatgpt"}:
         return traceback_error

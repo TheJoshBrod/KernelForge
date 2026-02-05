@@ -6,7 +6,8 @@ def:pub Mascot(
     variant: str = "hero",
     className: str = "",
     alt: str = "CGinS mascot",
-    ambient: bool = False
+    ambient: bool = False,
+    enableVideo: bool = False
 ) -> any {
     has isHovered: bool = False,
         shouldLoadVideo: bool = False,
@@ -41,7 +42,7 @@ def:pub Mascot(
     );
 
     def handleEnter -> None {
-        if reduceMotion or isTouch {
+        if reduceMotion or isTouch or not enableVideo {
             return;
         }
         shouldLoadVideo = True;
@@ -57,7 +58,7 @@ def:pub Mascot(
     }
 
     def handleLeave -> None {
-        if reduceMotion or isTouch {
+        if reduceMotion or isTouch or not enableVideo {
             return;
         }
         isHovered = False;
@@ -82,7 +83,7 @@ def:pub Mascot(
         }
     }
 
-    playing = isHovered and videoReady;
+    playing = enableVideo and isHovered and videoReady;
     classes = f"mascot mascot--{variant}";
     if playing {
         classes += " is-playing";
@@ -100,6 +101,23 @@ def:pub Mascot(
     if ambient
     else None;
 
+    videoMarkup = (
+        <video
+            className="mascot-video"
+            ref={videoRef}
+            src={"/mascot.mp4" if shouldLoadVideo else ""}
+            poster="/new-mascot.png"
+            muted={True}
+            loop={True}
+            playsInline={True}
+            preload="none"
+            controls={False}
+            onCanPlay={handleCanPlay}
+        />
+    )
+    if enableVideo
+    else None;
+
     return
         <div
             className={classes}
@@ -111,22 +129,11 @@ def:pub Mascot(
             <div className="mascot-media">
                 <img
                     className="mascot-img"
-                    src="/mascot.png"
+                    src="/new-mascot.png"
                     alt={alt}
                     draggable={False}
                 />
-                <video
-                    className="mascot-video"
-                    ref={videoRef}
-                    src={"/mascot.mp4" if shouldLoadVideo else ""}
-                    poster="/mascot.png"
-                    muted={True}
-                    loop={True}
-                    playsInline={True}
-                    preload="none"
-                    controls={False}
-                    onCanPlay={handleCanPlay}
-                />
+                {videoMarkup}
             </div>
         </div>;
 }

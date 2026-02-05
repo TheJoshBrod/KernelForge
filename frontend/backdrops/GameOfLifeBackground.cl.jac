@@ -2,7 +2,7 @@
 
 import from react { useEffect, useRef }
 
-def:pub GameOfLifeBackground() -> any {
+def:pub GameOfLifeBackground(className: str = "") -> any {
     canvasRef = useRef(None);
 
     useEffect(lambda -> None {
@@ -12,9 +12,11 @@ def:pub GameOfLifeBackground() -> any {
         ctx = canvas.getContext("2d");
         
         # Configuration
-        cellSize = 8;
+        cellSize = 10;
         deadColor = "rgba(0, 0, 0, 0)"; 
-        aliveColor = "rgba(39, 39, 42, 1.0)";
+        aliveColor = "rgba(134, 230, 169, 0.12)";
+        frameCount = 0;
+        tickInterval = 3;
         
         cols = 0;
         rows = 0;
@@ -30,8 +32,8 @@ def:pub GameOfLifeBackground() -> any {
                 c = 0;
                 row = [];
                 while c < cols {
-                    # Random noise: 15% chance of starting alive
-                    row.push(1 if Math.random() > 0.85 else 0);
+                    # Random noise: 12% chance of starting alive
+                    row.push(1 if Math.random() > 0.88 else 0);
                     c += 1;
                 }
                 newGrid.push(row);
@@ -91,9 +93,17 @@ def:pub GameOfLifeBackground() -> any {
 
         def update() -> None {
             nonlocal resetPending;
-            
+            nonlocal frameCount;
+
             # If we are already waiting for a reset, just keep drawing current state (or do nothing)
             if resetPending {
+                draw(grid);
+                requestAnimationFrame(update);
+                return;
+            }
+
+            frameCount += 1;
+            if frameCount % tickInterval != 0 {
                 draw(grid);
                 requestAnimationFrame(update);
                 return;
@@ -151,8 +161,13 @@ def:pub GameOfLifeBackground() -> any {
         };
     }, []);
 
+    baseClass = "app-life-canvas";
+    if className {
+        baseClass = baseClass + f" {className}";
+    }
+
     return <canvas
         ref={canvasRef}
-        className="fixed top-0 left-0 w-full h-full pointer-events-none z-0"
+        className={baseClass}
     />;
 }

@@ -3,6 +3,7 @@
 import from react { useEffect }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate, useParams }
+import from "backdrops/GameOfLifeBackground" { GameOfLifeBackground }
 import from .Mascot { Mascot }
 
 def:pub OpDetails -> any {
@@ -172,205 +173,217 @@ def:pub OpDetails -> any {
     if loading {
         return
             <div className="app-shell">
-                <aside className="sidebar">
-                    <div className="panel sidebar-panel">
-                        <div className="panel-header">
-                            <span className="panel-title">
-                                Loading op details
-                            </span>
+                <GameOfLifeBackground />
+                <div className="app-backdrop"></div>
+                <div className="app-layout app-content-layer">
+                    <aside className="sidebar">
+                        <div className="panel sidebar-panel">
+                            <div className="panel-header">
+                                <span className="panel-title">
+                                    Loading op details
+                                </span>
+                            </div>
+                            <div className="panel-body">
+                                {skeletonFiles}
+                            </div>
                         </div>
-                        <div className="panel-body">
-                            {skeletonFiles}
+                    </aside>
+                    <main className="content">
+                        <div className="panel">
+                            <div className="panel-header">
+                                <span className="panel-title">
+                                    File preview
+                                </span>
+                            </div>
+                            <div className="panel-body">
+                                <div className="skeleton skeleton-block"></div>
+                            </div>
                         </div>
-                    </div>
-                </aside>
-                <main className="content">
-                    <div className="panel">
-                        <div className="panel-header">
-                            <span className="panel-title">
-                                File preview
-                            </span>
-                        </div>
-                        <div className="panel-body">
-                            <div className="skeleton skeleton-block"></div>
-                        </div>
-                    </div>
-                </main>
+                    </main>
+                </div>
             </div>;
     }
 
     if errorMsg {
         return
             <div className="app-shell">
-                <main className="content">
-                    <div className="panel">
-                        <div className="panel-header">
-                            <span className="panel-title">
-                                Error
-                            </span>
+                <GameOfLifeBackground />
+                <div className="app-backdrop"></div>
+                <div className="app-layout app-content-layer">
+                    <main className="content">
+                        <div className="panel">
+                            <div className="panel-header">
+                                <span className="panel-title">
+                                    Error
+                                </span>
+                            </div>
+                            <div className="panel-body">
+                                <p className="table-muted">
+                                    {errorMsg}
+                                </p>
+                                <button
+                                    onClick={lambda -> None { navigate(
+                                        "/project/" + projectName
+                                    );}}
+                                    className="ghost-button"
+                                >
+                                    Back to Project
+                                </button>
+                            </div>
                         </div>
-                        <div className="panel-body">
-                            <p className="table-muted">
-                                {errorMsg}
-                            </p>
+                    </main>
+                </div>
+            </div>;
+    }
+
+    return
+        <div className="app-shell">
+            <GameOfLifeBackground />
+            <div className="app-backdrop"></div>
+            <div className="app-layout app-content-layer">
+                <aside className="sidebar">
+                    <div className="sidebar-header">
+                        <div className="brand">
+                            <Mascot variant="logo" ambient={True} />
+                            <div className="brand-meta">
+                                <span>
+                                    Op Details
+                                </span>
+                                <span className="brand-tag">
+                                    {opName}
+                                </span>
+                            </div>
+                        </div>
+                        <div className="sidebar-actions">
                             <button
                                 onClick={lambda -> None { navigate(
                                     "/project/" + projectName
                                 );}}
                                 className="ghost-button"
                             >
-                                Back to Project
+                                Back
+                            </button>
+                            <button
+                                onClick={lambda -> None { navigate("/settings");}}
+                                className="ghost-button"
+                            >
+                                Settings
                             </button>
                         </div>
                     </div>
-                </main>
-            </div>;
-    }
-
-    return
-        <div className="app-shell">
-            <aside className="sidebar">
-                <div className="sidebar-header">
-                    <div className="brand">
-                        <Mascot variant="logo" />
-                        <div className="brand-meta">
-                            <span>
-                                Op Details
+                    <div className="panel sidebar-panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Profile summary
                             </span>
-                            <span className="brand-tag">
+                            <span className="table-muted">
+                                Calls: {profile["count"]
+                                if profile and "count" in profile
+                                else 0}
+                            </span>
+                        </div>
+                        <div className="panel-body">
+                            <p className="table-muted">
+                                Select a kernel or log to inspect below.
+                            </p>
+                        </div>
+                    </div>
+                    <div className="panel sidebar-panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Generated kernels
+                            </span>
+                        </div>
+                        <div className="panel-body">
+                            {genKernelButtons
+                            if genKernelButtons.length > 0
+                            else <p className="table-muted">
+                                No generated kernels yet.
+                            </p>}
+                        </div>
+                    </div>
+                    <div className="panel sidebar-panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Generation logs
+                            </span>
+                        </div>
+                        <div className="panel-body">
+                            {genLogButtons
+                            if genLogButtons.length > 0
+                            else <p className="table-muted">
+                                No generation logs yet.
+                            </p>}
+                        </div>
+                    </div>
+                    <div className="panel sidebar-panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Optimized kernels
+                            </span>
+                        </div>
+                        <div className="panel-body">
+                            {optKernelButtons
+                            if optKernelButtons.length > 0
+                            else <p className="table-muted">
+                                No optimized kernels yet.
+                            </p>}
+                        </div>
+                    </div>
+                    <div className="panel sidebar-panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                Optimization logs
+                            </span>
+                        </div>
+                        <div className="panel-body">
+                            {optLogButtons
+                            if optLogButtons.length > 0
+                            else <p className="table-muted">
+                                No optimization logs yet.
+                            </p>}
+                        </div>
+                    </div>
+                </aside>
+                <main className="content">
+                    <div className="page-header">
+                        <div>
+                            <h1 className="page-title">
                                 {opName}
+                            </h1>
+                            <div className="badge-row">
+                                <span className="badge">
+                                    Project: {projectName}
+                                </span>
+                                <span className="badge">
+                                    Files: {files_label}
+                                </span>
+                            </div>
+                        </div>
+                        <Mascot variant="cta" ambient={True} />
+                    </div>
+                    <div className="panel">
+                        <div className="panel-header">
+                            <span className="panel-title">
+                                File preview
+                            </span>
+                            <span className="table-muted">
+                                {selectedFile["name"]
+                                if hasSelected
+                                else "Select a kernel or log"}
                             </span>
                         </div>
-                    </div>
-                    <div className="sidebar-actions">
-                        <button
-                            onClick={lambda -> None { navigate(
-                                "/project/" + projectName
-                            );}}
-                            className="ghost-button"
-                        >
-                            Back
-                        </button>
-                        <button
-                            onClick={lambda -> None { navigate("/settings");}}
-                            className="ghost-button"
-                        >
-                            Settings
-                        </button>
-                    </div>
-                </div>
-                <div className="panel sidebar-panel">
-                    <div className="panel-header">
-                        <span className="panel-title">
-                            Profile summary
-                        </span>
-                        <span className="table-muted">
-                            Calls: {profile["count"]
-                            if profile and "count" in profile
-                            else 0}
-                        </span>
-                    </div>
-                    <div className="panel-body">
-                        <p className="table-muted">
-                            Select a kernel or log to inspect below.
-                        </p>
-                    </div>
-                </div>
-                <div className="panel sidebar-panel">
-                    <div className="panel-header">
-                        <span className="panel-title">
-                            Generated kernels
-                        </span>
-                    </div>
-                    <div className="panel-body">
-                        {genKernelButtons
-                        if genKernelButtons.length > 0
-                        else <p className="table-muted">
-                            No generated kernels yet.
-                        </p>}
-                    </div>
-                </div>
-                <div className="panel sidebar-panel">
-                    <div className="panel-header">
-                        <span className="panel-title">
-                            Generation logs
-                        </span>
-                    </div>
-                    <div className="panel-body">
-                        {genLogButtons
-                        if genLogButtons.length > 0
-                        else <p className="table-muted">
-                            No generation logs yet.
-                        </p>}
-                    </div>
-                </div>
-                <div className="panel sidebar-panel">
-                    <div className="panel-header">
-                        <span className="panel-title">
-                            Optimized kernels
-                        </span>
-                    </div>
-                    <div className="panel-body">
-                        {optKernelButtons
-                        if optKernelButtons.length > 0
-                        else <p className="table-muted">
-                            No optimized kernels yet.
-                        </p>}
-                    </div>
-                </div>
-                <div className="panel sidebar-panel">
-                    <div className="panel-header">
-                        <span className="panel-title">
-                            Optimization logs
-                        </span>
-                    </div>
-                    <div className="panel-body">
-                        {optLogButtons
-                        if optLogButtons.length > 0
-                        else <p className="table-muted">
-                            No optimization logs yet.
-                        </p>}
-                    </div>
-                </div>
-            </aside>
-            <main className="content">
-                <div className="page-header">
-                    <div>
-                        <h1 className="page-title">
-                            {opName}
-                        </h1>
-                        <div className="badge-row">
-                            <span className="badge">
-                                Project: {projectName}
-                            </span>
-                            <span className="badge">
-                                Files: {files_label}
-                            </span>
-                        </div>
-                    </div>
-                    <Mascot variant="cta" />
-                </div>
-                <div className="panel">
-                    <div className="panel-header">
-                        <span className="panel-title">
-                            File preview
-                        </span>
-                        <span className="table-muted">
-                            {selectedFile["name"]
+                        <div className="panel-body">
+                            {<pre className="code-block">
+                                {fileContent}
+                            </pre>
                             if hasSelected
-                            else "Select a kernel or log"}
-                        </span>
+                            else <p className="table-muted">
+                                No file selected.
+                            </p>}
+                        </div>
                     </div>
-                    <div className="panel-body">
-                        {<pre className="code-block">
-                            {fileContent}
-                        </pre>
-                        if hasSelected
-                        else <p className="table-muted">
-                            No file selected.
-                        </p>}
-                    </div>
-                </div>
-            </main>
+                </main>
+            </div>
         </div>;
 }
