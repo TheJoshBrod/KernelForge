@@ -289,18 +289,27 @@ def get_gpu_info():
             for i in range(torch.cuda.device_count()):
                 props = torch.cuda.get_device_properties(i)
                 mem_gb = props.total_memory / (1024**3)
+                
+                arch_name = "Unknown"
+                if props.major == 7: arch_name = "Volta/Turing"
+                elif props.major == 8: arch_name = "Ampere"
+                elif props.major == 9: arch_name = "Hopper"
+
                 gpus.append({
                     'name': torch.cuda.get_device_name(i),
                     'memory': f"{mem_gb:.1f} GB",
-                    'compute_capability': f"v{props.major}.{props.minor}",
+                    'compute_capability': f"v{props.major}.{props.minor} {arch_name}",
                     'sm_count': props.multi_processor_count
                 })
             return gpus
-    except ImportError:
-        pass
+    except ImportError as e:
+        sys.stderr.write(f"DEBUG: Torch import failed: {e}\\n")
+    except Exception as e:
+        sys.stderr.write(f"DEBUG: Torch check failed: {e}\\n")
 
     # Fallback to nvidia-smi
     try:
+        sys.stderr.write("DEBUG: Falling back to nvidia-smi\\n")
         cmd = ["nvidia-smi", "--query-gpu=name,memory.total,compute_cap", "--format=csv,noheader"]
         output = subprocess.check_output(cmd).decode('utf-8').strip()
         gpus = []
@@ -318,11 +327,21 @@ def get_gpu_info():
                     mem_gb = f"{mem_val / 1024:.1f} GB"
                 except:
                     mem_gb = mem_str
+                
+                # Arch name from CC
+                arch_name = "Unknown"
+                try:
+                    major = int(str(cc).split('.')[0])
+                    if major == 7: arch_name = "Volta/Turing"
+                    elif major == 8: arch_name = "Ampere"
+                    elif major == 9: arch_name = "Hopper"
+                except:
+                    pass
 
                 gpus.append({
                     "name": name,
                     "memory": mem_gb,
-                    "compute_capability": f"v{cc}",
+                    "compute_capability": f"v{cc} {arch_name}",
                     "sm_count": "N/A (No Torch)"
                 })
         return gpus
@@ -333,7 +352,9 @@ print(json.dumps(get_gpu_info()))
 """;
                     
                     b64_script = b64encode(cmd_script.encode('utf-8')).decode('utf-8');
-                    cmd = f"""python3 -c 'import base64; exec(base64.b64decode("{b64_script}"))'""";
+                    # Use bash -lc to ensure profile/bashrc are sourced (PATH, virtualenvs, etc.)
+                    # We escape single quotes for the bash command
+                    cmd = f"""bash -lc 'python3 -c "import base64; exec(base64.b64decode(\\"{b64_script}\\"))"'""";
                     
                     exec_res = client.exec_command(cmd);
                     stdout = exec_res[1];
