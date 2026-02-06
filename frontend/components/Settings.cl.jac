@@ -39,6 +39,9 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
             if config and not "ssh_connections" in config {
                  setConfig(lambda prev: any -> any { return {**prev, "ssh_connections": []}; });
             }
+            if config and not "active_ssh_index" in config {
+                 setConfig(lambda prev: any -> any { return {**prev, "active_ssh_index": -1}; });
+            }
         }, [config]
     );
 
@@ -54,13 +57,15 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
                     pwd = ""; 
                     key = "";
                     
-                    if ssh_conns.length > 0 {
-                        # Default to last connection (likely most recent)
-                        conn = ssh_conns[ssh_conns.length - 1];
-                        host = conn["host"] if "host" in conn else "";
-                        user = conn["user"] if "user" in conn else "";
-                        pwd = conn["password"] if "password" in conn else "";
-                        key = conn["key_path"] if "key_path" in conn else "";
+                    if ssh_conns.length > 0 and "active_ssh_index" in config {
+                        idx = config["active_ssh_index"];
+                        if idx >= 0 and idx < ssh_conns.length {
+                            conn = ssh_conns[idx];
+                            host = conn["host"] if "host" in conn else "";
+                            user = conn["user"] if "user" in conn else "";
+                            pwd = conn["password"] if "password" in conn else "";
+                            key = conn["key_path"] if "key_path" in conn else "";
+                        }
                     }
 
                     info = await getSystemInfoWalker(host, user, pwd, key);
@@ -71,6 +76,7 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
         }, [view]
     );
 
+    
     def handleApiKeyChange(provider: str, value: str) -> None {
         setConfig(
             lambda prev: any -> any {
@@ -118,13 +124,25 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
             if index >= 0 and index < current_conns.length {
                 new_conns = current_conns.filter(lambda c: any, i: int -> bool { return i != index; });
                 
-                new_config = {**config, "ssh_connections": new_conns};
+                # If we remove the active one, reset active index
+                active_idx = config["active_ssh_index"] if "active_ssh_index" in config else -1;
+                new_active = active_idx;
+                if active_idx == index { new_active = -1; }
+                elif active_idx > index { new_active = active_idx - 1; }
+
+                new_config = {**config, "ssh_connections": new_conns, "active_ssh_index": new_active};
                 setConfig(new_config);
                 await saveConfig(new_config);
             }
         } finally {
             setSaving(False);
         }
+    }
+
+    async def handleSetActiveSshConnection(index: int) -> None {
+        new_config = {**config, "active_ssh_index": index};
+        setConfig(new_config);
+        await saveConfig(new_config);
     }
 
     def handleGpuSelect(index: any) -> None {
@@ -190,6 +208,7 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
                         config={config}
                         handleSaveSshConnection={handleSaveSshConnection}
                         handleRemoveSshConnection={handleRemoveSshConnection}
+                        handleSetActiveSshConnection={handleSetActiveSshConnection}
                         saving={saving}
                         checkSshConnectionWalker={checkSshConnectionWalker}
                     />
