@@ -9,7 +9,7 @@ def:pub GpuSettings(config: any, systemInfo: any, handleGpuSelect: any, handleSa
                 <div className="relative">
                 <select
                     value={config["selected_gpu_index"] if "selected_gpu_index" in config else 0}
-                    onChange={lambda e: any -> None { handleGpuSelect(parseInt(e.target.value)); }}
+                    onChange={lambda e: any -> None { handleGpuSelect(e.target.value); }}
                     className="w-full h-12 appearance-none bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-lg px-4 text-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all cursor-pointer"
                     disabled={not systemInfo or not "gpus" in systemInfo}
                 >

@@ -47,7 +47,23 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
         lambda -> None {
             async def fetchSystemInfo -> None {
                 if view == "gpu" and getSystemInfoWalker {
-                    info = await getSystemInfoWalker();
+                    # Check for SSH connections to use for remote GPU info
+                    ssh_conns = config["ssh_connections"] if config and "ssh_connections" in config else [];
+                    host = ""; 
+                    user = ""; 
+                    pwd = ""; 
+                    key = "";
+                    
+                    if ssh_conns.length > 0 {
+                        # Default to last connection (likely most recent)
+                        conn = ssh_conns[ssh_conns.length - 1];
+                        host = conn["host"] if "host" in conn else "";
+                        user = conn["user"] if "user" in conn else "";
+                        pwd = conn["password"] if "password" in conn else "";
+                        key = conn["key_path"] if "key_path" in conn else "";
+                    }
+
+                    info = await getSystemInfoWalker(host, user, pwd, key);
                     setSystemInfo(info);
                 }
             }
@@ -111,8 +127,8 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
         }
     }
 
-    def handleGpuSelect(index: int) -> None {
-        setConfig(lambda prev: any -> any { return {**prev, "selected_gpu_index": int(index)}; });
+    def handleGpuSelect(index: any) -> None {
+        setConfig(lambda prev: any -> any { return {**prev, "selected_gpu_index": index}; });
     }
 
     def handleReturn() -> None {
