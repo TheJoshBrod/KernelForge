@@ -176,7 +176,7 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
 
     return
         <main className="flex min-h-screen flex-col items-center justify-center p-4 bg-zinc-900 text-zinc-100 selection:bg-zinc-700">
-            <div className="w-full max-w-2xl space-y-4 bg-zinc-950 p-6 rounded-xl border border-zinc-800 shadow-2xl">
+            <div className="w-full max-w-4xl space-y-4 bg-zinc-950 p-6 rounded-xl border border-zinc-800 shadow-2xl">
                 <div className="text-center space-y-2">
                     <h1 className="text-3xl font-bold tracking-tight text-white">Settings</h1>
                     <p className="text-zinc-500 text-sm">

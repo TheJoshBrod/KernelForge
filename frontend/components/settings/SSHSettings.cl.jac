@@ -125,17 +125,18 @@ def:pub SSHSettings(config: any, handleSaveSshConnection: any, handleRemoveSshCo
         </div>
 
         <div className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-800 min-h-[300px]">
-            <div className="flex items-center gap-4 font-medium border-b border-zinc-800 pb-2 mb-2 text-zinc-400 uppercase text-xs tracking-wider px-2">
+            <div className="flex items-center gap-2 font-medium border-b border-zinc-800 pb-2 mb-2 text-zinc-400 uppercase text-xs tracking-wider px-2">
                 <div className="flex-1 min-w-0">user</div>
                 <div className="flex-[2] min-w-0">host</div>
                 <div className="w-40">last connected</div>
                 <div className="w-16 text-center">status</div>
-                <div className="w-28 text-right">toggle</div>
+                <div className="w-24 pl-2">toggle</div>
+                <div className="w-16 text-right"></div>
             </div>
             
             <div className="space-y-2">
                 {ssh_connections.map(lambda conn: any, i: any -> any:
-                    <div key={i} className="flex items-center gap-4 text-sm py-2 border-b border-zinc-800/50 last:border-0 hover:bg-zinc-900/40 rounded transition-colors px-2">
+                    <div key={i} className="flex items-center gap-2 text-sm py-2 border-b border-zinc-800/50 last:border-0 hover:bg-zinc-900/40 rounded transition-colors px-2">
                         <div className="flex-1 min-w-0 truncate text-zinc-300" title={conn["user"]}>{conn["user"]}</div>
                         <div className="flex-[2] min-w-0 truncate text-zinc-300 font-mono" title={conn["host"]}>{conn["host"]}</div>
                         <div className="w-40 text-zinc-500 text-xs">{(conn["last_connected"] if "last_connected" in conn else "N/A")}</div>
@@ -147,15 +148,24 @@ def:pub SSHSettings(config: any, handleSaveSshConnection: any, handleRemoveSshCo
                                 else 'bg-zinc-700'
                             )}"} />
                         </div>
-                        <div className="w-28 flex justify-end">
+                        <div className="w-24 flex justify-end">
                             <button
                                 onClick={lambda -> None { handleConnectToggle(i); }}
-                                className={f"px-3 py-1.5 rounded text-xs font-bold w-24 transition-all border {(
+                                className={f"px-3 py-1.5 rounded text-xs font-bold w-full transition-all border {(
                                     'bg-red-500/10 text-red-500 border-red-500/50 hover:bg-red-500/20' if active_idx == i
                                     else 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700 hover:text-white'
                                 )}"}
                             >
                                 {("Disconnect" if active_idx == i else "Connect")}
+                            </button>
+                        </div>
+                        <div className="w-16 pl-2 flex justify-end">
+                             <button
+                                onClick={lambda -> None { handleRemoveSshConnection(i); }}
+                                className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                                title="Delete Connection"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                             </button>
                         </div>
                     </div>
