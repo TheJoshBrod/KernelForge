@@ -18,6 +18,24 @@ def _save_state(state_path: Path, state: dict) -> None:
     state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
+def update_job_fields(fields: dict | None = None) -> None:
+    state_path = os.environ.get("CGINS_STATE_PATH")
+    job_key = os.environ.get("CGINS_JOB_KEY")
+    if not state_path or not job_key:
+        return
+
+    try:
+        state_file = Path(state_path)
+        state = _load_state(state_file)
+        job_state = dict(state.get(job_key, {}))
+        for key, value in (fields or {}).items():
+            job_state[key] = value
+        state[job_key] = job_state
+        _save_state(state_file, state)
+    except Exception:
+        return
+
+
 def update_job_progress(current: int, total: int, message: str | None = None) -> None:
     state_path = os.environ.get("CGINS_STATE_PATH")
     job_key = os.environ.get("CGINS_JOB_KEY")

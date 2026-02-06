@@ -13,7 +13,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from src.optimizer.GPUprofiler import load_batch, get_module
+from src.optimizer.components.hardware.profiler import load_batch, get_module
 from src.progress import update_job_progress, wait_if_paused, check_cancelled
 
 
@@ -36,6 +36,10 @@ def get_torch_func(op_name: str):
     else:
         func_name = op_name
     return getattr(F, func_name, None)
+
+
+def _normalize_op_name(op_name: str) -> str:
+    return str(op_name).strip().replace(".", "_").replace("/", "_")
 
 
 def _resolve_device() -> str:
@@ -149,7 +153,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark per-op kernels for a project.")
     parser.add_argument("--project", required=True)
     parser.add_argument("--max-files", type=int, default=50)
+    parser.add_argument("--only-ops", default="")
     args = parser.parse_args()
+
+    only_ops = set()
+    if args.only_ops:
+        for item in str(args.only_ops).split(","):
+            norm = _normalize_op_name(item)
+            if norm:
+                only_ops.add(norm)
 
     target_device = _resolve_device()
     if target_device == "cuda" and not torch.cuda.is_available():
@@ -174,6 +186,8 @@ def main() -> int:
         if not op_dir.is_dir():
             continue
         op_name = op_dir.name
+        if only_ops and op_name not in only_ops:
+            continue
         func = get_torch_func(op_name)
         if func is None:
             continue

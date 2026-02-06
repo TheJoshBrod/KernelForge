@@ -389,11 +389,11 @@ walker:pub GetConfig {
         try {
             with open(config_path, "r") as f {
                 config = load(f);
-                report config ;
+                report config;
             }
         } except Exception as e {
             print(f"Error loading config: {e}");
-            report config_store ;
+            report config_store;
         }
     }
 }
@@ -407,11 +407,11 @@ walker:pub SaveConfig {
                 dump(self.cfg, f, indent=2);
                 global config_store;
                 config_store = self.cfg;
-                report True ;
+                report True;
             }
         } except Exception as e {
             print(f"Error saving config: {e}");
-            report False ;
+            report False;
         }
     }
 }
@@ -438,7 +438,7 @@ walker:pub TestLLMConnection {
         model = llm["model"] if llm and "model" in llm else "";
         apikey = llm["apikey"] if llm and "apikey" in llm else "";
         result = _run_llm_test(provider, model, apikey);
-        report result ;
+        report result;
     }
 }
 
@@ -461,7 +461,7 @@ walker:pub CreateProject {
             project_path = path.join(projects_dir, self.projectName);
 
             if path.exists(project_path) {
-                report {"error": "Project already exists", "success": False} ;
+                report {"error": "Project already exists", "success": False};
                 disengage;
             }
 
@@ -583,10 +583,10 @@ walker:pub CreateProject {
                 "name": self.projectName,
                 "profile": profile_result,
                 "prepare": prepare_result
-            } ;
+            };
         } except Exception as e {
             print(f"Error creating project: {e}");
-            report {"error": "Failed to create project", "success": False} ;
+            report {"error": "Failed to create project", "success": False};
         }
     }
 }
@@ -596,7 +596,7 @@ walker:pub GetProjects {
         try {
             projects_dir = path.join(repo_root, "projects");
             if not path.exists(projects_dir) {
-                report {"projects": []} ;
+                report {"projects": []};
                 disengage;
             }
 
@@ -607,10 +607,10 @@ walker:pub GetProjects {
                     projects.append({"name": name});
                 }
             }
-            report {"projects": projects} ;
+            report {"projects": projects};
         } except Exception as e {
             print(f"Error listing projects: {e}");
-            report {"projects": []} ;
+            report {"projects": []};
         }
     }
 }
@@ -618,7 +618,7 @@ walker:pub GetProjects {
 walker:pub DetectHardware {
     can return_hw with `root entry {
         info = _detect_hardware();
-        report info ;
+        report info;
     }
 }
 
@@ -631,28 +631,163 @@ walker:pub GetProjectOps {
                 repo_root, "projects", self.projectName, "io", "individual_ops"
             );
             if not path.exists(base_dir) {
-                report {"ops": []} ;
+                report {"ops": []};
                 disengage;
             }
 
+            summary_counts = {};
+            summary_path = path.join(
+                _project_dir(self.projectName), "io", "summary.json"
+            );
+            if path.exists(summary_path) {
+                try {
+                    with open(summary_path, "r") as f {
+                        summary_data = load(f);
+                    }
+                    op_counts = summary_data["op_counts"]
+                    if summary_data and "op_counts" in summary_data
+                    else {};
+                    for dotted_name in op_counts {
+                        safe_name = str(dotted_name).replace(".", "_").replace("/", "_");
+                        summary_counts[safe_name] = op_counts[dotted_name];
+                    }
+                } except Exception as e {
+                    print(f"Error reading summary counts: {e}");
+                }
+            }
+
             ops = [];
-            for name in listdir(base_dir) {
+            for name in sorted(listdir(base_dir)) {
                 full_path = path.join(base_dir, name);
                 if path.isdir(full_path) {
-                    count = 0;
-                    for f in listdir(full_path) {
-                        if f.startswith("entry_") and f.endswith(".pt") {
-                            count = count + 1;
+                    count = summary_counts[name] if name in summary_counts else -1;
+                    if count < 0 {
+                        count = 0;
+                        for f in listdir(full_path) {
+                            if f.startswith("entry_") and f.endswith(".pt") {
+                                count = count + 1;
+                            }
                         }
                     }
                     ops.append({"name": name, "count": count});
                 }
             }
 
-            report {"ops": ops} ;
+            report {"ops": ops};
         } except Exception as e {
             print(f"Error listing ops: {e}");
-            report {"ops": []} ;
+            report {"ops": []};
+        }
+    }
+}
+
+walker:pub GetProjectCoverage {
+    has projectName: str;
+
+    can run with `root entry {
+        try {
+            io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
+            if not path.exists(io_dir) {
+                report {
+                    "generated": [],
+                    "missing": [],
+                    "generated_count": 0,
+                    "missing_count": 0,
+                    "total_count": 0
+                };
+                disengage;
+            }
+
+            project_generated_dir = path.join(
+                _project_dir(self.projectName),
+                "kernels",
+                "generated",
+                "individual_op_kernels"
+            );
+            optimized_dir = _find_optimized_dir(self.projectName);
+
+            generated = [];
+            missing = [];
+            generated_count = 0;
+            missing_count = 0;
+
+            summary_counts = {};
+            summary_path = path.join(
+                _project_dir(self.projectName), "io", "summary.json"
+            );
+            if path.exists(summary_path) {
+                try {
+                    with open(summary_path, "r") as f {
+                        summary_data = load(f);
+                    }
+                    op_counts = summary_data["op_counts"]
+                    if summary_data and "op_counts" in summary_data
+                    else {};
+                    for dotted_name in op_counts {
+                        safe_name = str(dotted_name).replace(".", "_").replace("/", "_");
+                        summary_counts[safe_name] = op_counts[dotted_name];
+                    }
+                } except Exception as e {
+                    print(f"Error reading coverage summary: {e}");
+                }
+            }
+
+            for op_name in sorted(listdir(io_dir)) {
+                op_dir = path.join(io_dir, op_name);
+                if not path.isdir(op_dir) {
+                    continue;
+                }
+
+                has_kernel = False;
+                source = "missing";
+
+                if optimized_dir {
+                    optimized_kernel = path.join(optimized_dir, op_name, "kernel.cu");
+                    if path.exists(optimized_kernel) {
+                        has_kernel = True;
+                        source = "optimized";
+                    }
+                }
+                if not has_kernel {
+                    project_kernel = path.join(
+                        project_generated_dir, op_name, "kernel.cu"
+                    );
+                    if path.exists(project_kernel) {
+                        has_kernel = True;
+                        source = "generated";
+                    }
+                }
+
+                item = {
+                    "name": op_name,
+                    "count": summary_counts[op_name] if op_name in summary_counts else 0,
+                    "source": source
+                };
+                if has_kernel {
+                    generated.append(item);
+                    generated_count = generated_count + 1;
+                } else {
+                    missing.append(item);
+                    missing_count = missing_count + 1;
+                }
+            }
+
+            report {
+                "generated": generated,
+                "missing": missing,
+                "generated_count": generated_count,
+                "missing_count": missing_count,
+                "total_count": generated_count + missing_count
+            };
+        } except Exception as e {
+            print(f"Error computing project coverage: {e}");
+            report {
+                "generated": [],
+                "missing": [],
+                "generated_count": 0,
+                "missing_count": 0,
+                "total_count": 0
+            };
         }
     }
 }
@@ -662,7 +797,7 @@ walker:pub GetProjectStatus {
 
     can return_status with `root entry {
         state = _read_state(self.projectName);
-        report state ;
+        report state;
     }
 }
 
@@ -682,14 +817,14 @@ walker:pub SetJobControl {
             } elif action == "cancel" {
                 updates = {"control": "cancelled", "status": "cancelled"};
             } else {
-                report {"success": False, "error": "Unknown action"} ;
+                report {"success": False, "error": "Unknown action"};
                 disengage;
             }
             _update_job_state(self.projectName, self.jobKey, updates);
-            report {"success": True} ;
+            report {"success": True};
         } except Exception as e {
             print(f"Error setting job control: {e}");
-            report {"success": False, "error": "Failed to update job state"} ;
+            report {"success": False, "error": "Failed to update job state"};
         }
     }
 }
@@ -705,7 +840,7 @@ walker:pub StartProfile {
             self.projectName
         ];
         result = _start_job(self.projectName, "profile", cmd, "profile.log");
-        report result ;
+        report result;
     }
 }
 
@@ -726,7 +861,7 @@ walker:pub StartGenerate {
             out_dir
         ];
         result = _start_job(self.projectName, "generate", cmd, "generate.log");
-        report result ;
+        report result;
     }
 }
 
@@ -801,7 +936,7 @@ walker:pub StartGenerateAdvanced {
                     "generate_adv",
                     {"status": "error", "message": "No ops selected or discovered."}
                 );
-                report {"success": False, "error": "No ops selected or discovered."} ;
+                report {"success": False, "error": "No ops selected or discovered."};
                 disengage;
             }
             io_root = path.join(_project_dir(self.projectName), "io", "individual_ops");
@@ -832,7 +967,7 @@ walker:pub StartGenerateAdvanced {
                     "generate_adv",
                     {"status": "error", "message": error_msg}
                 );
-                report {"success": False, "error": error_msg} ;
+                report {"success": False, "error": error_msg};
                 disengage;
             }
 
@@ -896,7 +1031,7 @@ walker:pub StartGenerateAdvanced {
             result = _start_job_container(
                 self.projectName, "generate_adv", cmd, "generate_adv.log", self.image
             );
-            report result ;
+            report result;
         } except Exception as e {
             print(f"StartGenerateAdvanced failed: {e}");
             _update_job_state(
@@ -904,7 +1039,7 @@ walker:pub StartGenerateAdvanced {
                 "generate_adv",
                 {"status": "error", "message": f"StartGenerateAdvanced failed: {e}"}
             );
-            report {"success": False, "error": "StartGenerateAdvanced failed."} ;
+            report {"success": False, "error": "StartGenerateAdvanced failed."};
         }
     }
 }
@@ -977,7 +1112,7 @@ walker:pub StartOptimizeAdvanced {
                     "optimize_adv",
                     {"status": "error", "message": "No ops selected or discovered."}
                 );
-                report {"success": False, "error": "No ops selected or discovered."} ;
+                report {"success": False, "error": "No ops selected or discovered."};
                 disengage;
             }
             io_root = path.join(_project_dir(self.projectName), "io", "individual_ops");
@@ -1008,7 +1143,7 @@ walker:pub StartOptimizeAdvanced {
                     "optimize_adv",
                     {"status": "error", "message": error_msg}
                 );
-                report {"success": False, "error": error_msg} ;
+                report {"success": False, "error": error_msg};
                 disengage;
             }
 
@@ -1064,7 +1199,7 @@ walker:pub StartOptimizeAdvanced {
             result = _start_job_container(
                 self.projectName, "optimize_adv", cmd, "optimize_adv.log", self.image
             );
-            report result ;
+            report result;
         } except Exception as e {
             print(f"StartOptimizeAdvanced failed: {e}");
             _update_job_state(
@@ -1072,7 +1207,7 @@ walker:pub StartOptimizeAdvanced {
                 "optimize_adv",
                 {"status": "error", "message": f"StartOptimizeAdvanced failed: {e}"}
             );
-            report {"success": False, "error": "StartOptimizeAdvanced failed."} ;
+            report {"success": False, "error": "StartOptimizeAdvanced failed."};
         }
     }
 }
@@ -1103,7 +1238,7 @@ walker:pub StartOptimize {
             kernel_dir
         ];
         result = _start_job(self.projectName, "optimize", cmd, "optimize.log");
-        report result ;
+        report result;
     }
 }
 
@@ -1111,6 +1246,20 @@ walker:pub StartBenchmark {
     has projectName: str;
 
     can run with `root entry {
+        state = _read_state(self.projectName);
+        bench = state["benchmark"] if state and "benchmark" in state else {};
+        status = String(bench["status"]).toLowerCase()
+        if bench and "status" in bench and bench["status"]
+        else "";
+        if status == "queued" or status == "running" or status == "paused" {
+            report {
+                "success": False,
+                "already_running": True,
+                "error": "Benchmark job already running."
+            };
+            disengage;
+        }
+
         cmd = [
             sys.executable,
             path.join(repo_root, "scripts", "benchmark_project_ops.py"),
@@ -1118,7 +1267,7 @@ walker:pub StartBenchmark {
             self.projectName
         ];
         result = _start_job(self.projectName, "benchmark", cmd, "benchmark.log");
-        report result ;
+        report result;
     }
 }
 
@@ -1128,7 +1277,7 @@ walker:pub ExportProject {
 
     can run with `root entry {
         result = _export_project_zip(self.projectName, self.ops);
-        report result ;
+        report result;
     }
 }
 
@@ -1194,7 +1343,7 @@ walker:pub GetOpDetails {
                 "kernels": opt_kernels,
                 "logs": opt_logs
             }
-        } ;
+        };
     }
 }
 
@@ -1205,13 +1354,13 @@ walker:pub ReadRepoFile {
     can run with `root entry {
         try {
             if not _is_allowed_repo_path(self.relPath, self.projectName) {
-                report {"success": False, "error": "Path not allowed"} ;
+                report {"success": False, "error": "Path not allowed"};
                 disengage;
             }
             safe_rel = path.normpath(self.relPath);
             full_path = path.join(repo_root, safe_rel);
             if not path.exists(full_path) {
-                report {"success": False, "error": "File not found"} ;
+                report {"success": False, "error": "File not found"};
                 disengage;
             }
             with open(full_path, "r", encoding="utf-8", errors="ignore") as f {
@@ -1221,10 +1370,10 @@ walker:pub ReadRepoFile {
                 "success": True,
                 "content": content,
                 "name": path.basename(full_path)
-            } ;
+            };
         } except Exception as e {
             print(f"Error reading file: {e}");
-            report {"success": False, "error": "Failed to read file"} ;
+            report {"success": False, "error": "Failed to read file"};
         }
     }
 }
@@ -1237,7 +1386,7 @@ walker:pub DownloadExport {
         if self.ops and self.ops.length > 0 {
             export_result = _export_project_zip(self.projectName, self.ops);
             if not export_result["success"] {
-                report export_result ;
+                report export_result;
                 disengage;
             }
             export_path = export_result["path"];
@@ -1250,7 +1399,7 @@ walker:pub DownloadExport {
             if not path.exists(export_path) {
                 export_result = _export_project_zip(self.projectName, []);
                 if not export_result["success"] {
-                    report export_result ;
+                    report export_result;
                     disengage;
                 }
                 export_path = export_result["path"];
@@ -1260,7 +1409,7 @@ walker:pub DownloadExport {
             data = f.read();
         }
         b64 = b64encode(data).decode("utf-8");
-        report {"success": True, "name": path.basename(export_path), "data": b64} ;
+        report {"success": True, "name": path.basename(export_path), "data": b64};
     }
 }
 
@@ -1272,7 +1421,7 @@ walker:pub GetProjectBenchmarks {
             _project_dir(self.projectName), "benchmarks", "op_benchmarks.json"
         );
         if not path.exists(bench_path) {
-            report {"results": [], "winners": []} ;
+            report {"results": [], "winners": []};
             disengage;
         }
         try {
@@ -1286,10 +1435,10 @@ walker:pub GetProjectBenchmarks {
                     winners.append(r["op"]);
                 }
             }
-            report {"results": results, "winners": winners} ;
+            report {"results": results, "winners": winners};
         } except Exception as e {
             print(f"Error reading benchmarks: {e}");
-            report {"results": [], "winners": []} ;
+            report {"results": [], "winners": []};
         }
     }
 }
@@ -1319,7 +1468,20 @@ cl {
     }
 
     def:pub app -> any {
-        useEffect(lambda -> None { document.title = "CGinS";}, []);
+        useEffect(
+            lambda -> None {
+                document.title = "CGinS";
+                icon = document.querySelector("link[rel=\"icon\"]");
+                if not icon {
+                    icon = document.createElement("link");
+                    document.head.appendChild(icon);
+                }
+                icon.rel = "icon";
+                icon.type = "image/svg+xml";
+                icon.href = "/assets/CGinS-logo.svg";
+            },
+            []
+        );
         return
             <Router>
                 <ConfigProvider>

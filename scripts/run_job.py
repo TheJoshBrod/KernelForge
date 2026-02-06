@@ -184,6 +184,10 @@ def main() -> int:
             "status": "running",
             "started_at": started_at,
             "log": str(log_path),
+            "finished_at": None,
+            "return_code": None,
+            "error": "",
+            "control": "running",
         },
     )
 

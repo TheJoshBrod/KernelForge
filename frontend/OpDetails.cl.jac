@@ -264,7 +264,11 @@ def:pub OpDetails -> any {
                                 Back
                             </button>
                             <button
-                                onClick={lambda -> None { navigate("/settings");}}
+                                onClick={lambda -> None { navigate(
+                                    "/settings?returnTo=" + encodeURIComponent(
+                                        f"/project/{projectName}/{opName}"
+                                    )
+                                );}}
                                 className="ghost-button"
                             >
                                 Settings

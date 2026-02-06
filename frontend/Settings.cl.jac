@@ -18,9 +18,28 @@ def:pub Settings -> any {
         apiTesting: bool = False,
         apiTest: dict = {};
 
+    def getReturnPath -> str {
+        try {
+            search = window.location.search
+            if window and window.location and "search" in window.location
+            else "";
+            params = URLSearchParams(search);
+            candidate = params.get("returnTo");
+            if candidate
+            and candidate.startswith("/")
+            and not candidate.startswith("//")
+            and candidate != "/settings" {
+                return candidate;
+            }
+        } except Exception as e {
+            return "/";
+        }
+        return "/";
+    }
+
     def handleKeyDown(event: any) -> None {
         if event.key == "Escape" {
-            navigate("/");
+            navigate(getReturnPath());
         }
     }
 
@@ -44,7 +63,7 @@ def:pub Settings -> any {
         saving = True;
         await saveConfig(config);
         saving = False;
-        navigate("/");
+        navigate(getReturnPath());
     }
 
     async def handleTest -> None {
@@ -69,7 +88,7 @@ def:pub Settings -> any {
     }
 
     def handleReturn -> None {
-        navigate("/");
+        navigate(getReturnPath());
     }
 
     if loading {

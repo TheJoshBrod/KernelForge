@@ -9,6 +9,27 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
+try:
+    from src.progress import (
+        check_cancelled,
+        update_job_fields,
+        update_job_progress,
+        wait_if_paused,
+    )
+except Exception:
+    def update_job_progress(current: int, total: int, message: str | None = None) -> None:
+        return
+
+    def update_job_fields(fields: dict | None = None) -> None:
+        return
+
+    def wait_if_paused(poll_seconds: float = 2.0) -> bool:
+        return True
+
+    def check_cancelled() -> bool:
+        return False
+
+
 SKIP_FUNCTIONS = [
     "has_torch_function",
     "handle_torch_function",
@@ -149,6 +170,11 @@ def wrap_function(module, func_name):
     def wrapper(*args, **kwargs):
         key = f"{module_path}.{func_name}"
 
+        output = func(*args, **kwargs)
+        if _should_skip(key):
+            skipped_counts[key] = skipped_counts.get(key, 0) + 1
+            return output
+
         ser_args = [
             a.detach().cpu() if isinstance(a, torch.Tensor) else a
             for a in args
@@ -157,11 +183,6 @@ def wrap_function(module, func_name):
             k: (v.detach().cpu() if isinstance(v, torch.Tensor) else v)
             for k, v in kwargs.items()
         }
-
-        output = func(*args, **kwargs)
-        if _should_skip(key):
-            skipped_counts[key] = skipped_counts.get(key, 0) + 1
-            return output
 
         if isinstance(output, torch.Tensor):
             ser_output = output.detach().cpu()
@@ -357,6 +378,50 @@ def get_samples(module, project_dir: Path, max_batches: int, validation_path: st
     return [data]
 
 
+def _runtime_details(device: str) -> dict:
+    if device == "cuda" and torch.cuda.is_available():
+        try:
+            gpu_index = int(torch.cuda.current_device())
+        except Exception:
+            gpu_index = 0
+        try:
+            gpu_name = torch.cuda.get_device_name(gpu_index)
+        except Exception:
+            gpu_name = "Unknown CUDA GPU"
+        return {
+            "device": "cuda",
+            "gpu_index": gpu_index,
+            "gpu_name": gpu_name,
+            "device_count": int(torch.cuda.device_count()),
+        }
+    if device == "mps":
+        return {
+            "device": "mps",
+            "gpu_index": None,
+            "gpu_name": "Apple Silicon (MPS)",
+            "device_count": 1,
+        }
+    return {
+        "device": "cpu",
+        "gpu_index": None,
+        "gpu_name": "CPU",
+        "device_count": None,
+    }
+
+
+def _runtime_label(runtime: dict) -> str:
+    device = runtime.get("device")
+    if device == "cuda":
+        idx = runtime.get("gpu_index")
+        name = runtime.get("gpu_name") or "Unknown CUDA GPU"
+        if idx is None:
+            return f"CUDA ({name})"
+        return f"CUDA (GPU {idx}: {name})"
+    if device == "mps":
+        return "Apple MPS"
+    return "CPU"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Profile a project model to capture per-op inputs/outputs.")
     parser.add_argument("--project", type=str, default=None, help="Project name under projects/")
@@ -389,6 +454,15 @@ def main():
     else:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    runtime = _runtime_details(device)
+    runtime_label = _runtime_label(runtime)
+    update_job_fields(
+        {
+            "runtime": runtime,
+            "message": f"Loading model on {runtime_label}...",
+        }
+    )
+
     config = load_project_config(project_dir)
     _load_profile_filters(config)
     wrap_torch_nn_functional()
@@ -410,10 +484,24 @@ def main():
             print(f"Warning: validation path not found: {candidate}")
 
     samples = get_samples(module, project_dir, args.max_batches, validation_path)
+    total_samples = len(samples)
+    update_job_progress(
+        0,
+        total_samples,
+        f"Profiling on {runtime_label}...",
+    )
 
     op_totals = {}
+    cancelled = False
     with torch.no_grad():
-        for sample in samples:
+        for idx, sample in enumerate(samples):
+            if not wait_if_paused():
+                cancelled = True
+                break
+            if check_cancelled():
+                cancelled = True
+                break
+
             args_tuple, kwargs = normalize_inputs(sample)
             args_tuple = move_to_device(args_tuple, device)
             kwargs = move_to_device(kwargs, device)
@@ -427,10 +515,27 @@ def main():
             for k, v in batch_counts.items():
                 op_totals[k] = op_totals.get(k, 0) + v
 
+            detected_ops = len(op_totals)
+            update_job_progress(
+                idx + 1,
+                total_samples,
+                f"Profiling on {runtime_label} • detected {detected_ops} ops",
+            )
+
+    if cancelled:
+        update_job_fields(
+            {
+                "message": f"Profiling cancelled on {runtime_label}",
+                "runtime": runtime,
+            }
+        )
+        return
+
     summary_path = out_dir.parent / "summary.json"
     summary = {
         "project": project_dir.name,
         "device": device,
+        "runtime": runtime,
         "op_counts": op_totals,
         "skipped_counts": skipped_counts,
         "skip_filters": {
@@ -440,6 +545,12 @@ def main():
         },
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    update_job_progress(
+        total_samples,
+        total_samples,
+        f"Profile complete on {runtime_label} • detected {len(op_totals)} ops",
+    )
+    update_job_fields({"runtime": runtime})
     print(f"Saved profiling entries to {out_dir}")
     print(f"Summary written to {summary_path}")
 

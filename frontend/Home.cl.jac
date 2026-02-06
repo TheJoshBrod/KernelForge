@@ -136,7 +136,7 @@ def:pub Home -> any {
                                 Recent Projects
                             </span>
                             <span className="table-muted">
-                                {projects.length} total
+                                {projects.length}total
                             </span>
                         </div>
                         <div className="launcher-list">

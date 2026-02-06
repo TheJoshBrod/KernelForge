@@ -1,6 +1,6 @@
 """Splash Screen Component"""
 
-import from "backdrops/GameOfLifeBackground" { GameOfLifeBackground }
+import from "backdrops/CrashingWaveBackground" { CrashingWaveBackground }
 import from .Mascot { Mascot }
 
 def:pub SplashScreen(exiting: bool) -> any {
@@ -11,7 +11,7 @@ def:pub SplashScreen(exiting: bool) -> any {
 
     return
         <div className={splashClass}>
-            <GameOfLifeBackground className="app-life-canvas--splash" />
+            <CrashingWaveBackground />
             <div className="app-backdrop app-backdrop--splash"></div>
             <div className="splash-content">
                 <h1 className="splash-title">
