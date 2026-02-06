@@ -6,6 +6,7 @@ import random
 import string
 import argparse
 import tempfile
+import queue
 from pathlib import Path
 
 import src.optimizer.components.llm.generator as generator
@@ -378,6 +379,174 @@ def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path):
 
     return proj_dir
 
+def run_parallel_optimization(gpu_specs: GPUSpecs, paths: dict, n_workers: int = 4, max_iterations: int = 100):
+    """Run parallel MCTS optimization using multiprocessing.
+    
+    Dispatches nodes to workers as they become available, stops after max_iterations.
+    
+    Args:
+        gpu_specs: GPU specifications
+        paths: Dictionary containing project paths
+        n_workers: Number of worker processes
+        max_iterations: Total number of nodes to process before stopping
+    """
+    import multiprocessing as mp
+    from multiprocessing import Process
+    import time
+    from src.optimizer.components.worker.parallel_worker import worker_routine
+    
+    # CUDA requires 'spawn' start method (default 'fork' doesn't work with CUDA)
+    try:
+        mp.set_start_method('spawn', force=True)
+    except RuntimeError:
+        pass  # Already set
+    
+    print(f"\n{'='*60}")
+    print(f"PARALLEL MCTS OPTIMIZATION")
+    print(f"  Workers: {n_workers}")
+    print(f"  Max Iterations: {max_iterations}")
+    print(f"  Project: {paths['proj_dir']}")
+    print(f"{'='*60}\n")
+    
+    # Shared state via Manager
+    manager = mp.Manager()
+    task_queue = manager.Queue()
+    result_queue = manager.Queue()
+    gpu_lock = manager.Lock()
+    
+    # Shared counter for sequential node IDs (start from current node count)
+    initial_count = len(list((paths["proj_dir"] / "nodes").glob("*.json")))
+    node_counter = mp.Value('i', initial_count)  # Atomic integer counter
+    
+    in_flight_ids = set()
+    nodes_dispatched = 0
+    nodes_completed = 0
+    nodes_failed = 0
+    
+    # Start persistent workers
+    print(f"[INIT] Starting {n_workers} worker processes...")
+    workers = []
+    for i in range(n_workers):
+        p = Process(target=worker_routine, args=(task_queue, result_queue, gpu_lock, node_counter, paths))
+        p.start()
+        workers.append(p)
+        print(f"  [WORKER {i+1}] Started (PID: {p.pid})")
+    
+    # Ensure tree is loaded
+    mcts.load_tree_once(paths)
+    print(f"[INIT] Loaded {len(mcts._NODE_CACHE)} nodes from tree cache")
+    
+    # Main loop: dispatch until limit, then drain remaining
+    print(f"\n[LOOP] Starting optimization loop...")
+    
+    start_time = time.time()
+    dispatch_blocked = False  # Track if we've already logged "no more nodes"
+    
+    while nodes_dispatched < max_iterations or in_flight_ids:
+        
+        # === DISPATCH (only if under limit and not blocked) ===
+        dispatched_this_round = False
+        while len(in_flight_ids) < n_workers and nodes_dispatched < max_iterations:
+            try:
+                node = mcts.choose_optimization(paths, exclude_ids=in_flight_ids)
+            except ValueError as e:
+                if not dispatch_blocked:
+                    print(f"[DISPATCH] No nodes available (tree exhausted): {e}")
+                    dispatch_blocked = True
+                break
+            
+            if node is None or node.id in in_flight_ids:
+                if not dispatch_blocked:
+                    print(f"[DISPATCH] Waiting for workers to complete (tree capacity reached)")
+                    dispatch_blocked = True
+                break
+            
+            # Build context for worker
+            history, codes = mcts.collect_ancestry(paths, node)
+            context = {
+                "history": history,
+                "codes": codes,
+                "gpu_specs": gpu_specs,
+                "paths": paths,
+                "op_spec": None  # Will be loaded by worker
+            }
+            
+            task_queue.put((node, context))
+            in_flight_ids.add(node.id)
+            nodes_dispatched += 1
+            dispatched_this_round = True
+            dispatch_blocked = False  # Reset since we found a node
+            
+            elapsed = time.time() - start_time
+            print(f"[DISPATCH] Node {node.id} dispatched ({nodes_dispatched}/{max_iterations}) | In-flight: {len(in_flight_ids)} | Elapsed: {elapsed:.1f}s")
+        
+        # === COLLECT completed results ===
+        results_collected = False
+        while not result_queue.empty():
+            try:
+                node_id, result_data, status = result_queue.get_nowait()
+            except queue.Empty:
+                break
+            except Exception as e:
+                print(f"[ERROR] Result collection failed: {e}")
+                import traceback
+                traceback.print_exc()
+                break
+            
+            in_flight_ids.discard(node_id)
+            results_collected = True
+            dispatch_blocked = False  # New capacity available, can try dispatching again
+            
+            if status == "success" and result_data is not None:
+                nodes_completed += 1
+                runtime_ms = result_data["runtime_ms"]
+                kernel_id = result_data["kernel_id"]
+                
+                # Create new node
+                parent_node = mcts._NODE_CACHE.get(node_id)
+                if parent_node:
+                    new_node = KernelNode(
+                        id=kernel_id,
+                        parent_id=node_id,
+                        children_ids=[],
+                        visits=1,
+                        value=runtime_ms,
+                        best_subtree_value=runtime_ms,
+                        speedup_vs_parent=parent_node.value / runtime_ms if runtime_ms > 0 else 1.0,
+                        improvement_description=result_data.get("feedback", "Parallel optimization"),
+                        code=result_data["code_path"]
+                    )
+                    mcts.update_tree(paths, new_node)
+                    
+                    speedup = parent_node.value / runtime_ms if runtime_ms > 0 else 1.0
+                    print(f"[SUCCESS] Node {node_id} -> {kernel_id} | Runtime: {runtime_ms:.4f}ms | Speedup: {speedup:.2f}x | Completed: {nodes_completed}")
+            else:
+                nodes_failed += 1
+                print(f"[FAILED] Node {node_id}: {status} | Failed: {nodes_failed}")
+        
+        # If nothing happened this round and we have in-flight work, wait a bit
+        if not dispatched_this_round and not results_collected and in_flight_ids:
+            time.sleep(0.5)  # Wait longer when idle to reduce CPU usage
+        else:
+            time.sleep(0.1)  # Short poll when active
+    
+    # Cleanup
+    print(f"\n[CLEANUP] Terminating workers...")
+    for i, w in enumerate(workers):
+        w.terminate()
+        w.join(timeout=5)
+        print(f"  [WORKER {i+1}] Terminated")
+    
+    elapsed = time.time() - start_time
+    print(f"\n{'='*60}")
+    print(f"OPTIMIZATION COMPLETE")
+    print(f"  Total Time: {elapsed:.1f}s")
+    print(f"  Nodes Dispatched: {nodes_dispatched}")
+    print(f"  Nodes Completed: {nodes_completed}")
+    print(f"  Nodes Failed: {nodes_failed}")
+    print(f"  Success Rate: {nodes_completed/(nodes_dispatched or 1)*100:.1f}%")
+    print(f"{'='*60}\n")
+
 
 def main():
     """Calls optimization pipeline on each kernel."""
@@ -400,6 +569,14 @@ Examples:
     parser.add_argument("project_name", nargs="?", default=None, help="Optional project name")
     parser.add_argument("--new-root", type=str, metavar="OP_NAME",
                         help="Create a new independent root for the specified operator (no optimization)")
+    parser.add_argument("--parallel", action="store_true",
+                        help="Enable parallel optimization mode")
+    parser.add_argument("--workers", type=int, default=4,
+                        help="Number of worker processes for parallel mode (default: 4)")
+    parser.add_argument("--max-iterations", type=int, default=100,
+                        help="Maximum number of nodes to process (default: 100)")
+    parser.add_argument("--op", type=str, metavar="OP_NAME",
+                        help="Optimize only a specific operator")
     
     args = parser.parse_args()
     io_parent_dir = args.io_dir
@@ -453,18 +630,32 @@ Examples:
     # Normal operation: Create project (or resume if exists/provided)
     proj_dir = create_project(gpu_specs, io_parent_dir)
 
-    # Normal optimization loop
-    for op_dir_path in proj_dir.iterdir():
-        if not op_dir_path.is_dir() or "max" not in str(op_dir_path):
-            continue
+    # Build list of operators to process
+    if args.op:
+        # Single operator mode
+        op_dir_path = proj_dir / args.op
+        if not op_dir_path.exists():
+            print(f"Error: Operator '{args.op}' not found in project.")
+            print(f"Available operators: {[d.name for d in proj_dir.iterdir() if d.is_dir()]}")
+            sys.exit(1)
+        operators_to_process = [op_dir_path]
+        print(f"Single operator mode: {args.op}")
+    else:
+        # All operators
+        operators_to_process = [d for d in proj_dir.iterdir() if d.is_dir()]
+        print(f"Processing all operators ({len(operators_to_process)} found)")
 
+    # Process each operator
+    for op_dir_path in operators_to_process:
         op_name = op_dir_path.name
-        print(f"Optimizing {op_name}...")
+        print(f"\n{'='*40}")
+        print(f"Optimizing: {op_name}")
+        print(f"{'='*40}")
 
         # Check if IO exists
         io_dir = io_parent_dir / op_name
         if not io_dir.exists():
-            print(f"  Skipping {op_name}: IO directory not found")
+            print(f"  Skipping {op_name}: IO directory not found at {io_dir}")
             continue
 
         # Paths for optimization
@@ -476,14 +667,27 @@ Examples:
 
         mcts._NODE_CACHE.clear()
 
-        for _ in range(100):
-            # Select parent node then optimize off of it
-            parent_node = mcts.choose_optimization(paths)
-            new_node = optimize(gpu_specs, paths, parent_node)
-            
-            # Update tree with the new node (if optimization succeeded)
-            if new_node:
-                mcts.update_tree(paths, new_node)
+        if args.parallel:
+            # === PARALLEL MODE ===
+            run_parallel_optimization(
+                gpu_specs=gpu_specs,
+                paths=paths,
+                n_workers=args.workers,
+                max_iterations=args.max_iterations
+            )
+        else:
+            # === SEQUENTIAL MODE (original) ===
+            for i in range(args.max_iterations):
+                # Select parent node then optimize off of it
+                parent_node = mcts.choose_optimization(paths)
+                new_node = optimize(gpu_specs, paths, parent_node)
+                
+                # Update tree with the new node (if optimization succeeded)
+                if new_node:
+                    mcts.update_tree(paths, new_node)
+                
+                if (i + 1) % 10 == 0:
+                    print(f"  Progress: {i+1}/{args.max_iterations} iterations")
 
 if __name__ == "__main__":
     main()
