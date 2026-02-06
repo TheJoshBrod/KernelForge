@@ -3,7 +3,7 @@
 import from react { useState, useEffect }
 import from ...assets.ChevronDownIcon { ChevronDownIcon }
 
-def:pub SSHSettings(config: any, handleSaveSshConnection: any, handleRemoveSshConnection: any, handleSetActiveSshConnection: any, saving: bool, checkSshConnectionWalker: any) -> any {
+def:pub SSHSettings(config: any, handleSaveSshConnection: any, handleRemoveSshConnection: any, handleSetActiveSshConnection: any, handleUpdateSshConnection: any, saving: bool, checkSshConnectionWalker: any) -> any {
     ssh_connections = config["ssh_connections"] if "ssh_connections" in config else [];
     active_idx = config["active_ssh_index"] if "active_ssh_index" in config else -1;
 
@@ -44,7 +44,16 @@ def:pub SSHSettings(config: any, handleSaveSshConnection: any, handleRemoveSshCo
                     k_path = conn["key_path"] if "key_path" in conn else "";
                     
                     res = await checkSshConnectionWalker(conn["host"], conn["user"], pwd, k_path);
-                    updateStatus(active_idx, "success" if res else "failed");
+                    success = res["success"] if "success" in res else False;
+
+                    if success {
+                        updateStatus(active_idx, "success");
+                        if "timestamp" in res {
+                             handleUpdateSshConnection(active_idx, {"last_connected": res["timestamp"]});
+                        }
+                    } else {
+                        updateStatus(active_idx, "failed");
+                    }
                 }
                 check_active();
             }
@@ -99,10 +108,10 @@ def:pub SSHSettings(config: any, handleSaveSshConnection: any, handleRemoveSshCo
                 </div>
             </div>
             <div className="flex gap-3">
-                <button onClick={onSave} disabled={saving} className="flex-1 h-10 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg transition-all">
+                <button onClick={onSave} disabled={saving} className="flex-1 h-10 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20 disabled:opacity-50 disabled:cursor-not-allowed">
                     {("Saving..." if saving else "Save")}
                 </button>
-                <button onClick={lambda -> None { setView("list"); }} className="flex-1 h-10 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 font-bold rounded-lg transition-all">
+                <button onClick={lambda -> None { setView("list"); }} className="flex-1 h-10 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg transition-all border border-zinc-700">
                     Cancel
                 </button>
             </div>
@@ -115,46 +124,47 @@ def:pub SSHSettings(config: any, handleSaveSshConnection: any, handleRemoveSshCo
             <h2 className="text-xl font-bold">SSH Connections</h2>
         </div>
 
-        <div className="bg-zinc-300 rounded-lg p-4 text-zinc-900 min-h-[300px]">
-            <div className="grid grid-cols-[1fr_2fr_2fr_1fr_auto] gap-2 font-medium border-b border-zinc-400 pb-2 mb-2">
-                <div>user</div>
-                <div>host</div>
-                <div>last connected</div>
-                <div>status</div>
-                <div></div>
+        <div className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-800 min-h-[300px]">
+            <div className="flex items-center gap-4 font-medium border-b border-zinc-800 pb-2 mb-2 text-zinc-400 uppercase text-xs tracking-wider px-2">
+                <div className="flex-1 min-w-0">user</div>
+                <div className="flex-[2] min-w-0">host</div>
+                <div className="w-40">last connected</div>
+                <div className="w-16 text-center">status</div>
+                <div className="w-28 text-right">toggle</div>
             </div>
             
             <div className="space-y-2">
-                {(
-                    ssh_connections.map(lambda conn: any, i: any -> any:
-                        <div key={i} className="grid grid-cols-[1fr_2fr_2fr_1fr_auto] gap-2 items-center text-sm">
-                            <div className="truncate" title={conn["user"]}>{conn["user"]}</div>
-                            <div className="truncate" title={conn["host"]}>{conn["host"]}</div>
-                            <div className="text-zinc-600">{"N/A"}</div>
-                            <div className="pl-2">
-                                <div className={f"w-4 h-4 rounded-full {(
-                                    'bg-green-500' if i in statusMap and statusMap[i] == 'success'
-                                    else 'bg-red-500' if i in statusMap and statusMap[i] == 'failed'
-                                    else 'bg-yellow-500 animate-pulse' if i in statusMap and statusMap[i] == 'pending'
-                                    else 'bg-zinc-400'
-                                )}"} />
-                            </div>
-                            <div>
-                                <button
-                                    onClick={lambda -> None { handleConnectToggle(i); }}
-                                    className={f"px-3 py-1 rounded border text-xs font-bold w-24 transition-all {(
-                                        'bg-zinc-100 border-zinc-400 hover:bg-zinc-200' if active_idx == i
-                                        else 'bg-zinc-100/50 border-zinc-400/50 hover:bg-zinc-100'
-                                    )}"}
-                                >
-                                    {("Disconnect" if active_idx == i else "Connect")}
-                                </button>
-                            </div>
+                {ssh_connections.map(lambda conn: any, i: any -> any:
+                    <div key={i} className="flex items-center gap-4 text-sm py-2 border-b border-zinc-800/50 last:border-0 hover:bg-zinc-900/40 rounded transition-colors px-2">
+                        <div className="flex-1 min-w-0 truncate text-zinc-300" title={conn["user"]}>{conn["user"]}</div>
+                        <div className="flex-[2] min-w-0 truncate text-zinc-300 font-mono" title={conn["host"]}>{conn["host"]}</div>
+                        <div className="w-40 text-zinc-500 text-xs">{(conn["last_connected"] if "last_connected" in conn else "N/A")}</div>
+                        <div className="w-16 flex justify-center">
+                            <div className={f"w-2.5 h-2.5 rounded-full {(
+                                'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' if i in statusMap and statusMap[i] == 'success'
+                                else 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]' if i in statusMap and statusMap[i] == 'failed'
+                                else 'bg-yellow-500 animate-pulse shadow-[0_0_8px_rgba(234,179,8,0.5)]' if i in statusMap and statusMap[i] == 'pending'
+                                else 'bg-zinc-700'
+                            )}"} />
                         </div>
-                    )
+                        <div className="w-28 flex justify-end">
+                            <button
+                                onClick={lambda -> None { handleConnectToggle(i); }}
+                                className={f"px-3 py-1.5 rounded text-xs font-bold w-24 transition-all border {(
+                                    'bg-red-500/10 text-red-500 border-red-500/50 hover:bg-red-500/20' if active_idx == i
+                                    else 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700 hover:text-white'
+                                )}"}
+                            >
+                                {("Disconnect" if active_idx == i else "Connect")}
+                            </button>
+                        </div>
+                    </div>
                 )}
                 {(
-                    <div className="text-zinc-500 text-center py-8 italic">No connections saved.</div>
+                    <div className="text-zinc-500 text-center py-12 flex flex-col items-center gap-2">
+                        <span className="text-4xl opacity-20">🔌</span>
+                        <span className="italic">No connections saved</span>
+                    </div>
                     if ssh_connections.length == 0
                     else null
                 )}
@@ -164,11 +174,11 @@ def:pub SSHSettings(config: any, handleSaveSshConnection: any, handleRemoveSshCo
         <div className="flex gap-3">
              <button
                 onClick={lambda -> None { setView("add"); }}
-                className="flex-1 h-12 bg-zinc-300 hover:bg-white text-zinc-900 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20"
+                className="flex-1 h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20"
             >
                 Add New SSH
             </button>
-            # Return button handled by parent Settings component logic (Back button)
+            # Return button handled by parent
         </div>
     </div>;
 }

@@ -47,12 +47,6 @@ def:pub GpuSettings(config: any, systemInfo: any, handleGpuSelect: any, handleSa
             else null
         )}
         <button
-            onClick={lambda -> None { print("Connect to SSH"); }}
-            className="w-full h-12 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-900/50 border border-zinc-700"
-        >
-            Connect to SSH
-        </button>
-        <button
             onClick={handleSave}
             disabled={saving}
             className="w-full h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20 disabled:opacity-50 disabled:cursor-not-allowed"

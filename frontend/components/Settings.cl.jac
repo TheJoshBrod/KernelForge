@@ -139,6 +139,19 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
         }
     }
 
+    async def handleUpdateSshConnection(index: int, updates: any) -> None {
+        # Update connection at index without reordering
+        current_conns = config["ssh_connections"] if "ssh_connections" in config else [];
+        if index >= 0 and index < current_conns.length {
+            new_conns = [c for c in current_conns];
+            new_conns[index] = {**new_conns[index], **updates};
+            
+            new_config = {**config, "ssh_connections": new_conns};
+            setConfig(new_config);
+            await saveConfig(new_config);
+        }
+    }
+
     async def handleSetActiveSshConnection(index: int) -> None {
         new_config = {**config, "active_ssh_index": index};
         setConfig(new_config);
@@ -163,7 +176,7 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
 
     return
         <main className="flex min-h-screen flex-col items-center justify-center p-4 bg-zinc-900 text-zinc-100 selection:bg-zinc-700">
-            <div className="w-full max-w-md space-y-4 bg-zinc-950 p-6 rounded-xl border border-zinc-800 shadow-2xl">
+            <div className="w-full max-w-2xl space-y-4 bg-zinc-950 p-6 rounded-xl border border-zinc-800 shadow-2xl">
                 <div className="text-center space-y-2">
                     <h1 className="text-3xl font-bold tracking-tight text-white">Settings</h1>
                     <p className="text-zinc-500 text-sm">
@@ -209,6 +222,7 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
                         handleSaveSshConnection={handleSaveSshConnection}
                         handleRemoveSshConnection={handleRemoveSshConnection}
                         handleSetActiveSshConnection={handleSetActiveSshConnection}
+                        handleUpdateSshConnection={handleUpdateSshConnection}
                         saving={saving}
                         checkSshConnectionWalker={checkSshConnectionWalker}
                     />

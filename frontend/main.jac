@@ -433,7 +433,7 @@ walker:pub CheckSshConnection {
             if exit_status == 0 {
                 output = stdout.read().decode().strip();
                 print(f"Command execution successful: {output}");
-                report {"success": True};
+                report {"success": True, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")};
             } else {
                 error_msg = stderr.read().decode().strip();
                 print(f"Command execution failed with status {exit_status}: {error_msg}");
@@ -522,7 +522,7 @@ cl {
             return resp.reports[0] if resp.reports else {};
         }
 
-        async def client_check_ssh_connection(host: str, user: str, password: str = "", key_path: str = "") -> bool {
+        async def client_check_ssh_connection(host: str, user: str, password: str = "", key_path: str = "") -> dict {
             # Now passing all auth details to the walker
             resp = await root spawn CheckSshConnection(
                 host=host, 
@@ -531,9 +531,9 @@ cl {
                 key_path=key_path
             );
             if resp.reports {
-                 return resp.reports[0]["success"] if "success" in resp.reports[0] else False;
+                 return resp.reports[0];
             }
-            return False;
+            return {"success": False, "error": "No response"};
         }
 
         def navigate(path: str) -> None {
