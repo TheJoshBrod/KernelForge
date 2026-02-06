@@ -18,6 +18,17 @@ def:pub Settings -> any {
         apiTesting: bool = False,
         apiTest: dict = {};
 
+    def _return_cache_key() -> str {
+        return "cgins_settings_return_to";
+    }
+
+    def _is_valid_return(candidate: str) -> bool {
+        return candidate
+        and candidate.startswith("/")
+        and not candidate.startswith("//")
+        and candidate != "/settings";
+    }
+
     def getReturnPath -> str {
         try {
             search = window.location.search
@@ -25,11 +36,13 @@ def:pub Settings -> any {
             else "";
             params = URLSearchParams(search);
             candidate = params.get("returnTo");
-            if candidate
-            and candidate.startswith("/")
-            and not candidate.startswith("//")
-            and candidate != "/settings" {
+            if _is_valid_return(candidate) {
+                window.sessionStorage.setItem(_return_cache_key(), candidate);
                 return candidate;
+            }
+            cached = window.sessionStorage.getItem(_return_cache_key());
+            if _is_valid_return(cached) {
+                return cached;
             }
         } except Exception as e {
             return "/";

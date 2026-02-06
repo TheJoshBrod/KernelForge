@@ -108,6 +108,10 @@ def:pub Project -> any {
         return f"cgins_project_view::{name}";
     }
 
+    def _hardware_cache_key() -> str {
+        return "cgins_hardware_detect_v1";
+    }
+
     def loadCachedView -> bool {
         if not name {
             return False;
@@ -158,6 +162,35 @@ def:pub Project -> any {
             "targetDevice": targetDevice
         };
         window.sessionStorage.setItem(_cache_key(), JSON.stringify(payload));
+    }
+
+    def loadCachedHardware -> bool {
+        raw = window.localStorage.getItem(_hardware_cache_key());
+        if not raw {
+            return False;
+        }
+        data = JSON.parse(raw);
+        if data and "hardwareInfo" in data and data["hardwareInfo"] {
+            hardwareInfo = data["hardwareInfo"];
+        }
+        if data and "targetDevice" in data and data["targetDevice"] {
+            targetDevice = data["targetDevice"];
+        } elif hardwareInfo
+        and "mps_available" in hardwareInfo
+        and hardwareInfo["mps_available"] {
+            targetDevice = "mps";
+        } elif hardwareInfo and "cuda_available" in hardwareInfo {
+            targetDevice = "cuda" if hardwareInfo["cuda_available"] else "cpu";
+        }
+        return True;
+    }
+
+    def cacheHardwareInfo -> None {
+        if not hardwareInfo {
+            return;
+        }
+        payload = {"hardwareInfo": hardwareInfo, "targetDevice": targetDevice};
+        window.localStorage.setItem(_hardware_cache_key(), JSON.stringify(payload));
     }
 
     async def refreshOps(showLoading: bool = True) -> None {
@@ -290,6 +323,7 @@ def:pub Project -> any {
                     targetDevice = "cuda";
                 }
             }
+            cacheHardwareInfo();
         } except (error) {
             console.error("Failed to detect hardware:", error);
             hardwareInfo = {};
@@ -643,11 +677,14 @@ def:pub Project -> any {
         lambda -> None {
             autoBenchStarted = False;
             restored = loadCachedView();
+            has_cached_hw = loadCachedHardware();
             refreshOps(not restored);
             refreshCoverage();
             refreshStatus();
             refreshBench(not restored);
-            detectHardware();
+            if not has_cached_hw {
+                detectHardware();
+            }
         },
         [name]
     );
@@ -655,6 +692,11 @@ def:pub Project -> any {
     useEffect(
         lambda -> None { cacheProjectView(); },
         [name, ops, coverage, status, benchResults, hardwareInfo, targetDevice]
+    );
+
+    useEffect(
+        lambda -> None { cacheHardwareInfo(); },
+        [hardwareInfo, targetDevice]
     );
 
     useEffect(
@@ -827,9 +869,13 @@ def:pub Project -> any {
     for op in ops {
         if usage_chart_count < 12 {
             op_name = op["name"];
+            call_count = op["count"] if op and "count" in op else 0;
             bench_row = benchByOp[op_name] if op_name in benchByOp else {};
             pytorch_ms = bench_row["pytorch_ms"]
             if bench_row and "pytorch_ms" in bench_row and bench_row["pytorch_ms"]
+            else 0.0;
+            normalized_ms = bench_row["normalized_ms"]
+            if bench_row and "normalized_ms" in bench_row and bench_row["normalized_ms"]
             else 0.0;
             label = format_op(op_name);
             if label.length > 26 {
@@ -840,8 +886,9 @@ def:pub Project -> any {
                     {
                         "label": label,
                         "full": format_op(op_name),
-                        "usage_count": op["count"],
-                        "pytorch_ms": pytorch_ms
+                        "usage_count": call_count,
+                        "pytorch_ms": pytorch_ms,
+                        "normalized_ms": normalized_ms
                     }
                 ]
             );
@@ -1457,10 +1504,10 @@ def:pub Project -> any {
                         <div className="panel">
                             <div className="panel-header">
                                 <span className="panel-title">
-                                    Op usage vs PyTorch time
+                                    Op usage vs normalized PyTorch time
                                 </span>
                                 <span className="table-muted">
-                                    usage appears first, timing streams in from benchmark
+                                    normalized as pytorch_ms / op_count
                                 </span>
                             </div>
                             <div className="panel-body">
@@ -1534,8 +1581,8 @@ def:pub Project -> any {
                                             />
                                             <Bar
                                                 yAxisId="right"
-                                                dataKey="pytorch_ms"
-                                                name="PyTorch ms"
+                                                dataKey="normalized_ms"
+                                                name="PyTorch ms/call"
                                                 fill="#5bbbd3"
                                                 radius={[5, 5, 0, 0]}
                                             />

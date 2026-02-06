@@ -125,7 +125,9 @@ def:pub Home -> any {
                         </div>
                         <button
                             className="app-button app-button--ghost app-button--full"
-                            onClick={lambda -> None { navigate("/settings");}}
+                            onClick={lambda -> None { navigate(
+                                "/settings?returnTo=%2F"
+                            );}}
                         >
                             Settings
                         </button>

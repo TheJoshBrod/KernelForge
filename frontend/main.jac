@@ -1429,6 +1429,47 @@ walker:pub GetProjectBenchmarks {
                 data = load(f);
             }
             results = data["results"] if data and "results" in data else [];
+
+            summary_counts = {};
+            summary_path = path.join(
+                _project_dir(self.projectName), "io", "summary.json"
+            );
+            if path.exists(summary_path) {
+                with open(summary_path, "r") as f {
+                    summary_data = load(f);
+                }
+                op_counts = summary_data["op_counts"]
+                if summary_data and "op_counts" in summary_data
+                else {};
+                for dotted_name in op_counts {
+                    safe_name = str(dotted_name).replace(".", "_").replace("/", "_");
+                    summary_counts[safe_name] = op_counts[dotted_name];
+                }
+            }
+
+            normalized_results = [];
+            for r in results {
+                if not r or "op" not in r {
+                    continue;
+                }
+                op_name = r["op"];
+                op_count = summary_counts[op_name] if op_name in summary_counts else 0;
+                pytorch_ms = r["pytorch_ms"] if "pytorch_ms" in r and r["pytorch_ms"] else 0.0;
+                normalized_ms = 0.0;
+                if op_count > 0 {
+                    normalized_ms = float(pytorch_ms) / float(op_count);
+                }
+
+                enriched = {};
+                for key in r {
+                    enriched[key] = r[key];
+                }
+                enriched["op_count"] = op_count;
+                enriched["normalized_ms"] = normalized_ms;
+                normalized_results.append(enriched);
+            }
+
+            results = normalized_results;
             winners = [];
             for r in results {
                 if r and r["winner"] {

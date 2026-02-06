@@ -178,7 +178,9 @@ def:pub NewProject -> any {
             {loadingOverlay}
             <div className="absolute top-2 right-6">
                 <a
-                    onClick={lambda -> None { navigate("/settings");}}
+                    onClick={lambda -> None { navigate(
+                        "/settings?returnTo=%2Fnew-project"
+                    );}}
                     className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white cursor-pointer"
                     aria-label="Settings"
                 >
