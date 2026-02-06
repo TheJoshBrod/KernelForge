@@ -317,6 +317,9 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
     """
     Validates kernel using the persistent worker.
     """
+    import os as _os
+    _pid = _os.getpid()
+    
     tmpdir = paths["tmp_dir"]
     io_dir = paths["io_dir"]
 
@@ -326,6 +329,8 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
     with open(cu_path, "w", encoding="utf-8") as f:
         f.write(generated_cu_code)
 
+    print(f"[WORKER {_pid}] Sending kernel to validation subprocess...")
+    
     # 2. Send to Worker
     _ensure_worker_alive()
 
@@ -337,13 +342,18 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
     import queue
     start_time = time.time()
     TIMEOUT = settings.verifier_timeout_seconds
+    
+    print(f"[WORKER {_pid}] Waiting for validation result (timeout: {TIMEOUT}s)...")
 
     while time.time() - start_time < TIMEOUT:
         if not _WORKER_PROCESS.is_alive():
             return False, "[Process Error] Worker process crashed unexpectedly."
 
         try:
-            return _WORKER_Q_OUT.get(timeout=0.5)
+            result = _WORKER_Q_OUT.get(timeout=0.5)
+            elapsed = time.time() - start_time
+            print(f"[WORKER {_pid}] Validation completed in {elapsed:.1f}s")
+            return result
         except queue.Empty:
             continue
 
