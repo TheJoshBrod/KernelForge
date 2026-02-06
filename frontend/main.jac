@@ -6,6 +6,8 @@ import from base64 { b64decode }
 import from os { path, makedirs, listdir }
 import from shutil { rmtree }
 import from datetime { datetime }
+import socket;
+import paramiko;
 import torch;
 
 glob config_store: dict = {
@@ -248,6 +250,81 @@ walker:pub GetSystemInfo {
     }
 }
 
+walker:pub CheckSshConnection {
+    has host: str;
+    has user: str;
+    has password: str = "";
+    has key_path: str = "";
+    has port: int = 22;
+    has timeout: int = 5;
+
+    can check with `root entry {
+        client = paramiko.SSHClient();
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy());
+        
+        try {
+            print(f"Attempting SSH connection to {self.user}@{self.host}:{self.port}...");
+            
+            # Connect using key_path if provided, otherwise password, or both (paramiko handles precedence usually)
+            # We'll explicitly handle the key_filename argument logic
+            k_path = None;
+            if self.key_path {
+                if path.isdir(self.key_path) {
+                    # If user provided a directory (e.g. ~/.ssh/), try to find common keys
+                    possible_keys = ["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"];
+                    found_keys = [];
+                    for name in possible_keys {
+                        full = path.join(self.key_path, name);
+                        if path.exists(full) {
+                            found_keys.append(full);
+                        }
+                    }
+                    if found_keys {
+                        k_path = found_keys;
+                        print(f"Found keys in directory: {found_keys}");
+                    } else {
+                        print(f"Warning: {self.key_path} is a directory but no common keys found inside.");
+                    }
+                } else {
+                    # It's a file
+                    k_path = self.key_path;
+                }
+            }
+            
+            client.connect(
+                hostname=self.host,
+                port=self.port,
+                username=self.user,
+                password=self.password,
+                key_filename=k_path,
+                timeout=self.timeout
+            );
+            
+            print("SSH connection established. Executing test command...");
+
+            # Execute a simple command to verify shell access
+            stdin, stdout, stderr = client.exec_command('echo "Connection Successful"');
+            exit_status = stdout.channel.recv_exit_status();
+            
+            if exit_status == 0 {
+                output = stdout.read().decode().strip();
+                print(f"Command execution successful: {output}");
+                report {"success": True};
+            } else {
+                error_msg = stderr.read().decode().strip();
+                print(f"Command execution failed with status {exit_status}: {error_msg}");
+                report {"success": False, "error": f"Command failed: {error_msg}"};
+            }
+
+        } except Exception as e {
+            print(f"SSH/SFTP check failed for {self.host}: {e}");
+            report {"success": False, "error": str(e)};
+        } finally {
+            client.close();
+        }
+    }
+}
+
 cl {
     import from react { useState, useEffect }
     import from sonner { Toaster }
@@ -321,6 +398,20 @@ cl {
             return resp.reports[0] if resp.reports else {};
         }
 
+        async def client_check_ssh_connection(host: str, user: str, password: str = "", key_path: str = "") -> bool {
+            # Now passing all auth details to the walker
+            resp = await root spawn CheckSshConnection(
+                host=host, 
+                user=user, 
+                password=password, 
+                key_path=key_path
+            );
+            if resp.reports {
+                 return resp.reports[0]["success"] if "success" in resp.reports[0] else False;
+            }
+            return False;
+        }
+
         def navigate(path: str) -> None {
             console.log(f"Navigating to {path}");
             if page != path {
@@ -363,7 +454,12 @@ cl {
                         deleteProjectWalker={client_delete_project}
                     />
                     if page == "/" or page == ""
-                    else <Settings onNavigate={navigate} onReturn={go_back} getSystemInfoWalker={client_get_system_info} />
+                    else <Settings 
+                        onNavigate={navigate} 
+                        onReturn={go_back} 
+                        getSystemInfoWalker={client_get_system_info} 
+                        checkSshConnectionWalker={client_check_ssh_connection}
+                    />
                     if page == "/settings"
                     else <NewProject
                         onNavigate={navigate}

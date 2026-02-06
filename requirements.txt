@@ -27,3 +27,6 @@ pycuda
 
 # Testing
 pytest
+
+# SSH
+paramiko
