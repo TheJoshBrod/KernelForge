@@ -79,8 +79,8 @@ def choose_optimization(paths: dict, C: float = settings.mcts_c_constant, exclud
                 # Skip if this specific node is being processed
                 if current.id not in exclude_ids:
                     return current
-                else:
-                    break  # Try next root
+                # Node is excluded (in-flight), but don't give up on this subtree!
+                # Fall through to UCT selection below to find a valid child
 
             # --- UCT Selection ---
             best_child_node = None
