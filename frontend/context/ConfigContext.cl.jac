@@ -16,7 +16,7 @@ glob DEFAULT_CONFIG: dict = {
          }
      );
 
-def:pub ConfigProvider(children: any) {
+def:pub ConfigProvider(children: any) -> Any {
     # Use React state so context updates trigger re-renders
     config_state = useState(DEFAULT_CONFIG);
     config = config_state[0];
@@ -80,7 +80,9 @@ def:pub ConfigProvider(children: any) {
         <ConfigContext.Provider
             value={{
                 "config": config,
-                "setConfig": lambda newConfig: dict  -> None { setConfigState(newConfig);},
+                "setConfig": lambda newConfig: dict  -> None { setConfigState(
+                    newConfig
+                );},
                 "saveConfig": save_config_handler,
                 "loading": loading
             }}
