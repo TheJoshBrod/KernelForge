@@ -3,7 +3,7 @@
 import from "../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
 import from "../assets/CGinSLogo.cl.jac" { CGinSLogo }
 
-def:pub SplashScreen(exiting: bool) -> jsxElement {
+def:pub SplashScreen(exiting: bool) -> Any {
     splashClass = "splash-screen";
     if exiting {
         splashClass = "splash-screen is-exiting";

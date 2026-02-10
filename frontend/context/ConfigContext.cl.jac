@@ -1,6 +1,6 @@
 """Config Context Provider"""
 
-import from react { createContext, useContext, useEffect }
+import from react { createContext, useContext, useEffect, useState }
 import from "@jac/runtime" { jacSpawn }
 
 glob DEFAULT_CONFIG: dict = {
@@ -17,8 +17,14 @@ glob DEFAULT_CONFIG: dict = {
      );
 
 def:pub ConfigProvider(children: any) {
-    has config: dict = DEFAULT_CONFIG,
-        loading: bool = True;
+    # Use React state so context updates trigger re-renders
+    config_state = useState(DEFAULT_CONFIG);
+    config = config_state[0];
+    setConfigState = config_state[1];
+
+    loading_state = useState(True);
+    loading = loading_state[0];
+    setLoading = loading_state[1];
 
     # Load config on mount
     async def fetchConfig -> None {
@@ -28,15 +34,25 @@ def:pub ConfigProvider(children: any) {
             if resp and resp.reports and resp.reports.length > 0
             else None;
             if data and "llm_info" in data {
-                config = data;
+                # Normalize SSH config to avoid out-of-range active index
+                if "ssh_connections" in data {
+                    conns = data["ssh_connections"];
+                    if "active_ssh_index" in data {
+                        idx = data["active_ssh_index"];
+                        if idx < -1 or idx >= conns.length {
+                            data["active_ssh_index"] = -1;
+                        }
+                    }
+                }
+                setConfigState(data);
             } else {
-                config = DEFAULT_CONFIG;
+                setConfigState(DEFAULT_CONFIG);
             }
         } except (error) {
             console.error("Failed to load config:", error);
-            config = DEFAULT_CONFIG;
+            setConfigState(DEFAULT_CONFIG);
         } finally {
-            loading = False;
+            setLoading(False);
         }
     }
 
@@ -50,7 +66,7 @@ def:pub ConfigProvider(children: any) {
             if resp and resp.reports and resp.reports.length > 0
             else False;
             if res {
-                config = newConfig;
+                setConfigState(newConfig);
                 return True;
             }
             return False;
@@ -64,7 +80,7 @@ def:pub ConfigProvider(children: any) {
         <ConfigContext.Provider
             value={{
                 "config": config,
-                "setConfig": lambda newConfig: dict  -> None { config = newConfig;},
+                "setConfig": lambda newConfig: dict  -> None { setConfigState(newConfig);},
                 "saveConfig": save_config_handler,
                 "loading": loading
             }}

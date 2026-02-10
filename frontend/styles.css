@@ -898,7 +898,7 @@ video {
 }
 
 .settings-card {
-  width: min(520px, 100%);
+  width: min(820px, 100%);
   padding: 2rem;
   backdrop-filter: blur(12px);
 }
