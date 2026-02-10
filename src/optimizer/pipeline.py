@@ -123,7 +123,7 @@ def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNod
         # Read the actual kernel code from file path
         kernel_code_path = Path(parent_node.code)
         if not kernel_code_path.is_absolute():
-            kernel_code_path = paths["proj_dir"].parent / kernel_code_path
+            kernel_code_path = Path.cwd() / kernel_code_path
 
         if kernel_code_path.exists():
             kernel_code = kernel_code_path.read_text()
@@ -133,7 +133,7 @@ def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNod
 
         # Kernel Generation
         print(f"\tBeginning generation (history: {len(improvement_log)} entries)...")
-        improvement_description, is_valid = generator.generate(
+        improvement_description, is_valid, _kernel_id = generator.generate(
             kernel_code, gpu_specs, improvement_log, paths, ancestor_codes=ancestor_codes)
         print("\tFinished generation.")
         print(f"\t\t- Status: {is_valid}")
