@@ -31,40 +31,83 @@ def:pub SSHSettings(
         );
     }
 
+    def timeAgo(date_str: str) -> str {
+        if not date_str {
+            return "N/A";
+        }
+        try {
+            now = Date.now();
+            target = Date.parse(date_str);
+            if isNaN(target) {
+                return date_str;
+            }
+            diff = (now - target) / 1000;
+
+            if diff < 60 {
+                return "Just now";
+            } elif diff < 3600 {
+                mins = Math.floor(diff / 60);
+                return f"{mins} minute{'s' if mins != 1 else ''} ago";
+            } elif diff < 86400 {
+                hours = Math.floor(diff / 3600);
+                return f"{hours} hour{'s' if hours != 1 else ''} ago";
+            } elif diff < 604800 {
+                days = Math.floor(diff / 86400);
+                return f"{days} day{'s' if days != 1 else ''} ago";
+            } else {
+                weeks = Math.floor(diff / 604800);
+                return f"{weeks} week{'s' if weeks != 1 else ''} ago";
+            }
+        } except (e) {
+            return date_str;
+        }
+    }
+
+    async def performCheck(idx: int) {
+        if idx == -1 or idx >= ssh_connections.length {
+            return;
+        }
+        conn = ssh_connections[idx];
+        updateStatus(idx, "pending");
+
+        key_path = conn["key_path"] if "key_path" in conn else "";
+
+        res = await checkSshConnectionWalker(conn["host"], conn["user"], "", key_path);
+        success = res["success"] if "success" in res else False;
+
+        if success {
+            updateStatus(idx, "success");
+            if "timestamp" in res {
+                handleUpdateSshConnection(idx, {"last_connected": res["timestamp"]});
+            }
+        } else {
+            updateStatus(idx, "failed");
+        }
+    }
+
     useEffect(
         lambda -> None { if active_idx != -1 and active_idx < ssh_connections.length {
-            async def check_active {
-                conn = ssh_connections[active_idx];
-                updateStatus(active_idx, "pending");
-
-                key_path = conn["key_path"] if "key_path" in conn else "";
-
-                res = await checkSshConnectionWalker(
-                    conn["host"], conn["user"], "", key_path
-                );
-                success = res["success"] if "success" in res else False;
-
-                if success {
-                    updateStatus(active_idx, "success");
-                    if "timestamp" in res {
-                        handleUpdateSshConnection(
-                            active_idx, {"last_connected": res["timestamp"]}
-                        );
-                    }
-                } else {
-                    updateStatus(active_idx, "failed");
-                }
-            }
-            check_active();
+            performCheck(active_idx);
         }},
         [active_idx]
     );
 
     def handleConnectToggle(idx: int) {
         if active_idx == idx {
-            handleSetActiveSshConnection(-1);
-            updateStatus(idx, "unknown");
+            # Check if current status is failed
+            is_failed = (idx in statusMap) and statusMap[idx] == "failed";
+            if is_failed {
+                # Retry logic
+                performCheck(idx);
+            } else {
+                # Disconnect logic
+                handleSetActiveSshConnection(-1);
+                updateStatus(idx, "unknown");
+            }
         } else {
+            if active_idx != -1 {
+                updateStatus(active_idx, "unknown");
+            }
             # Optimistically show that we're trying to connect
             updateStatus(idx, "pending");
             handleSetActiveSshConnection(idx);
@@ -161,8 +204,11 @@ def:pub SSHSettings(
     i = 0;
     for conn in ssh_connections {
         # Capture current index in closure to avoid all buttons using final i value
+        # Capture current index in closure to avoid all buttons using final i value
+        # Capture current index in closure to avoid all buttons using final i value
+        # Capture current index in closure to avoid all buttons using final i value
         current_idx = i;
-        
+
         status_cls = "bg-zinc-700";
         if current_idx in statusMap {
             if statusMap[current_idx] == "success" {
@@ -176,15 +222,30 @@ def:pub SSHSettings(
 
         is_pending = (current_idx in statusMap) and statusMap[current_idx] == "pending";
 
+        is_failed = (current_idx in statusMap) and statusMap[current_idx] == "failed";
+
         btn_cls: str = "bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700 hover:text-white";
-        if active_idx == current_idx {
+        if active_idx == current_idx and not is_failed {
+            # Disconnect style (Red) only if properly connected/pending logic flows
+            # But wait, pending also uses this. Let's start with basic connect style.
             btn_cls = "bg-red-500/10 text-red-500 border-red-500/50 hover:bg-red-500/20";
         }
+
         if is_pending {
             btn_cls = btn_cls + " opacity-50 cursor-not-allowed";
         }
 
-        btn_text = "Disconnect" if active_idx == current_idx else "Connect";
+        btn_text = "Connect";
+        if active_idx == current_idx {
+            if is_failed {
+                btn_text = "Retry";
+                # Revert to connect style for Retry
+                btn_cls = "bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700 hover:text-white";
+            } else {
+                btn_text = "Disconnect";
+            }
+        }
+
         if is_pending {
             btn_text = "Connecting...";
         }
@@ -208,7 +269,9 @@ def:pub SSHSettings(
                         {conn["host"]}
                     </div>
                     <div className="col-span-2 text-zinc-500 text-xs text-center">
-                        {conn["last_connected"] if "last_connected" in conn else "N/A"}
+                        {timeAgo(conn["last_connected"])
+                        if "last_connected" in conn
+                        else "N/A"}
                     </div>
                     <div className="col-span-1 flex justify-center">
                         <div className={f"w-2.5 h-2.5 rounded-full {status_cls}"} />
@@ -224,7 +287,9 @@ def:pub SSHSettings(
                     </div>
                     <div className="col-span-1 flex justify-center">
                         <button
-                            onClick={lambda -> None { handleRemoveSshConnection(current_idx);}}
+                            onClick={lambda -> None { handleRemoveSshConnection(
+                                current_idx
+                            );}}
                             className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
                             title="Delete Connection"
                         >

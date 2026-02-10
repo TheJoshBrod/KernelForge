@@ -958,7 +958,8 @@ print(json.dumps(get_gpu_info()))
                 report {
                     "success": True,
                     "gpus": remote_gpus,
-                    "message": f"Connected to {self.host} successfully."
+                    "message": f"Connected to {self.host} successfully.",
+                    "timestamp": datetime.now().isoformat()
                 };
             } else {
                 err = stderr.read().decode().strip();
