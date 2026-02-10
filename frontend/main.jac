@@ -406,7 +406,6 @@ walker:pub SaveConfig {
     can update_config with `root entry {
         try {
             abs_path = path.abspath(config_path);
-            print(f"DEBUG: Saving config to {abs_path}");
             with open(config_path, "w") as f {
                 dump(self.cfg, f, indent=2);
                 global config_store;

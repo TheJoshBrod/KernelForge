@@ -65,6 +65,8 @@ def:pub SSHSettings(
             handleSetActiveSshConnection(-1);
             updateStatus(idx, "unknown");
         } else {
+            # Optimistically show that we're trying to connect
+            updateStatus(idx, "pending");
             handleSetActiveSshConnection(idx);
         }
     }
@@ -158,28 +160,39 @@ def:pub SSHSettings(
     conn_list = [];
     i = 0;
     for conn in ssh_connections {
+        # Capture current index in closure to avoid all buttons using final i value
+        current_idx = i;
+        
         status_cls = "bg-zinc-700";
-        if i in statusMap {
-            if statusMap[i] == "success" {
+        if current_idx in statusMap {
+            if statusMap[current_idx] == "success" {
                 status_cls = "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]";
-            } elif statusMap[i] == "failed" {
+            } elif statusMap[current_idx] == "failed" {
                 status_cls = "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]";
-            } elif statusMap[i] == "pending" {
+            } elif statusMap[current_idx] == "pending" {
                 status_cls = "bg-yellow-500 animate-pulse shadow-[0_0_8px_rgba(234,179,8,0.5)]";
             }
         }
 
+        is_pending = (current_idx in statusMap) and statusMap[current_idx] == "pending";
+
         btn_cls = "bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700 hover:text-white";
-        if active_idx == i {
+        if active_idx == current_idx {
             btn_cls = "bg-red-500/10 text-red-500 border-red-500/50 hover:bg-red-500/20";
         }
+        if is_pending {
+            btn_cls = btn_cls + " opacity-50 cursor-not-allowed";
+        }
 
-        btn_text = "Disconnect" if active_idx == i else "Connect";
+        btn_text = "Disconnect" if active_idx == current_idx else "Connect";
+        if is_pending {
+            btn_text = "Connecting...";
+        }
 
         conn_list = conn_list.concat(
             [
                 <div
-                    key={i}
+                    key={current_idx}
                     className="grid grid-cols-12 gap-2 items-center text-sm py-2 border-b border-zinc-800/50 last:border-0 hover:bg-zinc-900/40 rounded transition-colors px-2"
                 >
                     <div
@@ -202,7 +215,8 @@ def:pub SSHSettings(
                     </div>
                     <div className="col-span-2 flex justify-end gap-2">
                         <button
-                            onClick={lambda -> None { handleConnectToggle(i);}}
+                            onClick={lambda -> None { handleConnectToggle(current_idx);}}
+                            disabled={is_pending}
                             className={f"flex-1 px-3 py-1.5 rounded text-xs font-bold transition-all border {btn_cls}"}
                         >
                             {btn_text}
@@ -210,7 +224,7 @@ def:pub SSHSettings(
                     </div>
                     <div className="col-span-1 flex justify-center">
                         <button
-                            onClick={lambda -> None { handleRemoveSshConnection(i);}}
+                            onClick={lambda -> None { handleRemoveSshConnection(current_idx);}}
                             className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
                             title="Delete Connection"
                         >

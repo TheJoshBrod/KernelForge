@@ -43,6 +43,17 @@ def:pub SshPage {
 
         new_config = {** config};
         new_config["ssh_connections"] = new_connections;
+
+        # Adjust active index if needed
+        active_idx = config["active_ssh_index"] if "active_ssh_index" in config else -1;
+        if active_idx == index {
+            # Deleted the active connection -> clear active
+            new_config["active_ssh_index"] = -1;
+        } elif active_idx > index {
+            # Shift active index down by one when removing earlier entry
+            new_config["active_ssh_index"] = active_idx - 1;
+        }
+
         setConfig(new_config);
         saveConfig(new_config);
     }
