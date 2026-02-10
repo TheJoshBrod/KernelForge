@@ -25,23 +25,13 @@ def:pub SshPage {
         new_connections = config["ssh_connections"]
         if "ssh_connections" in config
         else [];
-        # Check if updating existing or adding new?
-        # The logic in SSHSettings seems to imply 'add' usually, but let's just append for now
-        # based on user intent.
-
-        # Actually SSHSettings.cl.jac implementation of onSave calls handleSaveSshConnection with formData
-        # It treats it as an add.
+       
         new_connections.push(connection);
 
         new_config = {** config};
         new_config["ssh_connections"] = new_connections;
         setConfig(new_config);
 
-        # Trigger save to persist immediately? user might expect that.
-        # But UI has main "Save" button usually?
-        # SSHSettings has its own SAVE button for the form.
-        # But it doesn't trigger global saveConfig. It calls handleSaveSshConnection.
-        # We should probably save config here.
         saveConfig(new_config);
     }
 
@@ -125,7 +115,7 @@ def:pub SshPage {
         <main className="app-shell app-shell--center settings-shell">
             <GameOfLifeBackground />
             <div className="app-backdrop"></div>
-            <div className="settings-card panel app-content-layer">
+            <div className="settings-card panel app-content-layer !max-w-7xl w-full">
                 <div className="settings-header">
                     <h1 className="settings-title">
                         SSH Settings

@@ -9,7 +9,7 @@ import from "../assets/BackIcon.cl.jac" { BackIcon }
 import from "../assets/UploadIcon.cl.jac" { UploadIcon }
 import from "../assets/FolderIcon.cl.jac" { FolderIcon }
 
-def LoadingGhostIcon(className: str = "") {
+def LoadingGhostIcon(className: str = "") -> Any {
     return
         <svg viewBox="0 0 120 120" className={className} fill="currentColor">
             <path

@@ -180,35 +180,35 @@ def:pub SSHSettings(
             [
                 <div
                     key={i}
-                    className="flex items-center gap-2 text-sm py-2 border-b border-zinc-800/50 last:border-0 hover:bg-zinc-900/40 rounded transition-colors px-2"
+                    className="grid grid-cols-12 gap-2 items-center text-sm py-2 border-b border-zinc-800/50 last:border-0 hover:bg-zinc-900/40 rounded transition-colors px-2"
                 >
                     <div
-                        className="flex-1 min-w-0 truncate text-zinc-300"
+                        className="col-span-2 min-w-0 truncate text-zinc-300"
                         title={conn["user"]}
                     >
                         {conn["user"]}
                     </div>
                     <div
-                        className="flex-[2] min-w-0 truncate text-zinc-300 font-mono"
+                        className="col-span-4 min-w-0 truncate text-zinc-300 font-mono"
                         title={conn["host"]}
                     >
                         {conn["host"]}
                     </div>
-                    <div className="w-40 text-zinc-500 text-xs">
+                    <div className="col-span-2 text-zinc-500 text-xs text-center">
                         {conn["last_connected"] if "last_connected" in conn else "N/A"}
                     </div>
-                    <div className="w-16 flex justify-center">
+                    <div className="col-span-1 flex justify-center">
                         <div className={f"w-2.5 h-2.5 rounded-full {status_cls}"} />
                     </div>
-                    <div className="w-24 flex justify-end">
+                    <div className="col-span-2 flex justify-end gap-2">
                         <button
                             onClick={lambda -> None { handleConnectToggle(i);}}
-                            className={f"px-3 py-1.5 rounded text-xs font-bold w-full transition-all border {btn_cls}"}
+                            className={f"flex-1 px-3 py-1.5 rounded text-xs font-bold transition-all border {btn_cls}"}
                         >
                             {btn_text}
                         </button>
                     </div>
-                    <div className="w-16 pl-2 flex justify-end">
+                    <div className="col-span-1 flex justify-center">
                         <button
                             onClick={lambda -> None { handleRemoveSshConnection(i);}}
                             className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
@@ -248,32 +248,31 @@ def:pub SSHSettings(
                 className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-800 min-h-[300px]"
             >
                 <div
-                    className="flex items-center gap-2 font-medium border-b border-zinc-800 pb-2 mb-2 text-zinc-400 uppercase text-xs tracking-wider px-2"
+                    className="grid grid-cols-12 gap-2 font-medium border-b border-zinc-800 pb-2 mb-2 text-zinc-400 uppercase text-xs tracking-wider px-2"
                 >
-                    <div className="flex-1 min-w-0">
+                    <div className="col-span-2 min-w-0">
                         user
                     </div>
-                    <div className="flex-[2] min-w-0">
+                    <div className="col-span-4 min-w-0">
                         host
                     </div>
-                    <div className="w-40">
+                    <div className="col-span-2">
                         last connected
                     </div>
-                    <div className="w-16 text-center">
+                    <div className="col-span-1 text-center">
                         status
                     </div>
-                    <div className="w-24 pl-2">
+                    <div className="col-span-2 text-center">
                         toggle
                     </div>
-                    <div className="w-16 text-right"></div>
+                    <div className="col-span-1 text-center">
+                        Remove
+                    </div>
                 </div>
                 <div className="space-y-2">
                     {conn_list}{<div
                         className="text-zinc-500 text-center py-12 flex flex-col items-center gap-2"
                     >
-                        <span className="text-4xl opacity-20">
-                            🔌
-                        </span>
                         <span className="italic">
                             No connections saved
                         </span>
