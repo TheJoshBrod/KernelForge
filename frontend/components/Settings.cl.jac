@@ -2,10 +2,12 @@
 
 import from react { useState, useEffect }
 import from ..context.ConfigContext { useConfig }
-import from ..assets.ChevronDownIcon { ChevronDownIcon }
-import from ..assets.ArrowRightIcon { ArrowRightIcon }
+import from .settings.ApiKeysSettings { ApiKeysSettings }
+import from .settings.GpuSettings { GpuSettings }
+import from .settings.SSHSettings { SSHSettings }
+import from .settings.SettingsMenu { SettingsMenu }
 
-def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any = None) -> any {
+def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any = None, checkSshConnectionWalker: any = None) -> any {
     config_ctx = useConfig();
     config = config_ctx.config;
     setConfig = config_ctx.setConfig;
@@ -34,6 +36,12 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
             if config and not "selected_gpu_index" in config {
                  setConfig(lambda prev: any -> any { return {**prev, "selected_gpu_index": 0}; });
             }
+            if config and not "ssh_connections" in config {
+                 setConfig(lambda prev: any -> any { return {**prev, "ssh_connections": []}; });
+            }
+            if config and not "active_ssh_index" in config {
+                 setConfig(lambda prev: any -> any { return {**prev, "active_ssh_index": -1}; });
+            }
         }, [config]
     );
 
@@ -42,7 +50,25 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
         lambda -> None {
             async def fetchSystemInfo -> None {
                 if view == "gpu" and getSystemInfoWalker {
-                    info = await getSystemInfoWalker();
+                    # Check for SSH connections to use for remote GPU info
+                    ssh_conns = config["ssh_connections"] if config and "ssh_connections" in config else [];
+                    host = ""; 
+                    user = ""; 
+                    pwd = ""; 
+                    key = "";
+                    
+                    if ssh_conns.length > 0 and "active_ssh_index" in config {
+                        idx = config["active_ssh_index"];
+                        if idx >= 0 and idx < ssh_conns.length {
+                            conn = ssh_conns[idx];
+                            host = conn["host"] if "host" in conn else "";
+                            user = conn["user"] if "user" in conn else "";
+                            pwd = conn["password"] if "password" in conn else "";
+                            key = conn["key_path"] if "key_path" in conn else "";
+                        }
+                    }
+
+                    info = await getSystemInfoWalker(host, user, pwd, key);
                     setSystemInfo(info);
                 }
             }
@@ -50,6 +76,7 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
         }, [view]
     );
 
+    
     def handleApiKeyChange(provider: str, value: str) -> None {
         setConfig(
             lambda prev: any -> any {
@@ -68,8 +95,71 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
         setView("main");
     }
 
-    def handleGpuSelect(index: int) -> None {
-        setConfig(lambda prev: any -> any { return {**prev, "selected_gpu_index": int(index)}; });
+    async def handleSaveSshConnection(connection: any) -> None {
+        setSaving(True);
+        try {
+            current_conns = config["ssh_connections"] if "ssh_connections" in config else [];
+            
+            # Simple replace logic: Filter out matching host/user, then append new
+            host = connection["host"] if "host" in connection else "";
+            user = connection["user"] if "user" in connection else "";
+            
+            if host and user {
+                new_conns = [c for c in current_conns if not (("host" in c and c["host"] == host) and ("user" in c and c["user"] == user))];
+                new_conns.push(connection);
+                
+                new_config = {**config, "ssh_connections": new_conns};
+                setConfig(new_config);
+                await saveConfig(new_config);
+            }
+        } finally {
+            setSaving(False);
+        }
+    }
+
+    async def handleRemoveSshConnection(index: int) -> None {
+        setSaving(True);
+        try {
+            current_conns = config["ssh_connections"] if "ssh_connections" in config else [];
+            if index >= 0 and index < current_conns.length {
+                new_conns = current_conns.filter(lambda c: any, i: int -> bool { return i != index; });
+                
+                # If we remove the active one, reset active index
+                active_idx = config["active_ssh_index"] if "active_ssh_index" in config else -1;
+                new_active = active_idx;
+                if active_idx == index { new_active = -1; }
+                elif active_idx > index { new_active = active_idx - 1; }
+
+                new_config = {**config, "ssh_connections": new_conns, "active_ssh_index": new_active};
+                setConfig(new_config);
+                await saveConfig(new_config);
+            }
+        } finally {
+            setSaving(False);
+        }
+    }
+
+    async def handleUpdateSshConnection(index: int, updates: any) -> None {
+        # Update connection at index without reordering
+        current_conns = config["ssh_connections"] if "ssh_connections" in config else [];
+        if index >= 0 and index < current_conns.length {
+            new_conns = [c for c in current_conns];
+            new_conns[index] = {**new_conns[index], **updates};
+            
+            new_config = {**config, "ssh_connections": new_conns};
+            setConfig(new_config);
+            await saveConfig(new_config);
+        }
+    }
+
+    async def handleSetActiveSshConnection(index: int) -> None {
+        new_config = {**config, "active_ssh_index": index};
+        setConfig(new_config);
+        await saveConfig(new_config);
+    }
+
+    def handleGpuSelect(index: any) -> None {
+        setConfig(lambda prev: any -> any { return {**prev, "selected_gpu_index": index}; });
     }
 
     def handleReturn() -> None {
@@ -85,8 +175,8 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
     }
 
     return
-        <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-zinc-900 text-zinc-100 selection:bg-zinc-700">
-            <div className="w-full max-w-md space-y-8 bg-zinc-950 p-8 rounded-xl border border-zinc-800 shadow-2xl">
+        <main className="flex min-h-screen flex-col items-center justify-center p-4 bg-zinc-900 text-zinc-100 selection:bg-zinc-700">
+            <div className="w-full max-w-4xl space-y-4 bg-zinc-950 p-6 rounded-xl border border-zinc-800 shadow-2xl">
                 <div className="text-center space-y-2">
                     <h1 className="text-3xl font-bold tracking-tight text-white">Settings</h1>
                     <p className="text-zinc-500 text-sm">
@@ -96,113 +186,51 @@ def:pub Settings(onNavigate: any, onReturn: any = None, getSystemInfoWalker: any
                             else "Manage API Credentials"
                             if view == "api_keys"
                             else "Hardware Configuration"
+                            if view == "gpu"
+                            else "SSH Configuration"
                         )}
                     </p>
                 </div>
 
                 {
                     # MAIN VIEW
-                    <div className="space-y-4">
-                        <button
-                            onClick={lambda -> None { setView("api_keys"); }}
-                            className="w-full h-16 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-600 rounded-lg px-6 flex items-center justify-between group transition-all"
-                        >
-                            <span className="font-semibold text-zinc-300 group-hover:text-white">API Keys</span>
-                            <ArrowRightIcon className="text-zinc-500 group-hover:text-white transition-colors" />
-                        </button>
-                        <button
-                            onClick={lambda -> None { setView("gpu"); }}
-                            className="w-full h-16 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-600 rounded-lg px-6 flex items-center justify-between group transition-all"
-                        >
-                            <span className="font-semibold text-zinc-300 group-hover:text-white">GPU Settings</span>
-                            <ArrowRightIcon className="text-zinc-500 group-hover:text-white transition-colors" />
-                        </button>
-                    </div>
+                    <SettingsMenu setView={setView} />
                     if view == "main"
 
                     # API KEYS VIEW
-                    else <div className="space-y-6">
-                        <div className="space-y-4">
-                            {
-                                [<div className="space-y-2" key={provider}>
-                                    <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">{provider}</label>
-                                    <input
-                                        type="password"
-                                        value={config["api_keys"][provider] if "api_keys" in config and provider in config["api_keys"] else ""}
-                                        onChange={lambda e: any -> None { handleApiKeyChange(provider, e.target.value); }}
-                                        placeholder={f"Enter {provider} API Key"}
-                                        className="w-full h-12 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-lg px-4 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all font-mono text-sm"
-                                    />
-                                </div> for provider in ["openai", "gemini", "anthropic"]]
-                            }
-                        </div>
-                        <button
-                            onClick={handleSave}
-                            disabled={saving}
-                            className="w-full h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {("Saving..." if saving else "Save Keys")}
-                        </button>
-                    </div>
+                    else <ApiKeysSettings
+                        config={config}
+                        handleApiKeyChange={handleApiKeyChange}
+                        handleSave={handleSave}
+                        saving={saving}
+                    />
                     if view == "api_keys"
 
                     # GPU SETTINGS VIEW
-                    else <div className="space-y-6">
-                        <div className="space-y-2">
-                             <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Select Active GPU</label>
-                             <div className="relative">
-                                <select
-                                    value={config["selected_gpu_index"] if "selected_gpu_index" in config else 0}
-                                    onChange={lambda e: any -> None { handleGpuSelect(parseInt(e.target.value)); }}
-                                    className="w-full h-12 appearance-none bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-lg px-4 text-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all cursor-pointer"
-                                    disabled={not systemInfo or not "gpus" in systemInfo}
-                                >
-                                    {(
-                                        systemInfo["gpus"].map(lambda gpu: any, i: any -> any:
-                                            <option value={i} key={gpu["name"]}>{f"{i}: {gpu['name']}"}</option>
-                                        )
-                                        if systemInfo and "gpus" in systemInfo
-                                        else <option>Loading GPUs...</option>
-                                    )}
-                                </select>
-                                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500">
-                                    <ChevronDownIcon />
-                                </div>
-                             </div>
-                        </div>
-
-                        {(
-                            <div className="p-4 bg-zinc-900/50 rounded-lg border border-zinc-800 space-y-2">
-                                <h3 className="text-sm font-medium text-zinc-300">Selected GPU Stats</h3>
-                                <div className="grid grid-cols-[auto_1fr] gap-4 text-sm">
-                                    <div className="text-zinc-500">Name</div>
-                                    <div className="text-zinc-200 text-right whitespace-nowrap overflow-hidden text-ellipsis pl-2" title={systemInfo["gpus"][config["selected_gpu_index"]]["name"]}>
-                                        {systemInfo["gpus"][config["selected_gpu_index"]]["name"]}
-                                    </div>
-                                    <div className="text-zinc-500">Memory</div>
-                                    <div className="text-zinc-200 text-right">{systemInfo["gpus"][config["selected_gpu_index"]]["memory"]}</div>
-                                    <div className="text-zinc-500">Architecture Version</div>
-                                    <div className="text-zinc-200 text-right">{systemInfo["gpus"][config["selected_gpu_index"]]["compute_capability"]}</div>
-                                    <div className="text-zinc-500">SM Count</div>
-                                    <div className="text-zinc-200 text-right">{systemInfo["gpus"][config["selected_gpu_index"]]["sm_count"]}</div>
-                                </div>
-                            </div>
-                            if systemInfo and "gpus" in systemInfo and config["selected_gpu_index"] < systemInfo["gpus"].length
-                            else null
-                        )}
-                        <button
-                            onClick={handleSave}
-                            disabled={saving}
-                            className="w-full h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {("Saving..." if saving else "Save Selection")}
-                        </button>
-                    </div>
+                    else <GpuSettings
+                        config={config}
+                        systemInfo={systemInfo}
+                        handleGpuSelect={handleGpuSelect}
+                        handleSave={handleSave}
+                        saving={saving}
+                    />
                     if view == "gpu"
+
+                    # SSH SETTINGS VIEW
+                    else <SSHSettings
+                        config={config}
+                        handleSaveSshConnection={handleSaveSshConnection}
+                        handleRemoveSshConnection={handleRemoveSshConnection}
+                        handleSetActiveSshConnection={handleSetActiveSshConnection}
+                        handleUpdateSshConnection={handleUpdateSshConnection}
+                        saving={saving}
+                        checkSshConnectionWalker={checkSshConnectionWalker}
+                    />
+                    if view == "ssh"
                     else null
                 }
 
-                <div className="pt-4">
+                <div className="pt-2">
                     <button
                         onClick={handleReturn}
                         className="w-full h-12 bg-transparent border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-900 text-zinc-300 font-bold rounded-lg transition-all"

@@ -14,13 +14,12 @@ from src.optimizer.core.types import KernelNode, GPUSpecs
 from src.optimizer.config.settings import settings
 
 
-def get_project_dir(gpu_name: str):
 
-    # Determine project name (random or user requested)
+def get_project_dir(gpu_name: str, optional_name: str = None):
     letters = string.ascii_letters + string.digits
     proj_name = ''.join(random.choices(letters, k=10))
-    if len(sys.argv) >= 3:
-        proj_name = sys.argv[2]
+    if optional_name:
+        proj_name = optional_name
     
     # Sanitize GPU name
     clean_gpu_name = gpu_name.replace(
@@ -40,17 +39,8 @@ def get_project_dir(gpu_name: str):
     return proj_dir
 
 
-def save_iteration(paths: dict, parent_info: KernelNode, improvement_description: str, best_kernel_code: str):
+def save_iteration(paths: dict, parent_info: KernelNode, improvement_description: str, best_kernel_code: str, ssh_config: dict = None):
     """Profiles iteration and records performance results
-
-    Args:
-        paths (dict): path objects to various filepaths
-        parent_info (KernelNode): 
-        improvement_description (str): _description_
-        best_kernel_code (str): _description_
-
-    Returns:
-        _type_: _description_
     """
     next_id = len(list(paths["proj_dir"].glob("nodes/*.json")))
 
@@ -61,7 +51,10 @@ def save_iteration(paths: dict, parent_info: KernelNode, improvement_description
 
     # Log the attempt with results
     print("\tBeginning Profiler...")
-    current_stats, profiler = gpu.profile_kernel(paths)
+    if ssh_config:
+        current_stats, profiler = gpu.profile_remote_kernel(ssh_config, paths)
+    else:
+        current_stats, profiler = gpu.profile_kernel(paths)
     print("\tFinished Profiler.")
     log_entry = {
         "iteration": next_id,
@@ -89,16 +82,8 @@ def save_iteration(paths: dict, parent_info: KernelNode, improvement_description
     return log_entry
 
 
-def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNode):
+def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNode, ssh_config: dict = None):
     """Optimizes target kernel
-
-    Args:
-        gpu_specs (GPUSpecs): GPU specs
-        paths (dict[str, Path]): paths to directories
-        parent_node (KernelNode): node to optimize off of
-    
-    Returns:
-        KernelNode or None: The newly created node if successful, None otherwise
     """
 
     # Create attempts directory
@@ -129,14 +114,14 @@ def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNod
         # Kernel Generation
         print(f"\tBeginning generation (history: {len(improvement_log)} entries)...")
         improvement_description, is_valid = generator.generate(
-            kernel_code, gpu_specs, improvement_log, paths, ancestor_codes=ancestor_codes)
+            kernel_code, gpu_specs, improvement_log, paths, ancestor_codes=ancestor_codes, ssh_config=ssh_config)
         print("\tFinished generation.")
         print(f"\t\t- Status: {is_valid}")
 
         # If its valid, log it and return the new node
         if is_valid:
             log_entry = save_iteration(
-                paths, parent_node, improvement_description, str(paths["proj_dir"] / "attempts" / f"kernel_{parent_node.id}.cu"))
+                paths, parent_node, improvement_description, str(paths["proj_dir"] / "attempts" / f"kernel_{parent_node.id}.cu"), ssh_config=ssh_config)
             
             # Load and return the newly created node
             new_node_id = len(list((paths["proj_dir"] / "nodes").glob("*.json"))) - 1
@@ -148,18 +133,11 @@ def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNod
     return None
 
 
-def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path):
+def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path, optional_proj_name: str = None, ssh_config: dict = None):
     """Creates a new optimization project for each individual operator kernel.
-
-    Args:
-        gpu_specs (GPUSpecs): GPU specs
-        io_parent_dir (Path): Path to directory containing input/output torch files
-
-    Returns:
-        Path: Path to project directory
     """
     # Output directory (access via dot notation now)
-    proj_dir = get_project_dir(gpu_specs.gpu_name)
+    proj_dir = get_project_dir(gpu_specs.gpu_name, optional_proj_name)
 
     # Directory containing initial wave of correct, but unoptimized kernels
     op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
@@ -202,7 +180,10 @@ def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path):
             (tmp_path / "kernel.cu").write_text((op_dir / "kernel.cu").read_text())
 
             # Profile kernel
-            current_stats, profiler = gpu.profile_kernel(paths, baseline=True)
+            if ssh_config:
+                 current_stats, profiler = gpu.profile_remote_kernel(ssh_config, paths, baseline=True)
+            else:
+                 current_stats, profiler = gpu.profile_kernel(paths, baseline=True)
 
             # Log kernel
             node_data = {
@@ -230,21 +211,50 @@ def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path):
 
 def main():
     """Calls optimization pipeline on each kernel."""
-    global next_id
-
-    # Directory of Torch files containing formatted input/output pairs (for specific model preferably)
-    if len(sys.argv) < 2:
-        print("Missing input/output torch dir")
-        print(
-            "`python3 -m src.optimizer.pipeline <io_directory> <optional_project_name>`")
-        sys.exit(1)
-    io_parent_dir = Path(sys.argv[1])
-
-    # Collect GPU specs first to get name
-    gpu_specs = gpu.get_gpu_specs()
+    
+    # Needs argument parsing
+    import argparse
+    parser = argparse.ArgumentParser(description="CGinS Optimization Pipeline")
+    parser.add_argument("io_dir", type=str, help="Directory containing IO pairs")
+    parser.add_argument("proj_name", type=str, nargs="?", default=None, help="Optional project name")
+    parser.add_argument("--remote", type=str, help="Path to configuration JSON for remote remote execution")
+    
+    args = parser.parse_args()
+    
+    io_parent_dir = Path(args.io_dir)
+    optional_proj_name = args.proj_name
+    
+    ssh_config = None
+    
+    if args.remote:
+        config_path = Path(args.remote)
+        if not config_path.exists():
+            print(f"Error: Config file not found: {config_path}")
+            sys.exit(1)
+            
+        with open(config_path, "r") as f:
+            remote_config = json.load(f)
+            
+        # Get active SSH config
+        connections = remote_config.get("ssh_connections", [])
+        active_idx = remote_config.get("active_ssh_index", -1)
+        
+        if 0 <= active_idx < len(connections):
+            ssh_config = connections[active_idx]
+            print(f"remote Mode: Using SSH connection to {ssh_config.get('host')}")
+        else:
+            print("Error: Invalid active_ssh_index in remote config.")
+            sys.exit(1)
+            
+        # Collect GPU specs remotely
+        print("Retrieving remote GPU specs...")
+        gpu_specs = gpu.get_remote_gpu_specs(ssh_config)
+    else:
+        # Collect GPU specs locally
+        gpu_specs = gpu.get_gpu_specs()
 
     # Create project (or resume if exists/provided)
-    proj_dir = create_project(gpu_specs, io_parent_dir)
+    proj_dir = create_project(gpu_specs, io_parent_dir, optional_proj_name, ssh_config)
 
     for op_dir_path in proj_dir.iterdir():
         if not op_dir_path.is_dir() or "max" not in str(op_dir_path):
@@ -272,7 +282,7 @@ def main():
         for _ in range(100):
             # Select parent node then optimize off of it
             parent_node = mcts.choose_optimization(paths)
-            new_node = optimize(gpu_specs, paths, parent_node)
+            new_node = optimize(gpu_specs, paths, parent_node, ssh_config)
             
             # Update tree with the new node (if optimization succeeded)
             if new_node:

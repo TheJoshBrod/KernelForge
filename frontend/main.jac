@@ -1,11 +1,13 @@
 """Main entry point for frontend."""
         
-import from json { load, dump }
+import from json { load, loads, dump }
 import from pathlib { Path }
-import from base64 { b64decode }
+import from base64 { b64decode, b64encode }
 import from os { path, makedirs, listdir }
 import from shutil { rmtree }
 import from datetime { datetime }
+import socket;
+import paramiko;
 import torch;
 
 glob config_store: dict = {
@@ -208,42 +210,262 @@ walker:pub GetOptimizationData {
 }
 
 walker:pub GetSystemInfo {
+    has host: str = "";
+    has user: str = "";
+    has password: str = "";
+    has key_path: str = "";
+
     can return_info with `root entry {
         try {
-            if torch.cuda.is_available() {
-                count = torch.cuda.device_count();
-                gpus = [];
-                for i in range(count) {
-                    device_name = torch.cuda.get_device_name(i);
-                    props = torch.cuda.get_device_properties(i);
-                    # Convert bytes to GB
-                    total_memory = props.total_memory / (1024 ** 3);
-                    
-                    arch_name = "Unknown";
-                    if props.major == 3 { arch_name = "Kepler"; }
-                    elif props.major == 5 { arch_name = "Maxwell"; }
-                    elif props.major == 6 { arch_name = "Pascal"; }
-                    elif props.major == 7 { arch_name = "Volta" if props.minor == 0 else "Turing"; }
-                    elif props.major == 8 { arch_name = "Ampere" if props.minor < 9 else "Ada Lovelace"; }
-                    elif props.major == 9 { arch_name = "Hopper"; }
-                    elif props.major == 10 { arch_name = "Blackwell"; }
+            all_gpus = [];
+            
+            # 1. LOCAL CHECK
+            try {
+                import torch;
+                if torch.cuda.is_available() {
+                    count = torch.cuda.device_count();
+                    for i in range(count) {
+                        device_name = torch.cuda.get_device_name(i);
+                        props = torch.cuda.get_device_properties(i);
+                        total_memory = props.total_memory / (1024 ** 3);
+                        
+                        arch_name = "Unknown";
+                        if props.major == 7 { arch_name = "Volta/Turing"; }
+                        elif props.major == 8 { arch_name = "Ampere"; }
+                        elif props.major == 9 { arch_name = "Hopper"; }
 
-                    gpus.append({
-                        "name": device_name,
-                        "memory": f"{total_memory:.1f} GB",
-                        "compute_capability": f"v{props.major}.{props.minor} {arch_name}",
-                        "sm_count": props.multi_processor_count
-                    });
+                        all_gpus.append({
+                            "name": f"{device_name} (Local)",
+                            "memory": f"{total_memory:.1f} GB",
+                            "compute_capability": f"v{props.major}.{props.minor} {arch_name}",
+                            "sm_count": props.multi_processor_count
+                        });
+                    }
                 }
-                report {
-                    "available": True,
-                    "gpus": gpus
-                };
-            } else {
-                report {"available": False, "error": "No CUDA device detected"};
+            } except Exception as e {
+                print(f"Local GPU check failed: {e}");
             }
+
+            # 2. REMOTE CHECK VIA SSH
+            if self.host and self.user {
+                try {
+                    client = paramiko.SSHClient();
+                    client.set_missing_host_key_policy(paramiko.AutoAddPolicy());
+                    
+                    # Resolve key path
+                    k_path = None;
+                    if self.key_path {
+                        if path.isdir(self.key_path) {
+                            possible = ["id_rsa", "id_ed25519"];
+                            for p in possible {
+                                fp = path.join(self.key_path, p);
+                                if path.exists(fp) { k_path = fp; break; }
+                            }
+                        } else {
+                            k_path = self.key_path;
+                        }
+                    }
+
+                    client.connect(
+                        hostname=self.host,
+                        username=self.user,
+                        password=self.password,
+                        key_filename=k_path,
+                        timeout=5
+                    );
+
+                    # Python script to check GPU
+                    cmd_script = """
+import json
+import sys
+import subprocess
+
+def get_gpu_info():
+    # Try torch first
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpus = []
+            for i in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(i)
+                mem_gb = props.total_memory / (1024**3)
+                
+                arch_name = "Unknown"
+                if props.major == 7: arch_name = "Volta/Turing"
+                elif props.major == 8: arch_name = "Ampere"
+                elif props.major == 9: arch_name = "Hopper"
+
+                gpus.append({
+                    'name': torch.cuda.get_device_name(i),
+                    'memory': f"{mem_gb:.1f} GB",
+                    'compute_capability': f"v{props.major}.{props.minor} {arch_name}",
+                    'sm_count': props.multi_processor_count
+                })
+            return gpus
+    except ImportError as e:
+        sys.stderr.write(f"DEBUG: Torch import failed: {e}\\n")
+    except Exception as e:
+        sys.stderr.write(f"DEBUG: Torch check failed: {e}\\n")
+
+    # Fallback to nvidia-smi
+    try:
+        sys.stderr.write("DEBUG: Falling back to nvidia-smi\\n")
+        cmd = ["nvidia-smi", "--query-gpu=name,memory.total,compute_cap", "--format=csv,noheader"]
+        output = subprocess.check_output(cmd).decode('utf-8').strip()
+        gpus = []
+        for line in output.split('\\n'):
+            if not line.strip(): continue
+            parts = [x.strip() for x in line.split(',')]
+            if len(parts) >= 3:
+                name = parts[0]
+                mem_str = parts[1] # e.g. "24576 MiB"
+                cc = parts[2] # e.g. "8.6"
+                
+                # Convert memory to GB
+                try:
+                    mem_val = float(mem_str.split()[0])
+                    mem_gb = f"{mem_val / 1024:.1f} GB"
+                except:
+                    mem_gb = mem_str
+                
+                # Arch name from CC
+                arch_name = "Unknown"
+                try:
+                    major = int(str(cc).split('.')[0])
+                    if major == 7: arch_name = "Volta/Turing"
+                    elif major == 8: arch_name = "Ampere"
+                    elif major == 9: arch_name = "Hopper"
+                except:
+                    pass
+
+                gpus.append({
+                    "name": name,
+                    "memory": mem_gb,
+                    "compute_capability": f"v{cc} {arch_name}",
+                    "sm_count": "N/A (No Torch)"
+                })
+        return gpus
+    except Exception:
+        return []
+
+print(json.dumps(get_gpu_info()))
+""";
+                    
+                    b64_script = b64encode(cmd_script.encode('utf-8')).decode('utf-8');
+                    # Use bash -lc to ensure profile/bashrc are sourced (PATH, virtualenvs, etc.)
+                    # We escape single quotes for the bash command
+                    cmd = f"""bash -lc 'python3 -c "import base64; exec(base64.b64decode(\\"{b64_script}\\"))"'""";
+                    
+                    exec_res = client.exec_command(cmd);
+                    stdout = exec_res[1];
+                    stderr = exec_res[2];
+                    
+                    exit_status = stdout.channel.recv_exit_status();
+                    
+                    if exit_status == 0 {
+                        out_json = stdout.read().decode().strip();
+                        remote_gpus = loads(out_json);
+                        for r_gpu in remote_gpus {
+                            r_gpu["name"] = f"{r_gpu['name']} (Remote: {self.host})";
+                            all_gpus.append(r_gpu);
+                        }
+                    } else {
+                        err = stderr.read().decode().strip();
+                        print(f"Remote python failed: {err}");
+                        # Don't fail completely, just log error and continue with local
+                    }
+                    client.close();
+
+                } except Exception as e {
+                    print(f"SSH Check failed: {e}");
+                }
+            }
+            
+            report {
+                "available": True if all_gpus else False,
+                "gpus": all_gpus,
+                "source": "mixed"
+            };
         } except Exception as e {
             report {"available": False, "error": str(e)};
+        }
+    }
+}
+
+walker:pub CheckSshConnection {
+    has host: str;
+    has user: str;
+    has password: str = "";
+    has key_path: str = "";
+    has port: int = 22;
+    has timeout: int = 5;
+
+    can check with `root entry {
+        client = paramiko.SSHClient();
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy());
+        
+        try {
+            print(f"Attempting SSH connection to {self.user}@{self.host}:{self.port}...");
+            
+            # Connect using key_path if provided, otherwise password, or both (paramiko handles precedence usually)
+            # We'll explicitly handle the key_filename argument logic
+            k_path = None;
+            if self.key_path {
+                if path.isdir(self.key_path) {
+                    # If user provided a directory (e.g. ~/.ssh/), try to find common keys
+                    possible_keys = ["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"];
+                    found_keys = [];
+                    for name in possible_keys {
+                        full = path.join(self.key_path, name);
+                        if path.exists(full) {
+                            found_keys.append(full);
+                        }
+                    }
+                    if found_keys {
+                        k_path = found_keys;
+                        print(f"Found keys in directory: {found_keys}");
+                    } else {
+                        print(f"Warning: {self.key_path} is a directory but no common keys found inside.");
+                    }
+                } else {
+                    # It's a file
+                    k_path = self.key_path;
+                }
+            }
+            
+            client.connect(
+                hostname=self.host,
+                port=self.port,
+                username=self.user,
+                password=self.password,
+                key_filename=k_path,
+                timeout=self.timeout
+            );
+            
+            print("SSH connection established. Executing test command...");
+
+            # Execute a simple command to verify shell access
+            exec_res = client.exec_command('echo "Connection Successful"');
+            stdin = exec_res[0];
+            stdout = exec_res[1];
+            stderr = exec_res[2];
+            exit_status = stdout.channel.recv_exit_status();
+            
+            if exit_status == 0 {
+                output = stdout.read().decode().strip();
+                print(f"Command execution successful: {output}");
+                report {"success": True, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")};
+            } else {
+                error_msg = stderr.read().decode().strip();
+                print(f"Command execution failed with status {exit_status}: {error_msg}");
+                report {"success": False, "error": f"Command failed: {error_msg}"};
+            }
+
+        } except Exception as e {
+            print(f"SSH/SFTP check failed for {self.host}: {e}");
+            report {"success": False, "error": str(e)};
+        } finally {
+            client.close();
         }
     }
 }
@@ -251,7 +473,7 @@ walker:pub GetSystemInfo {
 cl {
     import from react { useState, useEffect }
     import from sonner { Toaster }
-    import from .context.ConfigContext { ConfigProvider }
+    import from context.ConfigContext { ConfigProvider }
     import from .components.Home { Home }
     import from .components.Project { Project }
     import from .components.Settings { Settings }
@@ -316,9 +538,23 @@ cl {
             return resp.reports[0] if resp.reports else {"nodes": []};
         }
 
-        async def client_get_system_info() -> dict {
-            resp = await root spawn GetSystemInfo();
+        async def client_get_system_info(host: str = "", user: str = "", password: str = "", key_path: str = "") -> dict {
+            resp = await root spawn GetSystemInfo(host=host, user=user, password=password, key_path=key_path);
             return resp.reports[0] if resp.reports else {};
+        }
+
+        async def client_check_ssh_connection(host: str, user: str, password: str = "", key_path: str = "") -> dict {
+            # Now passing all auth details to the walker
+            resp = await root spawn CheckSshConnection(
+                host=host, 
+                user=user, 
+                password=password, 
+                key_path=key_path
+            );
+            if resp.reports {
+                 return resp.reports[0];
+            }
+            return {"success": False, "error": "No response"};
         }
 
         def navigate(path: str) -> None {
@@ -363,7 +599,12 @@ cl {
                         deleteProjectWalker={client_delete_project}
                     />
                     if page == "/" or page == ""
-                    else <Settings onNavigate={navigate} onReturn={go_back} getSystemInfoWalker={client_get_system_info} />
+                    else <Settings 
+                        onNavigate={navigate} 
+                        onReturn={go_back} 
+                        getSystemInfoWalker={client_get_system_info} 
+                        checkSshConnectionWalker={client_check_ssh_connection}
+                    />
                     if page == "/settings"
                     else <NewProject
                         onNavigate={navigate}
