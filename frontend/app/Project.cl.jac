@@ -17,7 +17,7 @@ import from recharts {
 }
 import from "../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
 import from "../components/ui/GlowButton.cl.jac" { GlowButton }
-import from "../components/Mascot.cl.jac" { Mascot }
+import from "../assets/CGinSLogo.cl.jac" { CGinSLogo }
 
 def:pub Project {
     navigate = useNavigate();
@@ -807,7 +807,7 @@ def:pub Project {
                 <aside className="sidebar">
                     <div className="sidebar-header">
                         <div className="brand">
-                            <Mascot variant="logo" ambient={True} />
+                            <CGinSLogo className="mascot mascot--logo" />
                             <div className="brand-meta">
                                 <span>
                                     Project
@@ -1130,7 +1130,7 @@ def:pub Project {
                                 </span>
                             </div>
                         </div>
-                        <Mascot variant="cta" ambient={True} />
+                        <CGinSLogo className="mascot mascot--cta" />
                     </div>
                     <div className="panel-grid">
                         <div className="panel">

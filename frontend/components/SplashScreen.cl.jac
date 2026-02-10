@@ -1,7 +1,7 @@
 """Splash Screen Component"""
 
 import from "../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
-import from "./Mascot.cl.jac" { Mascot }
+import from "../assets/CGinSLogo.cl.jac" { CGinSLogo }
 
 def:pub SplashScreen(exiting: bool) -> jsxElement {
     splashClass = "splash-screen";
@@ -21,11 +21,7 @@ def:pub SplashScreen(exiting: bool) -> jsxElement {
                     Agentic PyTorch Model Optimizer
                 </p>
                 <div className="splash-mascot">
-                    <Mascot
-                        variant="hero"
-                        ambient={True}
-                        className="splash-mascot-img"
-                    />
+                    <CGinSLogo className="mascot mascot--hero splash-mascot-img" />
                 </div>
                 <div className="splash-loading">
                     Loading resources...

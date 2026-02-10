@@ -5,7 +5,7 @@ import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
 import from "../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
 import from "../components/ui/GlowButton.cl.jac" { GlowButton }
-import from "../components/Mascot.cl.jac" { Mascot }
+import from "../assets/CGinSLogo.cl.jac" { CGinSLogo }
 import from "../components/SplashScreen.cl.jac" { SplashScreen }
 
 def:pub Home {
@@ -91,11 +91,7 @@ def:pub Home {
             <div className="launcher-container app-content-layer">
                 <header className="launcher-header">
                     <div className="launcher-brand">
-                        <Mascot
-                            variant="logo"
-                            ambient={True}
-                            className="launcher-logo"
-                        />
+                        <CGinSLogo className="mascot mascot--logo launcher-logo" />
                         <div>
                             <div className="launcher-title">
                                 CGinS
