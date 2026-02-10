@@ -4,6 +4,8 @@ import from pathlib { Path }
 import from base64 { b64decode, b64encode }
 import from os { path, makedirs, listdir }
 import from datetime { datetime }
+import sys;
+import subprocess;
 import socket;
 import paramiko;
 import torch;
@@ -459,6 +461,10 @@ walker:pub CreateProject {
             # Define projects directory
             # Define projects directory
             # Define projects directory
+            # Define projects directory
+            # Define projects directory
+            # Define projects directory
+            # Define projects directory
             projects_dir = path.join(repo_root, "projects");
             if not path.exists(projects_dir) {
                 makedirs(projects_dir);
@@ -625,13 +631,22 @@ walker:pub GetSystemInfo {
     has key_path: str = "";
 
     can return_info with `root entry {
+        print("DEBUG: GetSystemInfo walker executing on backend. Self:", self);
+        print(f"DEBUG: host={self.host}, user={self.user}, key_path={self.key_path}");
+
         try {
             all_gpus = [];
 
+            print("DEBUG: Checking local GPUs with torch");
+
             try {
                 import torch;
+                print("DEBUG: torch imported successfully");
+
                 if torch.cuda.is_available() {
+                    print("DEBUG: CUDA is available");
                     count = torch.cuda.device_count();
+                    print(f"DEBUG: Found {count} local GPUs");
                     for i in range(count) {
                         device_name = torch.cuda.get_device_name(i);
                         props = torch.cuda.get_device_properties(i);

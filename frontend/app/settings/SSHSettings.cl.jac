@@ -176,7 +176,7 @@ def:pub SSHSettings(
 
         is_pending = (current_idx in statusMap) and statusMap[current_idx] == "pending";
 
-        btn_cls = "bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700 hover:text-white";
+        btn_cls: str = "bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700 hover:text-white";
         if active_idx == current_idx {
             btn_cls = "bg-red-500/10 text-red-500 border-red-500/50 hover:bg-red-500/20";
         }
