@@ -4,7 +4,7 @@ import from react { useState }
 import from "react-router-dom" { useNavigate }
 import from "@jac/runtime" { jacSpawn }
 import from "../../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
-import from "../../components/settings/SSHSettings.cl.jac" { SSHSettings }
+import from "./SSHSettings.cl.jac" { SSHSettings }
 import from "../../context/ConfigContext.cl.jac" { useConfig }
 
 def:pub SshPage {

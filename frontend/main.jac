@@ -387,6 +387,8 @@ glob config_path: str = "config.json";
 walker:pub GetConfig {
     can return_config with `root entry {
         try {
+            abs_path = path.abspath(config_path);
+            print(f"DEBUG: Loading config from {abs_path}");
             with open(config_path, "r") as f {
                 config = load(f);
                 report config;
@@ -403,6 +405,8 @@ walker:pub SaveConfig {
 
     can update_config with `root entry {
         try {
+            abs_path = path.abspath(config_path);
+            print(f"DEBUG: Saving config to {abs_path}");
             with open(config_path, "w") as f {
                 dump(self.cfg, f, indent=2);
                 global config_store;
@@ -452,6 +456,8 @@ walker:pub CreateProject {
 
     can create with `root entry {
         try {
+            # Define projects directory
+            # Define projects directory
             # Define projects directory
             # Define projects directory
             projects_dir = path.join(repo_root, "projects");
@@ -662,6 +668,7 @@ walker:pub GetSystemInfo {
 
                     k_path = None;
                     if self.key_path {
+                        self.key_path = path.expanduser(self.key_path);
                         if path.isdir(self.key_path) {
                             possible = ["id_rsa", "id_ed25519"];
                             for p in possible {
@@ -799,82 +806,153 @@ print(json.dumps(get_gpu_info()))
 }
 
 walker:pub CheckSshConnection {
-    has host: str;
-    has user: str;
-    has password: str = "";
-    has key_path: str = "";
-    has port: int = 22;
-    has timeout: int = 5;
+    has host: str,
+        user: str,
+        password: str,
+        key_path: str;
 
-    can check with `root entry {
-        client = paramiko.SSHClient();
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy());
-
+    can return_status with `root entry {
         try {
             print(
-                f"Attempting SSH connection to {self.user}@{self.host}:{self.port}..."
+                f"DEBUG: Starting SSH connection check for {self.user}@{self.host}..."
             );
+            client = paramiko.SSHClient();
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy());
 
             k_path = None;
             if self.key_path {
+                print(f"DEBUG: Resolving key path: {self.key_path}");
+                self.key_path = path.expanduser(self.key_path);
                 if path.isdir(self.key_path) {
-                    possible_keys = ["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"];
-                    found_keys = [];
-                    for name in possible_keys {
-                        full = path.join(self.key_path, name);
-                        if path.exists(full) {
-                            found_keys.append(full);
+                    possible = ["id_rsa", "id_ed25519"];
+                    for p in possible {
+                        fp = path.join(self.key_path, p);
+                        if path.exists(fp) {
+                            k_path = fp;
+                            print(f"DEBUG: Found key at {k_path}");
+                            break;
                         }
-                    }
-                    if found_keys {
-                        k_path = found_keys;
-                        print(f"Found keys in directory: {found_keys}");
-                    } else {
-                        print(
-                            f"Warning: {self.key_path} is a directory but no common keys found inside."
-                        );
                     }
                 } else {
                     k_path = self.key_path;
+                    print(f"DEBUG: Using key at {k_path}");
                 }
             }
 
+            print("DEBUG: Connecting...");
             client.connect(
                 hostname=self.host,
-                port=self.port,
                 username=self.user,
                 password=self.password,
                 key_filename=k_path,
-                timeout=self.timeout
+                timeout=5
             );
+            print("DEBUG: Connection established.");
 
-            print("SSH connection established. Executing test command...");
+            cmd_script = """
+import json
+import sys
+import subprocess
 
-            exec_res = client.exec_command('echo "Connection Successful"');
-            stdin = exec_res[0];
+def get_gpu_info():
+    # Try torch first
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpus = []
+            for i in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(i)
+                mem_gb = props.total_memory / (1024**3)
+
+                arch_name = "Unknown"
+                if props.major == 7: arch_name = "Volta/Turing"
+                elif props.major == 8: arch_name = "Ampere"
+                elif props.major == 9: arch_name = "Hopper"
+
+                gpus.append({
+                    'name': torch.cuda.get_device_name(i),
+                    'memory': f"{mem_gb:.1f} GB",
+                    'compute_capability': f"v{props.major}.{props.minor} {arch_name}",
+                    'sm_count': props.multi_processor_count
+                })
+            return gpus
+    except ImportError as e:
+        sys.stderr.write(f"DEBUG: Torch import failed: {e}\\n")
+    except Exception as e:
+        sys.stderr.write(f"DEBUG: Torch check failed: {e}\\n")
+
+    # Fallback to nvidia-smi
+    try:
+        sys.stderr.write("DEBUG: Falling back to nvidia-smi\\n")
+        cmd = ["nvidia-smi", "--query-gpu=name,memory.total,compute_cap", "--format=csv,noheader"]
+        output = subprocess.check_output(cmd).decode('utf-8').strip()
+        gpus = []
+        for line in output.split('\\n'):
+            if not line.strip(): continue
+            parts = [x.strip() for x in line.split(',')]
+            if len(parts) >= 3:
+                name = parts[0]
+                mem_str = parts[1] # e.g. "24576 MiB"
+                cc = parts[2] # e.g. "8.6"
+
+                # Convert memory to GB
+                try:
+                    mem_val = float(mem_str.split()[0])
+                    mem_gb = f"{mem_val / 1024:.1f} GB"
+                except:
+                    mem_gb = mem_str
+
+                # Arch name from CC
+                arch_name = "Unknown"
+                try:
+                    major = int(str(cc).split('.')[0])
+                    if major == 7: arch_name = "Volta/Turing"
+                    elif major == 8: arch_name = "Ampere"
+                    elif major == 9: arch_name = "Hopper"
+                except:
+                    pass
+
+                gpus.append({
+                    "name": name,
+                    "memory": mem_gb,
+                    "compute_capability": f"v{cc} {arch_name}",
+                    "sm_count": "N/A (No Torch)"
+                })
+        return gpus
+    except Exception:
+        return []
+
+print(json.dumps(get_gpu_info()))
+""";
+
+            b64_script = b64encode(cmd_script.encode('utf-8')).decode('utf-8');
+            cmd = f"""bash -lc 'python3 -c "import base64; exec(base64.b64decode(\\"{b64_script}\\"))"'""";
+
+            print("DEBUG: Executing remote GPU check script...");
+            exec_res = client.exec_command(cmd);
             stdout = exec_res[1];
             stderr = exec_res[2];
             exit_status = stdout.channel.recv_exit_status();
+            print(f"DEBUG: Script finished with exit code {exit_status}");
 
             if exit_status == 0 {
-                output = stdout.read().decode().strip();
-                print(f"Command execution successful: {output}");
+                out_json = stdout.read().decode().strip();
+                remote_gpus = loads(out_json);
+                for r_gpu in remote_gpus {
+                    r_gpu["name"] = f"{r_gpu['name']} (Remote: {self.host})";
+                }
                 report {
                     "success": True,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    "gpus": remote_gpus,
+                    "message": f"Connected to {self.host} successfully."
                 };
             } else {
-                error_msg = stderr.read().decode().strip();
-                print(
-                    f"Command execution failed with status {exit_status}: {error_msg}"
-                );
-                report {"success": False, "error": f"Command failed: {error_msg}"};
+                err = stderr.read().decode().strip();
+                report {"success": False, "error": f"Remote script failed: {err}"};
             }
-        } except Exception as e {
-            print(f"SSH/SFTP check failed for {self.host}: {e}");
-            report {"success": False, "error": str(e)};
-        } finally {
             client.close();
+        } except Exception as e {
+            report {"success": False, "error": f"Connection failed: {str(e)}"};
         }
     }
 }
