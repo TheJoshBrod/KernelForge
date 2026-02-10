@@ -15,9 +15,9 @@ import from recharts {
     Legend,
     ResponsiveContainer
 }
-import from "../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
-import from "../components/ui/GlowButton.cl.jac" { GlowButton }
-import from "../assets/CGinSLogo.cl.jac" { CGinSLogo }
+import from "../../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
+import from "../../components/ui/GlowButton.cl.jac" { GlowButton }
+import from "../../assets/CGinSLogo.cl.jac" { CGinSLogo }
 
 def:pub Project {
     navigate = useNavigate();

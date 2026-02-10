@@ -4,10 +4,10 @@ import from react { useEffect }
 import from sonner { toast }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
-import from "../assets/SettingsIcon.cl.jac" { SettingsIcon }
-import from "../assets/BackIcon.cl.jac" { BackIcon }
-import from "../assets/UploadIcon.cl.jac" { UploadIcon }
-import from "../assets/FolderIcon.cl.jac" { FolderIcon }
+import from "../../assets/SettingsIcon.cl.jac" { SettingsIcon }
+import from "../../assets/BackIcon.cl.jac" { BackIcon }
+import from "../../assets/UploadIcon.cl.jac" { UploadIcon }
+import from "../../assets/FolderIcon.cl.jac" { FolderIcon }
 
 def LoadingGhostIcon(className: str = "") -> Any {
     return
@@ -80,6 +80,7 @@ def:pub NewProject {
     }
 
     # Handle Escape key to navigate back
+    # Handle Escape key to navigate back
     def handleKeyDown(event: any) -> None {
         if event.key == "Escape" {
             navigate("/");
@@ -121,6 +122,7 @@ def:pub NewProject {
                 validation_name = formData["validationZip"].name;
             }
 
+            # Call the walker passed from parent
             # Call the walker passed from parent
             submitStage = "Creating project";
             resp = await jacSpawn(

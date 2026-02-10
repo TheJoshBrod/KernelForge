@@ -465,6 +465,14 @@ walker:pub CreateProject {
             # Define projects directory
             # Define projects directory
             # Define projects directory
+            # Define projects directory
+            # Define projects directory
+            # Define projects directory
+            # Define projects directory
+            # Define projects directory
+            # Define projects directory
+            # Define projects directory
+            # Define projects directory
             projects_dir = path.join(repo_root, "projects");
             if not path.exists(projects_dir) {
                 makedirs(projects_dir);
@@ -1630,14 +1638,14 @@ cl import from react { useEffect }
 cl import from sonner { Toaster }
 cl import from "react-router-dom" { BrowserRouter as Router, Routes, Route }
 cl import from "./context/ConfigContext.cl.jac" { ConfigProvider }
-cl import from "./app/Home.cl.jac" { Home }
-cl import from "./app/Project.cl.jac" { Project }
+cl import from "./app/home/Home.cl.jac" { Home }
+cl import from "./app/project/Project.cl.jac" { Project }
 cl import from "./app/settings/SettingsPage.cl.jac" { SettingsPage }
 cl import from "./app/settings/ApiKeysPage.cl.jac" { ApiKeysPage }
 cl import from "./app/settings/GpuPage.cl.jac" { GpuPage }
 cl import from "./app/settings/SshPage.cl.jac" { SshPage }
-cl import from "./app/NewProject.cl.jac" { NewProject }
-cl import from "./app/OpDetails.cl.jac" { OpDetails }
+cl import from "./app/create/NewProject.cl.jac" { NewProject }
+cl import from "./app/project/OpDetails.cl.jac" { OpDetails }
 cl import "./styles.css";
 
 cl {
