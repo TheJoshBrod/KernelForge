@@ -14,6 +14,7 @@ def:pub Home -> any {
         splashDone: bool = False;
 
     async def fetchProjects -> None {
+        start = Date.now();
         try {
             resp = await jacSpawn("GetProjects", "", {});
             data = resp.reports[0]
@@ -27,6 +28,13 @@ def:pub Home -> any {
         } except Exception as e {
             console.error("Failed to fetch projects", e);
         } finally {
+            elapsed = Date.now() - start;
+            if elapsed < 3000 {
+                def sleeper(resolve: any, reject: any) -> None {
+                    setTimeout(resolve, 3000 - elapsed);
+                }
+                await Reflect.construct(Promise, [sleeper]);
+            }
             loading = False;
             splashDone = True;
         }
