@@ -36,26 +36,26 @@ def:pub SSHSettings(
             return "N/A";
         }
         try {
-            now = Date.now();
-            target = Date.parse(date_str);
+            now: float = Date.now();
+            target: float = Date.parse(date_str);
             if isNaN(target) {
                 return date_str;
             }
-            diff = (now - target) / 1000;
+            diff: float = (now - target) / 1000;
 
             if diff < 60 {
                 return "Just now";
             } elif diff < 3600 {
-                mins = Math.floor(diff / 60);
+                mins: int = Math.floor(diff / 60);
                 return f"{mins} minute{'s' if mins != 1 else ''} ago";
             } elif diff < 86400 {
-                hours = Math.floor(diff / 3600);
+                hours: int = Math.floor(diff / 3600);
                 return f"{hours} hour{'s' if hours != 1 else ''} ago";
             } elif diff < 604800 {
-                days = Math.floor(diff / 86400);
+                days: int = Math.floor(diff / 86400);
                 return f"{days} day{'s' if days != 1 else ''} ago";
             } else {
-                weeks = Math.floor(diff / 604800);
+                weeks: int = Math.floor(diff / 604800);
                 return f"{weeks} week{'s' if weeks != 1 else ''} ago";
             }
         } except (e) {
@@ -108,7 +108,6 @@ def:pub SSHSettings(
             if active_idx != -1 {
                 updateStatus(active_idx, "unknown");
             }
-            # Optimistically show that we're trying to connect
             updateStatus(idx, "pending");
             handleSetActiveSshConnection(idx);
         }

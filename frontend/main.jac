@@ -631,22 +631,14 @@ walker:pub GetSystemInfo {
     has key_path: str = "";
 
     can return_info with `root entry {
-        print("DEBUG: GetSystemInfo walker executing on backend. Self:", self);
-        print(f"DEBUG: host={self.host}, user={self.user}, key_path={self.key_path}");
-
         try {
             all_gpus = [];
 
-            print("DEBUG: Checking local GPUs with torch");
-
             try {
                 import torch;
-                print("DEBUG: torch imported successfully");
 
                 if torch.cuda.is_available() {
-                    print("DEBUG: CUDA is available");
                     count = torch.cuda.device_count();
-                    print(f"DEBUG: Found {count} local GPUs");
                     for i in range(count) {
                         device_name = torch.cuda.get_device_name(i);
                         props = torch.cuda.get_device_properties(i);
@@ -827,15 +819,11 @@ walker:pub CheckSshConnection {
 
     can return_status with `root entry {
         try {
-            print(
-                f"DEBUG: Starting SSH connection check for {self.user}@{self.host}..."
-            );
             client = paramiko.SSHClient();
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy());
 
             k_path = None;
             if self.key_path {
-                print(f"DEBUG: Resolving key path: {self.key_path}");
                 self.key_path = path.expanduser(self.key_path);
                 if path.isdir(self.key_path) {
                     possible = ["id_rsa", "id_ed25519"];
@@ -843,17 +831,14 @@ walker:pub CheckSshConnection {
                         fp = path.join(self.key_path, p);
                         if path.exists(fp) {
                             k_path = fp;
-                            print(f"DEBUG: Found key at {k_path}");
                             break;
                         }
                     }
                 } else {
                     k_path = self.key_path;
-                    print(f"DEBUG: Using key at {k_path}");
                 }
             }
 
-            print("DEBUG: Connecting...");
             client.connect(
                 hostname=self.host,
                 username=self.user,
@@ -861,7 +846,6 @@ walker:pub CheckSshConnection {
                 key_filename=k_path,
                 timeout=5
             );
-            print("DEBUG: Connection established.");
 
             cmd_script = """
 import json
@@ -942,12 +926,10 @@ print(json.dumps(get_gpu_info()))
             b64_script = b64encode(cmd_script.encode('utf-8')).decode('utf-8');
             cmd = f"""bash -lc 'python3 -c "import base64; exec(base64.b64decode(\\"{b64_script}\\"))"'""";
 
-            print("DEBUG: Executing remote GPU check script...");
             exec_res = client.exec_command(cmd);
             stdout = exec_res[1];
             stderr = exec_res[2];
             exit_status = stdout.channel.recv_exit_status();
-            print(f"DEBUG: Script finished with exit code {exit_status}");
 
             if exit_status == 0 {
                 out_json = stdout.read().decode().strip();

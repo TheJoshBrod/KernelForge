@@ -23,7 +23,6 @@ def:pub GpuPage {
     setSystemInfo = system_info_state[1];
 
     setSystemInfo = system_info_state[1];
-    console.log("DEBUG: GpuPage Rendered. Config:", config);
 
     gpus = systemInfo["gpus"] if systemInfo and "gpus" in systemInfo else [];
     selected_idx = config["selected_gpu_index"]
@@ -32,9 +31,6 @@ def:pub GpuPage {
 
     async def fetchSystemInfo -> None {
         try {
-            console.log("DEBUG: Starting fetchSystemInfo");
-            console.log("DEBUG: Config State:", config);
-
             active_idx = config["active_ssh_index"]
             if "active_ssh_index" in config
             else -1;
@@ -56,23 +52,11 @@ def:pub GpuPage {
                 };
             }
 
-            console.log("DEBUG: Payload =", payload);
-            console.log(
-                "DEBUG: Calling jacSpawn with GetSystemInfo. Payload:", payload
-            );
-            console.log("DEBUG: walker name: GetSystemInfo");
-
             resp = await jacSpawn("GetSystemInfo", "", payload);
-
-            console.log("DEBUG: jacSpawn completed. Resp:", resp);
-
-            console.log("DEBUG: Response received =", resp);
 
             data = resp.reports[0]
             if resp and resp.reports and resp.reports.length > 0
             else None;
-
-            console.log("DEBUG: Extracted data =", data);
 
             if data {
                 setSystemInfo(data);
@@ -80,7 +64,6 @@ def:pub GpuPage {
         } except (error) {
             console.error("Failed to fetch system info:", error);
             console.error("Error stack:", error.stack);
-            console.log("DEBUG: Error in fetchSystemInfo details", error);
         }
     }
 
@@ -101,16 +84,11 @@ def:pub GpuPage {
     selected_gpu = gpus[selected_idx]
     if selected_idx != -1 and selected_idx < gpus.length
     else None;
-    console.log(
-        "DEBUG: Render State - Selected GPU:", selected_gpu, "Index:", selected_idx
-    );
 
     def handleGpuSelect(index: str) -> None {
-        console.log("DEBUG: handleGpuSelect called with index:", index);
         new_config = {** config};
         idx_int = parseInt(index);
         new_config["selected_gpu_index"] = idx_int;
-        console.log("DEBUG: Setting selected_gpu_index to:", idx_int);
         setConfig(new_config);
     }
 
