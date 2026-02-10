@@ -8,49 +8,121 @@ import re
 from pathlib import Path
 
 import torch
-from byllm.lib import by  # type: ignore
-from byllm.lib import Model  # type: ignore
+
+BYLLM_AVAILABLE = False
+try:
+    from byllm.lib import by  # type: ignore
+    from byllm.lib import Model  # type: ignore
+    BYLLM_AVAILABLE = True
+except Exception:
+    by = None
+    Model = None
 from torch.utils.cpp_extension import load_inline
+from src.config import ensure_llm_config
 
-provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
-if provider == "gemini":
-    model_name = "gemini/gemini-2.0-flash-exp"
-else:
-    model_name = "claude-opus-4-5-20251101"
+_SUMMARY_SYSTEM_PROMPT = """
+Analyze CUDA kernel compilation or runtime errors and provide actionable fix suggestions.
 
-llm = Model(model_name=model_name)
+Important:
+- The caller-side argument formatting is already correct and MUST NOT be modified.
+- The issue will always be internal to the CUDA kernel code (argument order, typing,
+    indexing, launch signature, or parameter handling).
+
+The input_and_output dict contains:
+- args: List of positional arguments (normalized from kwargs if applicable)
+- signature: Dict with 'params' (parameter names in order) and 'defaults'
+- output or correct-output: Expected output tensor
+
+The CUDA kernel's launch() function MUST accept arguments in exactly this order:
+{', '.join(input_and_output.get('signature', {}).get('params', ['arg0', 'arg1', '...']))}
+
+Provide specific recommendations for:
+1. Correct argument ordering and types in the kernel launch() signature
+2. Correct parameter use inside the CUDA code
+3. Indexing, pointer arithmetic, and shape-related issues
+
+Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
+Only CUDA-side fixes are relevant.
+""".strip()
 
 
-@by(llm)
+def _short_error(msg: str, limit: int = 2000) -> str:
+    if not msg:
+        return ""
+    if len(msg) <= limit:
+        return msg
+    return msg[: limit - 3] + "..."
+
+def _get_provider() -> str:
+    provider = ensure_llm_config().strip().lower()
+    if provider:
+        return provider
+    return os.environ.get("LLM_PROVIDER", "").strip().lower()
+
+
+def _byllm_model_name(provider: str) -> str:
+    if provider == "gemini":
+        return os.environ.get("GEMINI_MODEL", "gemini/gemini-2.0-flash-exp")
+    return os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-5-20251101")
+
+
+def _summarize_with_byllm(
+    traceback_error: str,
+    cu_code: str,
+    input_and_output: dict,
+    model_name: str,
+) -> str:
+    if not BYLLM_AVAILABLE or Model is None or by is None:
+        return traceback_error
+    llm = Model(model_name=model_name)
+
+    @by(llm)
+    def _summarize(
+        traceback_error: str,
+        cu_code: str,
+        input_and_output: dict,
+    ) -> str:
+        """
+        Analyze CUDA kernel compilation or runtime errors and provide actionable fix suggestions.
+
+        Important:
+        - The caller-side argument formatting is already correct and MUST NOT be modified.
+        - The issue will always be internal to the CUDA kernel code (argument order, typing,
+            indexing, launch signature, or parameter handling).
+
+        The input_and_output dict contains:
+        - args: List of positional arguments (normalized from kwargs if applicable)
+        - signature: Dict with 'params' (parameter names in order) and 'defaults'
+        - output or correct-output: Expected output tensor
+
+        The CUDA kernel's launch() function MUST accept arguments in exactly this order:
+        {', '.join(input_and_output.get('signature', {}).get('params', ['arg0', 'arg1', '...']))}
+
+        Provide specific recommendations for:
+        1. Correct argument ordering and types in the kernel launch() signature
+        2. Correct parameter use inside the CUDA code
+        3. Indexing, pointer arithmetic, and shape-related issues
+
+        Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
+        Only CUDA-side fixes are relevant.
+        """
+
+    return _summarize(traceback_error, cu_code, input_and_output)
+
+
 def summarize_issue_with_traceback(
     traceback_error: str,
     cu_code: str,
-    input_and_output: dict
+    input_and_output: dict,
 ) -> str:
-    """
-    Analyze CUDA kernel compilation or runtime errors and provide actionable fix suggestions.
+    if not BYLLM_AVAILABLE:
+        return traceback_error
+    provider = _get_provider()
+    if not provider or provider in {"openai", "gpt", "chatgpt"}:
+        return traceback_error
 
-    Important:
-    - The caller-side argument formatting is already correct and MUST NOT be modified.
-    - The issue will always be internal to the CUDA kernel code (argument order, typing,
-        indexing, launch signature, or parameter handling).
-
-    The input_and_output dict contains:
-    - args: List of positional arguments (normalized from kwargs if applicable)
-    - signature: Dict with 'params' (parameter names in order) and 'defaults'
-    - output or correct-output: Expected output tensor
-
-    The CUDA kernel's launch() function MUST accept arguments in exactly this order:
-    {', '.join(input_and_output.get('signature', {}).get('params', ['arg0', 'arg1', '...']))}
-
-    Provide specific recommendations for:
-    1. Correct argument ordering and types in the kernel launch() signature
-    2. Correct parameter use inside the CUDA code
-    3. Indexing, pointer arithmetic, and shape-related issues
-
-    Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
-    Only CUDA-side fixes are relevant.
-    """
+    model_name = _byllm_model_name(provider)
+    return _summarize_with_byllm(traceback_error, cu_code, input_and_output, model_name)
 
 
 def handle_output(traceback_error: str, cu_code: str, log_file_path: Path, input_and_output: dict) -> str:
@@ -58,14 +130,31 @@ def handle_output(traceback_error: str, cu_code: str, log_file_path: Path, input
     input_and_output["correct-output"] = input_and_output["output"]
     del input_and_output["output"]
 
-    feedback = summarize_issue_with_traceback(
-        traceback_error, cu_code, input_and_output)
+    raw_error = _short_error(traceback_error)
 
-    output = f"[Traceback Error]:\n{traceback_error}\n\n[LLM Generated Feedback]:\n{feedback}"
+    provider = _get_provider()
+    disable_summary = os.environ.get("CGINS_DISABLE_SUMMARY", "").lower() in {"1", "true", "yes"}
+
+    if disable_summary or not provider:
+        feedback = raw_error
+    elif provider in {"openai", "gpt", "chatgpt"}:
+        feedback = raw_error
+    else:
+        try:
+            feedback = summarize_issue_with_traceback(
+                traceback_error, cu_code, input_and_output
+            )
+        except Exception:
+            feedback = traceback_error
+
+    output = (
+        f"[Raw Error]:\n{raw_error}\n\n"
+        f"[LLM Generated Feedback]:\n{feedback}"
+    )
     with open(log_file_path, "w") as f:
         f.write(output)
 
-    return feedback
+    return output
 
 
 def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:
@@ -124,6 +213,137 @@ def move_to_cuda(item):
     return item
 
 
+def _target_device() -> str:
+    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    if value in {"gpu", "cuda"}:
+        return "cuda"
+    if value == "mps":
+        return "mps"
+    if value == "cpu":
+        return "cpu"
+    return "cuda"
+
+
+def move_to_target(item):
+    target = _target_device()
+    if target == "cpu":
+        if torch.is_tensor(item):
+            return item.cpu()
+        if isinstance(item, (list, tuple)):
+            return type(item)(move_to_target(x) for x in item)
+        if isinstance(item, dict):
+            return {k: move_to_target(v) for k, v in item.items()}
+        return item
+    if target == "mps":
+        if torch.is_tensor(item):
+            return item.to("mps")
+        if isinstance(item, (list, tuple)):
+            return type(item)(move_to_target(x) for x in item)
+        if isinstance(item, dict):
+            return {k: move_to_target(v) for k, v in item.items()}
+        return item
+    return move_to_cuda(item)
+
+
+def _resolve_function(function_name: str):
+    if not function_name:
+        return None
+    if function_name.startswith("torch.nn.functional."):
+        name = function_name.split(".")[-1]
+        return getattr(torch.nn.functional, name, None)
+    if function_name.startswith("torch."):
+        name = function_name.split(".")[-1]
+        return getattr(torch, name, None)
+    return None
+
+
+def _is_safe_for_extra_tests(function_name: str, args: list, kwargs: dict) -> bool:
+    safe_ops = {
+        "torch.nn.functional.linear",
+        "torch.nn.functional.gelu",
+        "torch.nn.functional.layer_norm",
+    }
+    if function_name not in safe_ops:
+        return False
+    for item in list(args) + list(kwargs.values()):
+        if torch.is_tensor(item) and not item.is_floating_point():
+            return False
+    return True
+
+
+def _random_like_tensor(t: torch.Tensor) -> torch.Tensor:
+    if t.is_floating_point():
+        return torch.randn_like(t)
+    if t.dtype == torch.int64:
+        return torch.randint(low=0, high=10, size=t.shape, dtype=t.dtype)
+    return t.clone()
+
+
+def _generate_random_inputs(entry: dict):
+    args = entry.get("args", [])
+    kwargs = entry.get("kwargs", {})
+    new_args = []
+    for a in args:
+        if torch.is_tensor(a):
+            new_args.append(_random_like_tensor(a))
+        else:
+            new_args.append(a)
+    new_kwargs = {}
+    for k, v in kwargs.items():
+        if torch.is_tensor(v):
+            new_kwargs[k] = _random_like_tensor(v)
+        else:
+            new_kwargs[k] = v
+    return new_args, new_kwargs
+
+
+def _run_extra_validation(
+    function_name: str,
+    module,
+    entry: dict,
+    signature_info: dict,
+    extra_cases: int,
+) -> tuple[bool, str]:
+    func = _resolve_function(function_name)
+    if not func:
+        return True, ""
+    if not _is_safe_for_extra_tests(function_name, entry.get("args", []), entry.get("kwargs", {})):
+        return True, ""
+
+    for _ in range(extra_cases):
+        args, kwargs = _generate_random_inputs(entry)
+        normalized_args, remaining_kwargs = normalize_args_kwargs(
+            args, kwargs, signature_info
+        )
+        if remaining_kwargs:
+            return False, f"Extra validation failed: unmapped kwargs {list(remaining_kwargs.keys())}"
+        target_args = [move_to_target(item) for item in normalized_args]
+        try:
+            with torch.no_grad():
+                expected = func(*target_args)
+        except Exception as e:
+            return False, f"Extra validation failed calling PyTorch op: {e}"
+
+        try:
+            got = module.launch(*target_args)
+        except Exception as e:
+            return False, f"Extra validation failed calling kernel: {e}"
+
+        if expected.shape != got.shape:
+            return False, "Extra validation failed: output shape mismatch"
+        if expected.dtype != got.dtype:
+            return False, "Extra validation failed: output dtype mismatch"
+        if torch.is_tensor(expected):
+            if expected.is_floating_point():
+                ok = torch.allclose(got, expected, atol=1e-2, rtol=1e-1)
+            else:
+                ok = torch.equal(got, expected)
+            if not ok:
+                return False, "Extra validation failed: output mismatch"
+
+    return True, ""
+
+
 def validate_kernel(
     generated_cu_code: str,
     entry_file: str,
@@ -155,8 +375,10 @@ def validate_kernel(
         # Also add python executable dir to PATH to ensure ninja is found
         import sys
         python_bin_dir = os.path.dirname(sys.executable)
-        os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
-        os.environ["PATH"] = f"{python_bin_dir}:/usr/local/cuda-12.1/bin:{os.environ['PATH']}"
+        target_device = _target_device()
+        if target_device == "cuda":
+            os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
+            os.environ["PATH"] = f"{python_bin_dir}:/usr/local/cuda-12.1/bin:{os.environ['PATH']}"
 
         # Extract function signature for load_inline
         # Looking for: torch::Tensor launch(...)
@@ -168,15 +390,34 @@ def validate_kernel(
 
         cpp_source = match.group(1) + ";"
 
-        module = load_inline(
-            name=f"generated_module_{os.path.basename(tmpdir)}",
-            cpp_sources=cpp_source,
-            cuda_sources=generated_cu_code,
-            functions=['launch'],
-            build_directory=tmpdir,
-            verbose=True,
-            with_cuda=True
-        )
+        if target_device == "cpu":
+            module = load_inline(
+                name=f"generated_module_{os.path.basename(tmpdir)}",
+                cpp_sources=generated_cu_code,
+                functions=['launch'],
+                build_directory=tmpdir,
+                verbose=True,
+                with_cuda=False
+            )
+        elif target_device == "cuda":
+            module = load_inline(
+                name=f"generated_module_{os.path.basename(tmpdir)}",
+                cpp_sources=cpp_source,
+                cuda_sources=generated_cu_code,
+                functions=['launch'],
+                build_directory=tmpdir,
+                verbose=True,
+                with_cuda=True
+            )
+        else:
+            module = load_inline(
+                name=f"generated_module_{os.path.basename(tmpdir)}",
+                cpp_sources=generated_cu_code,
+                functions=['launch'],
+                build_directory=tmpdir,
+                verbose=True,
+                with_cuda=False
+            )
         call_success = True
 
     except Exception as e:
@@ -210,18 +451,29 @@ def validate_kernel(
         if remaining_kwargs:
             print(f"Warning: Unmapped kwargs: {list(remaining_kwargs.keys())}")
 
-        # Move tensors to CUDA, keep scalars as-is
-        cuda_args = [move_to_cuda(item) for item in normalized_args]
+        # Move tensors to target device, keep scalars as-is
+        target_args = [move_to_target(item) for item in normalized_args]
 
         # Call with ONLY positional args (load_inline doesn't support kwargs)
-        output_generated = module.launch(*cuda_args)
+        output_generated = module.launch(*target_args)
 
-        # Ensure all CUDA operations complete
-        torch.cuda.synchronize()
+        if _target_device() == "cuda":
+            # Ensure all CUDA operations complete
+            torch.cuda.synchronize()
+        elif _target_device() == "mps":
+            if hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+                torch.mps.synchronize()
 
         # Move to same device as ground truth if needed
-        if not output_generated.is_cuda:
-            output_generated = output_generated.cuda()
+        if _target_device() == "cuda":
+            if not output_generated.is_cuda:
+                output_generated = output_generated.cuda()
+        elif _target_device() == "mps":
+            if torch.is_tensor(output_generated) and output_generated.device.type != "mps":
+                output_generated = output_generated.to("mps")
+        else:
+            if torch.is_tensor(output_generated):
+                output_generated = output_generated.cpu()
 
         # Kernel executed without a runtime error
         runtime_success = True
@@ -235,7 +487,7 @@ def validate_kernel(
         input_info = {
             "original_args_count": len(args) if "args" in locals() else 0,
             "original_kwargs": list(kwargs.keys()) if "kwargs" in locals() else [],
-            "normalized_args_count": len(cuda_args) if "cuda_args" in locals() else 0,
+            "normalized_args_count": len(target_args) if "target_args" in locals() else 0,
             "signature_params": signature_info.get("params", []) if "signature_info" in locals() else [],
             "args": [
                 {
@@ -244,7 +496,7 @@ def validate_kernel(
                     "shape": list(a.shape) if torch.is_tensor(a) else None,
                     "type": type(a).__name__,
                 }
-                for idx, a in enumerate(cuda_args) if "cuda_args" in locals()
+                for idx, a in enumerate(target_args) if "target_args" in locals()
             ],
         }
 
@@ -264,8 +516,22 @@ def validate_kernel(
             if torch.is_tensor(ground_truth):
                 ground_truth = ground_truth.to(output_generated.device)
 
-            is_correct = torch.allclose(
-                output_generated, ground_truth, atol=1e-2, rtol=1e-1)
+            if torch.is_tensor(ground_truth):
+                if output_generated.shape != ground_truth.shape:
+                    raise ValueError(
+                        f"Output shape mismatch: got {list(output_generated.shape)}, expected {list(ground_truth.shape)}"
+                    )
+                if output_generated.dtype != ground_truth.dtype:
+                    raise ValueError(
+                        f"Output dtype mismatch: got {output_generated.dtype}, expected {ground_truth.dtype}"
+                    )
+
+            if torch.is_tensor(ground_truth) and not ground_truth.is_floating_point():
+                is_correct = torch.equal(output_generated, ground_truth)
+            else:
+                is_correct = torch.allclose(
+                    output_generated, ground_truth, atol=1e-2, rtol=1e-1
+                )
 
             if is_correct:
                 exec_success = True
@@ -287,14 +553,32 @@ def validate_kernel(
                 )
 
                 entry["generated-incorrect-output"] = output_generated
-                log_message += handle_output(analysis,
-                                             generated_cu_code, log_file_path, entry)
+                log_message += handle_output(
+                    analysis, generated_cu_code, log_file_path, entry
+                )
 
                 with open(log_file_path, "w") as f:
                     f.write(f"[Incorrect Output]:\n{log_message}")
         except Exception as e:
             exec_success = False
             log_message += f"Output Comparison Error (Exec Status=False):\n{e}"
+
+    # --- 5. Extra Validation (optional) ---
+    if exec_success:
+        extra_cases_env = os.environ.get("CGINS_EXTRA_VALIDATION_CASES", "0")
+        try:
+            extra_cases = int(extra_cases_env)
+        except Exception:
+            extra_cases = 0
+        if extra_cases > 0:
+            function_name = entry.get("function_name", "")
+            signature_info = entry.get("signature", {"params": [], "defaults": {}})
+            ok, extra_msg = _run_extra_validation(
+                function_name, module, entry, signature_info, extra_cases
+            )
+            if not ok:
+                exec_success = False
+                log_message += f"\n[Extra Validation Failed]\n{extra_msg}"
 
     # Final return
     return call_success, exec_success, log_message

@@ -11,44 +11,58 @@ import queue
 from pathlib import Path
 
 import torch
-from byllm.lib import by  # type: ignore
-from byllm.lib import Model  # type: ignore
+
+BYLLM_AVAILABLE = False
+try:
+    from byllm.lib import by  # type: ignore
+    from byllm.lib import Model  # type: ignore
+    BYLLM_AVAILABLE = True
+except Exception:
+    by = None
+    Model = None
 from torch.utils.cpp_extension import load_inline
 from src.optimizer.config.settings import settings
 
-llm = Model(model_name=settings.llm_model_name)
+if BYLLM_AVAILABLE and Model is not None and by is not None:
+    llm = Model(model_name=settings.llm_model_name)
 
+    @by(llm)
+    def summarize_issue_with_traceback(
+        traceback_error: str,
+        cu_code: str,
+        input_and_output: dict
+    ) -> str:
+        """
+        Analyze CUDA kernel compilation or runtime errors and provide actionable fix suggestions.
 
-@by(llm)
-def summarize_issue_with_traceback(
-    traceback_error: str,
-    cu_code: str,
-    input_and_output: dict
-) -> str:
-    """
-    Analyze CUDA kernel compilation or runtime errors and provide actionable fix suggestions.
+        Important:
+        - The caller-side argument formatting is already correct and MUST NOT be modified.
+        - The issue will always be internal to the CUDA kernel code (argument order, typing,
+            indexing, launch signature, or parameter handling).
 
-    Important:
-    - The caller-side argument formatting is already correct and MUST NOT be modified.
-    - The issue will always be internal to the CUDA kernel code (argument order, typing,
-        indexing, launch signature, or parameter handling).
+        The input_and_output dict contains:
+        - args: List of positional arguments (normalized from kwargs if applicable)
+        - signature: Dict with 'params' (parameter names in order) and 'defaults'
+        - output or correct-output: Expected output tensor
 
-    The input_and_output dict contains:
-    - args: List of positional arguments (normalized from kwargs if applicable)
-    - signature: Dict with 'params' (parameter names in order) and 'defaults'
-    - output or correct-output: Expected output tensor
+        The CUDA kernel's launch() function MUST accept arguments in exactly this order:
+        {', '.join(input_and_output.get('signature', {}).get('params', ['arg0', 'arg1', '...']))}
 
-    The CUDA kernel's launch() function MUST accept arguments in exactly this order:
-    {', '.join(input_and_output.get('signature', {}).get('params', ['arg0', 'arg1', '...']))}
+        Provide specific recommendations for:
+        1. Correct argument ordering and types in the kernel launch() signature
+        2. Correct parameter use inside the CUDA code
+        3. Indexing, pointer arithmetic, and shape-related issues
 
-    Provide specific recommendations for:
-    1. Correct argument ordering and types in the kernel launch() signature
-    2. Correct parameter use inside the CUDA code
-    3. Indexing, pointer arithmetic, and shape-related issues
-
-    Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
-    Only CUDA-side fixes are relevant.
-    """
+        Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
+        Only CUDA-side fixes are relevant.
+        """
+else:
+    def summarize_issue_with_traceback(
+        traceback_error: str,
+        cu_code: str,
+        input_and_output: dict
+    ) -> str:
+        return traceback_error
 
 
 def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:
@@ -107,6 +121,38 @@ def move_to_cuda(item):
     return item
 
 
+def _target_device() -> str:
+    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    if value in {"gpu", "cuda"}:
+        return "cuda"
+    if value == "mps":
+        return "mps"
+    if value == "cpu":
+        return "cpu"
+    return "cuda"
+
+
+def move_to_target(item):
+    target = _target_device()
+    if target == "cpu":
+        if torch.is_tensor(item):
+            return item.cpu()
+        if isinstance(item, (list, tuple)):
+            return type(item)(move_to_target(x) for x in item)
+        if isinstance(item, dict):
+            return {k: move_to_target(v) for k, v in item.items()}
+        return item
+    if target == "mps":
+        if torch.is_tensor(item):
+            return item.to("mps")
+        if isinstance(item, (list, tuple)):
+            return type(item)(move_to_target(x) for x in item)
+        if isinstance(item, dict):
+            return {k: move_to_target(v) for k, v in item.items()}
+        return item
+    return move_to_cuda(item)
+
+
 # --- Persistent Worker Globals ---
 _WORKER_PROCESS = None
 _WORKER_Q_IN = None
@@ -122,11 +168,11 @@ def _validate_worker_loop(q_in, q_out):
     # Set environment variables ONCE
     import sys
     python_bin_dir = os.path.dirname(sys.executable)
-    os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
-    os.environ["PATH"] = f"{python_bin_dir}:/usr/local/cuda-12.1/bin:{os.environ['PATH']}"
-
+    if _target_device() == "cuda":
+        os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
+        os.environ["PATH"] = f"{python_bin_dir}:/usr/local/cuda-12.1/bin:{os.environ['PATH']}"
     # Pre-import torch to warm up (already imported at top level, but ensure context is ready)
-    if torch.cuda.is_available():
+    if _target_device() == "cuda" and torch.cuda.is_available():
         torch.cuda.init()
 
     while True:
@@ -152,17 +198,25 @@ def _validate_worker_loop(q_in, q_out):
                 # load_inline uses a cache based on sources, but since we change tmpdir every time,
                 # we force a recompile/realloc. Ideally we should reuse tmpdir if code is same,
                 # but 'tmpdir' is provided by caller.
-
-                module = load_inline(
-                    name=f"generated_module_{os.path.basename(tmpdir)}",
-                    cpp_sources=cpp_source,
-                    cuda_sources=generated_cu_code,
-                    functions=['launch'],
-                    build_directory=tmpdir,
-                    verbose=False,  # Reduce spam
-                    with_cuda=True
-                )
-
+                if _target_device() == "cuda":
+                    module = load_inline(
+                        name=f"generated_module_{os.path.basename(tmpdir)}",
+                        cpp_sources=cpp_source,
+                        cuda_sources=generated_cu_code,
+                        functions=['launch'],
+                        build_directory=tmpdir,
+                        verbose=False,  # Reduce spam
+                        with_cuda=True
+                    )
+                else:
+                    module = load_inline(
+                        name=f"generated_module_{os.path.basename(tmpdir)}",
+                        cpp_sources=generated_cu_code,
+                        functions=['launch'],
+                        build_directory=tmpdir,
+                        verbose=False,  # Reduce spam
+                        with_cuda=False
+                    )
                 # Execution Test
                 entry_files = sorted(Path(io_dir).glob("entry_*.pt"))
                 if not entry_files:
@@ -178,20 +232,21 @@ def _validate_worker_loop(q_in, q_out):
                         entry = torch.load(entry_file)
                         args = entry.get("args", [])
                         kwargs = entry.get("kwargs", {})
-                        signature_info = entry.get(
-                            "signature", {"params": [], "defaults": {}})
+                        signature_info = entry.get("signature", {"params": [], "defaults": {}})
 
-                        normalized_args, remaining_kwargs = normalize_args_kwargs(
-                            args, kwargs, signature_info)
-                        cuda_args = [move_to_cuda(item)
-                                     for item in normalized_args]
+                        normalized_args, remaining_kwargs = normalize_args_kwargs(args, kwargs, signature_info)
+                        cuda_args = [move_to_target(item) for item in normalized_args]
 
                         output_generated = module.launch(*cuda_args)
-                        torch.cuda.synchronize()
+                        if _target_device() == "cuda":
+                            torch.cuda.synchronize()
+                        elif _target_device() == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+                            torch.mps.synchronize()
 
-                        if not output_generated.is_cuda:
+                        if _target_device() == "cuda" and not output_generated.is_cuda:
                             output_generated = output_generated.cuda()
-
+                        elif _target_device() == "mps" and torch.is_tensor(output_generated):
+                            output_generated = output_generated.to("mps")
                         ground_truth = entry["output"]
                         if torch.is_tensor(ground_truth):
                             ground_truth = ground_truth.to(

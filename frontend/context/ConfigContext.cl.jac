@@ -1,51 +1,56 @@
 """Config Context Provider"""
 
-import from react { createContext, useContext, useState, useEffect }
+import from react { createContext, useContext, useEffect }
+import from "@jac/runtime" { jacSpawn }
 
-# Create Context
-glob ConfigContext = createContext();
+glob DEFAULT_CONFIG: dict = {
+         "llm_info": {"model": "", "apikey": "", "provider": ""},
+         "providers": []
+     },
+     ConfigContext = createContext(
+         {
+             "config": DEFAULT_CONFIG,
+             "setConfig": None,
+             "saveConfig": None,
+             "loading": True
+         }
+     );
 
-def:pub ConfigProvider(children: any, getConfig: any, saveConfig: any) -> any {
-    state = useState(
-        {
-             "api_keys": {"openai": "", "gemini": "", "anthropic": ""},
-             "selected_gpu_index": 0
-        }
-    );
-    config = state[0];
-    setConfig = state[1];
-
-    loading_state = useState(True);
-    loading = loading_state[0];
-    setLoading = loading_state[1];
+def:pub ConfigProvider(children: any) {
+    has config: dict = DEFAULT_CONFIG,
+        loading: bool = True;
 
     # Load config on mount
-    useEffect(
-        lambda -> None { async def fetchConfig() -> None {
-            try {
-                data = await getConfig();
-                # Merge with defaults
-                setConfig(
-                    lambda prev: any  -> any { return {
-                        ** prev,
-                        ** data
-                    }; }
-                );
-            } except (error) {
-                console.error("Failed to load config:", error);
-            } finally {
-                setLoading(False);
+    async def fetchConfig -> None {
+        try {
+            resp = await jacSpawn("GetConfig", "", {});
+            data = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else None;
+            if data and "llm_info" in data {
+                config = data;
+            } else {
+                config = DEFAULT_CONFIG;
             }
-        } fetchConfig();},
-        []
-    );
+        } except (error) {
+            console.error("Failed to load config:", error);
+            config = DEFAULT_CONFIG;
+        } finally {
+            loading = False;
+        }
+    }
 
-    async def save_config_handler(newConfig: any) -> bool {
+    useEffect(lambda -> None { fetchConfig();}, []);
+
+    async def save_config_handler(newConfig: dict) -> bool {
         try {
             # Calls the passed saveConfig
-            res = await saveConfig(newConfig);
+            resp = await jacSpawn("SaveConfig", "", {"cfg": newConfig});
+            res = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else False;
             if res {
-                setConfig(newConfig);
+                config = newConfig;
                 return True;
             }
             return False;
@@ -59,7 +64,7 @@ def:pub ConfigProvider(children: any, getConfig: any, saveConfig: any) -> any {
         <ConfigContext.Provider
             value={{
                 "config": config,
-                "setConfig": setConfig,
+                "setConfig": lambda newConfig: dict  -> None { config = newConfig;},
                 "saveConfig": save_config_handler,
                 "loading": loading
             }}
@@ -68,6 +73,7 @@ def:pub ConfigProvider(children: any, getConfig: any, saveConfig: any) -> any {
         </ConfigContext.Provider>;
 }
 
-def:pub useConfig() -> any {
+def:pub useConfig {
     return useContext(ConfigContext);
 }
+# Create Context

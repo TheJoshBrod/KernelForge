@@ -2,6 +2,7 @@
 src/optimizer/components/llm/generator.py
 Uses LLM to generate CUDA kernels that is model-agnostic.
 """
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -10,6 +11,7 @@ from typing import Tuple
 import src.optimizer.components.llm.prompts as prompts
 import src.optimizer.components.worker.verifier as verifier
 from src.llm_tools import GenModel
+from src.config import ensure_llm_config
 from src.optimizer.core.types import GPUSpecs
 from src.optimizer.config.settings import settings
 
@@ -113,8 +115,16 @@ def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, 
         ancestor_codes (list[tuple[int, str]], optional): List of (iteration_id, code) tuples from ancestors
         ssh_config (dict, optional): SSH configuration for remote validation.
     """
-    if model is None:
-        model = settings.llm_model_name
+    if not model:
+        provider = ensure_llm_config().strip().lower()
+        if provider in {"openai", "gpt", "chatgpt"}:
+            model = os.environ.get("OPENAI_MODEL", "gpt-5.2")
+        elif provider == "gemini":
+            model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        elif provider == "anthropic":
+            model = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-5-20251101")
+        else:
+            model = settings.llm_model_name
 
     # Attempt initial CUDA code generation
     llm: GenModel = GenModel(sys_prompt)

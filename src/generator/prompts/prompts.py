@@ -1,4 +1,5 @@
 """File to construct and pull prompts."""
+import os
 import torch
 
 
@@ -12,7 +13,128 @@ def get_system_prompt() -> str:
     prompt = ""
     with open("src/generator/prompts/GeneratorSystemPrompt.md") as f:
         prompt = f.read()
+    target = _target_device()
+    if target == "cpu":
+        prompt += """
+
+TARGET DEVICE: CPU
+
+Rules:
+- Generate a CPU-only C++ extension (no CUDA headers, no __global__ kernels).
+- Do NOT call cuda APIs or use CUDA-specific checks.
+- Do NOT require .is_cuda(); tensors are CPU.
+- Keep torch::Tensor launch(...) signature unchanged.
+"""
+    elif target == "mps":
+        prompt += """
+
+TARGET DEVICE: MPS (Apple Silicon)
+
+Rules:
+- Generate a CPU/MPS-compatible C++ extension (no CUDA headers, no __global__ kernels).
+- Do NOT call cuda APIs or use CUDA-specific checks.
+- Do NOT require .is_cuda(); tensors are MPS.
+- Keep torch::Tensor launch(...) signature unchanged.
+"""
+    elif target == "cuda":
+        prompt += """
+
+TARGET DEVICE: CUDA
+
+Rules:
+- Generate a CUDA kernel and CUDA-aware C++ wrapper.
+- Enforce .is_cuda() checks for tensor inputs.
+"""
     return prompt
+
+
+def _target_device() -> str:
+    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    if value in {"gpu", "cuda"}:
+        return "cuda"
+    if value == "mps":
+        return "mps"
+    if value == "cpu":
+        return "cpu"
+    return ""
+
+
+def _merge_dynamic_dims(values_list):
+    if not values_list:
+        return []
+    ref = list(values_list[0])
+    dynamic = list(ref)
+    for val in values_list[1:]:
+        if len(val) != len(ref):
+            return "Rank Varies"
+        for i, dim in enumerate(val):
+            if dim != dynamic[i]:
+                dynamic[i] = -1
+    return dynamic
+
+
+def _summarize_scalar(values: list):
+    if not values:
+        return {}
+    uniq = list(dict.fromkeys(values))[:5]
+    summary = {"examples": uniq}
+    try:
+        numeric_vals = [v for v in values if isinstance(v, (int, float))]
+        if numeric_vals:
+            summary["min"] = min(numeric_vals)
+            summary["max"] = max(numeric_vals)
+    except Exception:
+        pass
+    return summary
+
+
+def _tensor_stats(value: torch.Tensor) -> dict:
+    target = _target_device()
+    device = target or str(value.device)
+    return {
+        "dtype": str(value.dtype),
+        "shape": list(value.shape),
+        "stride": list(value.stride()),
+        "device": device,
+        "contiguous": bool(value.is_contiguous()),
+        "requires_grad": bool(value.requires_grad),
+        "numel": int(value.numel()),
+    }
+
+
+def _summarize_value(value):
+    if torch.is_tensor(value):
+        return _tensor_stats(value)
+    if isinstance(value, (list, tuple)):
+        return {
+            "type": type(value).__name__,
+            "length": len(value),
+        }
+    if isinstance(value, dict):
+        return {
+            "type": "dict",
+            "keys": list(value.keys()),
+        }
+    return {"type": type(value).__name__, "value": value}
+
+
+def _infer_param_order(call_list):
+    for call in call_list:
+        sig = call.get("signature", {}) if isinstance(call, dict) else {}
+        params = sig.get("params", []) if isinstance(sig, dict) else []
+        defaults = sig.get("defaults", {}) if isinstance(sig, dict) else {}
+        if params:
+            return list(params), defaults
+    # Fallback: positional args then kwargs in observed order
+    if call_list:
+        first = call_list[0]
+        args = first.get("args", [])
+        kwargs = first.get("kwargs", {})
+        param_order = [f"arg{i}" for i in range(len(args))]
+        if isinstance(kwargs, dict):
+            param_order.extend(list(kwargs.keys()))
+        return param_order, {}
+    return [], {}
 
 
 def generate_function_spec_from_calls(call_list, function_name):
@@ -25,10 +147,9 @@ def generate_function_spec_from_calls(call_list, function_name):
 
     # 1. Data Aggregation
     # We will store observed properties for every argument across all calls
-    # param_stats = { "arg0": { "types": set(), "shapes": [], "is_list": False }, ... }
     param_stats = {}
 
-    param_order = []  # To keep arguments in correct order
+    param_order, defaults = _infer_param_order(call_list)
 
     for call_idx, call in enumerate(call_list):
         # Normalize args to dict keys (arg0, arg1...) to match kwargs
@@ -37,26 +158,45 @@ def generate_function_spec_from_calls(call_list, function_name):
             current_params[f"arg{i}"] = arg
         current_params.update(call.get("kwargs", {}))
 
-        # Initialize param order from the first call
-        if call_idx == 0:
-            param_order = list(current_params.keys())
-
         # Update stats for each parameter
         for name, value in current_params.items():
             if name not in param_stats:
                 param_stats[name] = {
-                    "types": set(), "shapes": [], "list_lens": set()}
+                    "types": set(),
+                    "shapes": [],
+                    "strides": [],
+                    "dtypes": set(),
+                    "devices": set(),
+                    "contiguous": set(),
+                    "requires_grad": set(),
+                    "numel": set(),
+                    "list_lens": set(),
+                    "scalar_values": [],
+                }
 
             # Record Type
             param_stats[name]["types"].add(type(value))
 
             # Record Shape (for Tensors)
             if isinstance(value, torch.Tensor):
+                target = _target_device()
+                device = target or str(value.device)
                 param_stats[name]["shapes"].append(list(value.shape))
+                param_stats[name]["strides"].append(list(value.stride()))
+                param_stats[name]["dtypes"].add(str(value.dtype))
+                param_stats[name]["devices"].add(device)
+                param_stats[name]["contiguous"].add(bool(value.is_contiguous()))
+                param_stats[name]["requires_grad"].add(bool(value.requires_grad))
+                param_stats[name]["numel"].add(int(value.numel()))
 
             # Record Length (for Lists/Tuples)
             elif isinstance(value, (list, tuple)):
                 param_stats[name]["list_lens"].add(len(value))
+                param_stats[name]["scalar_values"].append(value)
+            elif value is None:
+                param_stats[name]["scalar_values"].append(None)
+            else:
+                param_stats[name]["scalar_values"].append(value)
 
     # 2. Build Specification
     param_specs = []
@@ -68,6 +208,12 @@ def generate_function_spec_from_calls(call_list, function_name):
 
         types = stats["types"]
         shapes = stats["shapes"]
+        strides = stats["strides"]
+        dtypes = stats["dtypes"]
+        devices = stats["devices"]
+        contiguous = stats["contiguous"]
+        requires_grad = stats["requires_grad"]
+        numel = stats["numel"]
 
         spec = {
             "name": name,
@@ -85,39 +231,29 @@ def generate_function_spec_from_calls(call_list, function_name):
 
             # Analyze Shapes for Dynamics
             if not shapes:
-                # Can happen if Tensor type was seen but only as None (rare edge case)
                 spec["shape"] = "Unknown"
             else:
-                # Compare all observed shapes to find dynamic dimensions
-                # Start with the first observed shape as reference
-                ref_shape = shapes[0]
-                final_shape = list(ref_shape)
-
-                is_dynamic_rank = False
-
-                for s in shapes[1:]:
-                    if len(s) != len(ref_shape):
-                        final_shape = "Rank Varies"
-                        is_dynamic_rank = True
-                        break
-
-                    for dim_i, dim_val in enumerate(s):
-                        if dim_val != final_shape[dim_i]:
-                            final_shape[dim_i] = -1  # Mark as dynamic
-
+                final_shape = _merge_dynamic_dims(shapes)
                 spec["shape"] = final_shape
-
-                # Format description
-                if is_dynamic_rank:
+                if final_shape == "Rank Varies":
                     spec["description"] += "Input tensor with varying rank. "
-                elif -1 in final_shape:
-                    spec["description"] += f"Input tensor. Dynamic shape: {final_shape} (-1 indicates variable dim). "
+                elif isinstance(final_shape, list) and -1 in final_shape:
+                    spec["description"] += (
+                        f"Input tensor. Dynamic shape: {final_shape} (-1 indicates variable dim). "
+                    )
                 else:
                     spec["description"] += f"Input tensor. Fixed shape: {final_shape}. "
 
-            # Grab dtype from the last non-None value seen
-            # (In a real implementation, you might check if dtypes vary too)
-            spec["dtype"] = "mixed"  # Placeholder, usually consistent
+            if not strides:
+                spec["stride"] = "Unknown"
+            else:
+                spec["stride"] = _merge_dynamic_dims(strides)
+
+            spec["dtype"] = list(dtypes) if dtypes else ["unknown"]
+            spec["device"] = list(devices) if devices else ["unknown"]
+            spec["contiguous"] = list(contiguous) if contiguous else []
+            spec["requires_grad"] = list(requires_grad) if requires_grad else []
+            spec["numel"] = list(numel) if numel else []
 
         # --- Logic for Lists/Tuples ---
         elif list in types or tuple in types:
@@ -127,34 +263,44 @@ def generate_function_spec_from_calls(call_list, function_name):
                 spec["description"] = f"List/Tuple with varying lengths: {lens}"
             else:
                 spec["description"] = f"List/Tuple of length {list(lens)[0]}"
+            spec["examples"] = stats["scalar_values"][:3]
 
         # --- Logic for Scalars ---
         elif int in types:
             spec["type"] = "int64_t"
             spec["description"] = "Integer scalar"
+            spec["stats"] = _summarize_scalar(stats["scalar_values"])
         elif float in types:
             spec["type"] = "double"
             spec["description"] = "Float scalar"
+            spec["stats"] = _summarize_scalar(stats["scalar_values"])
         elif bool in types:
             spec["type"] = "bool"
             spec["description"] = "Boolean flag"
+            spec["stats"] = _summarize_scalar(stats["scalar_values"])
         elif str in types:
             spec["type"] = "std::string"
             spec["description"] = "String parameter"
+            spec["stats"] = _summarize_scalar(stats["scalar_values"])
         else:
             spec["type"] = "auto"
             spec["description"] = "Unknown/Complex type"
+            spec["stats"] = _summarize_scalar(stats["scalar_values"])
 
         param_specs.append(spec)
 
     return {
         "function_name": function_name,
         "num_calls": len(call_list),
-        "parameters": param_specs
+        "parameters": param_specs,
+        "signature": {
+            "params": param_order,
+            "defaults": defaults,
+        },
     }
 
 
-def format_operator_prompt(function_spec, profiler_context=None):
+def format_operator_prompt(function_spec, profiler_context=None, template: str | None = None):
     """
     Format the function specification into a clear prompt for the LLM.
     This is what you append to the system prompt.
@@ -169,20 +315,53 @@ def format_operator_prompt(function_spec, profiler_context=None):
 
 ### Function Signature
 
-Based on {function_spec['num_calls']} tracked call(s), implement this operator:
+Based on {function_spec['num_calls']} tracked call(s), implement this operator.
+
+Signature parameters (exact order): {function_spec['signature']['params']}
+Defaults: {function_spec['signature']['defaults']}
 
 **Parameters:**
 """
+    target = _target_device()
+    if target:
+        prompt += f"\nTarget device: {target}\n"
 
     # List all parameters
     for i, param in enumerate(function_spec['parameters'], 1):
         prompt += f"\n{i}. `{param['name']}` ({param['type']})"
         if 'shape' in param:
             prompt += f"\n   - Shape: {param['shape']}"
-            prompt += f"\n   - dtype: {param['dtype']}"
+            prompt += f"\n   - Stride: {param.get('stride', 'unknown')}"
+            prompt += f"\n   - Dtype(s): {param.get('dtype', 'unknown')}"
+            prompt += f"\n   - Device(s): {param.get('device', 'unknown')}"
+            prompt += f"\n   - Contiguous: {param.get('contiguous', [])}"
+            prompt += f"\n   - Requires grad: {param.get('requires_grad', [])}"
+            prompt += f"\n   - Numel: {param.get('numel', [])}"
         elif 'value' in param and param['value'] is not None:
             prompt += f"\n   - Default/Example: {param['value']}"
+        elif 'stats' in param:
+            prompt += f"\n   - Stats: {param['stats']}"
         prompt += f"\n   - {param['description']}"
+
+    prompt += """
+
+### Output Specification
+"""
+    output_spec = function_spec.get("output", {})
+    if output_spec:
+        for k, v in output_spec.items():
+            prompt += f"\n- {k}: {v}"
+    else:
+        prompt += "\n- Output: not available"
+
+    examples = function_spec.get("examples", [])
+    if examples:
+        prompt += "\n\n### Example Calls (summarized)\n"
+        for idx, ex in enumerate(examples, 1):
+            prompt += f"\nExample {idx}:\n"
+            prompt += f"- args: {ex.get('args')}\n"
+            prompt += f"- kwargs: {ex.get('kwargs')}\n"
+            prompt += f"- output: {ex.get('output')}\n"
 
     # Add profiler context if available
     if profiler_context:
@@ -212,6 +391,18 @@ This shows how PyTorch implements this operation internally:
 - You don't need to match PyTorch's internal implementation exactly
 
 """
+
+    if template:
+        prompt += """
+
+### Reference Kernel Template (use as a starting point)
+You may reuse structure and helper functions from this template, but ensure the signature
+matches the parameters above and the kernel is correct for this operator.
+
+```cpp
+"""
+        prompt += template
+        prompt += "\n```\n"
 
     # Add implementation guidance
     prompt += """
@@ -278,7 +469,7 @@ def parse_profiler_output(profiler_text):
     }
 
 
-def generate_full_llm_prompt(calls_list, function_name, profiler_output=None):
+def generate_full_llm_prompt(calls_list, function_name, profiler_output=None, template: str | None = None):
     """
     Complete pipeline: Generate the full prompt to send to an LLM.
 
@@ -309,6 +500,56 @@ def generate_full_llm_prompt(calls_list, function_name, profiler_output=None):
         profiler_context = parse_profiler_output(profiler_output)
 
     # Combine system prompt + operator specification
-    full_prompt = format_operator_prompt(spec, profiler_context)
+    # Attach output spec if present
+    output_spec = None
+    try:
+        for call in calls_list:
+            out = call.get("output")
+            if torch.is_tensor(out):
+                output_spec = _tensor_stats(out)
+                break
+            if isinstance(out, (list, tuple)):
+                output_spec = {"type": type(out).__name__, "length": len(out)}
+                break
+    except Exception:
+        output_spec = None
+    if output_spec:
+        spec["output"] = output_spec
+
+    examples = []
+    for call in calls_list[:2]:
+        try:
+            examples.append(
+                {
+                    "args": [_summarize_value(v) for v in call.get("args", [])],
+                    "kwargs": {
+                        k: _summarize_value(v)
+                        for k, v in call.get("kwargs", {}).items()
+                    },
+                    "output": _summarize_value(call.get("output")),
+                }
+            )
+        except Exception:
+            continue
+    if examples:
+        spec["examples"] = examples
+
+    full_prompt = format_operator_prompt(spec, profiler_context, template=template)
 
     return full_prompt
+
+
+def get_repair_prompt(function_name: str, attempt: int, feedback: str) -> str:
+    return f"""
+The previous kernel for {function_name} failed validation on attempt {attempt + 1}.
+
+ERROR SUMMARY (do not ignore):
+{feedback}
+
+Repair instructions:
+- Keep the launch() signature EXACTLY the same.
+- Do NOT change argument order or types.
+- Only modify CUDA kernel logic, indexing, dtype handling, and launch configuration.
+- Do NOT add PYBIND11_MODULE blocks.
+- Ensure all tensor outputs match PyTorch numerically and in shape.
+""".strip()

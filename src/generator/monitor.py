@@ -2,14 +2,12 @@
 src/generator/monitor.py
 Monitors and Preprocesses PyTorch Aten and CUDA Kernel Abstraction Layer Calls for Generator.
 """
+import os
 import torch
 
 aten_output: str = ""
 kernel_output: str = ""
-
-if not torch.cuda.is_available():
-    raise RuntimeError(
-        "This example requires a CUDA-enabled PyTorch installation.")
+_HAS_CUDA = torch.cuda.is_available()
 
 
 def handle_trace(prof):
@@ -51,6 +49,9 @@ def profile_single_op(context: dict, full_exec_string: str) -> str:
     Output:
         op_details (str): Formatted string of Aten/kernel info for the LLM.
     """
+    target_device = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    if not _HAS_CUDA or target_device == "cpu":
+        return ""
 
     # 1. Reset global profiler strings for this specific op
     global aten_output, kernel_output
