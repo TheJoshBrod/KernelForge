@@ -13,7 +13,7 @@ def:pub SSHSettings(config: any, handleSaveSshConnection: any, handleRemoveSshCo
     setView = view_state[1];
 
     # Form State for Add/Edit
-    form_state = useState({"host": "", "user": "", "key_path": "", "password": ""});
+    form_state = useState({"host": "", "user": "", "key_path": ""});
     formData = form_state[0];
     setFormData = form_state[1];
 
@@ -40,10 +40,8 @@ def:pub SSHSettings(config: any, handleSaveSshConnection: any, handleRemoveSshCo
                     conn = ssh_connections[active_idx];
                     updateStatus(active_idx, "pending");
                     
-                    pwd = conn["password"] if "password" in conn else "";
-                    k_path = conn["key_path"] if "key_path" in conn else "";
                     
-                    res = await checkSshConnectionWalker(conn["host"], conn["user"], pwd, k_path);
+                    res = await checkSshConnectionWalker(conn["host"], conn["user"], "", k_path);
                     success = res["success"] if "success" in res else False;
 
                     if success {
@@ -79,7 +77,7 @@ def:pub SSHSettings(config: any, handleSaveSshConnection: any, handleRemoveSshCo
     def onSave() -> None {
         handleSaveSshConnection(formData);
         setView("list");
-        setFormData({"host": "", "user": "", "key_path": "", "password": ""});
+        setFormData({"host": "", "user": "", "key_path": ""});
     }
 
     if view == "add" {
@@ -96,11 +94,7 @@ def:pub SSHSettings(config: any, handleSaveSshConnection: any, handleRemoveSshCo
                     <input type="text" value={formData["user"]} onChange={lambda e: any -> None { handleChange("user", e.target.value); }}
                         className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded px-3 text-zinc-200" placeholder="user" />
                 </div>
-                <div className="space-y-1">
-                    <label className="text-xs font-semibold text-zinc-400 uppercase">Password</label>
-                    <input type="password" value={formData["password"]} onChange={lambda e: any -> None { handleChange("password", e.target.value); }}
-                        className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded px-3 text-zinc-200" placeholder="••••••" />
-                </div>
+
                 <div className="space-y-1">
                     <label className="text-xs font-semibold text-zinc-400 uppercase">Key Path</label>
                     <input type="text" value={formData["key_path"]} onChange={lambda e: any -> None { handleChange("key_path", e.target.value); }}

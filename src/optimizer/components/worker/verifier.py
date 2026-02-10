@@ -296,3 +296,39 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
     print(f"Warning: Validation timed out. Killing worker.")
     _kill_worker()
     return False, "[Timeout Error] Validation timed out (Infinite loop detected)."
+
+
+
+def validate_remote_kernel(ssh_config: dict, generated_cu_code: str, paths: dict[str, Path]) -> tuple[bool, str]:
+    """
+    Validates a kernel on a remote server using the persistent worker.
+    """
+    from src.optimizer.core.ssh_client import RemoteWorkerClient, upload_files
+    
+    try:
+        worker = RemoteWorkerClient(ssh_config)
+        
+        # Upload IO files to shared cache
+        io_dir = paths["io_dir"]
+        io_files = list(io_dir.glob("*.pt"))
+        file_map = {str(f): f.name for f in io_files}
+        
+        remote_io_dir = "cgins_workspace/io_cache/" + io_dir.name
+        upload_files(worker.client, file_map, remote_io_dir)
+        
+        # Send verify task
+        payload = {
+            "code": generated_cu_code,
+            "io_dir": remote_io_dir
+        }
+        
+        result = worker.send_task("verify", payload)
+        worker.close()
+        
+        if result.get("valid"):
+            return True, "Validation Successful"
+        else:
+            return False, result.get("log", "Unknown Validation Error")
+            
+    except Exception as e:
+        return False, f"Remote Validation Exception: {e}"
