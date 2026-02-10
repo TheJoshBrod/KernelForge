@@ -8,7 +8,7 @@ def:pub Mascot(
     alt: str = "CGinS mascot",
     ambient: bool = False,
     enableVideo: bool = False
-) {
+) -> Any {
     has isHovered: bool = False,
         shouldLoadVideo: bool = False,
         videoReady: bool = False,

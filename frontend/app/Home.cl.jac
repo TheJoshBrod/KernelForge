@@ -12,7 +12,8 @@ def:pub Home {
     navigate = useNavigate();
     has projects: list = [],
         loading: bool = True,
-        splashDone: bool = False;
+        splashDone: bool = (sessionStorage.getItem("splash_shown") == "true"),
+        searchQuery: str = "";
 
     async def fetchProjects -> None {
         start: float = Date.now();
@@ -30,11 +31,12 @@ def:pub Home {
             console.error("Failed to fetch projects", e);
         } finally {
             elapsed = Date.now() - start;
-            if elapsed < 3000 {
+            if not splashDone and elapsed < 3000 {
                 def sleeper(resolve: any, reject: any) -> None {
                     setTimeout(resolve, 3000 - elapsed);
                 }
                 await Reflect.construct(Promise, [sleeper]);
+                sessionStorage.setItem("splash_shown", "true");
             }
             loading = False;
             splashDone = True;
@@ -54,7 +56,7 @@ def:pub Home {
     recentLinks = [];
     projectOptions = [];
     hasRecent = False;
-    idx = 0;
+    hasRecent = False;
     for project in projects {
         projectOptions = projectOptions.concat(
             [
@@ -63,10 +65,10 @@ def:pub Home {
                 </option>
             ]
         );
-        if idx < 4 {
+        if not searchQuery
+        or project["name"].toLowerCase().includes(searchQuery.toLowerCase()) {
             recentProjects = recentProjects.concat([project]);
             hasRecent = True;
-            idx = idx + 1;
         }
     }
     for project in recentProjects {
@@ -141,9 +143,17 @@ def:pub Home {
                                 Recent Projects
                             </span>
                             <span className="table-muted">
-                                {projects.length}total
+                                {f"{projects.length} total"}
                             </span>
                         </div>
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={lambda e: any  -> None { searchQuery = e.target.value;}}
+                            placeholder="Search projects..."
+                            className="input"
+                            style={{"marginBottom": "1rem"}}
+                        />
                         <div className="launcher-list">
                             {recentLinks
                             if hasRecent
