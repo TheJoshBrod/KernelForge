@@ -16,7 +16,7 @@ glob DEFAULT_CONFIG: dict = {
          }
      );
 
-def:pub ConfigProvider(children: any) -> any {
+def:pub ConfigProvider(children: any) {
     has config: dict = DEFAULT_CONFIG,
         loading: bool = True;
 
@@ -42,7 +42,7 @@ def:pub ConfigProvider(children: any) -> any {
 
     useEffect(lambda -> None { fetchConfig();}, []);
 
-    async def save_config_handler(newConfig: any) -> bool {
+    async def save_config_handler(newConfig: dict) -> bool {
         try {
             # Calls the passed saveConfig
             resp = await jacSpawn("SaveConfig", "", {"cfg": newConfig});
@@ -64,7 +64,7 @@ def:pub ConfigProvider(children: any) -> any {
         <ConfigContext.Provider
             value={{
                 "config": config,
-                "setConfig": lambda newConfig: any  -> None { config = newConfig;},
+                "setConfig": lambda newConfig: dict  -> None { config = newConfig;},
                 "saveConfig": save_config_handler,
                 "loading": loading
             }}
@@ -73,7 +73,7 @@ def:pub ConfigProvider(children: any) -> any {
         </ConfigContext.Provider>;
 }
 
-def:pub useConfig -> any {
+def:pub useConfig {
     return useContext(ConfigContext);
 }
 # Create Context

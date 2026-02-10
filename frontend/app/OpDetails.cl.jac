@@ -3,10 +3,10 @@
 import from react { useEffect }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate, useParams }
-import from "backdrops/GameOfLifeBackground" { GameOfLifeBackground }
-import from .Mascot { Mascot }
+import from "../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
+import from "../components/Mascot.cl.jac" { Mascot }
 
-def:pub OpDetails -> any {
+def:pub OpDetails {
     navigate = useNavigate();
     params = useParams();
     projectName: str = params.projectName or "";

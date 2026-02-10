@@ -15,11 +15,11 @@ import from recharts {
     Legend,
     ResponsiveContainer
 }
-import from "backdrops/GameOfLifeBackground" { GameOfLifeBackground }
-import from .GlowButton { GlowButton }
-import from .Mascot { Mascot }
+import from "../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
+import from "../components/ui/GlowButton.cl.jac" { GlowButton }
+import from "../components/Mascot.cl.jac" { Mascot }
 
-def:pub Project -> any {
+def:pub Project {
     navigate = useNavigate();
     params = useParams();
     raw_name = params.projectName;

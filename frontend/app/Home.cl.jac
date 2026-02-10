@@ -3,18 +3,19 @@
 import from react { useEffect }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
-import from "backdrops/GameOfLifeBackground" { GameOfLifeBackground }
-import from "SplashScreen" { SplashScreen }
-import from .Mascot { Mascot }
+import from "../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
+import from "../components/ui/GlowButton.cl.jac" { GlowButton }
+import from "../components/Mascot.cl.jac" { Mascot }
+import from "../components/SplashScreen.cl.jac" { SplashScreen }
 
-def:pub Home -> any {
+def:pub Home {
     navigate = useNavigate();
     has projects: list = [],
         loading: bool = True,
         splashDone: bool = False;
 
     async def fetchProjects -> None {
-        start = Date.now();
+        start: float = Date.now();
         try {
             resp = await jacSpawn("GetProjects", "", {});
             data = resp.reports[0]
@@ -144,7 +145,7 @@ def:pub Home -> any {
                                 Recent Projects
                             </span>
                             <span className="table-muted">
-                                {projects.length} total
+                                {projects.length}total
                             </span>
                         </div>
                         <div className="launcher-list">

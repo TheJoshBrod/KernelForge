@@ -3,10 +3,10 @@
 import from react { useEffect }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
-import from "backdrops/GameOfLifeBackground" { GameOfLifeBackground }
-import from ..context.ConfigContext { useConfig }
+import from "../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
+import from "../context/ConfigContext.cl.jac" { useConfig }
 
-def:pub Settings -> any {
+def:pub Settings {
     navigate = useNavigate();
     config_ctx = useConfig();
     config = config_ctx.config;

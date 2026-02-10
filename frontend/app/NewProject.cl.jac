@@ -4,12 +4,12 @@ import from react { useEffect }
 import from sonner { toast }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
-import from "@jac-client/assets/SettingsIcon" { SettingsIcon }
-import from "@jac-client/assets/BackIcon" { BackIcon }
-import from "@jac-client/assets/UploadIcon" { UploadIcon }
-import from "@jac-client/assets/FolderIcon" { FolderIcon }
+import from "../assets/SettingsIcon.cl.jac" { SettingsIcon }
+import from "../assets/BackIcon.cl.jac" { BackIcon }
+import from "../assets/UploadIcon.cl.jac" { UploadIcon }
+import from "../assets/FolderIcon.cl.jac" { FolderIcon }
 
-def LoadingGhostIcon(className: str = "") -> any {
+def LoadingGhostIcon(className: str = "") {
     return
         <svg viewBox="0 0 120 120" className={className} fill="currentColor">
             <path
@@ -42,7 +42,7 @@ def fileToText(file: any) -> any {
     return Reflect.construct(Promise, [executor]);
 }
 
-def:pub NewProject -> any {
+def:pub NewProject {
     navigate = useNavigate();
     has code: str = "",
         formData: dict = {

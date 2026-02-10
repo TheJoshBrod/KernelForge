@@ -1,9 +1,9 @@
 """Splash Screen Component"""
 
-import from "backdrops/GameOfLifeBackground" { GameOfLifeBackground }
-import from .Mascot { Mascot }
+import from "../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
+import from "./Mascot.cl.jac" { Mascot }
 
-def:pub SplashScreen(exiting: bool) -> any {
+def:pub SplashScreen(exiting: bool) -> jsxElement {
     splashClass = "splash-screen";
     if exiting {
         splashClass = "splash-screen is-exiting";

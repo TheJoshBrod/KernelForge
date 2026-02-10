@@ -9,7 +9,6 @@ paramiko = ">=0.0.0"
 
 [dependencies.npm]
 jac-client-node = "1.0.4"
-"@jac-client/utils" = "latest"
 recharts = "latest"
 sonner = "latest"
 react-router-dom = "latest"
@@ -18,9 +17,7 @@ tailwindcss = "latest"
 tailwind-merge = "latest"
 clsx = "latest"
 watchdog = "latest"
-
-[dependencies.npm.dev]
-"@jac-client/dev-deps" = "1.0.0"
+"@vitejs/plugin-react" = "latest"
 
 [dev-dependencies]
 watchdog = ">=3.0.0"
@@ -29,5 +26,23 @@ watchdog = ">=3.0.0"
 base_route_app = "app"
 
 [plugins.client.vite]
-plugins = ["tailwindcss()"]
-lib_imports = ["import tailwindcss from '@tailwindcss/vite'"]
+plugins = ["jacExtensionFix()", "tailwindcss()"]
+lib_imports = [
+    "import tailwindcss from '@tailwindcss/vite'",
+    '''
+function jacExtensionFix() {
+  return {
+    name: "jac-extension-fix",
+    enforce: "pre",
+    async resolveId(source, importer) {
+      if (source.endsWith(".cl.jac")) {
+        const newSource = source.replace(/\.cl\.jac$/, ".js");
+        const resolution = await this.resolve(newSource, importer, { skipSelf: true });
+        if (resolution) return resolution;
+      }
+      return null;
+    }
+  };
+}
+'''
+]
