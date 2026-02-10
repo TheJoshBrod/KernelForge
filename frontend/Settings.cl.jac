@@ -40,6 +40,15 @@ def:pub Settings -> any {
         new_llm_info[field] = value;
         setConfig({"llm_info": new_llm_info});
     }
+
+    def handleSshChange(field: str, value: str) -> None {
+        new_ssh_info = config["ssh_info"]
+        if "ssh_info" in config
+        else {"host": "", "user": "", "password": "", "key_path": ""};
+        new_ssh_info[field] = value;
+        setConfig({"ssh_info": new_ssh_info});
+    }
+
     async def handleSave -> None {
         saving = True;
         await saveConfig(config);
@@ -63,6 +72,37 @@ def:pub Settings -> any {
         } except (error) {
             console.error("API test failed:", error);
             apiTest = {"success": False, "error": "API test failed"};
+        } finally {
+            apiTesting = False;
+        }
+    }
+
+    async def handleTestSsh -> None {
+        apiTesting = True;
+        apiTest = {};
+        ssh_info = config["ssh_info"] if "ssh_info" in config else {};
+        try {
+            resp = await jacSpawn(
+                "CheckSshConnection",
+                "",
+                {
+                    "host": ssh_info["host"] if "host" in ssh_info else "",
+                    "user": ssh_info["user"] if "user" in ssh_info else "",
+                    "password": ssh_info["password"] if "password" in ssh_info else "",
+                    "key_path": ssh_info["key_path"] if "key_path" in ssh_info else ""
+                }
+            );
+            data = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else None;
+            if data {
+                apiTest = data;
+            } else {
+                apiTest = {"success": False, "error": "No response from server"};
+            }
+        } except (error) {
+            console.error("SSH test failed:", error);
+            apiTest = {"success": False, "error": "SSH test failed"};
         } finally {
             apiTesting = False;
         }
@@ -201,6 +241,91 @@ def:pub Settings -> any {
                             {" - "}{responseValue}
                         </span>}
                     </div>}
+                </div>
+                <div className="settings-header" style={{"marginTop": "2rem"}}>
+                    <h2 className="settings-title" style={{"fontSize": "1.25rem"}}>
+                        SSH Configuration
+                    </h2>
+                    <p className="settings-subtitle">
+                        Configure remote GPU server
+                    </p>
+                </div>
+                <div className="form-stack">
+                    <div className="form-field">
+                        <label className="input-label">
+                            Host
+                        </label>
+                        <input
+                            type="text"
+                            value={config["ssh_info"]["host"]
+                            if "ssh_info" in config and "host" in config["ssh_info"]
+                            else ""}
+                            onChange={lambda e: any  -> None { handleSshChange(
+                                "host", e.target.value
+                            );}}
+                            placeholder="hostname or IP"
+                            className="input"
+                        />
+                    </div>
+                    <div className="form-field">
+                        <label className="input-label">
+                            User
+                        </label>
+                        <input
+                            type="text"
+                            value={config["ssh_info"]["user"]
+                            if "ssh_info" in config and "user" in config["ssh_info"]
+                            else ""}
+                            onChange={lambda e: any  -> None { handleSshChange(
+                                "user", e.target.value
+                            );}}
+                            placeholder="username"
+                            className="input"
+                        />
+                    </div>
+                    <div className="form-field">
+                        <label className="input-label">
+                            Password (Optional)
+                        </label>
+                        <input
+                            type="password"
+                            value={config["ssh_info"]["password"]
+                            if "ssh_info" in config
+                            and "password" in config["ssh_info"]
+                            else ""}
+                            onChange={lambda e: any  -> None { handleSshChange(
+                                "password", e.target.value
+                            );}}
+                            placeholder="password"
+                            className="input"
+                        />
+                    </div>
+                    <div className="form-field">
+                        <label className="input-label">
+                            Key Path (Optional)
+                        </label>
+                        <input
+                            type="text"
+                            value={config["ssh_info"]["key_path"]
+                            if "ssh_info" in config
+                            and "key_path" in config["ssh_info"]
+                            else ""}
+                            onChange={lambda e: any  -> None { handleSshChange(
+                                "key_path", e.target.value
+                            );}}
+                            placeholder="/path/to/private/key"
+                            className="input input--mono"
+                        />
+                    </div>
+                    <button
+                        onClick={handleTestSsh}
+                        disabled={apiTesting}
+                        className="app-button app-button--secondary app-button--full"
+                    >
+                        {("Testing SSH..." if apiTesting else "Test SSH Connection")}
+                    </button>
+                </div>
+                <div className="settings-actions-block">
                     <div className="settings-actions">
                         <button
                             onClick={handleReturn}

@@ -5,10 +5,9 @@ import from pathlib { Path }
 import from base64 { b64decode, b64encode }
 import from os { path, makedirs, listdir }
 import from datetime { datetime }
-import from zipfile { ZipFile }
-import sys;
-import os;
-import subprocess;
+import socket;
+import paramiko;
+import torch;
 
 glob config_store: dict = {
          "llm_info": {"model": "", "apikey": "", "provider": ""},
@@ -456,6 +455,8 @@ walker:pub CreateProject {
         try {
             # Define projects directory
             # Define projects directory
+            # Define projects directory
+            # Define projects directory
             projects_dir = path.join(repo_root, "projects");
             if not path.exists(projects_dir) {
                 makedirs(projects_dir);
@@ -472,12 +473,16 @@ walker:pub CreateProject {
 
             # Save model.py
             # Save model.py
+            # Save model.py
+            # Save model.py
             if self.code {
                 with open(path.join(project_path, "model.py"), "w") as f {
                     f.write(self.code);
                 }
             }
 
+            # Save weights.pt
+            # Save weights.pt
             # Save weights.pt
             # Save weights.pt
             if self.weightsFileB64 {
@@ -492,6 +497,8 @@ walker:pub CreateProject {
                 validation_dir = path.join("data", "validation");
             }
 
+            # Save config.json
+            # Save config.json
             # Save config.json
             # Save config.json
             hw = _detect_hardware();
@@ -621,10 +628,186 @@ walker:pub GetProjects {
     }
 }
 
-walker:pub DetectHardware {
-    can return_hw with `root entry {
-        info = _detect_hardware();
-        report info;
+walker:pub GetSystemInfo {
+    has host: str = "";
+    has user: str = "";
+    has password: str = "";
+    has key_path: str = "";
+
+    can return_info with `root entry {
+        try {
+            all_gpus = [];
+            
+            # 1. LOCAL CHECK
+            try {
+                if torch.cuda.is_available() {
+                    count = torch.cuda.device_count();
+                    for i in range(count) {
+                        device_name = torch.cuda.get_device_name(i);
+                        props = torch.cuda.get_device_properties(i);
+                        total_memory = props.total_memory / (1024 ** 3);
+                        
+                        arch_name = "Unknown";
+                        if props.major == 7 { arch_name = "Volta/Turing"; }
+                        elif props.major == 8 { arch_name = "Ampere"; }
+                        elif props.major == 9 { arch_name = "Hopper"; }
+
+                        all_gpus.append({
+                            "name": f"{device_name} (Local)",
+                            "memory": f"{total_memory:.1f} GB",
+                            "compute_capability": f"v{props.major}.{props.minor} {arch_name}",
+                            "sm_count": props.multi_processor_count
+                        });
+                    }
+                }
+            } except Exception as e {
+                print(f"Local GPU check failed: {e}");
+            }
+
+            # 2. REMOTE CHECK VIA SSH
+            if self.host and self.user {
+                try {
+                    client = paramiko.SSHClient();
+                    client.set_missing_host_key_policy(paramiko.AutoAddPolicy());
+                    
+                    # Resolve key path
+                    k_path = None;
+                    if self.key_path {
+                        if path.isdir(self.key_path) {
+                            possible = ["id_rsa", "id_ed25519"];
+                            for p in possible {
+                                fp = path.join(self.key_path, p);
+                                if path.exists(fp) { k_path = fp; break; }
+                            }
+                        } else {
+                            k_path = self.key_path;
+                        }
+                    }
+
+                    client.connect(
+                        hostname=self.host,
+                        username=self.user,
+                        password=self.password,
+                        key_filename=k_path,
+                        timeout=5
+                    );
+
+                    # Python script to check GPU
+                    cmd_script = "import json; import sys; import subprocess; def get_gpu_info():\n try:\n  import torch\n  if torch.cuda.is_available():\n   gpus=[]\n   for i in range(torch.cuda.device_count()):\n    props=torch.cuda.get_device_properties(i); mem_gb=props.total_memory/(1024**3); arch='Unknown';\n    if props.major==7: arch='Volta/Turing'\n    elif props.major==8: arch='Ampere'\n    elif props.major==9: arch='Hopper'\n    gpus.append({'name':torch.cuda.get_device_name(i), 'memory':f'{mem_gb:.1f} GB', 'compute_capability':f'v{props.major}.{props.minor} {arch}', 'sm_count':props.multi_processor_count})\n   return gpus\n except: pass\n return []\nprint(json.dumps(get_gpu_info()))";
+                    
+                    b64_script = b64encode(cmd_script.encode('utf-8')).decode('utf-8');
+                    cmd = f"bash -lc 'python3 -c \"import base64; exec(base64.b64decode(\\\"{b64_script}\\\"))\"'";
+                    
+                    exec_res = client.exec_command(cmd);
+                    stdout = exec_res[1];
+                    stderr = exec_res[2];
+                    
+                    exit_status = stdout.channel.recv_exit_status();
+                    
+                    if exit_status == 0 {
+                        out_json = stdout.read().decode().strip();
+                        remote_gpus = loads(out_json);
+                        for r_gpu in remote_gpus {
+                            r_gpu["name"] = f"{r_gpu['name']} (Remote: {self.host})";
+                            all_gpus.append(r_gpu);
+                        }
+                    } else {
+                        err = stderr.read().decode().strip();
+                        print(f"Remote python failed: {err}");
+                    }
+                    client.close();
+
+                } except Exception as e {
+                    print(f"SSH Check failed: {e}");
+                }
+            }
+            
+            report {
+                "available": True if all_gpus else False,
+                "gpus": all_gpus,
+                "source": "mixed"
+            };
+        } except Exception as e {
+            report {"available": False, "error": str(e)};
+        }
+    }
+}
+
+walker:pub CheckSshConnection {
+    has host: str;
+    has user: str;
+    has password: str = "";
+    has key_path: str = "";
+    has port: int = 22;
+    has timeout: int = 5;
+
+    can check with `root entry {
+        client = paramiko.SSHClient();
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy());
+        
+        try {
+            print(f"Attempting SSH connection to {self.user}@{self.host}:{self.port}...");
+            
+            # Connect using key_path if provided, otherwise password, or both (paramiko handles precedence usually)
+            # We'll explicitly handle the key_filename argument logic
+            k_path = None;
+            if self.key_path {
+                if path.isdir(self.key_path) {
+                    # If user provided a directory (e.g. ~/.ssh/), try to find common keys
+                    possible_keys = ["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"];
+                    found_keys = [];
+                    for name in possible_keys {
+                        full = path.join(self.key_path, name);
+                        if path.exists(full) {
+                            found_keys.append(full);
+                        }
+                    }
+                    if found_keys {
+                        k_path = found_keys;
+                        print(f"Found keys in directory: {found_keys}");
+                    } else {
+                        print(f"Warning: {self.key_path} is a directory but no common keys found inside.");
+                    }
+                } else {
+                    # It's a file
+                    k_path = self.key_path;
+                }
+            }
+            
+            client.connect(
+                hostname=self.host,
+                port=self.port,
+                username=self.user,
+                password=self.password,
+                key_filename=k_path,
+                timeout=self.timeout
+            );
+            
+            print("SSH connection established. Executing test command...");
+
+            # Execute a simple command to verify shell access
+            exec_res = client.exec_command('echo "Connection Successful"');
+            stdin = exec_res[0];
+            stdout = exec_res[1];
+            stderr = exec_res[2];
+            exit_status = stdout.channel.recv_exit_status();
+            
+            if exit_status == 0 {
+                output = stdout.read().decode().strip();
+                print(f"Command execution successful: {output}");
+                report {"success": True, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")};
+            } else {
+                error_msg = stderr.read().decode().strip();
+                print(f"Command execution failed with status {exit_status}: {error_msg}");
+                report {"success": False, "error": f"Command failed: {error_msg}"};
+            }
+
+        } except Exception as e {
+            print(f"SSH/SFTP check failed for {self.host}: {e}");
+            report {"success": False, "error": str(e)};
+        } finally {
+            client.close();
+        }
     }
 }
 
