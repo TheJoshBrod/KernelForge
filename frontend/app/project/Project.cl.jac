@@ -15,9 +15,11 @@ import from recharts {
     Legend,
     ResponsiveContainer
 }
-import from "../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
-import from "../components/ui/GlowButton.cl.jac" { GlowButton }
-import from "../assets/CGinSLogo.cl.jac" { CGinSLogo }
+import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
+    GameOfLifeBackground
+}
+import from "../../components/ui/GlowButton.cl.jac" { GlowButton }
+import from "../../components/ui/Icons.cl.jac" { CGinSLogo }
 
 def:pub Project {
     navigate = useNavigate();

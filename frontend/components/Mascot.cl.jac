@@ -1,6 +1,8 @@
 """Mascot component with PNG default and MP4 hover (desktop only)."""
 
 import from react { useEffect, useRef }
+import from "../../assets/mascot.mp4" { default as mascotVideo }
+import from "../../assets/new-mascot.png" { default as mascotImage }
 
 def:pub Mascot(
     variant: str = "hero",
@@ -105,8 +107,8 @@ def:pub Mascot(
         <video
             className="mascot-video"
             ref={videoRef}
-            src={"/mascot.mp4" if shouldLoadVideo else ""}
-            poster="/new-mascot.png"
+            src={mascotVideo if shouldLoadVideo else ""}
+            poster={mascotImage}
             muted={True}
             loop={True}
             playsInline={True}
@@ -129,7 +131,7 @@ def:pub Mascot(
             <div className="mascot-media">
                 <img
                     className="mascot-img"
-                    src="/new-mascot.png"
+                    src={mascotImage}
                     alt={alt}
                     draggable={False}
                 />

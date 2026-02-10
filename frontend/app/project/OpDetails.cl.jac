@@ -3,8 +3,10 @@
 import from react { useEffect }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate, useParams }
-import from "../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
-import from "../assets/CGinSLogo.cl.jac" { CGinSLogo }
+import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
+    GameOfLifeBackground
+}
+import from "../../components/ui/Icons.cl.jac" { CGinSLogo }
 
 def:pub OpDetails {
     navigate = useNavigate();
