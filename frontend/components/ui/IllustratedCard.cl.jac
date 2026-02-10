@@ -1,6 +1,6 @@
 """Illustrated card component for landing page."""
 
-def:pub IllustratedCard(title: str, text: str, icon: any, tag: str = "") -> any {
+def:pub IllustratedCard(title: str, text: str, icon: any, tag: str = "") -> Any {
     tagMarkup = (
         <span className="card-tag">
             {tag}
