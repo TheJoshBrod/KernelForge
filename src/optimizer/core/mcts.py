@@ -254,7 +254,7 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
                 code_path = Path(current.code)
                 # Handle relative paths if necessary, though absolute is safer
                 if not code_path.is_absolute():
-                     code_path = paths["proj_dir"].parent / code_path
+                     code_path = Path.cwd() / code_path
 
                 if code_path.exists():
                     codes.append((current.id, code_path.read_text()))
@@ -332,7 +332,7 @@ def get_existing_roots(paths: dict) -> list[dict]:
                 # e.g., "torch_nn_functional_embedding/attempts/kernel_0.cu"
                 # proj_dir is like ".../NVIDIA.../torch_nn_functional_embedding"
                 # so parent is ".../NVIDIA..." and we join with relative path
-                code_path = paths["proj_dir"].parent / code_path_str
+                code_path = Path.cwd() / code_path_str
             
             if code_path.exists():
                 code_preview = code_path.read_text()[:4000]  # First 4KB
