@@ -636,31 +636,34 @@ walker:pub GetSystemInfo {
     can return_info with `root entry {
         try {
             all_gpus = [];
-            
+
             # 1. LOCAL CHECK
             try {
-<<<<<<< HEAD
-=======
                 import torch;
->>>>>>> f4ebc598e3d92390342b4487b84c1ce173943ffd
                 if torch.cuda.is_available() {
                     count = torch.cuda.device_count();
                     for i in range(count) {
                         device_name = torch.cuda.get_device_name(i);
                         props = torch.cuda.get_device_properties(i);
                         total_memory = props.total_memory / (1024 ** 3);
-                        
-                        arch_name = "Unknown";
-                        if props.major == 7 { arch_name = "Volta/Turing"; }
-                        elif props.major == 8 { arch_name = "Ampere"; }
-                        elif props.major == 9 { arch_name = "Hopper"; }
 
-                        all_gpus.append({
-                            "name": f"{device_name} (Local)",
-                            "memory": f"{total_memory:.1f} GB",
-                            "compute_capability": f"v{props.major}.{props.minor} {arch_name}",
-                            "sm_count": props.multi_processor_count
-                        });
+                        arch_name = "Unknown";
+                        if props.major == 7 {
+                            arch_name = "Volta/Turing";
+                        } elif props.major == 8 {
+                            arch_name = "Ampere";
+                        } elif props.major == 9 {
+                            arch_name = "Hopper";
+                        }
+
+                        all_gpus.append(
+                            {
+                                "name": f"{device_name} (Local)",
+                                "memory": f"{total_memory:.1f} GB",
+                                "compute_capability": f"v{props.major}.{props.minor} {arch_name}",
+                                "sm_count": props.multi_processor_count
+                            }
+                        );
                     }
                 }
             } except Exception as e {
@@ -672,7 +675,7 @@ walker:pub GetSystemInfo {
                 try {
                     client = paramiko.SSHClient();
                     client.set_missing_host_key_policy(paramiko.AutoAddPolicy());
-                    
+
                     # Resolve key path
                     k_path = None;
                     if self.key_path {
@@ -680,7 +683,10 @@ walker:pub GetSystemInfo {
                             possible = ["id_rsa", "id_ed25519"];
                             for p in possible {
                                 fp = path.join(self.key_path, p);
-                                if path.exists(fp) { k_path = fp; break; }
+                                if path.exists(fp) {
+                                    k_path = fp;
+                                    break;
+                                }
                             }
                         } else {
                             k_path = self.key_path;
@@ -710,7 +716,7 @@ def get_gpu_info():
             for i in range(torch.cuda.device_count()):
                 props = torch.cuda.get_device_properties(i)
                 mem_gb = props.total_memory / (1024**3)
-                
+
                 arch_name = "Unknown"
                 if props.major == 7: arch_name = "Volta/Turing"
                 elif props.major == 8: arch_name = "Ampere"
@@ -741,14 +747,14 @@ def get_gpu_info():
                 name = parts[0]
                 mem_str = parts[1] # e.g. "24576 MiB"
                 cc = parts[2] # e.g. "8.6"
-                
+
                 # Convert memory to GB
                 try:
                     mem_val = float(mem_str.split()[0])
                     mem_gb = f"{mem_val / 1024:.1f} GB"
                 except:
                     mem_gb = mem_str
-                
+
                 # Arch name from CC
                 arch_name = "Unknown"
                 try:
@@ -771,18 +777,18 @@ def get_gpu_info():
 
 print(json.dumps(get_gpu_info()))
 """;
-                    
+
                     b64_script = b64encode(cmd_script.encode('utf-8')).decode('utf-8');
                     # Use bash -lc to ensure profile/bashrc are sourced (PATH, virtualenvs, etc.)
                     # We escape single quotes for the bash command
                     cmd = f"""bash -lc 'python3 -c "import base64; exec(base64.b64decode(\\"{b64_script}\\"))"'""";
-                    
+
                     exec_res = client.exec_command(cmd);
                     stdout = exec_res[1];
                     stderr = exec_res[2];
-                    
+
                     exit_status = stdout.channel.recv_exit_status();
-                    
+
                     if exit_status == 0 {
                         out_json = stdout.read().decode().strip();
                         remote_gpus = loads(out_json);
@@ -796,12 +802,11 @@ print(json.dumps(get_gpu_info()))
                         # Don't fail completely, just log error and continue with local
                     }
                     client.close();
-
                 } except Exception as e {
                     print(f"SSH Check failed: {e}");
                 }
             }
-            
+
             report {
                 "available": True if all_gpus else False,
                 "gpus": all_gpus,
@@ -824,10 +829,12 @@ walker:pub CheckSshConnection {
     can check with `root entry {
         client = paramiko.SSHClient();
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy());
-        
+
         try {
-            print(f"Attempting SSH connection to {self.user}@{self.host}:{self.port}...");
-            
+            print(
+                f"Attempting SSH connection to {self.user}@{self.host}:{self.port}..."
+            );
+
             # Connect using key_path if provided, otherwise password, or both (paramiko handles precedence usually)
             # We'll explicitly handle the key_filename argument logic
             k_path = None;
@@ -846,14 +853,16 @@ walker:pub CheckSshConnection {
                         k_path = found_keys;
                         print(f"Found keys in directory: {found_keys}");
                     } else {
-                        print(f"Warning: {self.key_path} is a directory but no common keys found inside.");
+                        print(
+                            f"Warning: {self.key_path} is a directory but no common keys found inside."
+                        );
                     }
                 } else {
                     # It's a file
                     k_path = self.key_path;
                 }
             }
-            
+
             client.connect(
                 hostname=self.host,
                 port=self.port,
@@ -862,7 +871,7 @@ walker:pub CheckSshConnection {
                 key_filename=k_path,
                 timeout=self.timeout
             );
-            
+
             print("SSH connection established. Executing test command...");
 
             # Execute a simple command to verify shell access
@@ -871,17 +880,21 @@ walker:pub CheckSshConnection {
             stdout = exec_res[1];
             stderr = exec_res[2];
             exit_status = stdout.channel.recv_exit_status();
-            
+
             if exit_status == 0 {
                 output = stdout.read().decode().strip();
                 print(f"Command execution successful: {output}");
-                report {"success": True, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")};
+                report {
+                    "success": True,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                };
             } else {
                 error_msg = stderr.read().decode().strip();
-                print(f"Command execution failed with status {exit_status}: {error_msg}");
+                print(
+                    f"Command execution failed with status {exit_status}: {error_msg}"
+                );
                 report {"success": False, "error": f"Command failed: {error_msg}"};
             }
-
         } except Exception as e {
             print(f"SSH/SFTP check failed for {self.host}: {e}");
             report {"success": False, "error": str(e)};
