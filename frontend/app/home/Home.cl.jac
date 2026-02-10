@@ -7,7 +7,7 @@ import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
     GameOfLifeBackground
 }
 import from "../../components/ui/GlowButton.cl.jac" { GlowButton }
-import from "../../assets/CGinSLogo.cl.jac" { CGinSLogo }
+import from "../../components/ui/Icons.cl.jac" { CGinSLogo }
 import from "../../components/SplashScreen.cl.jac" { SplashScreen }
 
 def:pub Home {

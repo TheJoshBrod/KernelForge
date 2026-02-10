@@ -4,11 +4,13 @@ import from react { useEffect }
 import from sonner { toast }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
-import from "../../assets/SettingsIcon.cl.jac" { SettingsIcon }
-import from "../../assets/BackIcon.cl.jac" { BackIcon }
-import from "../../assets/UploadIcon.cl.jac" { UploadIcon }
-import from "../../assets/FolderIcon.cl.jac" { FolderIcon }
-import from "../../assets/GhostIcon.cl.jac" { GhostIcon }
+import from "../../components/ui/Icons.cl.jac" {
+    SettingsIcon,
+    BackIcon,
+    UploadIcon,
+    FolderIcon,
+    GhostIcon
+}
 
 # Client-side helper for reading file as base64
 def fileToBase64(file: any) -> any {
@@ -111,6 +113,8 @@ def:pub NewProject {
                 validation_name = formData["validationZip"].name;
             }
 
+            # Call the walker passed from parent
+            # Call the walker passed from parent
             # Call the walker passed from parent
             # Call the walker passed from parent
             submitStage = "Creating project";

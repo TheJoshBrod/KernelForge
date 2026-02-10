@@ -1,6 +1,5 @@
 import from react { useState, useEffect }
-import from "../../assets/ChevronDownIcon.cl.jac" { ChevronDownIcon }
-import from "../../assets/TrashIcon.cl.jac" { TrashIcon }
+import from "../../components/ui/Icons.cl.jac" { ChevronDownIcon, TrashIcon }
 
 def:pub SSHSettings(
     config: dict,
