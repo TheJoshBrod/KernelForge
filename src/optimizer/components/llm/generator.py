@@ -55,7 +55,7 @@ def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str
     return feedback, code
 
 
-def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) -> Tuple[str, bool, str]:
+def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path], ssh_config: dict = None) -> Tuple[str, bool, str]:
     """Generates a new kernel then validates it for correctness
 
     Args:
@@ -63,6 +63,7 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
         msg (str): User message for LLM
         model (str): Name of LLM model
         paths (dict[Path]): Data structure holding different filepaths
+        ssh_config (dict, optional): SSH configuration for remote validation.
 
     Returns:
         Tuple[str, bool, str]: _description_
@@ -75,7 +76,10 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
         print(f"Raw response:\n{response}")
         return feedback, False, "Failed to extract code"
 
-    is_valid, error = verifier.validate_kernel(cu_code, paths)
+    if ssh_config:
+        is_valid, error = verifier.validate_remote_kernel(ssh_config, cu_code, paths)
+    else:
+        is_valid, error = verifier.validate_kernel(cu_code, paths)
 
     if not is_valid:
         # Save to garbage dump
@@ -99,7 +103,7 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
     return feedback, is_valid, error
 
 
-def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None) -> Tuple[str, bool]:
+def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None, ssh_config: dict = None) -> Tuple[str, bool]:
     """Generates and validates CUDA kernels 
 
     Args:
@@ -109,6 +113,7 @@ def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, 
         paths (dict[str, Path]): Paths to directories
         model (str, optional): LLM model name. Defaults to settings value.
         ancestor_codes (list[tuple[int, str]], optional): List of (iteration_id, code) tuples from ancestors
+        ssh_config (dict, optional): SSH configuration for remote validation.
     """
     if not model:
         provider = ensure_llm_config().strip().lower()
@@ -138,7 +143,7 @@ def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, 
     print(f"\t\tSaved prompt to: {prompt_dump_path}")
 
     paths["attempt"] = 0
-    feedback, is_valid, error = create_and_validate(llm, msg, model, paths)
+    feedback, is_valid, error = create_and_validate(llm, msg, model, paths, ssh_config)
     if is_valid:
         return feedback, True
     print("\t\tInitial gen failed...")
@@ -146,7 +151,7 @@ def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, 
     for i in range(settings.retry_limit):
         print(f"\t\t\tReattempt {i}")
         paths["attempt"] = i + 1
-        _, is_valid, error = create_and_validate(llm, error, model, paths)
+        _, is_valid, error = create_and_validate(llm, error, model, paths, ssh_config)
         if is_valid:
             return feedback, True
 

@@ -4,6 +4,9 @@ version = "1.0.0"
 description = "Jac client application: frontend"
 entry-point = "main.jac"
 
+[dependencies]
+paramiko = ">=0.0.0"
+
 [dependencies.npm]
 jac-client-node = "1.0.4"
 "@jac-client/utils" = "latest"

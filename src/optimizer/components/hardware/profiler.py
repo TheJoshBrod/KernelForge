@@ -394,3 +394,152 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
         print(f"Speedup: {speedup:.2f}x")
 
     return stats, prof
+
+
+# ******************
+# REMOTE PROFILER
+# ******************
+
+def get_remote_gpu_specs(ssh_config: dict) -> GPUSpecs:
+    """
+    Retrieves GPU specs from a remote server via SSH.
+    """
+    from src.optimizer.core.ssh_client import connect_ssh, execute_remote_command, ensure_remote_dependencies
+    import json
+    import time
+
+    client = connect_ssh(ssh_config)
+    try:
+        if not ensure_remote_dependencies(client):
+            raise RuntimeError("Remote dependencies check failed")
+
+        # Script to run remotely
+        script_content = r'''
+import json
+import sys
+try:
+    from pynvml import *
+    import pycuda.driver as cuda
+    import pycuda.autoinit
+except ImportError:
+    # If imports fail despite ensure_remote_dependencies, we can't proceed
+    print(json.dumps({"error": "Missing libraries"}))
+    sys.exit(1)
+
+def _nvml_safe(fn, default=None):
+    try:
+        return fn()
+    except:
+        return default
+
+def get_specs():
+    nvmlInit()
+    handle = nvmlDeviceGetHandleByIndex(0)
+    
+    power_limit_mw = _nvml_safe(lambda: nvmlDeviceGetPowerManagementLimit(handle))
+    
+    nvml_info = {
+        "gpu_name": nvmlDeviceGetName(handle),
+        # nvml_architecture is skipped or needs int casting if it returns an object
+        # "nvml_architecture": nvmlDeviceGetArchitecture(handle), 
+        "total_memory_gb": nvmlDeviceGetMemoryInfo(handle).total / (1024 ** 3),
+        "sm_clock_mhz": nvmlDeviceGetClockInfo(handle, NVML_CLOCK_SM),
+        "mem_clock_mhz": nvmlDeviceGetClockInfo(handle, NVML_CLOCK_MEM),
+        "power_limit_watts": None if power_limit_mw is None else power_limit_mw / 1000,
+    }
+    
+    # Handle byte strings in info
+    for k, v in nvml_info.items():
+        if isinstance(v, bytes):
+            nvml_info[k] = v.decode()
+
+    nvmlShutdown()
+    
+    dev = cuda.Device(0)
+    attrs = dev.get_attributes()
+    cc_major, cc_minor = dev.compute_capability()
+    
+    cuda_info = {
+        "compute_capability": f"{cc_major}.{cc_minor}",
+        "num_sms": attrs[cuda.device_attribute.MULTIPROCESSOR_COUNT],
+        "warp_size": attrs[cuda.device_attribute.WARP_SIZE],
+        "max_threads_per_block": attrs[cuda.device_attribute.MAX_THREADS_PER_BLOCK],
+        except Exception as e:
+            continue
+            
+    if not inputs:
+        print(json.dumps({{"error": "Failed to load any inputs"}}))
+        return
+
+    # 3. Profile Loop
+    timings = []
+    
+    # Warmup
+    for args, kwargs in inputs:
+        try:
+            module.launch(*args, **kwargs)
+        except TypeError:
+            module.launch(*args)
+    torch.cuda.synchronize()
+    
+    # Measure
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    
+    for args, kwargs in inputs:
+        start.record()
+        for _ in range(10):
+            try:
+                module.launch(*args, **kwargs)
+            except TypeError:
+                module.launch(*args)
+        end.record()
+        torch.cuda.synchronize()
+        timings.append(start.elapsed_time(end) / 10)
+        
+    stats = {{
+        'mean_time_ms': float(np.mean(timings)),
+        'std_time_ms':  float(np.std(timings)),
+        'min_time_ms':  float(np.min(timings)),
+        'max_time_ms':  float(np.max(timings)),
+    }}
+    
+    print(json.dumps(stats))
+
+if __name__ == "__main__":
+    profile()
+'''
+        script_name = "remote_profiler.py"
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
+            tmp.write(script_content)
+            tmp_path = tmp.name
+            
+        upload_files(client, {tmp_path: script_name}, remote_workspace)
+        os.unlink(tmp_path)
+        
+        # Execute
+        cmd = f"python3 {remote_workspace}/{script_name}"
+        exit_code, out, err = execute_remote_command(client, cmd)
+        
+        # Cleanup
+        execute_remote_command(client, f"rm -rf {remote_workspace}")
+        
+        if exit_code != 0:
+            print(f"Remote profiling error: {out} {err}")
+            raise RuntimeError(f"Remote profiling failed: {err}")
+            
+        try:
+            stats = json.loads(out)
+            if "error" in stats:
+                raise RuntimeError(stats["error"])
+        except json.JSONDecodeError:
+             raise RuntimeError(f"Invalid JSON from remote: {out}")
+             
+        if previous_stats:
+            speedup = previous_stats['mean_time_ms'] / stats['mean_time_ms']
+            print(f"Remote Speedup: {speedup:.2f}x")
+            
+        return stats, None
+
+    finally:
+        client.close()

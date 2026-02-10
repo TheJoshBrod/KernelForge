@@ -1,6 +1,5 @@
 """Main entry point for frontend."""
-
-import from json { load, dump }
+import from json { load, loads, dump }
 import from pathlib { Path }
 import from base64 { b64decode, b64encode }
 import from os { path, makedirs, listdir }
@@ -640,6 +639,10 @@ walker:pub GetSystemInfo {
             
             # 1. LOCAL CHECK
             try {
+<<<<<<< HEAD
+=======
+                import torch;
+>>>>>>> f4ebc598e3d92390342b4487b84c1ce173943ffd
                 if torch.cuda.is_available() {
                     count = torch.cuda.device_count();
                     for i in range(count) {
@@ -693,10 +696,86 @@ walker:pub GetSystemInfo {
                     );
 
                     # Python script to check GPU
-                    cmd_script = "import json; import sys; import subprocess; def get_gpu_info():\n try:\n  import torch\n  if torch.cuda.is_available():\n   gpus=[]\n   for i in range(torch.cuda.device_count()):\n    props=torch.cuda.get_device_properties(i); mem_gb=props.total_memory/(1024**3); arch='Unknown';\n    if props.major==7: arch='Volta/Turing'\n    elif props.major==8: arch='Ampere'\n    elif props.major==9: arch='Hopper'\n    gpus.append({'name':torch.cuda.get_device_name(i), 'memory':f'{mem_gb:.1f} GB', 'compute_capability':f'v{props.major}.{props.minor} {arch}', 'sm_count':props.multi_processor_count})\n   return gpus\n except: pass\n return []\nprint(json.dumps(get_gpu_info()))";
+                    cmd_script = """
+import json
+import sys
+import subprocess
+
+def get_gpu_info():
+    # Try torch first
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpus = []
+            for i in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(i)
+                mem_gb = props.total_memory / (1024**3)
+                
+                arch_name = "Unknown"
+                if props.major == 7: arch_name = "Volta/Turing"
+                elif props.major == 8: arch_name = "Ampere"
+                elif props.major == 9: arch_name = "Hopper"
+
+                gpus.append({
+                    'name': torch.cuda.get_device_name(i),
+                    'memory': f"{mem_gb:.1f} GB",
+                    'compute_capability': f"v{props.major}.{props.minor} {arch_name}",
+                    'sm_count': props.multi_processor_count
+                })
+            return gpus
+    except ImportError as e:
+        sys.stderr.write(f"DEBUG: Torch import failed: {e}\\n")
+    except Exception as e:
+        sys.stderr.write(f"DEBUG: Torch check failed: {e}\\n")
+
+    # Fallback to nvidia-smi
+    try:
+        sys.stderr.write("DEBUG: Falling back to nvidia-smi\\n")
+        cmd = ["nvidia-smi", "--query-gpu=name,memory.total,compute_cap", "--format=csv,noheader"]
+        output = subprocess.check_output(cmd).decode('utf-8').strip()
+        gpus = []
+        for line in output.split('\\n'):
+            if not line.strip(): continue
+            parts = [x.strip() for x in line.split(',')]
+            if len(parts) >= 3:
+                name = parts[0]
+                mem_str = parts[1] # e.g. "24576 MiB"
+                cc = parts[2] # e.g. "8.6"
+                
+                # Convert memory to GB
+                try:
+                    mem_val = float(mem_str.split()[0])
+                    mem_gb = f"{mem_val / 1024:.1f} GB"
+                except:
+                    mem_gb = mem_str
+                
+                # Arch name from CC
+                arch_name = "Unknown"
+                try:
+                    major = int(str(cc).split('.')[0])
+                    if major == 7: arch_name = "Volta/Turing"
+                    elif major == 8: arch_name = "Ampere"
+                    elif major == 9: arch_name = "Hopper"
+                except:
+                    pass
+
+                gpus.append({
+                    "name": name,
+                    "memory": mem_gb,
+                    "compute_capability": f"v{cc} {arch_name}",
+                    "sm_count": "N/A (No Torch)"
+                })
+        return gpus
+    except Exception:
+        return []
+
+print(json.dumps(get_gpu_info()))
+""";
                     
                     b64_script = b64encode(cmd_script.encode('utf-8')).decode('utf-8');
-                    cmd = f"bash -lc 'python3 -c \"import base64; exec(base64.b64decode(\\\"{b64_script}\\\"))\"'";
+                    # Use bash -lc to ensure profile/bashrc are sourced (PATH, virtualenvs, etc.)
+                    # We escape single quotes for the bash command
+                    cmd = f"""bash -lc 'python3 -c "import base64; exec(base64.b64decode(\\"{b64_script}\\"))"'""";
                     
                     exec_res = client.exec_command(cmd);
                     stdout = exec_res[1];
@@ -714,6 +793,7 @@ walker:pub GetSystemInfo {
                     } else {
                         err = stderr.read().decode().strip();
                         print(f"Remote python failed: {err}");
+                        # Don't fail completely, just log error and continue with local
                     }
                     client.close();
 
