@@ -8,18 +8,7 @@ import from "../../assets/SettingsIcon.cl.jac" { SettingsIcon }
 import from "../../assets/BackIcon.cl.jac" { BackIcon }
 import from "../../assets/UploadIcon.cl.jac" { UploadIcon }
 import from "../../assets/FolderIcon.cl.jac" { FolderIcon }
-
-def LoadingGhostIcon(className: str = "") -> Any {
-    return
-        <svg viewBox="0 0 120 120" className={className} fill="currentColor">
-            <path
-                d="M 60 10 C 30 10 10 40 10 70 L 10 100 C 10 110 30 110 30 100 C 30 110 50 110 50 100 C 50 110 70 110 70 100 C 70 110 90 110 90 100 C 90 110 110 110 110 100 L 110 70 C 110 40 90 10 60 10 Z"
-            />
-            <circle cx="45" cy="50" r="5" fill="#0b0f14" />
-            <circle cx="75" cy="50" r="5" fill="#0b0f14" />
-            <ellipse cx="60" cy="70" rx="4" ry="3" fill="#0b0f14" opacity="0.2" />
-        </svg>;
-}
+import from "../../assets/GhostIcon.cl.jac" { GhostIcon }
 
 # Client-side helper for reading file as base64
 def fileToBase64(file: any) -> any {
@@ -163,7 +152,7 @@ def:pub NewProject {
     if isSubmitting {
         loadingOverlay = <div className="project-loading">
             <div className="project-loading-card">
-                <LoadingGhostIcon className="project-loading-ghost" />
+                <GhostIcon className="project-loading-ghost" />
                 <div className="project-loading-title">
                     Creating Project
                 </div>

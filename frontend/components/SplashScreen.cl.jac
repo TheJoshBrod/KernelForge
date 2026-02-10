@@ -1,6 +1,6 @@
 """Splash Screen Component"""
 
-import from "../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
+import from "./backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
 import from "../assets/CGinSLogo.cl.jac" { CGinSLogo }
 
 def:pub SplashScreen(exiting: bool) -> Any {

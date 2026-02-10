@@ -2,7 +2,9 @@
 
 import from react { useEffect }
 import from "react-router-dom" { useNavigate }
-import from "../../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
+import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
+    GameOfLifeBackground
+}
 import from "../../components/settings/SettingsMenu.cl.jac" { SettingsMenu }
 import from "../../context/ConfigContext.cl.jac" { useConfig }
 

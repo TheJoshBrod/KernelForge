@@ -3,7 +3,9 @@
 import from react { useState, useEffect }
 import from "react-router-dom" { useNavigate }
 import from "@jac/runtime" { jacSpawn }
-import from "../../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
+import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
+    GameOfLifeBackground
+}
 import from "../../context/ConfigContext.cl.jac" { useConfig }
 
 def:pub GpuPage {

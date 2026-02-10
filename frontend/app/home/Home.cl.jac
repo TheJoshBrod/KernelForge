@@ -3,7 +3,9 @@
 import from react { useEffect }
 import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
-import from "../../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
+import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
+    GameOfLifeBackground
+}
 import from "../../components/ui/GlowButton.cl.jac" { GlowButton }
 import from "../../assets/CGinSLogo.cl.jac" { CGinSLogo }
 import from "../../components/SplashScreen.cl.jac" { SplashScreen }
