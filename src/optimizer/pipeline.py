@@ -265,7 +265,7 @@ def main():
     proj_dir = create_project(backend, gpu_specs, io_parent_dir, optional_proj_name, ssh_config)
 
     for op_dir_path in proj_dir.iterdir():
-        if not op_dir_path.is_dir() or "max" not in str(op_dir_path):
+        if not op_dir_path.is_dir():
             continue
 
 

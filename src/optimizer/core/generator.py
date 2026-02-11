@@ -114,12 +114,17 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
     """
     if not model:
         provider = ensure_llm_config().strip().lower()
+        
+        env_model = None
         if provider in {"openai", "gpt", "chatgpt"}:
-            model = os.environ.get("OPENAI_MODEL", "gpt-5.2")
+            env_model = os.environ.get("OPENAI_MODEL")
         elif provider == "gemini":
-            model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+            env_model = os.environ.get("GEMINI_MODEL")
         elif provider == "anthropic":
-            model = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-5-20251101")
+            env_model = os.environ.get("ANTHROPIC_MODEL")
+            
+        if env_model:
+            model = env_model
         else:
             model = settings.llm_model_name
 
