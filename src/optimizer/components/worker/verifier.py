@@ -317,33 +317,23 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
     """
     Validates kernel using the persistent worker.
     """
-    import os as _os
-    _pid = _os.getpid()
-    
     tmpdir = paths["tmp_dir"]
     io_dir = paths["io_dir"]
 
-    # 1. Write Code (needed for load_inline debugging/artifacts, though we pass string to worker)
-    # The worker also writes/compiles, but writing here ensures artifacts exist for user inspection
+    # Write kernel code for artifacts/debugging
     cu_path = os.path.join(tmpdir, "kernel.cu")
     with open(cu_path, "w", encoding="utf-8") as f:
         f.write(generated_cu_code)
 
-    print(f"[WORKER {_pid}] Sending kernel to validation subprocess...")
-    
-    # 2. Send to Worker
+    # Send to worker
     _ensure_worker_alive()
-
-    # We pass paths as STRINGS to be safe
     _WORKER_Q_IN.put((generated_cu_code, str(tmpdir), str(io_dir)))
 
-    # 3. Wait for result with timeout
+    # Wait for result with timeout
     import time
     import queue
     start_time = time.time()
     TIMEOUT = settings.verifier_timeout_seconds
-    
-    print(f"[WORKER {_pid}] Waiting for validation result (timeout: {TIMEOUT}s)...")
 
     while time.time() - start_time < TIMEOUT:
         if not _WORKER_PROCESS.is_alive():
@@ -351,8 +341,6 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
 
         try:
             result = _WORKER_Q_OUT.get(timeout=0.5)
-            elapsed = time.time() - start_time
-            print(f"[WORKER {_pid}] Validation completed in {elapsed:.1f}s")
             return result
         except queue.Empty:
             continue
