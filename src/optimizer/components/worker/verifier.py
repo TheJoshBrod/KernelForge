@@ -320,19 +320,16 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
     tmpdir = paths["tmp_dir"]
     io_dir = paths["io_dir"]
 
-    # 1. Write Code (needed for load_inline debugging/artifacts, though we pass string to worker)
-    # The worker also writes/compiles, but writing here ensures artifacts exist for user inspection
+    # Write kernel code for artifacts/debugging
     cu_path = os.path.join(tmpdir, "kernel.cu")
     with open(cu_path, "w", encoding="utf-8") as f:
         f.write(generated_cu_code)
 
-    # 2. Send to Worker
+    # Send to worker
     _ensure_worker_alive()
-
-    # We pass paths as STRINGS to be safe
     _WORKER_Q_IN.put((generated_cu_code, str(tmpdir), str(io_dir)))
 
-    # 3. Wait for result with timeout
+    # Wait for result with timeout
     import time
     import queue
     start_time = time.time()
@@ -343,7 +340,8 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
             return False, "[Process Error] Worker process crashed unexpectedly."
 
         try:
-            return _WORKER_Q_OUT.get(timeout=0.5)
+            result = _WORKER_Q_OUT.get(timeout=0.5)
+            return result
         except queue.Empty:
             continue
 

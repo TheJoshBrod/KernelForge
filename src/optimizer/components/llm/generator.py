@@ -19,6 +19,10 @@ from src.optimizer.config.settings import settings
 sys_prompt = prompts.get_sys_prompt()
 
 
+def _log(msg: str):
+    print(f"[Generator] {msg}")
+
+
 def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str]]:
     """
     Extract feedback and code sections from a formatted string.
@@ -72,15 +76,24 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path], 
     feedback, cu_code = extract_feedback_and_code(response)
 
     if cu_code is None:
-        print("Error: Could not extract code from LLM response.")
-        print(f"Raw response:\n{response}")
         return feedback, False, "Failed to extract code"
-
-    if ssh_config:
-        is_valid, error = verifier.validate_remote_kernel(ssh_config, cu_code, paths)
+    
+    # Serialize validation (compilation + execution) if GPU lock is available
+    gpu_lock = paths.get("gpu_lock")
+    if gpu_lock:
+        with gpu_lock:
+            _log("GPU lock acquired, running validation...")
+            if ssh_config:
+                is_valid, error = verifier.validate_remote_kernel(ssh_config, cu_code, paths)
+            else:
+                is_valid, error = verifier.validate_kernel(cu_code, paths)
     else:
-        is_valid, error = verifier.validate_kernel(cu_code, paths)
-
+        if ssh_config:
+            is_valid, error = verifier.validate_remote_kernel(ssh_config, cu_code, paths)
+        else:
+            is_valid, error = verifier.validate_kernel(cu_code, paths)
+    
+    _log(f"Validation result: {'PASSED' if is_valid else 'FAILED'}")
     if not is_valid:
         # Save to garbage dump
         proj_dir = paths.get("proj_dir")
@@ -103,7 +116,7 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path], 
     return feedback, is_valid, error
 
 
-def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None, ssh_config: dict = None) -> Tuple[str, bool]:
+def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None, ssh_config: dict = None) -> Tuple[str, bool, int]:
     """Generates and validates CUDA kernels 
 
     Args:
@@ -116,15 +129,8 @@ def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, 
         ssh_config (dict, optional): SSH configuration for remote validation.
     """
     if not model:
-        provider = ensure_llm_config().strip().lower()
-        if provider in {"openai", "gpt", "chatgpt"}:
-            model = os.environ.get("OPENAI_MODEL", "gpt-5.2")
-        elif provider == "gemini":
-            model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-        elif provider == "anthropic":
-            model = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-5-20251101")
-        else:
-            model = settings.llm_model_name
+        ensure_llm_config()
+        model = settings.llm_model_name
 
     # Attempt initial CUDA code generation
     llm: GenModel = GenModel(sys_prompt)
@@ -132,7 +138,16 @@ def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, 
         gpu_specs.model_dump(), best_kernel_code, improvement_log, ancestor_codes)
 
     # DEBUG: Save full prompt alongside each generation
-    next_node_id = len(list((paths["proj_dir"] / "nodes").glob("*.json")))
+    # Use shared counter if available (parallel mode), else count files (sequential mode)
+    if "node_counter" in paths:
+        # Parallel mode: use atomic shared counter
+        with paths["node_counter"].get_lock():
+            next_node_id = paths["node_counter"].value
+            paths["node_counter"].value += 1
+    else:
+        # Sequential mode: count existing nodes
+        next_node_id = len(list((paths["proj_dir"] / "nodes").glob("*.json")))
+    
     prompt_dump_path = paths["proj_dir"] / "attempts" / f"prompt_{next_node_id}.md"
     prompt_dump_path.parent.mkdir(parents=True, exist_ok=True)
     with open(prompt_dump_path, "w") as f:
@@ -145,7 +160,7 @@ def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, 
     paths["attempt"] = 0
     feedback, is_valid, error = create_and_validate(llm, msg, model, paths, ssh_config)
     if is_valid:
-        return feedback, True
+        return feedback, True, next_node_id
     print("\t\tInitial gen failed...")
     # On failure attempt fix before giving up
     for i in range(settings.retry_limit):
@@ -153,6 +168,6 @@ def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, 
         paths["attempt"] = i + 1
         _, is_valid, error = create_and_validate(llm, error, model, paths, ssh_config)
         if is_valid:
-            return feedback, True
+            return feedback, True, next_node_id
 
-    return "", False
+    return "", False, next_node_id

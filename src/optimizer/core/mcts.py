@@ -27,7 +27,19 @@ def load_tree_once(paths: dict):
         except Exception as e:
             print(f"Skipping corrupted node {file}: {e}")
 
-def choose_optimization(paths: dict, C: float = settings.mcts_c_constant) -> KernelNode:
+def choose_optimization(paths: dict, C: float = settings.mcts_c_constant, exclude_ids: set = None) -> KernelNode:
+    """Select the most promising node to optimize next.
+    
+    Args:
+        paths: Dictionary containing project paths
+        C: UCT exploration constant
+        exclude_ids: Set of node IDs to skip (for parallel processing)
+    
+    Returns:
+        The selected KernelNode to optimize
+    """
+    if exclude_ids is None:
+        exclude_ids = set()
 
     # 1. Ensure Cache is Populated
     if not _NODE_CACHE:
@@ -64,7 +76,11 @@ def choose_optimization(paths: dict, C: float = settings.mcts_c_constant) -> Ker
             # Branching Condition
             if len(current.children_ids) <= max_children:
                 # Return current node so the caller creates a NEW child
-                return current
+                # Skip if this specific node is being processed
+                if current.id not in exclude_ids:
+                    return current
+                # Node is excluded (in-flight), but don't give up on this subtree!
+                # Fall through to UCT selection below to find a valid child
 
             # --- UCT Selection ---
             best_child_node = None
@@ -73,7 +89,9 @@ def choose_optimization(paths: dict, C: float = settings.mcts_c_constant) -> Ker
 
             for child_id in current.children_ids:
                 if child_id not in _NODE_CACHE:
-                    continue # Skip missing nodes
+                    continue  # Skip missing nodes
+                if child_id in exclude_ids:
+                    continue  # Skip nodes being processed by other workers
                 
                 child = _NODE_CACHE[child_id]
                 
@@ -103,12 +121,46 @@ def choose_optimization(paths: dict, C: float = settings.mcts_c_constant) -> Ker
         
         # Handle case where value might be None (compilation error leaf)
         if val is None: val = float('inf')
+        
+        # Skip if this node is already being processed
+        if current.id in exclude_ids:
+            continue
 
         if val < best_leaf_score:
             best_leaf_score = val
             best_leaf = current
 
     return best_leaf if best_leaf else roots[0]
+
+
+def select_n_distinct(paths: dict, n: int, in_flight_ids: set = None) -> list:
+    """Select N distinct nodes for parallel processing.
+    
+    Args:
+        paths: Dictionary containing project paths
+        n: Number of nodes to select
+        in_flight_ids: Set of node IDs already being processed
+    
+    Returns:
+        List of KernelNode objects (may be fewer than n if tree is small)
+    """
+    if in_flight_ids is None:
+        in_flight_ids = set()
+    
+    selected = []
+    exclude_ids = in_flight_ids.copy()
+    
+    for _ in range(n):
+        try:
+            node = choose_optimization(paths, exclude_ids=exclude_ids)
+            if node is None or node.id in exclude_ids:
+                break  # No more valid nodes
+            selected.append(node)
+            exclude_ids.add(node.id)
+        except ValueError:
+            break  # No nodes available
+    
+    return selected
 
 def update_tree(paths: dict, new_node: KernelNode):
     global _NODE_CACHE
@@ -246,3 +298,55 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
                 h["speedup_vs_baseline"] = 0.0
 
     return history, codes
+
+
+def get_existing_roots(paths: dict) -> list[dict]:
+    """Get all root nodes with their kernel code for diversity guidance.
+    
+    Used when creating new roots to show the LLM what approaches already exist.
+    
+    Args:
+        paths: Dictionary containing project paths
+        
+    Returns:
+        List of dicts with {id, runtime_ms, code_preview} sorted by runtime (best first)
+    """
+    node_path: Path = paths["proj_dir"] / "nodes"
+    roots = []
+    
+    for file in node_path.glob("*.json"):
+        try:
+            with open(file, 'r') as f:
+                node = json.load(f)
+            
+            # Only include root nodes (parent == -1)
+            if node.get("parent") != -1:
+                continue
+            
+            # Read the kernel code - handle both absolute and relative paths
+            code_path_str = node.get("code", "")
+            code_path = Path(code_path_str)
+            
+            # If relative path, resolve from project parent directory
+            if not code_path.is_absolute():
+                # e.g., "torch_nn_functional_embedding/attempts/kernel_0.cu"
+                # proj_dir is like ".../NVIDIA.../torch_nn_functional_embedding"
+                # so parent is ".../NVIDIA..." and we join with relative path
+                code_path = paths["proj_dir"].parent / code_path_str
+            
+            if code_path.exists():
+                code_preview = code_path.read_text()[:4000]  # First 4KB
+            else:
+                code_preview = f"// Code file not found: {code_path}"
+            
+            roots.append({
+                "id": node["id"],
+                "runtime_ms": node.get("value", 0.0),
+                "code_preview": code_preview
+            })
+        except Exception as e:
+            print(f"Warning: Error loading root node from {file}: {e}")
+            continue
+    
+    # Sort by runtime (best/fastest first)
+    return sorted(roots, key=lambda x: x["runtime_ms"])

@@ -326,3 +326,120 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
 3. **Generate Code:** Preserve `launch(...)` signature.
 """
     return prompt.strip()
+
+
+def generate_new_root_prompt(
+    operator_spec: dict, 
+    existing_roots: list[dict],
+    profiler_context: dict = None
+) -> str:
+    """Generate prompt for creating a new independent root kernel.
+    
+    Unlike optimization prompts, this creates a kernel from scratch using the
+    generator approach, but includes existing roots' code to encourage diversity.
+    Root kernels are GPU-agnostic - optimization prompts handle GPU-specific tuning.
+    
+    Args:
+        operator_spec: Function specification from generator (params, shapes, etc.)
+        existing_roots: List of {id, runtime_ms, code_preview} from get_existing_roots()
+        profiler_context: Optional ATen ops and CUDA kernels from profiler
+        
+    Returns:
+        Prompt string for LLM
+    """
+
+    # Format operator specification
+    func_name = operator_spec.get('function_name', 'unknown_operator')
+    params = operator_spec.get('parameters', [])
+    
+    params_section = ""
+    for i, param in enumerate(params, 1):
+        params_section += f"\n{i}. `{param.get('name', f'arg{i}')}` ({param.get('type', 'auto')})"
+        if 'shape' in param:
+            params_section += f"\n   - Shape: {param['shape']}"
+        if 'description' in param:
+            params_section += f"\n   - {param['description']}"
+    
+    # Format existing roots section (the key for diversity)
+    if existing_roots:
+        roots_section = """
+---
+
+## ⚠️ EXISTING IMPLEMENTATIONS - Use a DIFFERENT Approach!
+
+The following kernels already exist. Your task is to create a **fundamentally different** 
+implementation. Consider different:
+- Memory access patterns (coalesced vs. strided, vectorized loads, etc.)
+- Thread/block configurations
+- Algorithmic approaches (tiling, persistent kernels, warp-level primitives, etc.)
+- Data reuse strategies
+
+"""
+        for root in existing_roots:
+            roots_section += f"""
+### Root {root['id']}
+
+```cpp
+{root['code_preview']}
+```
+
+---
+"""
+    else:
+        roots_section = ""
+    
+    # Format profiler context if available
+    profiler_section = ""
+    if profiler_context:
+        if profiler_context.get('aten_ops'):
+            profiler_section += "\n**ATen Operations:**\n"
+            for op in profiler_context['aten_ops']:
+                profiler_section += f"- {op}\n"
+        if profiler_context.get('cuda_kernels'):
+            profiler_section += "\n**CUDA Kernels Launched:**\n"
+            for kernel in profiler_context['cuda_kernels']:
+                profiler_section += f"- {kernel}\n"
+
+    prompt = f"""
+# New Root Kernel Generation
+
+You are creating a **new independent kernel** for the operator below.
+This will be a fresh starting point for optimization, separate from existing implementations.
+
+---
+
+## Operator to Implement: `{func_name}`
+
+Based on {operator_spec.get('num_calls', 'multiple')} tracked call(s):
+
+**Parameters:**
+{params_section}
+
+{profiler_section}
+
+{roots_section}
+
+---
+
+## Output Requirements
+
+1. Wrap your kernel in:
+```cpp
+// [START kernel.cu]
+... your code ...
+// [END kernel.cu]
+```
+
+2. Include a `// [START FEEDBACK]` section explaining your approach:
+```cpp
+// [START FEEDBACK]
+// Brief description of the strategy used in this kernel
+// [END FEEDBACK]
+```
+
+3. Implement the `launch()` function with correct parameter handling
+4. Focus on a **unique optimization strategy** different from existing roots
+
+Now generate a complete, working kernel.cu file.
+"""
+    return prompt.strip()
