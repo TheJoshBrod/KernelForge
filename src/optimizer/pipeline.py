@@ -106,7 +106,7 @@ def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNod
         # Read the actual kernel code from file path
         kernel_code_path = Path(parent_node.code)
         if not kernel_code_path.is_absolute():
-            kernel_code_path = Path.cwd() / kernel_code_path
+            kernel_code_path = paths["proj_dir"].parent / kernel_code_path
 
         if kernel_code_path.exists():
             kernel_code = kernel_code_path.read_text()
@@ -116,7 +116,7 @@ def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNod
 
         # Kernel Generation
         print(f"\tBeginning generation (history: {len(improvement_log)} entries)...")
-        improvement_description, is_valid = generator.generate(
+        improvement_description, is_valid, _ = generator.generate(
             kernel_code, gpu_specs, improvement_log, paths, ancestor_codes=ancestor_codes, ssh_config=ssh_config)
         print("\tFinished generation.")
         print(f"\t\t- Status: {is_valid}")
@@ -283,7 +283,7 @@ def create_new_root(gpu_specs: GPUSpecs, paths: dict[str, Path]) -> KernelNode:
         return node
 
 
-def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path):
+def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path, optional_proj_name: str = None, ssh_config: dict = None):
     """Creates a new optimization project for each individual operator kernel.
     """
     # Output directory (access via dot notation now)

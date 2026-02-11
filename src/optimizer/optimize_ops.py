@@ -81,7 +81,7 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
             paths["iteration"] = iteration
 
             print("\tBeginning generation...")
-            improvement_description, is_valid = generator.generate(
+            improvement_description, is_valid, _ = generator.generate(
                 best_kernel_code, gpu_specs, improvement_log, paths)
             print("\tFinished generation.")
             print(f"\t\t- Desc: {improvement_description}")

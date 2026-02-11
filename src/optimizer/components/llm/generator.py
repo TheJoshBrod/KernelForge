@@ -2,6 +2,7 @@
 src/optimizer/components/llm/generator.py
 Uses LLM to generate CUDA kernels that is model-agnostic.
 """
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -16,6 +17,10 @@ from src.optimizer.config.settings import settings
 
 # Global variables
 sys_prompt = prompts.get_sys_prompt()
+
+
+def _log(msg: str):
+    print(f"[Generator] {msg}")
 
 
 def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str]]:
@@ -111,7 +116,7 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path], 
     return feedback, is_valid, error
 
 
-def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None, ssh_config: dict = None) -> Tuple[str, bool]:
+def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None, ssh_config: dict = None) -> Tuple[str, bool, int]:
     """Generates and validates CUDA kernels 
 
     Args:
@@ -124,15 +129,8 @@ def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, 
         ssh_config (dict, optional): SSH configuration for remote validation.
     """
     if not model:
-        provider = ensure_llm_config().strip().lower()
-        if provider in {"openai", "gpt", "chatgpt"}:
-            model = os.environ.get("OPENAI_MODEL", "gpt-5.2")
-        elif provider == "gemini":
-            model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-        elif provider == "anthropic":
-            model = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-5-20251101")
-        else:
-            model = settings.llm_model_name
+        ensure_llm_config()
+        model = settings.llm_model_name
 
     # Attempt initial CUDA code generation
     llm: GenModel = GenModel(sys_prompt)
