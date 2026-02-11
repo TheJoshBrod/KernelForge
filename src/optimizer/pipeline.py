@@ -424,23 +424,22 @@ def run_parallel_optimization(gpu_specs: GPUSpecs, paths: dict, n_workers: int =
     nodes_failed = 0
     
     # Start persistent workers
-    print(f"[INIT] Starting {n_workers} worker processes...")
+    print(f"[INIT] Starting {n_workers} workers...")
     workers = []
     for i in range(n_workers):
         p = Process(target=worker_routine, args=(task_queue, result_queue, gpu_lock, node_counter, paths))
         p.start()
         workers.append(p)
-        print(f"  [WORKER {i+1}] Started (PID: {p.pid})")
     
     # Ensure tree is loaded
     mcts.load_tree_once(paths)
-    print(f"[INIT] Loaded {len(mcts._NODE_CACHE)} nodes from tree cache")
+    print(f"[INIT] Loaded {len(mcts._NODE_CACHE)} nodes from tree")
     
     # Main loop: dispatch until limit, then drain remaining
     print(f"\n[LOOP] Starting optimization loop...")
     
     start_time = time.time()
-    dispatch_blocked = False  # Track if we've already logged "no more nodes"
+    dispatch_blocked = False
     
     while nodes_dispatched < max_iterations or in_flight_ids:
         
@@ -449,15 +448,15 @@ def run_parallel_optimization(gpu_specs: GPUSpecs, paths: dict, n_workers: int =
         while len(in_flight_ids) < n_workers and nodes_dispatched < max_iterations:
             try:
                 node = mcts.choose_optimization(paths, exclude_ids=in_flight_ids)
-            except ValueError as e:
+            except ValueError:
                 if not dispatch_blocked:
-                    print(f"[DISPATCH] No nodes available (tree exhausted): {e}")
+                    print(f"[DISPATCH] Tree exhausted, waiting for workers...")
                     dispatch_blocked = True
                 break
             
             if node is None or node.id in in_flight_ids:
                 if not dispatch_blocked:
-                    print(f"[DISPATCH] Waiting for workers to complete (tree capacity reached)")
+                    print(f"[DISPATCH] Waiting for capacity...")
                     dispatch_blocked = True
                 break
             
@@ -468,41 +467,37 @@ def run_parallel_optimization(gpu_specs: GPUSpecs, paths: dict, n_workers: int =
                 "codes": codes,
                 "gpu_specs": gpu_specs,
                 "paths": paths,
-                "op_spec": None  # Will be loaded by worker
             }
             
             task_queue.put((node, context))
             in_flight_ids.add(node.id)
             nodes_dispatched += 1
             dispatched_this_round = True
-            dispatch_blocked = False  # Reset since we found a node
+            dispatch_blocked = False
             
             elapsed = time.time() - start_time
-            print(f"[DISPATCH] Node {node.id} dispatched ({nodes_dispatched}/{max_iterations}) | In-flight: {len(in_flight_ids)} | Elapsed: {elapsed:.1f}s")
+            print(f"[DISPATCH] Node {node.id} ({nodes_dispatched}/{max_iterations}) | In-flight: {len(in_flight_ids)} | {elapsed:.0f}s")
         
         # === COLLECT completed results ===
         results_collected = False
-        while not result_queue.empty():
+        while True:
             try:
-                node_id, result_data, status = result_queue.get_nowait()
+                node_id, result_data, status = result_queue.get(timeout=0.2)
             except queue.Empty:
                 break
             except Exception as e:
-                print(f"[ERROR] Result collection failed: {e}")
-                import traceback
-                traceback.print_exc()
+                print(f"[ERROR] Result collection: {e}")
                 break
             
             in_flight_ids.discard(node_id)
             results_collected = True
-            dispatch_blocked = False  # New capacity available, can try dispatching again
+            dispatch_blocked = False
             
             if status == "success" and result_data is not None:
                 nodes_completed += 1
                 runtime_ms = result_data["runtime_ms"]
                 kernel_id = result_data["kernel_id"]
                 
-                # Create new node
                 parent_node = mcts._NODE_CACHE.get(node_id)
                 if parent_node:
                     new_node = KernelNode(
@@ -519,23 +514,26 @@ def run_parallel_optimization(gpu_specs: GPUSpecs, paths: dict, n_workers: int =
                     mcts.update_tree(paths, new_node)
                     
                     speedup = parent_node.value / runtime_ms if runtime_ms > 0 else 1.0
-                    print(f"[SUCCESS] Node {node_id} -> {kernel_id} | Runtime: {runtime_ms:.4f}ms | Speedup: {speedup:.2f}x | Completed: {nodes_completed}")
+                    print(f"[SUCCESS] Node {node_id} -> {kernel_id} | {runtime_ms:.4f}ms | {speedup:.2f}x | Done: {nodes_completed}")
             else:
                 nodes_failed += 1
-                print(f"[FAILED] Node {node_id}: {status} | Failed: {nodes_failed}")
+                print(f"[FAILED] Node {node_id}: {status}")
         
-        # If nothing happened this round and we have in-flight work, wait a bit
+        # If nothing happened this round and we have in-flight work, wait
         if not dispatched_this_round and not results_collected and in_flight_ids:
-            time.sleep(0.5)  # Wait longer when idle to reduce CPU usage
-        else:
-            time.sleep(0.1)  # Short poll when active
+            time.sleep(0.5)
+        elif not in_flight_ids and nodes_dispatched >= max_iterations:
+            break  # All done
     
-    # Cleanup
-    print(f"\n[CLEANUP] Terminating workers...")
+    # Cleanup: send sentinel to each worker for clean exit
+    print(f"\n[CLEANUP] Sending exit signals to workers...")
+    for _ in workers:
+        task_queue.put(None)
+    
     for i, w in enumerate(workers):
-        w.terminate()
-        w.join(timeout=5)
-        print(f"  [WORKER {i+1}] Terminated")
+        w.join(timeout=10)
+        if w.is_alive():
+            w.terminate()
     
     elapsed = time.time() - start_time
     print(f"\n{'='*60}")

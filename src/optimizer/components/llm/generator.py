@@ -2,7 +2,6 @@
 src/optimizer/components/llm/generator.py
 Uses LLM to generate CUDA kernels that is model-agnostic.
 """
-import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -16,11 +15,6 @@ from src.optimizer.config.settings import settings
 
 # Global variables
 sys_prompt = prompts.get_sys_prompt()
-
-def _log(msg: str):
-    """Log with worker PID prefix for parallel debugging."""
-    pid = os.getpid()
-    print(f"[WORKER {pid}] {msg}")
 
 
 def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str]]:
@@ -71,30 +65,19 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path]) 
     Returns:
         Tuple[str, bool, str]: _description_
     """
-    _log(f"Calling LLM for kernel generation...")
     response = llm.chat(msg, model)
-    _log(f"LLM response received ({len(response)} chars)")
-    
     feedback, cu_code = extract_feedback_and_code(response)
 
     if cu_code is None:
-        _log("ERROR: Could not extract code from LLM response")
-        print(f"Raw response:\n{response}")
         return feedback, False, "Failed to extract code"
     
-    _log(f"Extracted kernel code ({len(cu_code)} chars), validating...")
-    
-    # Check for GPU lock to serialize validation (compilation + execution)
+    # Serialize validation (compilation + execution) if GPU lock is available
     gpu_lock = paths.get("gpu_lock")
     if gpu_lock:
-        _log("Waiting for GPU lock (validation)...")
         with gpu_lock:
-            _log("GPU lock acquired, running validation...")
             is_valid, error = verifier.validate_kernel(cu_code, paths)
     else:
         is_valid, error = verifier.validate_kernel(cu_code, paths)
-    
-    _log(f"Validation result: {'PASSED' if is_valid else 'FAILED'}")
 
     if not is_valid:
         # Save to garbage dump
