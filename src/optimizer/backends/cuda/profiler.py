@@ -404,13 +404,16 @@ def get_remote_gpu_specs(ssh_config: dict) -> GPUSpecs:
     """
     Retrieves GPU specs from a remote server via SSH.
     """
-    from src.optimizer.core.ssh_client import connect_ssh, execute_remote_command, ensure_remote_dependencies
+    from src.optimizer.core.ssh_client import connect_ssh, execute_remote_command, ensure_remote_setup
     import json
     import time
+    import tempfile
+    import os
+    import numpy as np # Used in profile parsing if needed, but not in script
 
     client = connect_ssh(ssh_config)
     try:
-        if not ensure_remote_dependencies(client):
+        if not ensure_remote_setup(client):
             raise RuntimeError("Remote dependencies check failed")
 
         # Script to run remotely
@@ -422,8 +425,7 @@ try:
     import pycuda.driver as cuda
     import pycuda.autoinit
 except ImportError:
-    # If imports fail despite ensure_remote_dependencies, we can't proceed
-    print(json.dumps({"error": "Missing libraries"}))
+    print(json.dumps({"error": "Missing libraries - ensure torch, pynvml, pycuda are installed in venv"}))
     sys.exit(1)
 
 def _nvml_safe(fn, default=None):
@@ -432,97 +434,88 @@ def _nvml_safe(fn, default=None):
     except:
         return default
 
+def _to_str(x):
+    return x.decode() if isinstance(x, bytes) else x
+
 def get_specs():
-    nvmlInit()
-    handle = nvmlDeviceGetHandleByIndex(0)
-    
-    power_limit_mw = _nvml_safe(lambda: nvmlDeviceGetPowerManagementLimit(handle))
-    
-    nvml_info = {
-        "gpu_name": nvmlDeviceGetName(handle),
-        # nvml_architecture is skipped or needs int casting if it returns an object
-        # "nvml_architecture": nvmlDeviceGetArchitecture(handle), 
-        "total_memory_gb": nvmlDeviceGetMemoryInfo(handle).total / (1024 ** 3),
-        "sm_clock_mhz": nvmlDeviceGetClockInfo(handle, NVML_CLOCK_SM),
-        "mem_clock_mhz": nvmlDeviceGetClockInfo(handle, NVML_CLOCK_MEM),
-        "power_limit_watts": None if power_limit_mw is None else power_limit_mw / 1000,
-    }
-    
-    # Handle byte strings in info
-    for k, v in nvml_info.items():
-        if isinstance(v, bytes):
-            nvml_info[k] = v.decode()
-
-    nvmlShutdown()
-    
-    dev = cuda.Device(0)
-    attrs = dev.get_attributes()
-    cc_major, cc_minor = dev.compute_capability()
-    
-    cuda_info = {
-        "compute_capability": f"{cc_major}.{cc_minor}",
-        "num_sms": attrs[cuda.device_attribute.MULTIPROCESSOR_COUNT],
-        "warp_size": attrs[cuda.device_attribute.WARP_SIZE],
-        "max_threads_per_block": attrs[cuda.device_attribute.MAX_THREADS_PER_BLOCK],
-        except Exception as e:
-            continue
-            
-    if not inputs:
-        print(json.dumps({{"error": "Failed to load any inputs"}}))
-        return
-
-    # 3. Profile Loop
-    timings = []
-    
-    # Warmup
-    for args, kwargs in inputs:
-        try:
-            module.launch(*args, **kwargs)
-        except TypeError:
-            module.launch(*args)
-    torch.cuda.synchronize()
-    
-    # Measure
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    
-    for args, kwargs in inputs:
-        start.record()
-        for _ in range(10):
-            try:
-                module.launch(*args, **kwargs)
-            except TypeError:
-                module.launch(*args)
-        end.record()
-        torch.cuda.synchronize()
-        timings.append(start.elapsed_time(end) / 10)
+    try:
+        nvmlInit()
+        handle = nvmlDeviceGetHandleByIndex(0)
         
-    stats = {{
-        'mean_time_ms': float(np.mean(timings)),
-        'std_time_ms':  float(np.std(timings)),
-        'min_time_ms':  float(np.min(timings)),
-        'max_time_ms':  float(np.max(timings)),
-    }}
-    
-    print(json.dumps(stats))
+        power_limit_mw = _nvml_safe(lambda: nvmlDeviceGetPowerManagementLimit(handle))
+        
+        nvml_info = {
+            "gpu_name": _to_str(nvmlDeviceGetName(handle)),
+            "nvml_architecture": nvmlDeviceGetArchitecture(handle),
+            "total_memory_gb": nvmlDeviceGetMemoryInfo(handle).total / (1024 ** 3),
+            "sm_clock_mhz": nvmlDeviceGetClockInfo(handle, NVML_CLOCK_SM),
+            "mem_clock_mhz": nvmlDeviceGetClockInfo(handle, NVML_CLOCK_MEM),
+            "power_limit_watts": None if power_limit_mw is None else power_limit_mw / 1000,
+        }
+
+        nvmlShutdown()
+        
+        dev = cuda.Device(0)
+        attrs = dev.get_attributes()
+        cc_major, cc_minor = dev.compute_capability()
+        
+        cuda_info = {
+            "compute_capability": f"{cc_major}.{cc_minor}",
+            "num_sms": attrs[cuda.device_attribute.MULTIPROCESSOR_COUNT],
+            "warp_size": attrs[cuda.device_attribute.WARP_SIZE],
+            "max_threads_per_block": attrs[cuda.device_attribute.MAX_THREADS_PER_BLOCK],
+            "max_threads_per_sm": attrs[cuda.device_attribute.MAX_THREADS_PER_MULTIPROCESSOR],
+            "max_blocks_per_sm": attrs.get(cuda.device_attribute.MAX_BLOCKS_PER_MULTIPROCESSOR, "unknown") if hasattr(cuda.device_attribute, 'MAX_BLOCKS_PER_MULTIPROCESSOR') else "unknown",
+            "registers_per_sm": attrs[cuda.device_attribute.MAX_REGISTERS_PER_MULTIPROCESSOR],
+            "registers_per_block": attrs[cuda.device_attribute.MAX_REGISTERS_PER_BLOCK],
+            "shared_mem_per_sm_kb": attrs[cuda.device_attribute.MAX_SHARED_MEMORY_PER_MULTIPROCESSOR] // 1024,
+            "shared_mem_per_block_kb": attrs[cuda.device_attribute.MAX_SHARED_MEMORY_PER_BLOCK] // 1024,
+            "l2_cache_kb": attrs[cuda.device_attribute.L2_CACHE_SIZE] // 1024,
+            "memory_bus_width_bits": attrs[cuda.device_attribute.GLOBAL_MEMORY_BUS_WIDTH]
+        }
+        
+        # Derived
+        memory_bandwidth_gbps = (
+            nvml_info["mem_clock_mhz"] * 1e6 *
+            cuda_info["memory_bus_width_bits"] / 8 * 2
+        ) / 1e9
+        
+        derived = {
+            "peak_memory_bandwidth_gbps": memory_bandwidth_gbps,
+            "warps_per_sm": cuda_info["max_threads_per_sm"] // cuda_info["warp_size"],
+            "tensor_cores_available": cc_major >= 7,
+        }
+        
+        # Merge
+        specs = {**nvml_info, **cuda_info, **derived}
+        print(json.dumps(specs))
+
+    except Exception as e:
+        import traceback
+        print(json.dumps({"error": str(e) + "\n" + traceback.format_exc()}))
 
 if __name__ == "__main__":
-    profile()
+    get_specs()
 '''
-        script_name = "remote_profiler.py"
+        script_name = "remote_specs_fetcher.py"
+        remote_workspace = "cgins_workspace"
+        
+        # Upload script
         with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
             tmp.write(script_content)
             tmp_path = tmp.name
             
+        from src.optimizer.core.ssh_client import upload_files
         upload_files(client, {tmp_path: script_name}, remote_workspace)
         os.unlink(tmp_path)
         
         # Execute
-        cmd = f"python3 {remote_workspace}/{script_name}"
+        # Ensure we use the venv python
+        cmd = f"~/cgins_workspace/venv/bin/python3 {remote_workspace}/{script_name}"
         exit_code, out, err = execute_remote_command(client, cmd)
         
         # Cleanup
-        execute_remote_command(client, f"rm -rf {remote_workspace}")
+        execute_remote_command(client, f"rm {remote_workspace}/{script_name}")
         
         if exit_code != 0:
             print(f"Remote profiling error: {out} {err}")
@@ -535,11 +528,53 @@ if __name__ == "__main__":
         except json.JSONDecodeError:
              raise RuntimeError(f"Invalid JSON from remote: {out}")
              
-        if previous_stats:
-            speedup = previous_stats['mean_time_ms'] / stats['mean_time_ms']
-            print(f"Remote Speedup: {speedup:.2f}x")
-            
-        return stats, None
+        # Map to GPUSpecs
+        return GPUSpecs(**stats)
 
     finally:
         client.close()
+
+
+def profile_remote_kernel(ssh_config: dict, paths: dict[str, Path], baseline: bool = False) -> tuple[dict, any]:
+    """
+    Profiles a kernel on a remote server using the persistent worker.
+    """
+    from src.optimizer.core.ssh_client import RemoteWorkerClient, upload_files
+    
+    try:
+        worker = RemoteWorkerClient(ssh_config)
+        
+        # 1. Prepare Code
+        kernel_path = paths["tmp_dir"] / "kernel.cu"
+        if not kernel_path.exists():
+            raise FileNotFoundError(f"Kernel code not found at {kernel_path}")
+        
+        kernel_code = kernel_path.read_text()
+        
+        # 2. Upload IO files to shared cache
+        io_dir = paths["io_dir"]
+        io_files = sorted(list(io_dir.glob("*.pt")))
+        file_map = {str(f): f.name for f in io_files}
+        
+        remote_io_dir = "cgins_workspace/io_cache/" + io_dir.name
+        upload_files(worker.client, file_map, remote_io_dir)
+        
+        # 3. Send profile task
+        payload = {
+            "code": kernel_code,
+            "io_dir": remote_io_dir,
+            "batch_size": settings.batch_size
+        }
+        
+        result = worker.send_task("profile", payload)
+        worker.close()
+        
+        if "error" in result:
+            print(f"Remote Profiling Error: {result['error']}")
+            raise RuntimeError(f"Remote profiling failed: {result['error']}")
+            
+        return result, None
+
+    except Exception as e:
+        print(f"Remote Profiling Exception: {e}")
+        raise e
