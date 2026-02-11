@@ -10,9 +10,11 @@ import tempfile
 from pathlib import Path
 
 from src.config import apply_llm_config
-import src.optimizer.generator as generator
-import src.optimizer.GPUprofiler as gpu
+import src.optimizer.core.generator as generator
+
 from src.progress import update_job_progress, wait_if_paused, check_cancelled
+from src.optimizer.core.backend import Backend
+from src.optimizer.backends.cuda import CUDABackend
 
 apply_llm_config()
 
@@ -40,7 +42,7 @@ def get_project_dir(gpu_name: str, project_name: str | None):
     return proj_dir
 
 
-def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
+def optimization_loop(backend: Backend, gpu_specs: dict, paths: dict[str, Path]):
     """Optimizes target kernel
 
     Args:
@@ -53,7 +55,7 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
         paths["tmp_dir"] = Path(tmpdir)
         import shutil
         shutil.copy(paths["op_dir"] / "kernel.cu", Path(tmpdir) / "kernel.cu")
-        baseline_stats, profiler = gpu.profile_kernel(paths, baseline=True)
+        baseline_stats = backend.profile_kernel(paths, baseline=True)
         best_stats = baseline_stats.copy()
         best_kernel_code = (paths["op_dir"] / "kernel.cu").read_text()
     print("Finished baseline.")
@@ -66,9 +68,9 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
     #   Generate kernel: Via LLM generate new kernel using the gpu specs & previously found best kernel
     #   Verification loop: Check if new kernel can handle expected input/output pairs, if not attempt to fix (max 3 times)
     # Step 2. Profile:
-    #   Profile Kernel: Run kernel and measure inference time and memory management
+    #   Profile Kernel: Run kernel and measure inference time and measure inference time and memory management
     #   Log kernel: If kernel performs better, have LLM attempt to explain what this improvement did better and give extra context (pass that to next iteration)
-
+    # 
     improvement_log = []
     for iteration in range(10):
         if not wait_if_paused():
@@ -81,8 +83,8 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
             paths["iteration"] = iteration
 
             print("\tBeginning generation...")
-            improvement_description, is_valid, _ = generator.generate(
-                best_kernel_code, gpu_specs, improvement_log, paths)
+            improvement_description, is_valid = generator.generate(
+                backend, best_kernel_code, gpu_specs, improvement_log, paths)
             print("\tFinished generation.")
             print(f"\t\t- Desc: {improvement_description}")
             print(f"\t\t- Status: {is_valid}")
@@ -95,7 +97,7 @@ def optimization_loop(gpu_specs: dict, paths: dict[str, Path]):
 
                 # Log the attempt with results
                 print("\tBeginning Profiler...")
-                current_stats, profiler = gpu.profile_kernel(paths)
+                current_stats = backend.profile_kernel(paths)
                 print("\tFinished Profiler.")
                 log_entry = {
                     "iteration": iteration,
@@ -159,15 +161,18 @@ def main():
         print(f"Kernel directory not found: {kernel_root}")
         sys.exit(1)
 
+    # Instantiate Backend
+    backend = CUDABackend()
+
     # Collect GPU specs first to get name
-    gpu_specs = gpu.get_gpu_specs()
+    gpu_specs = backend.get_device_specs()
 
     # Optimization: Set the CUDA Architecture to the specific device to speed up JIT compilation
     import os
-    os.environ["TORCH_CUDA_ARCH_LIST"] = gpu_specs["compute_capability"]
+    os.environ["TORCH_CUDA_ARCH_LIST"] = gpu_specs.compute_capability
 
     # Output directory
-    proj_dir = get_project_dir(gpu_specs["gpu_name"], args.project)
+    proj_dir = get_project_dir(gpu_specs.gpu_name, args.project)
 
     # Directory containing initial wave of correct, but unoptimized kernels
     op_dirs = list(kernel_root.glob("*"))
@@ -206,7 +211,7 @@ def main():
             "io_dir": io_dir,
             "op_dir": op_dir
         }
-        optimization_loop(gpu_specs, paths)
+        optimization_loop(backend, gpu_specs, paths)
         completed += 1
         update_job_progress(completed, total_ops, op_dir.name)
 

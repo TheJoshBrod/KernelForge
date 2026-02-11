@@ -10,73 +10,15 @@ import time
 import subprocess
 from pathlib import Path
 import re
+import numpy as np
 
-import glob
-import time
-import subprocess
-from pathlib import Path
-import re
-import sys
+# Assuming loader.py is uploaded to the same directory
+import loader
 
-# --- Environment Setup (Must be before torch import for safety in some envs) ---
-def setup_environment():
-    """Finds a suitable nvcc and sets CUDA_HOME."""
-    
-    # 1. Check if we have nvcc in the current venv (best match for torch)
-    venv_bin = os.path.dirname(sys.executable)
-    venv_nvcc = os.path.join(venv_bin, "nvcc")
-    if os.path.exists(venv_nvcc):
-        print(f"DTO: Found VENV nvcc at {venv_nvcc}", file=sys.stderr)
-        os.environ["CUDA_HOME"] = os.path.dirname(venv_bin)
-        os.environ["PATH"] = f"{venv_bin}:{os.environ['PATH']}"
-        return
-
-    # 2. Check standard locations for a NEWER cuda
-    # The default /usr/bin/nvcc might be old (e.g. 9.x or 10.x) which causes the dependency flag error.
-    # We prefer /usr/local/cuda-12.x or 11.x
-    candidates = sorted(glob.glob("/usr/local/cuda*"), reverse=True) # Try newest first
-    
-    found_good_cuda = False
-    for path in candidates:
-        nvcc_path = os.path.join(path, "bin", "nvcc")
-        if os.path.exists(nvcc_path):
-             # Simple check: avoid "cuda-10" if we want newer? 
-             # For now, just take the newest one found.
-             print(f"DTO: Found NVCC candidate at {nvcc_path}", file=sys.stderr)
-             os.environ["CUDA_HOME"] = path
-             os.environ["PATH"] = f"{path}/bin:{os.environ['PATH']}"
-             found_good_cuda = True
-             break
-    
-    if found_good_cuda:
-        return
-
-    # 3. Fallback to `which nvcc`
-    try:
-        which_nvcc = subprocess.check_output(["which", "nvcc"]).decode().strip()
-        print(f"DTO: Falling back to system nvcc at {which_nvcc}", file=sys.stderr)
-        # We don't change CUDA_HOME if it's just /usr/bin, usually implies /usr is home
-        # But if it's /usr/bin/nvcc, setting CUDA_HOME=/usr might be wrong or right?
-        # PyTorch defaults to finding it.
-    except:
-        print("DTO: Warning - Could not find any nvcc.", file=sys.stderr)
-
-setup_environment()
+# Initialize Env immediately
+loader.ensure_cuda_env()
 
 import torch
-import numpy as np
-from torch.utils.cpp_extension import load_inline
-
-# Initialize CUDA context if available
-try:
-    if cuda:
-        cuda.init()
-        DEVICE_COUNT = cuda.Device.count()
-    else:
-        DEVICE_COUNT = 0
-except Exception as e:
-    DEVICE_COUNT = 0
-    print(f"CUDA Init failed: {e}", file=sys.stderr)
 
 # --- Helper Functions ---
 
@@ -112,47 +54,24 @@ def normalize_args_kwargs(args, kwargs, signature_info):
 
     return normalized, remaining_kwargs
 
-def get_module(kernel_code, tmp_dir):
-    """Compiles the kernel code using load_inline."""
-    match = re.search(r"(torch::Tensor\s+launch\s*\([^)]*\))", kernel_code)
-    if not match:
-        raise ValueError("Could not find 'launch' function signature in kernel code.")
-    
-    cpp_source = match.group(1) + ";"
-    
-    # Use a unique name to avoid collision/caching issues if checking multiple attempts
-    # mechanism: load_inline caches by source content hashing, so it should be fine.
-    # But we can force it by valid name.
-    module_name = f"kernel_{int(time.time())}"
-    
-    return load_inline(
-        name=module_name,
-        cpp_sources=cpp_source,
-        cuda_sources=kernel_code,
-        functions=['launch'],
-        build_directory=str(tmp_dir),
-        verbose=False,
-        with_cuda=True
-    )
-
-
 def handle_verify(data):
     """
     Compiles and verifies the kernel against IO files.
-    data = {
-        'code': str,       # Kernel CUDA code
-        'io_dir': str      # Path to directory containing .pt files on remote
-    }
     """
     try:
         kernel_code = data['code']
         io_dir = data['io_dir']
         
-        # Create a temp dir for compilation artifacts
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
-                module = get_module(kernel_code, tmpdir)
+                # Use loader to compile
+                module = loader.compile_code_string(
+                    code=kernel_code,
+                    name=f"kernel_{int(time.time())}",
+                    build_dir=tmpdir,
+                    verbose=False
+                )
             except Exception as e:
                  return {"valid": False, "log": f"Compilation Error: {str(e)}"}
 
@@ -207,21 +126,21 @@ def handle_verify(data):
 def handle_profile(data):
     """
     Compiles and profiles the kernel.
-    data = {
-        'code': str,
-        'io_dir': str,
-        'batch_size': int (optional)
-    }
     """
     try:
         kernel_code = data['code']
         io_dir = data['io_dir']
-        batch_size = data.get('batch_size', 5) # Default batch size
+        batch_size = data.get('batch_size', 5)
 
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
-                module = get_module(kernel_code, tmpdir)
+                module = loader.compile_code_string(
+                    code=kernel_code,
+                    name=f"kernel_{int(time.time())}",
+                    build_dir=tmpdir,
+                    verbose=False
+                )
             except Exception as e:
                  return {"error": f"Compilation Error: {str(e)}"}
             
@@ -263,7 +182,7 @@ def handle_profile(data):
                 
                 for args in inputs:
                     start.record()
-                    for _ in range(10): # Profile 10 runs per input
+                    for _ in range(10): 
                          module.launch(*args)
                     end.record()
                     torch.cuda.synchronize()
@@ -305,17 +224,6 @@ def main():
             cmd = request.get('command')
             result = {}
             
-            # Allow executing arbitrary python code payload for maximum flexibility?
-            # Ideally the client sends a function and args.
-            if cmd == 'execute_script':
-                # Client sends a script string and expected entry point?
-                # This seems risky if we want to carry state, but checks strict separation.
-                # But for performance we want to persist imports.
-                
-                # Let's try to support the specific commands requested: verify, profile
-                # But we need to implement the actual logic in here.
-                pass
-            
             if cmd == 'verify':
                 result = handle_verify(request.get('data'))
                 
@@ -337,7 +245,7 @@ def main():
                     
                 import pycuda.driver as drv
                 drv.init()
-                dev = drv.Device(0) # Assume dev 0 for now or handle list
+                dev = drv.Device(0)
                 attributes = dev.get_attributes()
                 arch = f"{dev.compute_capability()[0]}.{dev.compute_capability()[1]}"
                 
