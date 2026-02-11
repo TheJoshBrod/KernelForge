@@ -1,9 +1,9 @@
+import os
 import sys
 import struct
 import pickle
 import traceback
 import json
-import os
 import shutil
 import glob
 import time
@@ -12,12 +12,71 @@ from pathlib import Path
 import re
 import numpy as np
 
+def configure_remote_env():
+    """
+    Dynamically configures CUDA environment on the remote worker.
+    Searches for the newest available nvcc and sets CUDA_HOME/PATH.
+    Disables Ninja if nvcc is too old (< 11.0).
+    """
+    print("DEBUG: Configuring remote environment...", flush=True)
+    
+    # Potential nvcc locations
+    candidates = glob.glob("/usr/local/cuda-*/bin/nvcc")
+    if os.path.exists("/usr/bin/nvcc"):
+        candidates.append("/usr/bin/nvcc")
+        
+    best_version = (0, 0)
+    best_path = None
+    best_home = None
+    
+    for nvcc_path in candidates:
+        try:
+            # Check version: "Cuda compilation tools, release 11.0, V11.0.194"
+            out = subprocess.check_output([nvcc_path, "--version"]).decode()
+            match = re.search(r"release (\d+\.\d+)", out)
+            if match:
+                ver_str = match.group(1)
+                ver_major, ver_minor = map(int, ver_str.split('.'))
+                ver_tuple = (ver_major, ver_minor)
+                
+                if ver_tuple > best_version:
+                    best_version = ver_tuple
+                    best_path = nvcc_path
+                    # /usr/local/cuda-11.0/bin/nvcc -> /usr/local/cuda-11.0
+                    if "/usr/local/cuda-" in nvcc_path:
+                         best_home = str(Path(nvcc_path).parent.parent)
+                    else:
+                         # For /usr/bin/nvcc, try to guess if it's a symlink or system install
+                         # Often /usr/bin/nvcc is just a symlink to /usr/local/cuda/bin/nvcc
+                         # Let's not set CUDA_HOME if it's /usr/bin to avoid messing up system paths
+                         best_home = None 
+        except Exception:
+            continue
+            
+    if best_path:
+        print(f"DEBUG: Found best nvcc at {best_path} (v{best_version[0]}.{best_version[1]})", flush=True)
+        
+        # Update PATH
+        bin_dir = str(Path(best_path).parent)
+        os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
+        
+        # Update CUDA_HOME
+        if best_home:
+            os.environ["CUDA_HOME"] = best_home
+            print(f"DEBUG: Set CUDA_HOME to {best_home}", flush=True)
+            
+        # Ninja compatibility check
+        if best_version < (11, 0):
+            print("DEBUG: nvcc < 11.0 detected, disabling Ninja build system.", flush=True)
+            os.environ["USE_NINJA"] = "0"
+    else:
+        print("DEBUG: No nvcc found. Relying on existing environment.", flush=True)
+
+# Configure before importing torch/loader
+configure_remote_env()
+
 # Assuming loader.py is uploaded to the same directory
 import loader
-
-# Initialize Env immediately
-loader.ensure_cuda_env()
-
 import torch
 
 # --- Helper Functions ---
