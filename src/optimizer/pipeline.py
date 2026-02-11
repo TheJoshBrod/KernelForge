@@ -524,7 +524,6 @@ def run_parallel_optimization(gpu_specs: GPUSpecs, paths: dict, n_workers: int =
     print(f"  Success Rate: {nodes_completed/(nodes_dispatched or 1)*100:.1f}%")
     print(f"{'='*60}\n")
 
-
 def main():
     """Calls optimization pipeline on each kernel."""
     global next_id
@@ -641,20 +640,11 @@ Examples:
     if optional_proj_name:
         sys.argv = [sys.argv[0], str(io_parent_dir), optional_proj_name]
 
-    proj_dir = create_project(
-        gpu_specs,
-        io_parent_dir,
-        optional_proj_name,
-        ssh_config
-    )
-
     # -----------------------
     # NEW ROOT HANDLING
     # -----------------------
 
     if args.new_root:
-        create_new_root(proj_dir, args.new_root)
-        print(f"Created new independent root for operator: {args.new_root}")
         op_name = args.new_root
         proj_dir = get_project_dir(gpu_specs.gpu_name)
         op_dir_path = proj_dir / op_name
@@ -693,7 +683,12 @@ Examples:
         sys.exit(0)
 
     # Normal operation: Create project (or resume if exists/provided)
-    proj_dir = create_project(gpu_specs, io_parent_dir)
+    proj_dir = create_project(
+        gpu_specs,
+        io_parent_dir,
+        optional_proj_name,
+        ssh_config
+    )
 
     # Build list of operators to process
     if args.op:
