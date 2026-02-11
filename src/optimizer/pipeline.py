@@ -646,10 +646,6 @@ Examples:
     # Create project (or resume if exists/provided)
     proj_dir = create_project(backend, gpu_specs, io_parent_dir, optional_proj_name, ssh_config)
 
-    # Maintain compatibility if create_project expects sys.argv layout
-    if optional_proj_name:
-        sys.argv = [sys.argv[0], str(io_parent_dir), optional_proj_name]
-
     # -----------------------
     # NEW ROOT HANDLING
     # -----------------------
