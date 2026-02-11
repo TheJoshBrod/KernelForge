@@ -140,11 +140,16 @@ class RemoteWorkerClient:
         if not ensure_remote_setup(self.client):
             raise RuntimeError("Failed to bootstrap remote environment")
             
-        # 2. Upload worker script
-        # We assume strict location for now, or we can read it from local file
-        worker_local_path = Path(__file__).parent.parent / "remote" / "worker.py"
+        # 2. Upload worker script and dependencies
+        # worker path: src/optimizer/backends/cuda/remote_worker.py
+        worker_local_path = Path(__file__).parent.parent / "backends" / "cuda" / "remote_worker.py"
+        loader_local_path = Path(__file__).parent.parent / "backends" / "cuda" / "loader.py"
+        
         print(f"DEBUG: Uploading worker from {worker_local_path}...", flush=True)
-        upload_files(self.client, {str(worker_local_path): "worker.py"}, "cgins_workspace")
+        upload_files(self.client, {
+            str(worker_local_path): "worker.py",
+            str(loader_local_path): "loader.py"
+        }, "cgins_workspace")
         
         # 3. Start Worker Process
         # Use line buffered unbuffered python? -u is important

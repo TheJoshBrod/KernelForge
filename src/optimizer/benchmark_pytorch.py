@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 # Import load_batch from GPUprofiler
 # Assuming run as: python3 -m src.optimizer.benchmark_pytorch
-from src.optimizer.components.hardware.profiler import load_batch, get_gpu_specs
+from src.optimizer.backends.cuda.profiler import load_batch, get_gpu_specs
 
 
 def _resolve_device() -> str:

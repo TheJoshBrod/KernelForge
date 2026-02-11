@@ -7,12 +7,15 @@ import string
 import tempfile
 from pathlib import Path
 
-import src.optimizer.components.llm.generator as generator
-import src.optimizer.components.hardware.profiler as gpu
+import src.optimizer.core.generator as generator
+
 import src.optimizer.core.mcts as mcts
 from src.optimizer.core.types import KernelNode, GPUSpecs
 from src.optimizer.config.settings import settings
-
+from src.optimizer.core.backend import Backend
+from src.optimizer.backends.cuda import CUDABackend
+from src.optimizer.backends.metal import MetalBackend
+from src.optimizer.backends.triton import TritonBackend
 
 
 def get_project_dir(gpu_name: str, optional_name: str = None):
@@ -39,7 +42,7 @@ def get_project_dir(gpu_name: str, optional_name: str = None):
     return proj_dir
 
 
-def save_iteration(paths: dict, parent_info: KernelNode, improvement_description: str, best_kernel_code: str, ssh_config: dict = None):
+def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, improvement_description: str, best_kernel_code: str, ssh_config: dict = None):
     """Profiles iteration and records performance results
     """
     next_id = len(list(paths["proj_dir"].glob("nodes/*.json")))
@@ -51,10 +54,7 @@ def save_iteration(paths: dict, parent_info: KernelNode, improvement_description
 
     # Log the attempt with results
     print("\tBeginning Profiler...")
-    if ssh_config:
-        current_stats, profiler = gpu.profile_remote_kernel(ssh_config, paths)
-    else:
-        current_stats, profiler = gpu.profile_kernel(paths)
+    current_stats = backend.profile_kernel(paths, ssh_config=ssh_config)
     print("\tFinished Profiler.")
     log_entry = {
         "iteration": next_id,
@@ -82,7 +82,7 @@ def save_iteration(paths: dict, parent_info: KernelNode, improvement_description
     return log_entry
 
 
-def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNode, ssh_config: dict = None):
+def optimize(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNode, ssh_config: dict = None):
     """Optimizes target kernel
     """
 
@@ -114,14 +114,14 @@ def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNod
         # Kernel Generation
         print(f"\tBeginning generation (history: {len(improvement_log)} entries)...")
         improvement_description, is_valid = generator.generate(
-            kernel_code, gpu_specs, improvement_log, paths, ancestor_codes=ancestor_codes, ssh_config=ssh_config)
+            backend, kernel_code, gpu_specs, improvement_log, paths, ancestor_codes=ancestor_codes, ssh_config=ssh_config)
         print("\tFinished generation.")
         print(f"\t\t- Status: {is_valid}")
 
         # If its valid, log it and return the new node
         if is_valid:
             log_entry = save_iteration(
-                paths, parent_node, improvement_description, str(paths["proj_dir"] / "attempts" / f"kernel_{parent_node.id}.cu"), ssh_config=ssh_config)
+                backend, paths, parent_node, improvement_description, str(paths["proj_dir"] / "attempts" / f"kernel_{parent_node.id}.cu"), ssh_config=ssh_config)
             
             # Load and return the newly created node
             new_node_id = len(list((paths["proj_dir"] / "nodes").glob("*.json"))) - 1
@@ -133,7 +133,7 @@ def optimize(gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNod
     return None
 
 
-def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path, optional_proj_name: str = None, ssh_config: dict = None):
+def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, optional_proj_name: str = None, ssh_config: dict = None):
     """Creates a new optimization project for each individual operator kernel.
     """
     # Output directory (access via dot notation now)
@@ -180,10 +180,7 @@ def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path, optional_proj_name:
             (tmp_path / "kernel.cu").write_text((op_dir / "kernel.cu").read_text())
 
             # Profile kernel
-            if ssh_config:
-                 current_stats, profiler = gpu.profile_remote_kernel(ssh_config, paths, baseline=True)
-            else:
-                 current_stats, profiler = gpu.profile_kernel(paths, baseline=True)
+            current_stats = backend.profile_kernel(paths, baseline=True, ssh_config=ssh_config)
 
             # Log kernel
             node_data = {
@@ -217,6 +214,7 @@ def main():
     parser = argparse.ArgumentParser(description="CGinS Optimization Pipeline")
     parser.add_argument("io_dir", type=str, help="Directory containing IO pairs")
     parser.add_argument("proj_name", type=str, nargs="?", default=None, help="Optional project name")
+    parser.add_argument("--backend", type=str, choices=["cuda", "metal", "triton"], default="cuda", help="Backend to use for optimization")
     parser.add_argument("--remote", type=str, help="Path to configuration JSON for remote remote execution")
     
     args = parser.parse_args()
@@ -226,6 +224,16 @@ def main():
     
     ssh_config = None
     
+    # Instantiate Backend based on arguments
+    if args.backend == "cuda":
+        backend = CUDABackend()
+    elif args.backend == "metal":
+        backend = MetalBackend()
+    elif args.backend == "triton":
+        backend = TritonBackend()
+    else:
+        raise ValueError(f"Unknown backend: {args.backend}")
+
     if args.remote:
         config_path = Path(args.remote)
         if not config_path.exists():
@@ -248,13 +256,13 @@ def main():
             
         # Collect GPU specs remotely
         print("Retrieving remote GPU specs...")
-        gpu_specs = gpu.get_remote_gpu_specs(ssh_config)
+        gpu_specs = backend.get_device_specs(ssh_config=ssh_config)
     else:
         # Collect GPU specs locally
-        gpu_specs = gpu.get_gpu_specs()
+        gpu_specs = backend.get_device_specs()
 
     # Create project (or resume if exists/provided)
-    proj_dir = create_project(gpu_specs, io_parent_dir, optional_proj_name, ssh_config)
+    proj_dir = create_project(backend, gpu_specs, io_parent_dir, optional_proj_name, ssh_config)
 
     for op_dir_path in proj_dir.iterdir():
         if not op_dir_path.is_dir() or "max" not in str(op_dir_path):
@@ -279,14 +287,13 @@ def main():
 
         mcts._NODE_CACHE.clear()
 
-        for _ in range(100):
-            # Select parent node then optimize off of it
-            parent_node = mcts.choose_optimization(paths)
-            new_node = optimize(gpu_specs, paths, parent_node, ssh_config)
-            
-            # Update tree with the new node (if optimization succeeded)
-            if new_node:
-                mcts.update_tree(paths, new_node)
+        # Select parent node then optimize off of it
+        parent_node = mcts.choose_optimization(paths)
+        new_node = optimize(backend, gpu_specs, paths, parent_node, ssh_config)
+        
+        # Update tree with the new node (if optimization succeeded)
+        if new_node:
+            mcts.update_tree(paths, new_node)
 
 if __name__ == "__main__":
     main()

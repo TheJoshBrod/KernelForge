@@ -19,11 +19,22 @@ def _extract_signature(code: str) -> str:
     return match.group(1) + ";"
 
 
-def _ensure_cuda_env() -> None:
+def ensure_cuda_env() -> None:
     if "CUDA_HOME" not in os.environ:
         os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
     python_bin = os.path.dirname(sys.executable)
     os.environ["PATH"] = f"{python_bin}:{os.environ.get('PATH','')}"
+
+
+def target_device() -> str:
+    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    if value in {"gpu", "cuda"}:
+        return "cuda"
+    if value == "mps":
+        return "mps"
+    if value == "cpu":
+        return "cpu"
+    return "cuda"
 
 
 def load_kernel(kernel_dir: Path, name: str | None = None, build_dir: Path | None = None) -> Any:
@@ -61,6 +72,36 @@ def load_kernel(kernel_dir: Path, name: str | None = None, build_dir: Path | Non
             with_cuda=False,
         )
     return module
+
+
+def compile_code_string(code: str, name: str, build_dir: str, verbose: bool = False) -> Any:
+    """
+    Compiles CUDA code string directly.
+    """
+    signature = _extract_signature(code)
+    Path(build_dir).mkdir(parents=True, exist_ok=True)
+    
+    device = target_device()
+    if device in {"gpu", "cuda"}:
+        ensure_cuda_env()
+        return load_inline(
+            name=name,
+            cpp_sources=signature,
+            cuda_sources=code,
+            functions=["launch"],
+            build_directory=build_dir,
+            verbose=verbose,
+            with_cuda=True,
+        )
+    else:
+        return load_inline(
+            name=name,
+            cpp_sources=code,
+            functions=["launch"],
+            build_directory=build_dir,
+            verbose=verbose,
+            with_cuda=False,
+        )
 
 
 def load_export(export_path: str | Path, extract_dir: str | Path | None = None) -> dict[str, Any]:
