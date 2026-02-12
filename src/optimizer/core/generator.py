@@ -8,15 +8,11 @@ from pathlib import Path
 from typing import Optional
 from typing import Tuple
 
-import src.optimizer.components.llm.prompts as prompts
-import src.optimizer.components.worker.verifier as verifier
 from src.llm_tools import GenModel
 from src.config import ensure_llm_config
 from src.optimizer.core.types import GPUSpecs
 from src.optimizer.config.settings import settings
-
-# Global variables
-sys_prompt = prompts.get_sys_prompt()
+from src.optimizer.core.backend import Backend
 
 
 def _log(msg: str):
@@ -59,10 +55,13 @@ def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str
     return feedback, code
 
 
-def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path], ssh_config: dict = None) -> Tuple[str, bool, str]:
+
+
+def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, paths: dict[Path], ssh_config: dict = None) -> Tuple[str, bool, str]:
     """Generates a new kernel then validates it for correctness
 
     Args:
+        backend (Backend): Backend instance specific to the GPU architecture for validation
         llm (GenModel): LLM abstraction class with chat history
         msg (str): User message for LLM
         model (str): Name of LLM model
@@ -83,15 +82,9 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path], 
     if gpu_lock:
         with gpu_lock:
             _log("GPU lock acquired, running validation...")
-            if ssh_config:
-                is_valid, error = verifier.validate_remote_kernel(ssh_config, cu_code, paths)
-            else:
-                is_valid, error = verifier.validate_kernel(cu_code, paths)
+            is_valid, error = backend.validate_kernel(cu_code, paths, ssh_config)
     else:
-        if ssh_config:
-            is_valid, error = verifier.validate_remote_kernel(ssh_config, cu_code, paths)
-        else:
-            is_valid, error = verifier.validate_kernel(cu_code, paths)
+        is_valid, error = backend.validate_kernel(cu_code, paths, ssh_config)
     
     _log(f"Validation result: {'PASSED' if is_valid else 'FAILED'}")
     if not is_valid:
@@ -116,10 +109,11 @@ def create_and_validate(llm: GenModel, msg: str, model: str, paths: dict[Path], 
     return feedback, is_valid, error
 
 
-def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None, ssh_config: dict = None) -> Tuple[str, bool, int]:
+def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None, ssh_config: dict = None) -> Tuple[str, bool]:
     """Generates and validates CUDA kernels 
 
     Args:
+        backend (Backend): Backend instance specific to the GPU architecture
         gpu_specs (GPUSpecs): Specs of specific GPU architecture
         best_kernel_code (str): Current best kernel code to optimize
         improvement_log (list): History of optimization attempts from tree ancestors
@@ -133,9 +127,10 @@ def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, 
         model = settings.llm_model_name
 
     # Attempt initial CUDA code generation
+    sys_prompt = backend.get_sys_prompt()
     llm: GenModel = GenModel(sys_prompt)
-    msg = prompts.generate_gpu_optimization_prompt(
-        gpu_specs.model_dump(), best_kernel_code, improvement_log, ancestor_codes)
+    msg = backend.generate_optimization_prompt(
+        gpu_specs, best_kernel_code, improvement_log, ancestor_codes)
 
     # DEBUG: Save full prompt alongside each generation
     # Use shared counter if available (parallel mode), else count files (sequential mode)
@@ -158,16 +153,16 @@ def generate(best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, 
     print(f"\t\tSaved prompt to: {prompt_dump_path}")
 
     paths["attempt"] = 0
-    feedback, is_valid, error = create_and_validate(llm, msg, model, paths, ssh_config)
+    feedback, is_valid, error = create_and_validate(backend, llm, msg, model, paths, ssh_config)
     if is_valid:
-        return feedback, True, next_node_id
+        return feedback, True
     print("\t\tInitial gen failed...")
     # On failure attempt fix before giving up
     for i in range(settings.retry_limit):
         print(f"\t\t\tReattempt {i}")
         paths["attempt"] = i + 1
-        _, is_valid, error = create_and_validate(llm, error, model, paths, ssh_config)
+        _, is_valid, error = create_and_validate(backend, llm, error, model, paths, ssh_config)
         if is_valid:
-            return feedback, True, next_node_id
+            return feedback, True
 
-    return "", False, next_node_id
+    return "", False

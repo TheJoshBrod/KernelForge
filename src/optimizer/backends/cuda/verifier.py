@@ -12,22 +12,15 @@ from pathlib import Path
 
 import torch
 
-BYLLM_AVAILABLE = False
-try:
-    from byllm.lib import by  # type: ignore
-    from byllm.lib import Model  # type: ignore
-    BYLLM_AVAILABLE = True
-except Exception:
-    by = None
-    Model = None
+from byllm.lib import by, Model
 from torch.utils.cpp_extension import load_inline
 from src.optimizer.config.settings import settings
+import src.optimizer.backends.cuda.loader as loader
 
-if BYLLM_AVAILABLE and Model is not None and by is not None:
-    llm = Model(model_name=settings.llm_model_name)
+llm = Model(model_name=settings.llm_model_name)
 
-    @by(llm)
-    def summarize_issue_with_traceback(
+@by(llm)
+def summarize_issue_with_traceback(
         traceback_error: str,
         cu_code: str,
         input_and_output: dict
@@ -56,13 +49,6 @@ if BYLLM_AVAILABLE and Model is not None and by is not None:
         Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
         Only CUDA-side fixes are relevant.
         """
-else:
-    def summarize_issue_with_traceback(
-        traceback_error: str,
-        cu_code: str,
-        input_and_output: dict
-    ) -> str:
-        return traceback_error
 
 
 def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:
@@ -121,19 +107,8 @@ def move_to_cuda(item):
     return item
 
 
-def _target_device() -> str:
-    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
-    if value in {"gpu", "cuda"}:
-        return "cuda"
-    if value == "mps":
-        return "mps"
-    if value == "cpu":
-        return "cpu"
-    return "cuda"
-
-
 def move_to_target(item):
-    target = _target_device()
+    target = loader.target_device()
     if target == "cpu":
         if torch.is_tensor(item):
             return item.cpu()
@@ -167,12 +142,12 @@ def _validate_worker_loop(q_in, q_out):
     """
     # Set environment variables ONCE
     import sys
-    python_bin_dir = os.path.dirname(sys.executable)
-    if _target_device() == "cuda":
-        os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
-        os.environ["PATH"] = f"{python_bin_dir}:/usr/local/cuda-12.1/bin:{os.environ['PATH']}"
+    # Delegate environment setup to loader
+    if loader.target_device() == "cuda":
+        loader.ensure_cuda_env()
+
     # Pre-import torch to warm up (already imported at top level, but ensure context is ready)
-    if _target_device() == "cuda" and torch.cuda.is_available():
+    if loader.target_device() == "cuda" and torch.cuda.is_available():
         torch.cuda.init()
 
     while True:
@@ -183,40 +158,16 @@ def _validate_worker_loop(q_in, q_out):
 
             generated_cu_code, tmpdir, io_dir = job
 
-            # Run the validation logic (refactored from original _validate_worker)
+            # Run the validation logic
             try:
-                # Compile
-                match = re.search(
-                    r"(torch::Tensor\s+launch\s*\([^)]*\))", generated_cu_code)
-                if not match:
-                    raise ValueError(
-                        "Could not find 'launch' function signature.")
-
-                cpp_source = match.group(1) + ";"
-
-                # Check if module already loaded (optimization?)
-                # load_inline uses a cache based on sources, but since we change tmpdir every time,
-                # we force a recompile/realloc. Ideally we should reuse tmpdir if code is same,
-                # but 'tmpdir' is provided by caller.
-                if _target_device() == "cuda":
-                    module = load_inline(
-                        name=f"generated_module_{os.path.basename(tmpdir)}",
-                        cpp_sources=cpp_source,
-                        cuda_sources=generated_cu_code,
-                        functions=['launch'],
-                        build_directory=tmpdir,
-                        verbose=False,  # Reduce spam
-                        with_cuda=True
-                    )
-                else:
-                    module = load_inline(
-                        name=f"generated_module_{os.path.basename(tmpdir)}",
-                        cpp_sources=generated_cu_code,
-                        functions=['launch'],
-                        build_directory=tmpdir,
-                        verbose=False,  # Reduce spam
-                        with_cuda=False
-                    )
+                # Compile using shared loader logic
+                # This handles environment setup and platform differences (CUDA vs CPU/MPS)
+                module = loader.compile_code_string(
+                    code=generated_cu_code,
+                    name=f"generated_module_{os.path.basename(tmpdir)}",
+                    build_dir=tmpdir,
+                    verbose=False
+                )
                 # Execution Test
                 entry_files = sorted(Path(io_dir).glob("entry_*.pt"))
                 if not entry_files:
@@ -238,14 +189,14 @@ def _validate_worker_loop(q_in, q_out):
                         cuda_args = [move_to_target(item) for item in normalized_args]
 
                         output_generated = module.launch(*cuda_args)
-                        if _target_device() == "cuda":
+                        if loader.target_device() == "cuda":
                             torch.cuda.synchronize()
-                        elif _target_device() == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+                        elif loader.target_device() == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
                             torch.mps.synchronize()
 
-                        if _target_device() == "cuda" and not output_generated.is_cuda:
+                        if loader.target_device() == "cuda" and not output_generated.is_cuda:
                             output_generated = output_generated.cuda()
-                        elif _target_device() == "mps" and torch.is_tensor(output_generated):
+                        elif loader.target_device() == "mps" and torch.is_tensor(output_generated):
                             output_generated = output_generated.to("mps")
                         ground_truth = entry["output"]
                         if torch.is_tensor(ground_truth):

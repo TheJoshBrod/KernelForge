@@ -15,7 +15,7 @@ REQUIRED_PACKAGES = [
 ]
 
 SETUP_SCRIPT = """
-import os, subprocess, sys
+import os, subprocess, sys, shutil
 
 # Expand user to get home dir
 WORKSPACE = os.path.expanduser("~/cgins_workspace")
@@ -24,6 +24,28 @@ VENV_PATH = os.path.join(WORKSPACE, "venv")
 if not os.path.exists(WORKSPACE):
     print(f"DTO: Creating workspace at {WORKSPACE}")
     os.makedirs(WORKSPACE)
+
+# Check if venv needs rebuild (version mismatch)
+if os.path.exists(VENV_PATH):
+    venv_python = os.path.join(VENV_PATH, "bin", "python")
+    rebuild = False
+    if not os.path.exists(venv_python):
+        rebuild = True
+    else:
+        try:
+            # Check major.minor version
+            out = subprocess.check_output([venv_python, "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"]).decode().strip()
+            current = f"{sys.version_info.major}.{sys.version_info.minor}"
+            if out != current:
+                print(f"DTO: Venv version mismatch ({out} vs {current}). Rebuilding.")
+                rebuild = True
+        except Exception as e:
+            print(f"DTO: Error checking venv version: {e}")
+            rebuild = True
+            
+    if rebuild:
+        print("DTO: Removing stale virtual environment...")
+        shutil.rmtree(VENV_PATH)
 
 # Create venv if missing
 if not os.path.exists(VENV_PATH):
@@ -63,7 +85,15 @@ def connect_ssh(config: dict) -> paramiko.SSHClient:
     if config.get("key_path"):
         key_path = os.path.expanduser(config["key_path"])
         if os.path.exists(key_path):
-             connect_kwargs["key_filename"] = key_path
+            if os.path.isdir(key_path):
+                # Try common key names if user provided a directory
+                for key_name in ["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"]:
+                    candidate = os.path.join(key_path, key_name)
+                    if os.path.exists(candidate):
+                        connect_kwargs["key_filename"] = candidate
+                        break
+            else:
+                connect_kwargs["key_filename"] = key_path
 
     try:
         print(f"DEBUG: Attempting SSH connection to {connect_kwargs['hostname']}...", flush=True)
@@ -115,7 +145,7 @@ def ensure_remote_setup(client: paramiko.SSHClient):
     """
     # Execute the setup script via stdin
     print("DEBUG: Executing remote setup script...", flush=True)
-    stdin, stdout, stderr = client.exec_command("python3 -")
+    stdin, stdout, stderr = client.exec_command("python3.12 -")
     stdin.write(SETUP_SCRIPT)
     stdin.close()
     
@@ -140,11 +170,16 @@ class RemoteWorkerClient:
         if not ensure_remote_setup(self.client):
             raise RuntimeError("Failed to bootstrap remote environment")
             
-        # 2. Upload worker script
-        # We assume strict location for now, or we can read it from local file
-        worker_local_path = Path(__file__).parent.parent / "remote" / "worker.py"
+        # 2. Upload worker script and dependencies
+        # worker path: src/optimizer/backends/cuda/remote_worker.py
+        worker_local_path = Path(__file__).parent.parent / "backends" / "cuda" / "remote_worker.py"
+        loader_local_path = Path(__file__).parent.parent / "backends" / "cuda" / "loader.py"
+        
         print(f"DEBUG: Uploading worker from {worker_local_path}...", flush=True)
-        upload_files(self.client, {str(worker_local_path): "worker.py"}, "cgins_workspace")
+        upload_files(self.client, {
+            str(worker_local_path): "worker.py",
+            str(loader_local_path): "loader.py"
+        }, "cgins_workspace")
         
         # 3. Start Worker Process
         # Use line buffered unbuffered python? -u is important

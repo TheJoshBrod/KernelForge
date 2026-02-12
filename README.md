@@ -12,10 +12,10 @@ The core innovation is a persistent learning architecture where agents maintain 
 
 **Key Results:**
 - Up to 4x optimization speedups over baseline generation through autonomous iterative refinement
-- Performance within 10% of native PyTorch implementations on production workloads
+- Performance up to 33% faster than native PyTorch implementations on production workloads
 - Automated correctness validation with precision threshold of 1e-5 per element
 - Two-tiered feedback mechanism:
-  - Generation-verification cycle with up to 3 self-debugging attempts per kernel
+  - Generation-verification cycle with self-debugging kernels
   - Performance profiling loop measuring real hardware metrics to guide optimization
 - Self-improving agents that autonomously explore optimization strategies, learn from failures, and converge toward optimal solutions through iterative reasoning
 
