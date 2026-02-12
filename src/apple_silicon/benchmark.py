@@ -353,6 +353,7 @@ def prepare_candidate_resources_for_benchmark(
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     metallib_dst = resources_path / "default.metallib"
+    metallib_dst.parent.mkdir(parents=True, exist_ok=True)
     metallib_cache = cache_dir / "default.metallib"
     src_metal = resources_path / "ggml-metal.metal"
     if not src_metal.exists():

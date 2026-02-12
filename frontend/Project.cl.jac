@@ -52,7 +52,15 @@ def:pub Project -> any {
         hardwareInfo: dict = {},
         hardwareLoading: bool = False,
         statusLoadedOnce: bool = False,
-        autoBenchStarted: bool = False;
+        autoBenchStarted: bool = False,
+        asDoctorInfo: dict = {},
+        asReport: dict = {},
+        asModelPath: str = "",
+        asPromptPath: str = "",
+        asProfile: str = "both",
+        asDoctorLoading: bool = False,
+        asOptimizing: bool = False,
+        asExportPath: str = "";
 
     def format_op(raw: str) -> str {
         raw_text = raw or "";
@@ -143,6 +151,21 @@ def:pub Project -> any {
         if data and "targetDevice" in data and data["targetDevice"] {
             targetDevice = data["targetDevice"];
         }
+        if data and "asReport" in data and data["asReport"] {
+            asReport = data["asReport"];
+        }
+        if data and "asModelPath" in data and data["asModelPath"] {
+            asModelPath = data["asModelPath"];
+        }
+        if data and "asPromptPath" in data and data["asPromptPath"] {
+            asPromptPath = data["asPromptPath"];
+        }
+        if data and "asProfile" in data and data["asProfile"] {
+            asProfile = data["asProfile"];
+        }
+        if data and "asDoctorInfo" in data and data["asDoctorInfo"] {
+            asDoctorInfo = data["asDoctorInfo"];
+        }
         if data and "status" in data and data["status"] and "benchmark" in data["status"] {
             autoBenchStarted = True;
         }
@@ -159,7 +182,12 @@ def:pub Project -> any {
             "status": status,
             "benchResults": benchResults,
             "hardwareInfo": hardwareInfo,
-            "targetDevice": targetDevice
+            "targetDevice": targetDevice,
+            "asReport": asReport,
+            "asModelPath": asModelPath,
+            "asPromptPath": asPromptPath,
+            "asProfile": asProfile,
+            "asDoctorInfo": asDoctorInfo
         };
         window.sessionStorage.setItem(_cache_key(), JSON.stringify(payload));
     }
@@ -302,6 +330,7 @@ def:pub Project -> any {
         await refreshCoverage();
         await refreshStatus();
         await refreshBench();
+        await refreshAppleSiliconReport();
     }
 
     async def detectHardware -> None {
@@ -359,6 +388,113 @@ def:pub Project -> any {
             await jacSpawn("StartBenchmark", "", {"projectName": name});
             await refreshStatus();
             await refreshBench();
+        }
+    }
+
+    async def refreshAppleSiliconReport -> None {
+        if not name {
+            asReport = {};
+            return;
+        }
+        try {
+            resp = await jacSpawn(
+                "GetAppleSiliconReport",
+                "",
+                {"projectName": name}
+            );
+            data = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else {};
+            if data and "success" in data and data["success"] and "report" in data {
+                asReport = data["report"] or {};
+            } else {
+                asReport = {};
+            }
+        } except (error) {
+            console.error("Failed to fetch Apple Silicon report:", error);
+            asReport = {};
+        }
+    }
+
+    async def handleAppleSiliconDoctor -> None {
+        asDoctorLoading = True;
+        try {
+            resp = await jacSpawn(
+                "AppleSiliconDoctor",
+                "",
+                {"projectName": name}
+            );
+            data = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else {};
+            asDoctorInfo = data or {};
+        } except (error) {
+            console.error("Apple Silicon doctor failed:", error);
+            asDoctorInfo = {};
+        } finally {
+            asDoctorLoading = False;
+        }
+    }
+
+    async def startAppleSiliconOptimize(gate: str) -> None {
+        if not name {
+            return;
+        }
+        asOptimizing = True;
+        try {
+            await jacSpawn(
+                "StartAppleSiliconOptimize",
+                "",
+                {
+                    "projectName": name,
+                    "modelPath": asModelPath,
+                    "profile": asProfile,
+                    "gate": gate,
+                    "promptsPath": asPromptPath
+                }
+            );
+            await refreshStatus();
+        } except (error) {
+            console.error("Apple Silicon optimize failed to start:", error);
+        } finally {
+            asOptimizing = False;
+        }
+    }
+
+    async def handleAppleSiliconExportPack -> None {
+        if not name {
+            return;
+        }
+        try {
+            resp = await jacSpawn(
+                "AppleSiliconExportPack",
+                "",
+                {"projectName": name, "modelPath": asModelPath}
+            );
+            data = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else {};
+            if data and "path" in data and data["path"] {
+                asExportPath = data["path"];
+            }
+        } except (error) {
+            console.error("Apple Silicon export failed:", error);
+        }
+    }
+
+    async def handleAppleSiliconDisablePack -> None {
+        if not name {
+            return;
+        }
+        try {
+            await jacSpawn(
+                "AppleSiliconDisablePack",
+                "",
+                {"projectName": name, "modelPath": asModelPath}
+            );
+            await refreshAppleSiliconReport();
+        } except (error) {
+            console.error("Apple Silicon disable failed:", error);
         }
     }
 
@@ -672,6 +808,12 @@ def:pub Project -> any {
     and status["benchmark"]
     and "status" in status["benchmark"]
     else "";
+    apple_silicon_optimize_status = status["apple_silicon_optimize"]["status"]
+    if status
+    and "apple_silicon_optimize" in status
+    and status["apple_silicon_optimize"]
+    and "status" in status["apple_silicon_optimize"]
+    else "";
 
     useEffect(
         lambda -> None {
@@ -682,8 +824,12 @@ def:pub Project -> any {
             refreshCoverage();
             refreshStatus();
             refreshBench(not restored);
+            refreshAppleSiliconReport();
             if not has_cached_hw {
                 detectHardware();
+            }
+            if not asDoctorInfo {
+                handleAppleSiliconDoctor();
             }
         },
         [name]
@@ -691,7 +837,20 @@ def:pub Project -> any {
 
     useEffect(
         lambda -> None { cacheProjectView(); },
-        [name, ops, coverage, status, benchResults, hardwareInfo, targetDevice]
+        [
+            name,
+            ops,
+            coverage,
+            status,
+            benchResults,
+            hardwareInfo,
+            targetDevice,
+            asReport,
+            asModelPath,
+            asPromptPath,
+            asProfile,
+            asDoctorInfo
+        ]
     );
 
     useEffect(
@@ -730,6 +889,9 @@ def:pub Project -> any {
             bench_active = _job_is_active(status["benchmark"])
             if status and "benchmark" in status
             else False;
+            as_opt_active = _job_is_active(status["apple_silicon_optimize"])
+            if status and "apple_silicon_optimize" in status
+            else False;
 
             if (
                 not profile_active
@@ -739,6 +901,7 @@ def:pub Project -> any {
                 and not optimize_active
                 and not optimize_adv_active
                 and not bench_active
+                and not as_opt_active
             ) {
                 return lambda -> None {};
             }
@@ -749,6 +912,7 @@ def:pub Project -> any {
                     refreshOps(False);
                     refreshCoverage();
                     refreshBench(False);
+                    refreshAppleSiliconReport();
                 },
                 1000
             );
@@ -762,7 +926,8 @@ def:pub Project -> any {
             generate_adv_status,
             optimize_status,
             optimize_adv_status,
-            benchmark_status
+            benchmark_status,
+            apple_silicon_optimize_status
         ]
     );
 
@@ -778,6 +943,15 @@ def:pub Project -> any {
             profile_status,
             prepare_status
         ]
+    );
+
+    useEffect(
+        lambda -> None {
+            if name {
+                refreshAppleSiliconReport();
+            }
+        },
+        [name, apple_silicon_optimize_status]
     );
 
     generated_ops = _coverage_generated_ops();
@@ -904,7 +1078,8 @@ def:pub Project -> any {
         {"key": "generate_adv", "label": "Adv Generate"},
         {"key": "optimize", "label": "Optimize"},
         {"key": "optimize_adv", "label": "Adv Optimize"},
-        {"key": "benchmark", "label": "Benchmark"}
+        {"key": "benchmark", "label": "Benchmark"},
+        {"key": "apple_silicon_optimize", "label": "Apple Silicon Optimize"}
     ];
 
     def status_label(key: str) -> str {
@@ -936,6 +1111,7 @@ def:pub Project -> any {
             or item["key"] == "generate_adv"
             or item["key"] == "optimize"
             or item["key"] == "optimize_adv"
+            or item["key"] == "apple_silicon_optimize"
         ) {
             if job and job["status"] == "running" {
                 controls = <div className="status-controls">
@@ -1143,6 +1319,39 @@ def:pub Project -> any {
         profileRuntimeStatus = "Profile runtime: Apple MPS";
     } elif runtimeDevice == "cpu" {
         profileRuntimeStatus = "Profile runtime: CPU";
+    }
+
+    asJob = status["apple_silicon_optimize"]
+    if status and "apple_silicon_optimize" in status
+    else {};
+    asJobMessage = asJob["message"] if asJob and "message" in asJob else "";
+    asJobStatus = asJob["status"] if asJob and "status" in asJob else "";
+    asHasReport = asReport and "success" in asReport and asReport["success"];
+    asPackId = asReport["pack_id"] if asHasReport and "pack_id" in asReport else "";
+    asPassGate = asReport["pass_gate"]
+    if asHasReport and "pass_gate" in asReport
+    else False;
+    asProfileDelta = asReport["delta"]["profiles"]
+    if asHasReport and "delta" in asReport and asReport["delta"] and "profiles" in asReport["delta"]
+    else {};
+    asDeltaRows = [];
+    if asProfileDelta {
+        for key in asProfileDelta {
+            row = asProfileDelta[key] if key in asProfileDelta else {};
+            pre = row["prefill_uplift_pct"] if row and "prefill_uplift_pct" in row else None;
+            dec = row["decode_uplift_pct"] if row and "decode_uplift_pct" in row else None;
+            asDeltaRows = asDeltaRows.concat(
+                [
+                    <li key={"as-delta-" + key} className="table-muted">
+                        {key + ": prefill="
+                        + (String(pre) if pre != None else "n/a")
+                        + "% decode="
+                        + (String(dec) if dec != None else "n/a")
+                        + "%"}
+                    </li>
+                ]
+            );
+        }
     }
 
     panelSelectableOps = _coverage_generated_ops()
@@ -1390,6 +1599,140 @@ def:pub Project -> any {
                                 >
                                     Profile Model
                                 </button>
+                            </div>
+                        </div>
+
+                        <div className="panel">
+                            <div className="panel-header">
+                                <span className="panel-title">
+                                    Apple Silicon (llama.cpp)
+                                </span>
+                                <button
+                                    onClick={lambda -> None { handleAppleSiliconDoctor();}}
+                                    className="chip-button"
+                                >
+                                    {"Checking..."
+                                    if asDoctorLoading
+                                    else "Doctor"}
+                                </button>
+                            </div>
+                            <div className="panel-body">
+                                <label className="input-label">
+                                    GGUF model path (optional)
+                                </label>
+                                <input
+                                    type="text"
+                                    value={asModelPath}
+                                    onChange={lambda e: any  -> None { asModelPath = e.target.value;}}
+                                    placeholder="leave blank to use default tiny Qwen"
+                                    className="input input--mono"
+                                />
+                                <label className="input-label">
+                                    Prompt file (optional)
+                                </label>
+                                <input
+                                    type="text"
+                                    value={asPromptPath}
+                                    onChange={lambda e: any  -> None { asPromptPath = e.target.value;}}
+                                    placeholder="newline-delimited prompts"
+                                    className="input input--mono"
+                                />
+                                <label className="input-label">
+                                    Profile scope
+                                </label>
+                                <div className="hardware-target-grid">
+                                    <label className="checkbox-row">
+                                        <input
+                                            type="radio"
+                                            checked={asProfile == "chat"}
+                                            onChange={lambda e: any  -> None { asProfile = "chat";}}
+                                        />
+                                        <span>
+                                            Chat
+                                        </span>
+                                    </label>
+                                    <label className="checkbox-row">
+                                        <input
+                                            type="radio"
+                                            checked={asProfile == "long"}
+                                            onChange={lambda e: any  -> None { asProfile = "long";}}
+                                        />
+                                        <span>
+                                            Long
+                                        </span>
+                                    </label>
+                                    <label className="checkbox-row">
+                                        <input
+                                            type="radio"
+                                            checked={asProfile == "both"}
+                                            onChange={lambda e: any  -> None { asProfile = "both";}}
+                                        />
+                                        <span>
+                                            Both
+                                        </span>
+                                    </label>
+                                </div>
+                                <div className="button-row">
+                                    <button
+                                        onClick={lambda -> None { startAppleSiliconOptimize("quick");}}
+                                        className="ghost-button"
+                                        disabled={asOptimizing}
+                                    >
+                                        Quick optimize
+                                    </button>
+                                    <button
+                                        onClick={lambda -> None { startAppleSiliconOptimize("full");}}
+                                        className="ghost-button"
+                                        disabled={asOptimizing}
+                                    >
+                                        Full optimize
+                                    </button>
+                                </div>
+                                <div className="button-row">
+                                    <button
+                                        onClick={lambda -> None { handleAppleSiliconExportPack();}}
+                                        className="ghost-button"
+                                    >
+                                        Export .cginspack
+                                    </button>
+                                    <button
+                                        onClick={lambda -> None { handleAppleSiliconDisablePack();}}
+                                        className="ghost-button"
+                                    >
+                                        Disable active pack
+                                    </button>
+                                </div>
+                                {<p className="table-muted">
+                                    {"Doctor commit check: "
+                                    + ("ok" if asDoctorInfo and "llamacpp_commit_ok" in asDoctorInfo and asDoctorInfo["llamacpp_commit_ok"] else "not ready")}
+                                </p>
+                                if asDoctorInfo
+                                else <span></span>}
+                                {<p className="table-muted">
+                                    {"Status: " + asJobStatus + " - " + asJobMessage}
+                                </p>
+                                if asJobStatus
+                                else <span></span>}
+                                {<p className="table-muted break-all">
+                                    {"Pack: " + asPackId}
+                                </p>
+                                if asPackId
+                                else <span></span>}
+                                {<p className={("status-success" if asPassGate else "table-muted")}>
+                                    {"Pass gate: " + ("yes" if asPassGate else "no")}
+                                </p>
+                                if asHasReport
+                                else <span></span>}
+                                {<ul className="status-list">
+                                    {asDeltaRows}
+                                </ul>
+                                if asDeltaRows.length > 0
+                                else <span></span>}
+                                {<p className="table-muted break-all">
+                                    {asExportPath}
+                                </p>
+                                if asExportPath
+                                else <span></span>}
                             </div>
                         </div>
                     </div>

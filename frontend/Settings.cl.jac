@@ -16,7 +16,59 @@ def:pub Settings -> any {
 
     has saving: bool = False,
         apiTesting: bool = False,
-        apiTest: dict = {};
+        authBusy: bool = False,
+        apiKeyDraft: str = "",
+        apiTest: dict = {},
+        authStatus: dict = {},
+        authMessage: str = "";
+
+    def _copy_cfg(src: dict) -> dict {
+        out = {};
+        for key in src {
+            out[key] = src[key];
+        }
+        return out;
+    }
+
+    def _auth_cfg(cfg: dict) -> dict {
+        auth = cfg["auth"] if cfg and "auth" in cfg and cfg["auth"] else {};
+        if not auth {
+            auth = {
+                "mode": "auto",
+                "provider": "openai",
+                "model": "",
+                "api_key_saved": False,
+                "account_session_detected": False,
+                "last_checked_at": 0
+            };
+        }
+        return auth;
+    }
+
+    async def refreshAuthStatus -> None {
+        authBusy = True;
+        try {
+            resp = await jacSpawn("GetAuthStatus", "", {});
+            data = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else {};
+            authStatus = data if data else {};
+            if data and "auth" in data {
+                mode_effective = data["auth"]["mode_effective"]
+                if "mode_effective" in data["auth"]
+                else "unknown";
+                reason = data["auth"]["reason"] if "reason" in data["auth"] else "";
+                authMessage = ("Auth: " + mode_effective + (" (" + reason + ")" if reason else ""));
+            } else {
+                authMessage = "Auth status unavailable";
+            }
+        } except (error) {
+            authStatus = {"success": False, "error": "Failed to detect auth status"};
+            authMessage = "Auth status check failed";
+        } finally {
+            authBusy = False;
+        }
+    }
 
     def _return_cache_key() -> str {
         return "cgins_settings_return_to";
@@ -63,18 +115,79 @@ def:pub Settings -> any {
         []
     );
 
+    useEffect(lambda -> None { refreshAuthStatus();}, []);
+
     def handleChange(field: str, value: str) -> None {
         new_llm_info = {
             "model": config["llm_info"]["model"],
-            "apikey": config["llm_info"]["apikey"],
+            "apikey": "",
             "provider": config["llm_info"]["provider"]
         };
         new_llm_info[field] = value;
-        setConfig({"llm_info": new_llm_info});
+
+        new_auth = _auth_cfg(config);
+        if field == "provider" or field == "model" {
+            new_auth[field] = value;
+        }
+
+        next_cfg = _copy_cfg(config);
+        next_cfg["llm_info"] = new_llm_info;
+        next_cfg["auth"] = new_auth;
+        setConfig(next_cfg);
     }
+
+    def handleAuthModeChange(value: str) -> None {
+        next_cfg = _copy_cfg(config);
+        auth = _auth_cfg(config);
+        auth["mode"] = value;
+        next_cfg["auth"] = auth;
+        setConfig(next_cfg);
+    }
+
+    async def handleSaveApiKey -> None {
+        if not apiKeyDraft {
+            authMessage = "Enter an API key first.";
+            return;
+        }
+        authBusy = True;
+        try {
+            llm = config["llm_info"] if config and "llm_info" in config else {};
+            provider = llm["provider"] if llm and "provider" in llm else "openai";
+            model = llm["model"] if llm and "model" in llm and llm["model"] else "gpt-5.2";
+            resp = await jacSpawn(
+                "SaveAuthSecret",
+                "",
+                {"provider": provider, "model": model, "apiKey": apiKeyDraft}
+            );
+            data = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else {};
+            if data and "success" in data and data["success"] {
+                apiKeyDraft = "";
+                authMessage = "API key saved to keychain.";
+                await refreshAuthStatus();
+            } else {
+                authMessage = (
+                    data["error"]
+                    if data and "error" in data and data["error"]
+                    else "Failed to save API key."
+                );
+            }
+        } except (error) {
+            console.error("Failed to save API key:", error);
+            authMessage = "Failed to save API key.";
+        } finally {
+            authBusy = False;
+        }
+    }
+
     async def handleSave -> None {
         saving = True;
-        await saveConfig(config);
+        next_cfg = _copy_cfg(config);
+        llm = next_cfg["llm_info"] if next_cfg and "llm_info" in next_cfg else {};
+        llm["apikey"] = "";
+        next_cfg["llm_info"] = llm;
+        await saveConfig(next_cfg);
         saving = False;
         navigate(getReturnPath());
     }
@@ -104,6 +217,10 @@ def:pub Settings -> any {
         navigate(getReturnPath());
     }
 
+    async def handleDetectAccountSession -> None {
+        await refreshAuthStatus();
+    }
+
     if loading {
         return
             <div className="app-shell app-shell--center settings-shell">
@@ -118,6 +235,7 @@ def:pub Settings -> any {
     }
 
     llm_info = config["llm_info"];
+    auth = _auth_cfg(config);
     providers = config["providers"] if "providers" in config else [];
     providerOptions = [];
     for p in providers {
@@ -198,17 +316,61 @@ def:pub Settings -> any {
                     </div>
                     <div className="form-field">
                         <label className="input-label">
+                            Auth Mode
+                        </label>
+                        <select
+                            value={auth["mode"]}
+                            onChange={lambda e: any  -> None { handleAuthModeChange(e.target.value);}}
+                            className="input"
+                        >
+                            <option value="auto">
+                                auto
+                            </option>
+                            <option value="api_key">
+                                api_key
+                            </option>
+                            <option value="account_session">
+                                account_session
+                            </option>
+                        </select>
+                    </div>
+                    <div className="form-field">
+                        <label className="input-label">
                             API Key
                         </label>
                         <input
                             type="password"
-                            value={llm_info["apikey"]}
-                            onChange={lambda e: any  -> None { handleChange(
-                                "apikey", e.target.value
-                            );}}
+                            value={apiKeyDraft}
+                            onChange={lambda e: any  -> None { apiKeyDraft = e.target.value;}}
                             placeholder="sk-..."
                             className="input input--mono"
                         />
+                        <div className="settings-actions">
+                            <button
+                                onClick={handleSaveApiKey}
+                                disabled={authBusy}
+                                className="app-button app-button--secondary app-button--wide"
+                            >
+                                {("Saving key..." if authBusy else "Save API Key")}
+                            </button>
+                            <button
+                                onClick={handleDetectAccountSession}
+                                disabled={authBusy}
+                                className="app-button app-button--ghost app-button--wide"
+                            >
+                                {("Checking..." if authBusy else "Detect Account Session")}
+                            </button>
+                        </div>
+                    </div>
+                    <div className="form-field">
+                        <label className="input-label">
+                            Auth Status
+                        </label>
+                        <div className="settings-test tone-muted">
+                            <span>
+                                {authMessage if authMessage else "No auth status yet"}
+                            </span>
+                        </div>
                     </div>
                 </div>
                 <div className="settings-actions-block">

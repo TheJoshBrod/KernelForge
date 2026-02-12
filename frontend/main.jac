@@ -12,6 +12,14 @@ import subprocess;
 
 glob config_store: dict = {
          "llm_info": {"model": "", "apikey": "", "provider": ""},
+         "auth": {
+             "mode": "auto",
+             "provider": "openai",
+             "model": "",
+             "api_key_saved": False,
+             "account_session_detected": False,
+             "last_checked_at": 0
+         },
          "providers": []
      },
      config_path: str = "config.json",
@@ -27,21 +35,97 @@ def _ensure_dir(dir_path: str) -> None {
     }
 }
 
+def _default_config -> dict {
+    return {
+        "llm_info": {"model": "", "apikey": "", "provider": ""},
+        "auth": {
+            "mode": "auto",
+            "provider": "openai",
+            "model": "",
+            "api_key_saved": False,
+            "account_session_detected": False,
+            "last_checked_at": 0
+        },
+        "providers": []
+    };
+}
+
+def _normalize_config(cfg: dict) -> dict {
+    base = _default_config();
+    if not cfg {
+        return base;
+    }
+
+    if "llm_info" in cfg and cfg["llm_info"] {
+        llm = cfg["llm_info"];
+        for key in llm {
+            base["llm_info"][key] = llm[key];
+        }
+    }
+
+    if "auth" in cfg and cfg["auth"] {
+        auth = cfg["auth"];
+        for key in auth {
+            base["auth"][key] = auth[key];
+        }
+    }
+
+    if "providers" in cfg and cfg["providers"] {
+        base["providers"] = cfg["providers"];
+    }
+
+    for key in cfg {
+        if key != "llm_info" and key != "auth" and key != "providers" {
+            base[key] = cfg[key];
+        }
+    }
+    return base;
+}
+
+def _sync_provider_model(cfg: dict) -> dict {
+    norm = _normalize_config(cfg);
+    llm = norm["llm_info"];
+    auth = norm["auth"];
+
+    llm_provider = llm["provider"] if llm and "provider" in llm else "";
+    llm_model = llm["model"] if llm and "model" in llm else "";
+    auth_provider = auth["provider"] if auth and "provider" in auth else "";
+    auth_model = auth["model"] if auth and "model" in auth else "";
+
+    provider = llm_provider if llm_provider else auth_provider;
+    model = llm_model if llm_model else auth_model;
+
+    llm["provider"] = provider;
+    llm["model"] = model;
+    auth["provider"] = provider;
+    auth["model"] = model;
+    norm["llm_info"] = llm;
+    norm["auth"] = auth;
+    return norm;
+}
+
 def _apply_llm_env_from_config(cfg: dict) -> None {
     if not cfg {
         return;
     }
+    cfg = _sync_provider_model(cfg);
     llm = cfg["llm_info"] if cfg and "llm_info" in cfg else {};
+    auth = cfg["auth"] if cfg and "auth" in cfg else {};
     provider = llm["provider"] if llm and "provider" in llm else "";
     model = llm["model"] if llm and "model" in llm else "";
     apikey = llm["apikey"] if llm and "apikey" in llm else "";
+    auth_mode = auth["mode"] if auth and "mode" in auth else "auto";
 
     if provider {
         os.environ["LLM_PROVIDER"] = provider;
     }
+    if auth_mode {
+        os.environ["CGINS_AUTH_MODE"] = auth_mode;
+    }
     if provider == "openai" {
         if apikey {
             os.environ["OPENAI_API_KEY"] = apikey;
+            os.environ["CODEX_API_KEY"] = apikey;
         }
         if model {
             os.environ["OPENAI_MODEL"] = model;
@@ -335,15 +419,45 @@ def _is_allowed_repo_path(rel_path: str, project_name: str) -> bool {
     return False;
 }
 
-def _run_llm_test(provider: str, model: str, apikey: str) -> dict {
+def _save_auth_secret(provider: str, model: str, apikey: str) -> dict {
+    secret = apikey.strip() if apikey else "";
+    if not secret {
+        return {"success": False, "error": "Missing API key"};
+    }
+    auth_script = path.join(repo_root, "scripts", "cgins_auth.py");
+    cmd = [
+        sys.executable,
+        auth_script,
+        "login",
+        "--method",
+        "api_key",
+        "--provider",
+        provider if provider else "openai",
+        "--model",
+        model if model else "gpt-5.2",
+        "--api-key",
+        secret
+    ];
+    return _run_json_cmd(cmd);
+}
+
+def _get_auth_status -> dict {
+    auth_script = path.join(repo_root, "scripts", "cgins_auth.py");
+    cmd = [sys.executable, auth_script, "status"];
+    return _run_json_cmd(cmd);
+}
+
+def _run_llm_test(cfg: dict) -> dict {
+    cfg = _sync_provider_model(cfg);
+    llm = cfg["llm_info"] if cfg and "llm_info" in cfg else {};
+    provider = llm["provider"] if llm and "provider" in llm else "";
+    model = llm["model"] if llm and "model" in llm else "";
+    apikey = llm["apikey"] if llm and "apikey" in llm else "";
     if not provider {
         return {"success": False, "error": "Missing provider"};
     }
     if not model {
         return {"success": False, "error": "Missing model"};
-    }
-    if not apikey {
-        return {"success": False, "error": "Missing API key"};
     }
     test_script = path.join(repo_root, "scripts", "test_llm_connection.py");
     cmd = [
@@ -352,10 +466,12 @@ def _run_llm_test(provider: str, model: str, apikey: str) -> dict {
         "--provider",
         provider,
         "--model",
-        model,
-        "--apikey",
-        apikey
+        model
     ];
+    if apikey {
+        cmd.append("--apikey");
+        cmd.append(apikey);
+    }
     try {
         result = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True);
         stdout = result.stdout.strip();
@@ -384,16 +500,50 @@ def _run_llm_test(provider: str, model: str, apikey: str) -> dict {
     }
 }
 
+def _apple_silicon_report_path(project_name: str) -> str {
+    return path.join(
+        _project_dir(project_name), "benchmarks", "apple_silicon_report.json"
+    );
+}
+
+def _run_json_cmd(cmd: list) -> dict {
+    try {
+        result = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True);
+        stdout = result.stdout.strip();
+        stderr = result.stderr.strip();
+        payload = {};
+        if stdout {
+            try {
+                payload = loads(stdout);
+            } except Exception {
+                payload = {"raw": stdout};
+            }
+        }
+        if stderr and "stderr" not in payload {
+            payload["stderr"] = stderr;
+        }
+        payload["return_code"] = result.returncode;
+        if result.returncode != 0 and "success" not in payload {
+            payload["success"] = False;
+        }
+        return payload;
+    } except Exception as e {
+        return {"success": False, "error": str(e)};
+    }
+}
+
 walker:pub GetConfig {
     can return_config with `root entry {
         try {
             with open(config_path, "r") as f {
-                config = load(f);
+                config = _sync_provider_model(load(f));
+                global config_store;
+                config_store = config;
                 report config;
             }
         } except Exception as e {
             print(f"Error loading config: {e}");
-            report config_store;
+            report _sync_provider_model(config_store);
         }
     }
 }
@@ -403,16 +553,103 @@ walker:pub SaveConfig {
 
     can update_config with `root entry {
         try {
+            clean_cfg = _sync_provider_model(self.cfg);
+            llm = clean_cfg["llm_info"] if clean_cfg and "llm_info" in clean_cfg else {};
+            auth = clean_cfg["auth"] if clean_cfg and "auth" in clean_cfg else {};
+            provider = llm["provider"] if llm and "provider" in llm else "";
+            model = llm["model"] if llm and "model" in llm else "";
+            apikey = llm["apikey"] if llm and "apikey" in llm else "";
+
+            if apikey {
+                secret_result = _save_auth_secret(provider, model, apikey);
+                if not secret_result or not secret_result["success"] {
+                    print(f"Error saving key to keychain: {secret_result}");
+                    report False;
+                    disengage;
+                }
+                auth["api_key_saved"] = True;
+                auth["mode"] = "api_key";
+                clean_cfg["auth"] = auth;
+            }
+            llm["apikey"] = "";
+            clean_cfg["llm_info"] = llm;
+
             with open(config_path, "w") as f {
-                dump(self.cfg, f, indent=2);
+                dump(clean_cfg, f, indent=2);
                 global config_store;
-                config_store = self.cfg;
+                config_store = clean_cfg;
                 report True;
             }
         } except Exception as e {
             print(f"Error saving config: {e}");
             report False;
         }
+    }
+}
+
+walker:pub SaveAuthSecret {
+    has provider: str = "openai",
+        model: str = "gpt-5.2",
+        apiKey: str = "";
+
+    can run with `root entry {
+        provider = self.provider if self.provider else "openai";
+        model = self.model if self.model else "gpt-5.2";
+        result = _save_auth_secret(provider, model, self.apiKey);
+        if result and "success" in result and result["success"] {
+            cfg = _sync_provider_model(config_store);
+            llm = cfg["llm_info"];
+            auth = cfg["auth"];
+            llm["provider"] = provider;
+            llm["model"] = model;
+            llm["apikey"] = "";
+            auth["provider"] = provider;
+            auth["model"] = model;
+            auth["mode"] = "api_key";
+            auth["api_key_saved"] = True;
+            auth["last_checked_at"] = int(datetime.now().timestamp());
+            cfg["llm_info"] = llm;
+            cfg["auth"] = auth;
+            try {
+                with open(config_path, "w") as f {
+                    dump(cfg, f, indent=2);
+                }
+                global config_store;
+                config_store = cfg;
+            } except Exception as e {
+                print(f"SaveAuthSecret failed to persist config: {e}");
+            }
+        }
+        report result;
+    }
+}
+
+walker:pub GetAuthStatus {
+    can run with `root entry {
+        result = _get_auth_status();
+        if result and "success" in result and result["success"] and "auth" in result {
+            cfg = _sync_provider_model(config_store);
+            auth = cfg["auth"] if cfg and "auth" in cfg else {};
+            auth_status = result["auth"];
+            auth["mode"] = auth_status["mode_requested"] if "mode_requested" in auth_status else auth["mode"];
+            auth["provider"] = auth_status["provider"] if "provider" in auth_status else auth["provider"];
+            auth["model"] = auth_status["model"] if "model" in auth_status else auth["model"];
+            auth["api_key_saved"] = auth_status["api_key_available"] if "api_key_available" in auth_status else auth["api_key_saved"];
+            auth["account_session_detected"] = auth_status["account_session_detected"] if "account_session_detected" in auth_status else auth["account_session_detected"];
+            auth["last_checked_at"] = int(datetime.now().timestamp());
+            cfg["auth"] = auth;
+            cfg = _sync_provider_model(cfg);
+            try {
+                with open(config_path, "w") as f {
+                    dump(cfg, f, indent=2);
+                }
+                global config_store;
+                config_store = cfg;
+            } except Exception as e {
+                print(f"GetAuthStatus failed to persist config: {e}");
+            }
+        }
+        report result;
     }
 }
 
@@ -431,13 +668,12 @@ walker:pub TestLLMConnection {
                 cfg = config_store;
             }
         }
-        llm = cfg["llm_info"]
-        if cfg and "llm_info" in cfg
-        else config_store["llm_info"];
-        provider = llm["provider"] if llm and "provider" in llm else "";
-        model = llm["model"] if llm and "model" in llm else "";
-        apikey = llm["apikey"] if llm and "apikey" in llm else "";
-        result = _run_llm_test(provider, model, apikey);
+        cfg = _sync_provider_model(cfg);
+        result = _run_llm_test(cfg);
+        auth_status = _get_auth_status();
+        if auth_status and "auth" in auth_status {
+            result["auth"] = auth_status["auth"];
+        }
         report result;
     }
 }
@@ -509,7 +745,14 @@ walker:pub CreateProject {
                     "extra_validation_cases": 1,
                     "target_device": target_device
                 },
-                "profile": {"allow_ops": [], "skip_ops": [], "skip_prefixes": []}
+                "profile": {"allow_ops": [], "skip_ops": [], "skip_prefixes": []},
+                "apple_silicon": {
+                    "enabled": False,
+                    "model_path": "",
+                    "active_pack_id": "",
+                    "profiles": ["chat", "long"],
+                    "prompt_suite_path": ""
+                }
             };
             with open(path.join(project_path, "config.json"), "w") as f {
                 dump(config, f, indent=2);
@@ -1267,6 +1510,197 @@ walker:pub StartBenchmark {
             self.projectName
         ];
         result = _start_job(self.projectName, "benchmark", cmd, "benchmark.log");
+        report result;
+    }
+}
+
+walker:pub AppleSiliconDoctor {
+    has projectName: str = "";
+
+    can run with `root entry {
+        cmd = [
+            sys.executable,
+            path.join(repo_root, "scripts", "apple_silicon", "cgins_as.py"),
+            "--llamacpp-root",
+            path.join(repo_root, ".vendor", "llama.cpp"),
+            "doctor"
+        ];
+        result = _run_json_cmd(cmd);
+        report result;
+    }
+}
+
+walker:pub StartAppleSiliconOptimize {
+    has projectName: str,
+        modelPath: str = "",
+        profile: str = "both",
+        gate: str = "quick",
+        promptsPath: str = "";
+
+    can run with `root entry {
+        profile_name = (self.profile or "both").lower();
+        if profile_name != "chat" and profile_name != "long" and profile_name != "both" {
+            profile_name = "both";
+        }
+        gate_name = (self.gate or "quick").lower();
+        if gate_name != "full" {
+            gate_name = "quick";
+        }
+        try {
+            cfg_path = path.join(_project_dir(self.projectName), "config.json");
+            cfg = {};
+            if path.exists(cfg_path) {
+                with open(cfg_path, "r") as f {
+                    cfg = load(f);
+                }
+            }
+            as_cfg = cfg["apple_silicon"] if cfg and "apple_silicon" in cfg else {};
+            as_cfg["enabled"] = True;
+            as_cfg["model_path"] = self.modelPath or "";
+            as_cfg["profiles"] = [profile_name];
+            as_cfg["prompt_suite_path"] = self.promptsPath or "";
+            cfg["apple_silicon"] = as_cfg;
+            with open(cfg_path, "w") as f {
+                dump(cfg, f, indent=2);
+            }
+        } except Exception as e {
+            print(f"Failed to persist apple silicon config: {e}");
+        }
+
+        cmd = [
+            sys.executable,
+            path.join(repo_root, "scripts", "apple_silicon", "cgins_as.py"),
+            "--llamacpp-root",
+            path.join(repo_root, ".vendor", "llama.cpp"),
+            "optimize",
+            "--project",
+            self.projectName,
+            "--profile",
+            profile_name
+        ];
+        if self.modelPath {
+            cmd.append("--model");
+            cmd.append(self.modelPath);
+        }
+        if self.promptsPath {
+            cmd.append("--prompts");
+            cmd.append(self.promptsPath);
+        }
+        if gate_name == "full" {
+            cmd.append("--full");
+        } else {
+            cmd.append("--quick");
+        }
+
+        result = _start_job(
+            self.projectName,
+            "apple_silicon_optimize",
+            cmd,
+            "apple_silicon_optimize.log"
+        );
+        report result;
+    }
+}
+
+walker:pub GetAppleSiliconReport {
+    has projectName: str;
+
+    can run with `root entry {
+        report_path = _apple_silicon_report_path(self.projectName);
+        if not path.exists(report_path) {
+            report {"success": False, "report": {}};
+            disengage;
+        }
+        try {
+            with open(report_path, "r") as f {
+                data = load(f);
+            }
+            try {
+                if data and "pack_id" in data and data["pack_id"] {
+                    cfg_path = path.join(_project_dir(self.projectName), "config.json");
+                    cfg = {};
+                    if path.exists(cfg_path) {
+                        with open(cfg_path, "r") as cfg_f {
+                            cfg = load(cfg_f);
+                        }
+                    }
+                    as_cfg = cfg["apple_silicon"] if cfg and "apple_silicon" in cfg else {};
+                    as_cfg["active_pack_id"] = data["pack_id"];
+                    cfg["apple_silicon"] = as_cfg;
+                    with open(cfg_path, "w") as cfg_f {
+                        dump(cfg, cfg_f, indent=2);
+                    }
+                }
+            } except Exception as cfg_e {
+                print(f"Failed to persist active pack id: {cfg_e}");
+            }
+            report {"success": True, "report": data, "path": report_path};
+        } except Exception as e {
+            print(f"Error reading Apple Silicon report: {e}");
+            report {"success": False, "report": {}, "error": str(e)};
+        }
+    }
+}
+
+walker:pub AppleSiliconDisablePack {
+    has projectName: str,
+        modelPath: str = "";
+
+    can run with `root entry {
+        cmd = [
+            sys.executable,
+            path.join(repo_root, "scripts", "apple_silicon", "cgins_as.py"),
+            "--llamacpp-root",
+            path.join(repo_root, ".vendor", "llama.cpp"),
+            "disable-pack"
+        ];
+        if self.modelPath {
+            cmd.append("--model");
+            cmd.append(self.modelPath);
+        }
+        result = _run_json_cmd(cmd);
+        try {
+            cfg_path = path.join(_project_dir(self.projectName), "config.json");
+            if path.exists(cfg_path) {
+                with open(cfg_path, "r") as f {
+                    cfg = load(f);
+                }
+                as_cfg = cfg["apple_silicon"] if cfg and "apple_silicon" in cfg else {};
+                as_cfg["active_pack_id"] = "";
+                cfg["apple_silicon"] = as_cfg;
+                with open(cfg_path, "w") as f {
+                    dump(cfg, f, indent=2);
+                }
+            }
+        } except Exception as e {
+            print(f"Failed to clear active pack id: {e}");
+        }
+        report result;
+    }
+}
+
+walker:pub AppleSiliconExportPack {
+    has projectName: str,
+        modelPath: str = "";
+
+    can run with `root entry {
+        exports_dir = path.join(_project_dir(self.projectName), "exports");
+        _ensure_dir(exports_dir);
+        out_path = path.join(exports_dir, self.projectName + ".cginspack");
+        cmd = [
+            sys.executable,
+            path.join(repo_root, "scripts", "apple_silicon", "cgins_as.py"),
+            "--llamacpp-root",
+            path.join(repo_root, ".vendor", "llama.cpp"),
+            "export-pack",
+            "--out",
+            out_path
+        ];
+        if self.modelPath {
+            cmd.append("--model");
+            cmd.append(self.modelPath);
+        }
+        result = _run_json_cmd(cmd);
         report result;
     }
 }

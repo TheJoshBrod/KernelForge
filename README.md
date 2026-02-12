@@ -148,6 +148,141 @@ python -m src.optimizer.optimize_ops projects/<project_name>/io/individual_ops <
 python scripts/benchmark_project_ops.py --project <project_name>
 ```
 
+### Apple Silicon (llama.cpp) v1
+
+CGinS now includes a dedicated Apple Silicon path for llama.cpp under `scripts/apple_silicon`.
+This path now uses LLM-guided tuning candidates (same core philosophy as CUDA optimization),
+so configure provider/model/API key in Settings before running `optimize`.
+
+Bootstrap a pinned llama.cpp toolchain (Metal enabled):
+```bash
+python scripts/apple_silicon/bootstrap.py
+```
+
+Check local readiness:
+```bash
+python scripts/apple_silicon/cgins_as.py doctor
+```
+
+Run optimization (uses default tiny Qwen GGUF if `--model` is omitted):
+```bash
+python scripts/apple_silicon/cgins_as.py optimize --profile both --quick
+```
+
+Kernel-focused high-budget optimization:
+```bash
+python scripts/apple_silicon/cgins_as.py optimize-kernels \
+  --model /path/to/model.gguf \
+  --profile both \
+  --budget 240 \
+  --stage full \
+  --kernel-mode iterative \
+  --strict-parity \
+  --attempt-log /tmp/as-kernel-attempts.jsonl
+```
+
+Optional tuning-study flags on optimize:
+```bash
+python scripts/apple_silicon/cgins_as.py optimize \
+  --profile both --full \
+  --attempt-budget 6 \
+  --study-tag paper-run-01 \
+  --emit-attempt-log /tmp/as-attempts.jsonl
+```
+
+Run llama.cpp with active optimized pack + fallback:
+```bash
+python scripts/apple_silicon/cgins_as.py run --model /path/to/model.gguf -- -p "Hello" -n 64
+```
+
+Export/disable active pack:
+```bash
+python scripts/apple_silicon/cgins_as.py export-pack --model /path/to/model.gguf --out /tmp/model-pack.cginspack
+python scripts/apple_silicon/cgins_as.py disable-pack --model /path/to/model.gguf
+```
+
+Build a reusable pack from a validated candidate cache entry:
+```bash
+python scripts/apple_silicon/cgins_as.py build-pack \
+  --model /path/to/model.gguf \
+  --from-candidate /path/to/candidate_cache/<candidate_id> \
+  --reuse-policy chip_family+os_minor \
+  --activate
+```
+
+Run the existing CGinS PyTorch optimizer on Apple Silicon (MPS target):
+```bash
+python scripts/apple_silicon/cgins_as.py torch-optimize --project <project_name>
+```
+
+Run an academic-style validation study (ABBA crossover + CI + CSV/JSON artifacts):
+```bash
+python scripts/apple_silicon/prepare_study_matrix.py \
+  --matrix benchmarks/studies/study_matrix.template.json \
+  --out benchmarks/studies/study_matrix.json
+
+python scripts/apple_silicon/cgins_as.py validate-study \
+  --matrix benchmarks/studies/study_matrix.json \
+  --profiles chat,long \
+  --arms baseline,flash,oneshot_kernel,iterative_kernel \
+  --kernel-mode iterative \
+  --abba-cycles 8 \
+  --warmup-blocks 2 \
+  --strict-parity \
+  --strict-power \
+  --decode-claim-threshold-pct 30 \
+  --attempt-log /tmp/apple_silicon_attempts.jsonl \
+  --gate-mode full \
+  --bootstrap-samples 10000 \
+  --out benchmarks/studies/apple_silicon_$(date +%Y%m%d_%H%M%S)
+```
+
+Kernel dispatch canary (authoritative backend audit, non-claim):
+```bash
+python scripts/apple_silicon/cgins_as.py validate-study \
+  --matrix benchmarks/studies/study_matrix.json \
+  --profiles chat \
+  --arms baseline,oneshot_kernel \
+  --kernel-mode oneshot \
+  --kernel-total-budget 1 \
+  --gate-mode quick \
+  --abba-cycles 1 \
+  --warmup-blocks 0 \
+  --parity-stage numeric \
+  --out benchmarks/studies/apple_silicon_canary_$(date +%Y%m%d_%H%M%S)
+```
+
+Expected canary checks:
+- `<study_out>/dispatch_audit/*.json` exists and includes non-empty `kernels`.
+- Kernel attempts with candidate resources are valid only when `dispatch_audit_status == "ok"` and `candidate_resources_used == true`.
+- `throughput_report.json` includes audit quality counters (`dispatch_audit_status_counts`, `candidate_resources_used_rate`).
+
+Render plot bundle from an existing study directory:
+```bash
+python scripts/apple_silicon/render_study_report.py --study-dir /path/to/study_output_dir
+```
+
+Repro helper script:
+```bash
+scripts/apple_silicon/run_study_repro.sh /abs/path/to/output /abs/path/to/study_matrix.json
+```
+
+Each study run writes:
+- `study_manifest.json`
+- `runs_raw.jsonl`
+- `attempts.jsonl`
+- `claim_decisions.json`
+- `hotspots.json`
+- `op_profiles.json`
+- `exclusions.csv`
+- `summary.json`
+- `metrics_by_block.csv`
+- `paired_deltas.csv`
+- `ci_results.csv`
+- `pvalues_corrected.csv`
+- `methods_note.md`
+- `plots/*.svg` and `plots/*.png`
+
 ### Containerized GPU Worker (safe mode)
 
 This repo includes a GPU worker image designed for running untrusted kernels inside a locked-down container.

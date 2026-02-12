@@ -68,3 +68,12 @@ jac.md
 # Local secrets / runtime data
 frontend/config.json
 projects/
+.vendor/
+
+# Apple Silicon study artifacts (generated)
+benchmarks/apple_silicon_ab_*.json
+benchmarks/studies/*
+!benchmarks/studies/study_matrix.template.json
+
+# Local Codex skill workspace copies
+skills/

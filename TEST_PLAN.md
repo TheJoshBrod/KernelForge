@@ -128,3 +128,62 @@ Run these after each set of changes:
 - Export produces a valid `.cgins.zip` with selected ops.
 - UI shows accurate status + progress for profile/generate/optimize/benchmark.
 - Settings “Test API Connection” returns success with valid credentials.
+
+## 11) Apple Silicon (llama.cpp) v1
+Goal: validate the Apple Silicon workflow for llama.cpp wrapper optimization.
+
+1. Toolchain bootstrap:
+   - `python scripts/apple_silicon/bootstrap.py`
+   - Expect `build/bin/llama-cli` exists under `.vendor/llama.cpp`.
+2. Environment doctor:
+   - `python scripts/apple_silicon/cgins_as.py doctor`
+   - Expect `device.is_apple_silicon = true` and Metal support reported on M-series Macs.
+3. Quick optimize:
+   - Ensure LLM provider/model/API key are configured in Settings (or env vars).
+   - `python scripts/apple_silicon/cgins_as.py optimize --profile both --quick --project <project_name>`
+   - Expect report at `projects/<project_name>/benchmarks/apple_silicon_report.json`.
+4. Kernel-focused optimize:
+   - `python scripts/apple_silicon/cgins_as.py optimize-kernels --model <gguf> --profile both --budget 240 --stage full --kernel-mode iterative --strict-parity --attempt-log /tmp/as_kernel_attempts.jsonl`
+   - Expect candidate cache + attempt log to include compile/correctness records and selected best candidate.
+4. Pack export / disable:
+   - `python scripts/apple_silicon/cgins_as.py export-pack --model <gguf> --out /tmp/test-pack.cginspack`
+   - `python scripts/apple_silicon/cgins_as.py disable-pack --model <gguf>`
+   - Expect exported pack file and successful disable response.
+5. Build reusable pack from candidate:
+   - `python scripts/apple_silicon/cgins_as.py build-pack --model <gguf> --from-candidate <candidate_dir_or_resources> --reuse-policy chip_family+os_minor --activate`
+   - Expect manifest compatibility policy fields and active-pack update.
+5. Frontend:
+   - Open project page and use **Apple Silicon (llama.cpp)** panel.
+   - Run Doctor, Quick/Full optimize, Export, Disable.
+   - Expect status row `apple_silicon_optimize` and report deltas rendered.
+6. PyTorch MPS bridge:
+   - `python scripts/apple_silicon/cgins_as.py torch-optimize --project <project_name>`
+   - Expect optimizer executes with `CGINS_TARGET_DEVICE=mps`.
+
+7. Academic validation study:
+   - Prepare matrix JSON with checksums:
+     - `python scripts/apple_silicon/prepare_study_matrix.py --matrix benchmarks/studies/study_matrix.template.json --out benchmarks/studies/study_matrix.json`
+   - `python scripts/apple_silicon/cgins_as.py validate-study --matrix benchmarks/studies/study_matrix.json --profiles chat,long --arms baseline,flash,oneshot_kernel,iterative_kernel --kernel-mode iterative --attempt-log /tmp/apple_silicon_attempts.jsonl --gate-mode full --abba-cycles 8 --warmup-blocks 2 --strict-parity --strict-power --decode-claim-threshold-pct 30 --out benchmarks/studies/<run_id>`
+   - Expect artifacts:
+     - `study_manifest.json`
+     - `runs_raw.jsonl`
+     - `attempts.jsonl`
+     - `claim_decisions.json`
+     - `hotspots.json`
+     - `op_profiles.json`
+     - `exclusions.csv`
+     - `summary.json`
+     - `methods_note.md`
+     - `metrics_by_block.csv`
+     - `paired_deltas.csv`
+     - `ci_results.csv`
+     - `pvalues_corrected.csv`
+     - `plots/*.svg` and `plots/*.png`
+   - `python scripts/apple_silicon/render_study_report.py --study-dir benchmarks/studies/<run_id>` regenerates plot bundle.
+
+8. Dispatch-audit canary (authoritative backend evidence):
+   - `python scripts/apple_silicon/cgins_as.py validate-study --matrix benchmarks/studies/study_matrix.json --profiles chat --arms baseline,oneshot_kernel --kernel-mode oneshot --kernel-total-budget 1 --gate-mode quick --abba-cycles 1 --warmup-blocks 0 --parity-stage numeric --out benchmarks/studies/<canary_run_id>`
+   - Expect:
+     - `<canary_run_id>/dispatch_audit/*.json` exists.
+     - For kernel attempts with candidate resources expected: `dispatch_audit_status == ok` and `candidate_resources_used == true`.
+     - `throughput_report.json` contains audit counters (`dispatch_audit_status_counts`, `candidate_resources_used_count`, `candidate_resources_used_rate`).
