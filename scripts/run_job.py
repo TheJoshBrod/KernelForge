@@ -104,6 +104,9 @@ def _build_docker_cmd(
 
     env_allowlist = {
         "LLM_PROVIDER",
+        "CGINS_AUTH_MODE",
+        "CGINS_AUTH_EFFECTIVE",
+        "CGINS_AUTH_REASON",
         "CODEX_API_KEY",
         "OPENAI_API_KEY",
         "OPENAI_MODEL",
@@ -211,6 +214,23 @@ def main() -> int:
                 use_container = False
 
             if use_container:
+                auth_mode = str(env.get("CGINS_AUTH_MODE", "")).strip().lower()
+                if auth_mode == "account_session":
+                    has_fallback_key = bool(
+                        str(env.get("OPENAI_API_KEY", "")).strip()
+                        or str(env.get("CODEX_API_KEY", "")).strip()
+                    )
+                    if not has_fallback_key:
+                        _update_state(
+                            state_path,
+                            args.job_key,
+                            {
+                                "status": "error",
+                                "finished_at": time.time(),
+                                "error": "Container run requires API key fallback when auth mode is account_session.",
+                            },
+                        )
+                        return 1
                 docker_cmd = _build_docker_cmd(
                     cmd,
                     state_path=state_path,

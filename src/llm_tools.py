@@ -159,14 +159,26 @@ class GenModel:
             self._openai_client = OpenAI()
             messages = self.__to_openai_messages()
 
-            # Make the API call
+            # GPT-5/Codex models use the Responses API.
+            normalized_model = str(model or "").strip().lower()
+            use_responses_api = normalized_model.startswith("gpt-5") or ("codex" in normalized_model)
+            if use_responses_api:
+                response = self._openai_client.responses.create(
+                    model=model,
+                    input=messages,
+                    max_output_tokens=4096,
+                )
+                return (response.output_text or "").strip()
+
+            # Legacy chat-completions path.
             response = self._openai_client.chat.completions.create(
                 model=model,
                 messages=messages,
                 max_tokens=4096
             )
 
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            return content if isinstance(content, str) else str(content)
 
         except Exception as e:
             return f"Error calling OpenAI API: {str(e)}"

@@ -23,7 +23,30 @@ def main() -> int:
         shutil.rmtree(project_dir)
 
     project_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(model_src, project_dir / "model.py")
+    if model_src.exists():
+        shutil.copy2(model_src, project_dir / "model.py")
+    else:
+        # Fallback model keeps smoke tests unblocked when bundled sample assets are absent.
+        (project_dir / "model.py").write_text(
+            (
+                "import torch\\n"
+                "\\n"
+                "class _Mini(torch.nn.Module):\\n"
+                "    def __init__(self):\\n"
+                "        super().__init__()\\n"
+                "        self.linear = torch.nn.Linear(8, 8)\\n"
+                "\\n"
+                "    def forward(self, x):\\n"
+                "        return torch.nn.functional.relu(self.linear(x))\\n"
+                "\\n"
+                "def build_model():\\n"
+                "    return _Mini()\\n"
+                "\\n"
+                "def sample_inputs():\\n"
+                "    return [(torch.randn(4, 8),)]\\n"
+            ),
+            encoding="utf-8",
+        )
     if weights_src.exists():
         shutil.copy2(weights_src, project_dir / "weights.pt")
 
@@ -43,6 +66,13 @@ def main() -> int:
             "allow_ops": [],
             "skip_ops": [],
             "skip_prefixes": [],
+        },
+        "apple_silicon": {
+            "enabled": False,
+            "model_path": "",
+            "active_pack_id": "",
+            "profiles": ["chat", "long"],
+            "prompt_suite_path": "",
         },
     }
     (project_dir / "config.json").write_text(

@@ -1,0 +1,44 @@
+{
+  "models": [
+    {
+      "id": "qwen2.5-0.5b-q4_k_m",
+      "path": "/Users/dhravidkumar/.cache/cgins/apple_silicon/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+      "sha256": ""
+    },
+    {
+      "id": "qwen2.5-1.5b-q4_k_m",
+      "path": "/Users/dhravidkumar/.cache/cgins/apple_silicon/models/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+      "sha256": ""
+    },
+    {
+      "id": "qwen2.5-3b-q4_k_m",
+      "path": "/Users/dhravidkumar/.cache/cgins/apple_silicon/models/qwen2.5-3b-instruct-q4_k_m.gguf",
+      "sha256": ""
+    },
+    {
+      "id": "qwen2.5-3b-q5_k_m",
+      "path": "/Users/dhravidkumar/.cache/cgins/apple_silicon/models/qwen2.5-3b-instruct-q5_k_m.gguf",
+      "sha256": ""
+    },
+    {
+      "id": "llama-3.2-1b-q4_k_m",
+      "path": "/Users/dhravidkumar/.cache/cgins/apple_silicon/models/llama-3.2-1b-instruct-q4_k_m.gguf",
+      "sha256": ""
+    },
+    {
+      "id": "llama-3.2-3b-q4_k_m",
+      "path": "/Users/dhravidkumar/.cache/cgins/apple_silicon/models/llama-3.2-3b-instruct-q4_k_m.gguf",
+      "sha256": ""
+    },
+    {
+      "id": "llama-3.1-8b-q4_k_m",
+      "path": "/Users/dhravidkumar/.cache/cgins/apple_silicon/models/llama-3.1-8b-instruct-q4_k_m.gguf",
+      "sha256": ""
+    },
+    {
+      "id": "llama-3.1-8b-q5_k_m",
+      "path": "/Users/dhravidkumar/.cache/cgins/apple_silicon/models/llama-3.1-8b-instruct-q5_k_m.gguf",
+      "sha256": ""
+    }
+  ]
+}

@@ -26,7 +26,8 @@ from src.progress import (
     wait_if_paused,
     check_cancelled,
 )
-from src.config import ensure_llm_config
+from src.auth.credentials import apply_auth_env, resolve_auth
+from src.config import ensure_llm_config, load_config_data
 
 
 def _repo_root() -> Path:
@@ -37,15 +38,27 @@ def _in_container() -> bool:
     return Path("/.dockerenv").exists() or bool(os.environ.get("CGINS_PROJECT_DIR"))
 
 
-def _ensure_openai_key() -> bool:
-    key = os.environ.get("OPENAI_API_KEY") or os.environ.get("CODEX_API_KEY")
-    if key and not os.environ.get("OPENAI_API_KEY"):
-        os.environ["OPENAI_API_KEY"] = key
-    if key and not os.environ.get("CODEX_API_KEY"):
-        os.environ["CODEX_API_KEY"] = key
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("Missing OPENAI_API_KEY for Codex CLI.")
+def _ensure_codex_auth() -> bool:
+    cfg, _ = load_config_data()
+    status = resolve_auth(
+        config=cfg,
+        env=dict(os.environ),
+        runtime_context={"in_container": _in_container()},
+    )
+    apply_auth_env(status, os.environ)
+
+    if status.mode_effective == "unconfigured":
+        print(f"No usable auth for Codex CLI: {status.reason}")
         return False
+
+    # Codex CLI supports account session or OpenAI key.
+    if status.mode_effective == "api_key":
+        key = (os.environ.get("OPENAI_API_KEY") or os.environ.get("CODEX_API_KEY") or "").strip()
+        if not key:
+            print("Auth resolved to api_key mode but no OPENAI_API_KEY/CODEX_API_KEY is available.")
+            return False
+        os.environ["OPENAI_API_KEY"] = key
+        os.environ["CODEX_API_KEY"] = key
     return True
 
 
@@ -356,7 +369,7 @@ def main() -> int:
     _prepare_codex_env()
     if _in_container():
         os.environ.setdefault("CGINS_CODEX_AUTO_INSTALL", "1")
-    if not _ensure_openai_key():
+    if not _ensure_codex_auth():
         return 2
 
     project = str(args.project).strip()

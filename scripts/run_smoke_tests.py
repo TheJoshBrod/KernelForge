@@ -22,20 +22,65 @@ def _load_json(path: Path) -> dict:
         return {}
 
 
-def _resolve_llm_config(repo_root: Path) -> tuple[str, str, str]:
+def _resolve_llm_config(repo_root: Path) -> tuple[str, str, str, str]:
     config_path = repo_root / "frontend" / "config.json"
     if config_path.exists():
         data = _load_json(config_path)
         llm = data.get("llm_info") if isinstance(data, dict) else None
-        if isinstance(llm, dict):
+        auth = data.get("auth") if isinstance(data, dict) else None
+        provider = str(os.environ.get("LLM_PROVIDER", "")).strip().lower()
+        if not provider and isinstance(auth, dict):
+            provider = str(auth.get("provider", "")).strip().lower()
+        if not provider and isinstance(llm, dict):
             provider = str(llm.get("provider", "")).strip().lower()
+
+        model = ""
+        if provider == "openai":
+            model = str(os.environ.get("OPENAI_MODEL", "")).strip()
+        elif provider == "anthropic":
+            model = str(os.environ.get("ANTHROPIC_MODEL", "")).strip()
+        elif provider == "gemini":
+            model = str(os.environ.get("GEMINI_MODEL", "")).strip()
+        if not model and isinstance(auth, dict):
+            model = str(auth.get("model", "")).strip()
+        if not model and isinstance(llm, dict):
             model = str(llm.get("model", "")).strip()
+
+        apikey = ""
+        if provider == "openai":
+            apikey = str(os.environ.get("OPENAI_API_KEY", "")).strip()
+        elif provider == "anthropic":
+            apikey = str(os.environ.get("ANTHROPIC_API_KEY", "")).strip()
+        elif provider == "gemini":
+            apikey = str(os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")).strip()
+        if not apikey and isinstance(llm, dict):
             apikey = str(llm.get("apikey", "")).strip()
-            return provider, model, apikey
+
+        mode = str(os.environ.get("CGINS_AUTH_MODE", "")).strip().lower()
+        if not mode and isinstance(auth, dict):
+            mode = str(auth.get("mode", "")).strip().lower()
+        if not mode:
+            mode = "auto"
+        return provider, model, apikey, mode
     provider = str(os.environ.get("LLM_PROVIDER", "")).strip().lower()
-    model = str(os.environ.get("OPENAI_MODEL", "")).strip()
-    apikey = str(os.environ.get("OPENAI_API_KEY", "")).strip()
-    return provider, model, apikey
+    if provider == "openai":
+        model = str(os.environ.get("OPENAI_MODEL", "")).strip()
+    elif provider == "anthropic":
+        model = str(os.environ.get("ANTHROPIC_MODEL", "")).strip()
+    elif provider == "gemini":
+        model = str(os.environ.get("GEMINI_MODEL", "")).strip()
+    else:
+        model = ""
+    if provider == "openai":
+        apikey = str(os.environ.get("OPENAI_API_KEY", "")).strip()
+    elif provider == "anthropic":
+        apikey = str(os.environ.get("ANTHROPIC_API_KEY", "")).strip()
+    elif provider == "gemini":
+        apikey = str(os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")).strip()
+    else:
+        apikey = ""
+    mode = str(os.environ.get("CGINS_AUTH_MODE", "auto")).strip().lower() or "auto"
+    return provider, model, apikey, mode
 
 
 def _check_profile_outputs(project_dir: Path, enforce_skiplist: bool) -> bool:
@@ -160,27 +205,28 @@ def main() -> int:
         return 1
 
     if args.with_llm:
-        provider, model, apikey = _resolve_llm_config(repo_root)
-        if not provider or not model or not apikey:
-            msg = "[llm] missing provider/model/apikey for LLM tests"
+        provider, model, apikey, mode = _resolve_llm_config(repo_root)
+        if not provider or not model:
+            msg = "[llm] missing provider/model for LLM tests"
             if args.require_llm:
                 print(msg)
                 return 1
             print(msg + " (skipping)")
         else:
+            llm_cmd = [
+                sys.executable,
+                str(repo_root / "scripts" / "test_llm_connection.py"),
+                "--provider",
+                provider,
+                "--model",
+                model,
+            ]
+            if apikey:
+                llm_cmd += ["--apikey", apikey]
             if not _run(
-                [
-                    sys.executable,
-                    str(repo_root / "scripts" / "test_llm_connection.py"),
-                    "--provider",
-                    provider,
-                    "--model",
-                    model,
-                    "--apikey",
-                    apikey,
-                ],
+                llm_cmd,
                 repo_root,
-                "llm_test",
+                f"llm_test({mode})",
             ):
                 return 1
 

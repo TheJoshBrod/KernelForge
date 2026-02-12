@@ -2,6 +2,15 @@ import argparse
 import json
 import os
 import time
+from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.auth.credentials import apply_auth_env, resolve_auth
+from src.config import load_config_data
 
 
 def _set_env(provider: str, model: str, apikey: str):
@@ -23,6 +32,32 @@ def _set_env(provider: str, model: str, apikey: str):
             os.environ["GOOGLE_API_KEY"] = apikey
         if model:
             os.environ["GEMINI_MODEL"] = model
+
+
+def _resolve_effective_auth(provider: str, model: str, apikey: str) -> dict:
+    cfg, _ = load_config_data()
+    cfg = dict(cfg or {})
+    llm = cfg.get("llm_info") if isinstance(cfg.get("llm_info"), dict) else {}
+    llm["provider"] = provider
+    llm["model"] = model
+    if apikey:
+        llm["apikey"] = apikey
+    cfg["llm_info"] = llm
+
+    auth_cfg = cfg.get("auth") if isinstance(cfg.get("auth"), dict) else {}
+    if provider:
+        auth_cfg["provider"] = provider
+    if model:
+        auth_cfg["model"] = model
+    cfg["auth"] = auth_cfg
+
+    status = resolve_auth(
+        config=cfg,
+        env=dict(os.environ),
+        runtime_context={"in_container": bool(os.environ.get("CGINS_PROJECT_DIR"))},
+    )
+    apply_auth_env(status, os.environ)
+    return status.to_dict()
 
 
 def _test_openai(model: str) -> dict:
@@ -109,11 +144,24 @@ def main() -> int:
     if not model:
         print(json.dumps({"success": False, "error": "Missing model"}))
         return 1
-    if not apikey:
-        print(json.dumps({"success": False, "error": "Missing API key"}))
-        return 1
+    if apikey:
+        _set_env(provider, model, apikey)
+    status = _resolve_effective_auth(provider, model, apikey)
 
-    _set_env(provider, model, apikey)
+    if status.get("mode_effective") == "account_session" and provider == "openai":
+        print(
+            json.dumps(
+                {
+                    "success": True,
+                    "provider": provider,
+                    "model": model,
+                    "mode_effective": "account_session",
+                    "response": "account session detected",
+                    "latency_ms": 0,
+                }
+            )
+        )
+        return 0
 
     try:
         if provider == "openai":
@@ -129,7 +177,14 @@ def main() -> int:
         print(json.dumps({"success": False, "error": str(e)}))
         return 1
 
-    result.update({"success": True, "provider": provider, "model": model})
+    result.update(
+        {
+            "success": True,
+            "provider": provider,
+            "model": model,
+            "mode_effective": status.get("mode_effective", ""),
+        }
+    )
     print(json.dumps(result))
     return 0
 

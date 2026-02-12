@@ -1,0 +1,7 @@
+{
+  "prompts": [
+    "Summarize in one sentence why measuring prefill and decode separately is useful.",
+    "List three factors that influence llama.cpp token generation throughput on Apple Silicon.",
+    "Explain briefly how context length affects inference latency."
+  ]
+}

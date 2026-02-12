@@ -13,6 +13,14 @@ from pathlib import Path
 from typing import Tuple
 import difflib
 
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.auth.codex_runner import run_codex_prompt
+
 
 def _redact_secrets(text: str) -> str:
     if not text:
@@ -133,33 +141,30 @@ def main() -> int:
     before_path.write_text(before_code, encoding="utf-8")
     prompt_path.write_text(prompt, encoding="utf-8")
 
-    cmd = ["codex", "exec", "--sandbox", args.sandbox, "-"]
-    if args.model:
-        cmd = ["codex", "exec", "--sandbox", args.sandbox, "--model", args.model, "-"]
-
     started = time.time()
-    proc = subprocess.run(
-        cmd,
-        input=prompt,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        cwd=str(work_dir),
+    run_result = run_codex_prompt(
+        work_dir=work_dir,
+        prompt=prompt,
+        model=args.model,
+        sandbox=args.sandbox,
+        timeout_sec=900,
     )
+    transcript_raw = (run_result.get("stdout", "") or "") + ("\n" + (run_result.get("stderr", "") or ""))
+    proc_rc = int(run_result.get("exit_code", 1))
     finished = time.time()
 
-    transcript = _redact_secrets(proc.stdout or "")
+    transcript = _redact_secrets(transcript_raw)
     transcript_path.write_text(transcript, encoding="utf-8")
 
     after_code = _read_text(kernel_path)
     after_path.write_text(after_code, encoding="utf-8")
 
     before_lines, after_lines = _write_diff(before_code, after_code, diff_path)
-    usage = _extract_usage(proc.stdout or "")
+    usage = _extract_usage(transcript_raw)
 
     metrics = {
         "attempt": attempt,
-        "exit_code": proc.returncode,
+        "exit_code": proc_rc,
         "started_at": started,
         "finished_at": finished,
         "duration_sec": round(finished - started, 4),
@@ -171,10 +176,13 @@ def main() -> int:
         "transcript_path": str(transcript_path),
         "diff_path": str(diff_path),
         "usage": usage,
+        "auth_error": bool(run_result.get("auth_error", False)),
+        "command_used": str(run_result.get("command_used", "")),
+        "runner_mode": str(run_result.get("runner_mode", "")),
     }
     metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
-    return proc.returncode
+    return proc_rc
 
 
 if __name__ == "__main__":
