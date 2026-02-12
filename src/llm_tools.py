@@ -2,6 +2,7 @@
 src/llm_tools.py
 Generalized LLM tooling for handling model agnostic conversations and tooling.
 """
+import os
 import json
 from typing import Any
 from typing import Dict
@@ -156,7 +157,14 @@ class GenModel:
         """
 
         try:
-            self._openai_client = OpenAI()
+            timeout_raw = os.environ.get("CGINS_LLM_TIMEOUT_SEC", "120").strip()
+            try:
+                timeout_s = float(timeout_raw)
+            except Exception:
+                timeout_s = 120.0
+            timeout_s = max(10.0, timeout_s)
+
+            self._openai_client = OpenAI(timeout=timeout_s)
             messages = self.__to_openai_messages()
 
             # GPT-5/Codex models use the Responses API.
@@ -167,6 +175,7 @@ class GenModel:
                     model=model,
                     input=messages,
                     max_output_tokens=4096,
+                    timeout=timeout_s,
                 )
                 return (response.output_text or "").strip()
 
@@ -174,7 +183,8 @@ class GenModel:
             response = self._openai_client.chat.completions.create(
                 model=model,
                 messages=messages,
-                max_tokens=4096
+                max_tokens=4096,
+                timeout=timeout_s,
             )
 
             content = response.choices[0].message.content
