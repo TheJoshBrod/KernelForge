@@ -155,7 +155,7 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
     paths["attempt"] = 0
     feedback, is_valid, error = create_and_validate(backend, llm, msg, model, paths, ssh_config)
     if is_valid:
-        return feedback, True, next_node_id
+        return feedback, True
     print("\t\tInitial gen failed...")
     # On failure attempt fix before giving up
     for i in range(settings.retry_limit):
@@ -163,6 +163,6 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
         paths["attempt"] = i + 1
         _, is_valid, error = create_and_validate(backend, llm, error, model, paths, ssh_config)
         if is_valid:
-            return feedback, True, next_node_id
+            return feedback, True
 
-    return "", False, next_node_id
+    return "", False

@@ -134,7 +134,7 @@ def optimize(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path], pare
     return None
 
 
-def create_new_root(gpu_specs: GPUSpecs, paths: dict[str, Path]) -> KernelNode:
+def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path]) -> KernelNode:
     """Generate a fresh kernel as an independent root node.
     
     Creates a new optimization tree separate from existing ones by generating
@@ -219,8 +219,7 @@ def create_new_root(gpu_specs: GPUSpecs, paths: dict[str, Path]) -> KernelNode:
         (paths["tmp_dir"] / "kernel.cu").write_text(code)
         
         # Validate the kernel with retries
-        import src.optimizer.components.worker.verifier as verifier
-        is_valid, error = verifier.validate_kernel(code, paths)
+        is_valid, error = backend.validate_kernel(code, paths)
         
         # Retry loop on validation failure
         attempt = 0
@@ -244,7 +243,7 @@ def create_new_root(gpu_specs: GPUSpecs, paths: dict[str, Path]) -> KernelNode:
             
             # Validate the new attempt
             (paths["tmp_dir"] / "kernel.cu").write_text(code)
-            is_valid, error = verifier.validate_kernel(code, paths)
+            is_valid, error = backend.validate_kernel(code, paths)
         
         if not is_valid:
             print(f"\t\tValidation failed after {settings.retry_limit} retries: {error}")
@@ -255,7 +254,7 @@ def create_new_root(gpu_specs: GPUSpecs, paths: dict[str, Path]) -> KernelNode:
         
         # Profile the kernel
         print("\t\tProfiling new root kernel...")
-        current_stats, _ = gpu.profile_kernel(paths)
+        current_stats = backend.profile_kernel(paths)
         
         # Create root node (parent = -1)
         node_data = {
@@ -281,7 +280,7 @@ def create_new_root(gpu_specs: GPUSpecs, paths: dict[str, Path]) -> KernelNode:
         return node
 
 
-def create_project(gpu_specs: GPUSpecs, io_parent_dir: Path, optional_proj_name: str = None, ssh_config: dict = None):
+def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, optional_proj_name: str = None, ssh_config: dict = None):
     """Creates a new optimization project for each individual operator kernel.
     """
     # Output directory (access via dot notation now)
@@ -677,7 +676,7 @@ Examples:
         }
         
         print(f"Creating new root for {op_name}...")
-        new_root = create_new_root(gpu_specs, paths)
+        new_root = create_new_root(backend, gpu_specs, paths)
         
         if new_root:
             print(f"\nSuccess! Created new root: Node {new_root.id}")
@@ -688,13 +687,7 @@ Examples:
         
         sys.exit(0)
 
-    # Normal operation: Create project (or resume if exists/provided)
-    proj_dir = create_project(
-        gpu_specs,
-        io_parent_dir,
-        optional_proj_name,
-        ssh_config
-    )
+
 
     # Build list of operators to process
     if args.op:
