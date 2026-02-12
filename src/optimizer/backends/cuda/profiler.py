@@ -404,135 +404,29 @@ def get_remote_gpu_specs(ssh_config: dict) -> GPUSpecs:
     """
     Retrieves GPU specs from a remote server via SSH.
     """
-    from src.optimizer.core.ssh_client import connect_ssh, execute_remote_command, ensure_remote_setup
+    from src.optimizer.core.ssh_client import RemoteWorkerClient
     import json
-    import time
-    import tempfile
-    import os
-    import numpy as np # Used in profile parsing if needed, but not in script
-
-    client = connect_ssh(ssh_config)
+    
+    # worker path: src/optimizer/backends/cuda/remote_worker.py
+    worker_path = Path(__file__).parent / "remote_worker.py"
+    loader_path = Path(__file__).parent / "loader.py"
+    
     try:
-        if not ensure_remote_setup(client):
-            raise RuntimeError("Remote dependencies check failed")
-
-        # Script to run remotely
-        script_content = r'''
-import json
-import sys
-try:
-    from pynvml import *
-    import pycuda.driver as cuda
-    import pycuda.autoinit
-except ImportError:
-    print(json.dumps({"error": "Missing libraries - ensure torch, pynvml, pycuda are installed in venv"}))
-    sys.exit(1)
-
-def _nvml_safe(fn, default=None):
-    try:
-        return fn()
-    except:
-        return default
-
-def _to_str(x):
-    return x.decode() if isinstance(x, bytes) else x
-
-def get_specs():
-    try:
-        nvmlInit()
-        handle = nvmlDeviceGetHandleByIndex(0)
+        worker = RemoteWorkerClient(ssh_config, worker_path, {str(loader_path): "loader.py"})
         
-        power_limit_mw = _nvml_safe(lambda: nvmlDeviceGetPowerManagementLimit(handle))
+        result = worker.send_task("get_specs")
+        worker.close()
         
-        nvml_info = {
-            "gpu_name": _to_str(nvmlDeviceGetName(handle)),
-            "nvml_architecture": nvmlDeviceGetArchitecture(handle),
-            "total_memory_gb": nvmlDeviceGetMemoryInfo(handle).total / (1024 ** 3),
-            "sm_clock_mhz": nvmlDeviceGetClockInfo(handle, NVML_CLOCK_SM),
-            "mem_clock_mhz": nvmlDeviceGetClockInfo(handle, NVML_CLOCK_MEM),
-            "power_limit_watts": None if power_limit_mw is None else power_limit_mw / 1000,
-        }
-
-        nvmlShutdown()
-        
-        dev = cuda.Device(0)
-        attrs = dev.get_attributes()
-        cc_major, cc_minor = dev.compute_capability()
-        
-        cuda_info = {
-            "compute_capability": f"{cc_major}.{cc_minor}",
-            "num_sms": attrs[cuda.device_attribute.MULTIPROCESSOR_COUNT],
-            "warp_size": attrs[cuda.device_attribute.WARP_SIZE],
-            "max_threads_per_block": attrs[cuda.device_attribute.MAX_THREADS_PER_BLOCK],
-            "max_threads_per_sm": attrs[cuda.device_attribute.MAX_THREADS_PER_MULTIPROCESSOR],
-            "max_blocks_per_sm": attrs.get(cuda.device_attribute.MAX_BLOCKS_PER_MULTIPROCESSOR, "unknown") if hasattr(cuda.device_attribute, 'MAX_BLOCKS_PER_MULTIPROCESSOR') else "unknown",
-            "registers_per_sm": attrs[cuda.device_attribute.MAX_REGISTERS_PER_MULTIPROCESSOR],
-            "registers_per_block": attrs[cuda.device_attribute.MAX_REGISTERS_PER_BLOCK],
-            "shared_mem_per_sm_kb": attrs[cuda.device_attribute.MAX_SHARED_MEMORY_PER_MULTIPROCESSOR] // 1024,
-            "shared_mem_per_block_kb": attrs[cuda.device_attribute.MAX_SHARED_MEMORY_PER_BLOCK] // 1024,
-            "l2_cache_kb": attrs[cuda.device_attribute.L2_CACHE_SIZE] // 1024,
-            "memory_bus_width_bits": attrs[cuda.device_attribute.GLOBAL_MEMORY_BUS_WIDTH]
-        }
-        
-        # Derived
-        memory_bandwidth_gbps = (
-            nvml_info["mem_clock_mhz"] * 1e6 *
-            cuda_info["memory_bus_width_bits"] / 8 * 2
-        ) / 1e9
-        
-        derived = {
-            "peak_memory_bandwidth_gbps": memory_bandwidth_gbps,
-            "warps_per_sm": cuda_info["max_threads_per_sm"] // cuda_info["warp_size"],
-            "tensor_cores_available": cc_major >= 7,
-        }
-        
-        # Merge
-        specs = {**nvml_info, **cuda_info, **derived}
-        print(json.dumps(specs))
+        if "error" in result:
+             raise RuntimeError(f"Remote specs retrieval failed: {result['error']}")
+             
+        return GPUSpecs(**result)
 
     except Exception as e:
-        import traceback
-        print(json.dumps({"error": str(e) + "\n" + traceback.format_exc()}))
-
-if __name__ == "__main__":
-    get_specs()
-'''
-        script_name = "remote_specs_fetcher.py"
-        remote_workspace = "cgins_workspace"
-        
-        # Upload script
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
-            tmp.write(script_content)
-            tmp_path = tmp.name
-            
-        from src.optimizer.core.ssh_client import upload_files
-        upload_files(client, {tmp_path: script_name}, remote_workspace)
-        os.unlink(tmp_path)
-        
-        # Execute
-        # Ensure we use the venv python
-        cmd = f"~/cgins_workspace/venv/bin/python3 {remote_workspace}/{script_name}"
-        exit_code, out, err = execute_remote_command(client, cmd)
-        
-        # Cleanup
-        execute_remote_command(client, f"rm {remote_workspace}/{script_name}")
-        
-        if exit_code != 0:
-            print(f"Remote profiling error: {out} {err}")
-            raise RuntimeError(f"Remote profiling failed: {err}")
-            
-        try:
-            stats = json.loads(out)
-            if "error" in stats:
-                raise RuntimeError(stats["error"])
-        except json.JSONDecodeError:
-             raise RuntimeError(f"Invalid JSON from remote: {out}")
-             
-        # Map to GPUSpecs
-        return GPUSpecs(**stats)
-
-    finally:
-        client.close()
+        print(f"Remote Specs Error: {e}")
+        # Return fallback/empty specs or re-raise?
+        # Re-raising seems appropriate as we need specs for optimization
+        raise e
 
 
 def profile_remote_kernel(ssh_config: dict, paths: dict[str, Path], baseline: bool = False) -> tuple[dict, any]:
@@ -542,7 +436,10 @@ def profile_remote_kernel(ssh_config: dict, paths: dict[str, Path], baseline: bo
     from src.optimizer.core.ssh_client import RemoteWorkerClient, upload_files
     
     try:
-        worker = RemoteWorkerClient(ssh_config)
+        worker_path = Path(__file__).parent / "remote_worker.py"
+        loader_path = Path(__file__).parent / "loader.py"
+        
+        worker = RemoteWorkerClient(ssh_config, worker_path, {str(loader_path): "loader.py"})
         
         # 1. Prepare Code
         kernel_path = paths["tmp_dir"] / "kernel.cu"

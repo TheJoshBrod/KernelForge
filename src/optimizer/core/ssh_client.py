@@ -163,7 +163,15 @@ def ensure_remote_setup(client: paramiko.SSHClient):
     return True
 
 class RemoteWorkerClient:
-    def __init__(self, ssh_config: dict):
+    def __init__(self, ssh_config: dict, worker_script_path: Path, aux_files: dict[str, str] = None):
+        """
+        Initializes the remote worker client.
+        
+        Args:
+            ssh_config: SSH connection details (host, user, key_path).
+            worker_script_path: Local path to the worker.py script to execute remotely.
+            aux_files: Optional dict of {local_path: remote_filename} for additional dependencies (e.g. loader.py).
+        """
         self.client = connect_ssh(ssh_config)
         
         # 1. Bootstrap
@@ -171,15 +179,14 @@ class RemoteWorkerClient:
             raise RuntimeError("Failed to bootstrap remote environment")
             
         # 2. Upload worker script and dependencies
-        # worker path: src/optimizer/backends/cuda/remote_worker.py
-        worker_local_path = Path(__file__).parent.parent / "backends" / "cuda" / "remote_worker.py"
-        loader_local_path = Path(__file__).parent.parent / "backends" / "cuda" / "loader.py"
-        
-        print(f"DEBUG: Uploading worker from {worker_local_path}...", flush=True)
-        upload_files(self.client, {
-            str(worker_local_path): "worker.py",
-            str(loader_local_path): "loader.py"
-        }, "cgins_workspace")
+        files_to_upload = {
+            str(worker_script_path): "worker.py"
+        }
+        if aux_files:
+            files_to_upload.update(aux_files)
+            
+        print(f"DEBUG: Uploading worker from {worker_script_path}...", flush=True)
+        upload_files(self.client, files_to_upload, "cgins_workspace")
         
         # 3. Start Worker Process
         # Use line buffered unbuffered python? -u is important
@@ -196,12 +203,20 @@ class RemoteWorkerClient:
         self.stderr = self.channel.makefile_stderr('rb')
         
         # 4. Wait for READY signal
-        # Since we are using binary mode rb, we need to be careful reading lines
-        line = self.stdout.readline().decode().strip()
-        if line != "READY":
-            # Check stderr
-            err = self.stderr.read().decode()
-            raise ConnectionError(f"Remote worker failed to start. Output: {line}. Error: {err}")
+        print("DEBUG: Waiting for remote worker 'READY' signal...", flush=True)
+        while True:
+            line = self.stdout.readline().decode().strip()
+            if not line:
+                # EOF without READY
+                err = self.stderr.read().decode()
+                raise ConnectionError(f"Remote worker closed connection without READY signal. Error: {err}")
+            
+            if line == "READY":
+                print("DEBUG: Remote worker is READY.", flush=True)
+                break
+            else:
+                # Forward debug output from worker
+                print(f"[REMOTE] {line}", flush=True)
             
     def send_task(self, command: str, data: dict = None):
         request = {'command': command, 'data': data or {}}
