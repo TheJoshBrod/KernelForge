@@ -13,6 +13,7 @@ import from walkers.project {
     StartGenerateAdvanced,
     StartOptimize,
     StartOptimizeAdvanced,
+    GetDashboardCharts,
     StartBenchmark,
     ExportProject,
     GetOpDetails,

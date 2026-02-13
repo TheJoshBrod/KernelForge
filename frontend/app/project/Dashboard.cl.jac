@@ -52,32 +52,26 @@ def:pub Dashboard {
         mctsSummary: dict = {};
 
 
-    COLORS = ['#86e6a9', '#5bbbd3', '#b7f0d0', '#d8f3ff'];
+    COLORS = ['#86e6a9', '#5bbbd3', '#b7f0d0', '#d8f3ff', '#c4b5fd', '#a78bfa', '#818cf8', '#60a5fa', '#34d399', '#f472b6'];
 
     pieData = [];
     hasPie = False;
-    count = 0;
-    # Sort ops by count descending for top 4
-    sorted_ops = ops; # Simple assignment, assume ops is sorted or sort here if needed
-    # Actually JS sort is tricky in Jac, verify if sorting is needed. usually ops come sorted or random.
-    # We'll just take top 4 in list order for now as Project.cl.jac did.
     
-    pieData = [
-        {"name": "Conv2d", "value": 45, "fill": COLORS[0]},
-        {"name": "BatchNorm", "value": 30, "fill": COLORS[1]},
-        {"name": "ReLU", "value": 15, "fill": COLORS[2]},
-        {"name": "Linear", "value": 10, "fill": COLORS[3]}
-    ];
-    hasPie = True;
+    op_idx = 0;
+    for op in ops {
+        pieData.push({
+            "name": format_op(op["name"]),
+            "value": op["total_time_ms"] if "total_time_ms" in op else 0,
+            "fill": COLORS[op_idx % COLORS.length]
+        });
+        op_idx += 1;
+    }
+    hasPie = pieData.length > 0;
 
-    # Filler Data for Speed Comparison
-    speedData = [
-        {"name": "Conv2d", "pytorch": 120, "optimized": 25},
-        {"name": "Attention", "pytorch": 200, "optimized": 45},
-        {"name": "Linear", "pytorch": 80, "optimized": 15},
-        {"name": "LayerNorm", "pytorch": 50, "optimized": 10},
-        {"name": "Softmax", "pytorch": 40, "optimized": 8}
-    ];
+    # Speed Comparison Data State
+    speedData_state = useState([]);
+    speedData = speedData_state[0];
+    setSpeedData = speedData_state[1];
 
     def format_op(raw: str) -> str {
         raw_text = raw or "";
@@ -92,10 +86,24 @@ def:pub Dashboard {
         loading = True;
         try {
             if name {
-                # Fetch Ops
+                # Fetch Ops (keeping for list view if needed, or remove if fully replaced)
                 ops_resp = await jacSpawn("GetProjectOps", "", {"projectName": name});
                 ops_data = ops_resp.reports[0] if ops_resp and ops_resp.reports else None;
                 ops = ops_data["ops"] if ops_data and "ops" in ops_data else [];
+
+                # Fetch Dashboard Charts
+                charts_resp = await jacSpawn("GetDashboardCharts", "", {"projectName": name});
+                charts_data = charts_resp.reports[0] if charts_resp and charts_resp.reports else {};
+                
+                if charts_data {
+                    if "operator_usage" in charts_data {
+                         ops = charts_data["operator_usage"]; 
+                    }
+                    
+                    if "speed_comparison" in charts_data {
+                        setSpeedData(charts_data["speed_comparison"]);
+                    }
+                }
 
                 # Fetch Status
                 status_resp = await jacSpawn("GetProjectStatus", "", {"projectName": name});
@@ -436,8 +444,8 @@ def:pub Dashboard {
 
                 <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden flex flex-col">
                     <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/50">
-                        <h3 className="font-semibold text-zinc-200">Operator Usage</h3>
-                        <span className="text-xs text-zinc-500">Top 4</span>
+                        <h3 className="font-semibold text-zinc-200">Operator Time Consumption</h3>
+                        <span className="text-xs text-zinc-500">Total (ms)</span>
                     </div>
                     <div className="p-4 flex-1 flex items-center justify-center min-h-[220px]">
                         {
@@ -460,12 +468,17 @@ def:pub Dashboard {
                                             }}
                                             itemStyle={{ "color": '#e6f2ff' }}
                                             labelStyle={{ "color": '#9fb1c7' }}
+                                            formatter={lambda value: str -> str { return f"{value}ms"; }}
                                         />
                                         <Legend
-                                            layout="horizontal"
-                                            verticalAlign="bottom"
-                                            align="center"
-                                            wrapperStyle={{ "color": '#dbe7f3', "fontSize": "12px", "paddingTop": "10px" }}
+                                            layout="vertical"
+                                            verticalAlign="middle"
+                                            align="right"
+                                            wrapperStyle={{ 
+                                                color: '#dbe7f3', 
+                                                fontSize: '12px',
+                                                paddingLeft: '10px'
+                                            }}
                                         />
                                     </PieChart>
                                 </ResponsiveContainer>
