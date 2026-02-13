@@ -29,11 +29,11 @@ def get_project_dir(gpu_name: str, optional_name: str = None):
     clean_gpu_name = gpu_name.replace(
         " ", "_").replace(":", "").replace("-", "_")
 
-    full_name = f"{clean_gpu_name}_{proj_name}"
+    full_name = f"{clean_gpu_name}_{proj_name}/trees"
 
     print(f"Beginning optimizing on project {full_name}...")
 
-    proj_dir = Path(f"kernels/optimized/{full_name}")
+    proj_dir = Path(f"projects/{full_name}")
     try:
         proj_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
