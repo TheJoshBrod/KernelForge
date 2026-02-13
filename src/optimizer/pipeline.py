@@ -324,8 +324,13 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
                 "proj_dir": proj_op_dir
             }
 
-            # Copy kernel to tmp_dir for profiling — detect source extension
-            src_ext = ".cu" if (op_dir / "kernel.cu").exists() else ".py"
+            # Copy kernel to tmp_dir for profiling — prefer backend's own extension
+            if (op_dir / f"kernel{backend.kernel_extension}").exists():
+                src_ext = backend.kernel_extension
+            elif (op_dir / "kernel.cu").exists():
+                src_ext = ".cu"
+            else:
+                src_ext = ".py"
             dst_ext = backend.kernel_extension
             (tmp_path / f"kernel{dst_ext}").write_text((op_dir / f"kernel{src_ext}").read_text())
 
