@@ -16,6 +16,11 @@ import from "../../components/ui/GlowButton.cl.jac" { GlowButton }
 import from recharts {
     PieChart,
     Pie,
+    BarChart,
+    Bar,
+    XAxis,
+    YAxis,
+    CartesianGrid,
     Tooltip,
     Legend,
     ResponsiveContainer
@@ -64,6 +69,15 @@ def:pub Dashboard {
         {"name": "Linear", "value": 10, "fill": COLORS[3]}
     ];
     hasPie = True;
+
+    # Filler Data for Speed Comparison
+    speedData = [
+        {"name": "Conv2d", "pytorch": 120, "optimized": 25},
+        {"name": "Attention", "pytorch": 200, "optimized": 45},
+        {"name": "Linear", "pytorch": 80, "optimized": 15},
+        {"name": "LayerNorm", "pytorch": 50, "optimized": 10},
+        {"name": "Softmax", "pytorch": 40, "optimized": 8}
+    ];
 
     def format_op(raw: str) -> str {
         raw_text = raw or "";
@@ -200,23 +214,6 @@ def:pub Dashboard {
     # Helper for Status Cards
     status_cards = [];
     
-    # Kernel Count Card
-    status_cards.push(
-        <div key="kernels" className="bg-zinc-900 border border-zinc-800 p-4 rounded-lg">
-            <div className="flex justify-between items-start mb-2">
-                <div className="p-2 bg-indigo-500/10 rounded-lg">
-                    <CodeIcon className="text-indigo-400 w-5 h-5" />
-                </div>
-                <span className="text-xs text-zinc-500 bg-zinc-800 px-2 py-1 rounded">Total</span>
-            </div>
-            <div className="text-2xl font-bold text-white mb-1">
-                {ops.length}
-            </div>
-            <div className="text-xs text-zinc-400">
-                Detected Kernels
-            </div>
-        </div>
-    );
 
     # MCTS Explorer Card
     status_cards.push(
@@ -362,32 +359,6 @@ def:pub Dashboard {
     }
 
     
-    # Operators List
-    op_list_items = [];
-    op_idx = 0;
-    while op_idx < ops.length {
-        op = ops[op_idx];
-        op_path = f"/project/{name}/workbench/{op['name']}";
-        op_list_items.push(
-            <div key={op["name"]} className="group flex items-center justify-between p-3 hovering:bg-zinc-800/50 rounded-lg border border-transparent hover:border-zinc-800 transition-all cursor-pointer" onClick={lambda -> None { navigate(op_path); }}>
-                <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded bg-zinc-800 flex items-center justify-center text-zinc-500 group-hover:bg-indigo-500/20 group-hover:text-indigo-400 transition-colors">
-                        <ActivityIcon className="w-4 h-4" />
-                    </div>
-                    <div>
-                        <div className="text-sm font-medium text-zinc-200 group-hover:text-white">
-                            {format_op(op["name"])}
-                        </div>
-                        <div className="text-xs text-zinc-500">
-                            {op["count"]} calls
-                        </div>
-                    </div>
-                </div>
-                 <ArrowRightIcon className="w-4 h-4 text-zinc-600 group-hover:text-zinc-400" />
-            </div>
-        );
-        op_idx += 1;
-    }
 
     return
         <div className="p-8 max-w-7xl mx-auto space-y-8">
@@ -415,17 +386,51 @@ def:pub Dashboard {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="md:col-span-2 bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden flex flex-col">
                     <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/50">
-                        <h3 className="font-semibold text-zinc-200">Detected Kernels</h3>
-                        <span className="text-xs text-zinc-500">{ops.length} operators found</span>
+                        <h3 className="font-semibold text-zinc-200">Speed Comparison (ms)</h3>
+                        <span className="text-xs text-zinc-500">Lower is better</span>
                     </div>
-                    <div className="p-2 grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {
-                            op_list_items if ops.length > 0 
-                            else 
-                            <div className="col-span-full p-8 text-center text-zinc-500">
-                                No kernels detected yet. Run fetching to begin.
-                            </div>
-                        }
+                    <div className="p-4 flex-1 flex items-center justify-center min-h-[220px]">
+                         <div className="w-full h-[220px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart
+                                    data={speedData}
+                                    margin={{
+                                        "top": 5,
+                                        "right": 30,
+                                        "left": 20,
+                                        "bottom": 5
+                                    }}
+                                >
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={False} />
+                                    <XAxis
+                                        dataKey="name"
+                                        stroke="#71717a"
+                                        fontSize={12}
+                                        tickLine={False}
+                                        axisLine={False}
+                                    />
+                                    <YAxis
+                                        stroke="#71717a"
+                                        fontSize={12}
+                                        tickLine={False}
+                                        axisLine={False}
+                                        tickFormatter={lambda value: str -> str { return f"{value}ms"; }}
+                                    />
+                                    <Tooltip
+                                        cursor={{ "fill": '#27272a' }}
+                                        contentStyle={{
+                                            "backgroundColor": '#18181b',
+                                            "borderColor": '#27272a',
+                                            "borderRadius": '8px',
+                                            "color": '#f4f4f5'
+                                        }}
+                                    />
+                                    <Legend />
+                                    <Bar dataKey="pytorch" name="PyTorch" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                                    <Bar dataKey="optimized" name="Optimized" fill="#10b981" radius={[4, 4, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
                     </div>
                 </div>
 
