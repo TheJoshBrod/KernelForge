@@ -16,14 +16,14 @@ def cleanup_mkdown(input: str) -> str:
     """Extract code using strict tags (preferred) or markdown code blocks (fallback)."""
 
     # 1. Try Strict Tags (Recommended)
-    # The prompt now asks for // [START kernel.cu] ... // [END kernel.cu]
-    tag_pattern = r"//\s*\[START kernel\.cu\](.*?)//\s*\[END kernel\.cu\]"
+    # Supports both CUDA (// [START kernel.cu]) and Triton (# [START kernel.py])
+    tag_pattern = r'(?://|#)\s*\[START kernel\.(?:cu|py)\](.*?)(?://|#)\s*\[END kernel\.(?:cu|py)\]'
     match = re.search(tag_pattern, input, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
 
-    # 2. Try Markdown with Language Specifier
-    pattern = r"```(?:C\+\+|cpp|cuda|c)\s*\n(.*?)```"
+    # 2. Try Markdown with Language Specifier (CUDA or Python/Triton)
+    pattern = r"```(?:C\+\+|cpp|cuda|c|python|triton)\s*\n(.*?)```"
     match = re.search(pattern, input, re.DOTALL | re.IGNORECASE)
 
     if match:

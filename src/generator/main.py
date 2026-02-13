@@ -26,9 +26,40 @@ import src.generator.generator as generator
 import src.generator.monitor as monitor
 import src.generator.prompts.prompts as prompts
 import src.generator.verifier as verify
+import src.generator.triton_verifier as triton_verify
 import src.generator.templates as templates
 from src.progress import update_job_progress, wait_if_paused, check_cancelled
-from src import codex_utils
+try:
+    from src import codex_utils
+except ImportError:
+    codex_utils = None  # codex is optional
+
+
+def _is_triton() -> bool:
+    return os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower() == "triton"
+
+
+def _kernel_ext() -> str:
+    return ".py" if _is_triton() else ".cu"
+
+
+def _kernel_filename() -> str:
+    return f"kernel{_kernel_ext()}"
+
+
+def _success_filename() -> str:
+    """Backend-specific success marker, e.g. 'success.cuda', 'success.triton'."""
+    device = os.environ.get("CGINS_TARGET_DEVICE", "cuda").strip().lower()
+    return f"success.{device}"
+
+
+def _validate_kernel(cu_code, entry_file, log_file_loc, tmpdir):
+    """Route to the correct verifier based on target device."""
+    if _is_triton():
+        print(f"[DEBUG] Using TRITON verifier (CGINS_TARGET_DEVICE={os.environ.get('CGINS_TARGET_DEVICE')})")
+        return triton_verify.validate_kernel(cu_code, entry_file, log_file_loc, tmpdir)
+    print(f"[DEBUG] Using CUDA verifier (CGINS_TARGET_DEVICE={os.environ.get('CGINS_TARGET_DEVICE')})")
+    return verify.validate_kernel(cu_code, entry_file, log_file_loc, tmpdir)
 
 # Configuration
 MAX_ATTEMPTS = int(os.environ.get("CGINS_MAX_ATTEMPTS", "8"))
@@ -102,10 +133,15 @@ def _build_codex_prompt(
     feedback: str | None = None,
     mode: str = "generate",
 ) -> str:
+    kf = _kernel_filename()
+    if _is_triton():
+        sig_hint = "Keep the launch(...) signature exactly unchanged."
+    else:
+        sig_hint = "Keep the torch::Tensor launch(...) signature exactly unchanged."
     parts = [
         f"Mode: {mode}",
-        "Edit kernel.cu only.",
-        "Keep the torch::Tensor launch(...) signature exactly unchanged.",
+        f"Edit {kf} only.",
+        sig_hint,
     ]
     if project_dir:
         parts.append(
@@ -114,7 +150,7 @@ def _build_codex_prompt(
     if feedback:
         parts.append("Previous validation error:\n" + feedback)
     parts.append(
-        "Specification (use as the source of truth; do NOT output tags, just edit kernel.cu):\n"
+        f"Specification (use as the source of truth; do NOT output tags, just edit {kf}):\n"
         + base_prompt
     )
     return "\n\n".join(parts)
@@ -171,23 +207,24 @@ def _validate_static_kernel(
         log_file_loc = op_dir / "attempts" / f"log-{tag}-{i}.txt"
         os.makedirs(log_file_loc.parent, exist_ok=True)
 
-        call_success, exec_success, feedback = verify.validate_kernel(
+        call_success, exec_success, feedback = _validate_kernel(
             cu_code, entry_file, log_file_loc, tmpdir
         )
 
         if os.path.exists(tmpdir):
             shutil.rmtree(tmpdir)
 
+        ext = _kernel_ext()
         if not (call_success and exec_success):
-            with open(kernel_dir / f"kernel-{tag}-{i}.cu", "w") as f:
+            with open(kernel_dir / f"kernel-{tag}-{i}{ext}", "w") as f:
                 f.write(cu_code)
             with open(op_dir / "attempts" / f"feedback-{tag}-{i}.txt", "w") as f:
                 f.write(feedback)
             return False, feedback
 
-    with open(op_dir / "kernel.cu", "w", encoding="utf-8") as f:
+    with open(op_dir / _kernel_filename(), "w", encoding="utf-8") as f:
         f.write(cu_code)
-    with open(kernel_dir / f"kernel-{tag}-g.cu", "w") as f:
+    with open(kernel_dir / f"kernel-{tag}-g{ext}", "w") as f:
         f.write(cu_code)
     return True, ""
 
@@ -229,12 +266,12 @@ def validate_with_retries(
     base_prompt = conversation_history[0]["content"] if conversation_history else ""
     use_codex_generate = codex_utils.op_enabled(
         "CGINS_CODEX_GENERATE", "CGINS_CODEX_GENERATE_OPS", op_key
-    )
+    ) if codex_utils else False
     use_codex_repair = codex_utils.op_enabled(
         "CGINS_CODEX_REPAIR", "CGINS_CODEX_REPAIR_OPS", op_key
-    )
+    ) if codex_utils else False
     codex_work_dir = output_dir / "work"
-    codex_seed = template or "// TODO: implement kernel.cu\n"
+    codex_seed = template or ("# TODO: implement kernel.py\n" if _is_triton() else "// TODO: implement kernel.cu\n")
     codex_max_attempts = _codex_attempts()
     codex_model = _codex_model()
     codex_sandbox = _codex_sandbox()
@@ -249,13 +286,13 @@ def validate_with_retries(
             feedback=feedback,
             mode="repair",
         )
-        codex_utils.prepare_work_dir(codex_work_dir, cu_code, task=repair_prompt)
+        codex_utils.prepare_work_dir(codex_work_dir, cu_code, task=repair_prompt, filename=_kernel_filename())
         ok, err = codex_utils.run_codex(
             codex_work_dir, repair_prompt, model=codex_model, sandbox=codex_sandbox
         )
         if ok:
             try:
-                repaired = (codex_work_dir / "kernel.cu").read_text(encoding="utf-8")
+                repaired = (codex_work_dir / _kernel_filename()).read_text(encoding="utf-8")
             except Exception as exc:
                 repaired = ""
                 err = f"Codex repair read failed: {exc}"
@@ -266,20 +303,20 @@ def validate_with_retries(
                 for j, entry_file in enumerate(tqdm(entry_files, desc="Repair Tests")):
                     log_file_loc = output_dir / "attempts" / f"log-repair-{attempt_idx}-{j}.txt"
                     os.makedirs(log_file_loc.parent, exist_ok=True)
-                    call_success, exec_success, repair_feedback = verify.validate_kernel(
+                    call_success, exec_success, repair_feedback = _validate_kernel(
                         repaired, entry_file, log_file_loc, repair_tmpdir
                     )
                     repaired_ok = repaired_ok and call_success and exec_success
                     if not repaired_ok:
-                        with open(kernel_dir / f"kernel-repair-{attempt_idx}-{j}.cu", "w") as f:
+                        with open(kernel_dir / f"kernel-repair-{attempt_idx}-{j}{_kernel_ext()}", "w") as f:
                             f.write(repaired)
                         return False, repair_feedback, "codex_repair"
                 if os.path.exists(repair_tmpdir):
                     shutil.rmtree(repair_tmpdir)
                 if repaired_ok:
-                    with open(kernel_dir / f"kernel-repair-{attempt_idx}-g.cu", "w") as f:
+                    with open(kernel_dir / f"kernel-repair-{attempt_idx}-g{_kernel_ext()}", "w") as f:
                         f.write(repaired)
-                    with open(output_dir / "kernel.cu", "w", encoding="utf-8") as f:
+                    with open(output_dir / _kernel_filename(), "w", encoding="utf-8") as f:
                         f.write(repaired)
                     return True, "", "success"
         return False, err or feedback, "codex_repair"
@@ -300,7 +337,7 @@ def validate_with_retries(
                 feedback=last_feedback if attempt > 0 else None,
                 mode="generate",
             )
-            codex_utils.prepare_work_dir(codex_work_dir, codex_seed, task=prompt)
+            codex_utils.prepare_work_dir(codex_work_dir, codex_seed, task=prompt, filename=_kernel_filename())
             ok, err = codex_utils.run_codex(
                 codex_work_dir, prompt, model=codex_model, sandbox=codex_sandbox
             )
@@ -309,7 +346,7 @@ def validate_with_retries(
                 last_stage = "codex_generate"
                 continue
             try:
-                cu_code = (codex_work_dir / "kernel.cu").read_text(encoding="utf-8")
+                cu_code = (codex_work_dir / _kernel_filename()).read_text(encoding="utf-8")
                 codex_seed = cu_code
             except Exception as e:
                 last_feedback = f"Codex output read failed: {e}"
@@ -346,7 +383,7 @@ def validate_with_retries(
         tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
 
         # Output newest version of kernel
-        with open(output_dir / "kernel.cu", "w", encoding="utf-8") as f:
+        with open(output_dir / _kernel_filename(), "w", encoding="utf-8") as f:
             f.write(cu_code)
 
         # For each generated kernel validate ALL input/output
@@ -360,7 +397,7 @@ def validate_with_retries(
             # Validate current kernel with entry file
             log_file_loc = output_dir / "attempts" / f"log-{attempt}-{i}.txt"
             os.makedirs(log_file_loc.parent, exist_ok=True)
-            call_success, exec_success, feedback = verify.validate_kernel(
+            call_success, exec_success, feedback = _validate_kernel(
                 cu_code, entry_file, log_file_loc, tmpdir
             )
 
@@ -370,7 +407,7 @@ def validate_with_retries(
             is_valid = is_valid and call_success and exec_success
             if not is_valid:
                 # Save kernel
-                with open(kernel_dir / f"kernel-{attempt}-{i}.cu", "w") as f:
+                with open(kernel_dir / f"kernel-{attempt}-{i}{_kernel_ext()}", "w") as f:
                     f.write(cu_code)
 
                 if use_codex_generate:
@@ -418,7 +455,7 @@ def validate_with_retries(
         if is_valid:
             print(f"SUCCESSFUL on {attempt + 1}")
             # Save kernel
-            with open(kernel_dir / f"kernel-{attempt}-g.cu", "w") as f:
+            with open(kernel_dir / f"kernel-{attempt}-g{_kernel_ext()}", "w") as f:
                 f.write(cu_code)
 
             return True, "", "success"
@@ -515,7 +552,7 @@ def process_function(
 
     # Track performance
     if success:
-        success_file = op_dir / "success"
+        success_file = op_dir / _success_filename()
         with open(success_file, "w") as f:
             f.write("passed")
     else:
@@ -653,7 +690,7 @@ def main():
         op_dir = OUTPUT_BASE_DIR / "individual_op_kernels" / op_key
         op_dir.mkdir(parents=True, exist_ok=True)
 
-        performance_file = op_dir / "success"
+        performance_file = op_dir / _success_filename()
         if performance_file.exists():
             completed += 1
             update_job_progress(completed, total_jobs, function_name)
@@ -675,25 +712,30 @@ def main():
         baseline_code = None
         baseline_ok = False
         if use_baseline and templates.has_baseline_kernel(function_name):
-            baseline_code = templates.load_baseline_kernel(function_name)
-            if baseline_code:
-                baseline_ok, baseline_error = _validate_static_kernel(
-                    baseline_code, entry_files, op_dir, "baseline"
-                )
-                if not baseline_ok:
-                    _write_failure_report(
-                        op_dir,
-                        "baseline",
-                        baseline_error or "Baseline kernel failed validation.",
-                        {"function": function_name},
+            baseline_path = templates.baseline_kernel_path(function_name)
+            # Skip baselines that don't match the target backend's extension
+            if baseline_path.suffix != _kernel_ext():
+                print(f"  Skipping {baseline_path.suffix} baseline (target is {_kernel_ext()}): {function_name}")
+            else:
+                baseline_code = templates.load_baseline_kernel(function_name)
+                if baseline_code:
+                    baseline_ok, baseline_error = _validate_static_kernel(
+                        baseline_code, entry_files, op_dir, "baseline"
                     )
+                    if not baseline_ok:
+                        _write_failure_report(
+                            op_dir,
+                            "baseline",
+                            baseline_error or "Baseline kernel failed validation.",
+                            {"function": function_name},
+                        )
 
         codex_enabled = codex_utils.op_enabled(
             "CGINS_CODEX_GENERATE", "CGINS_CODEX_GENERATE_OPS", op_key
-        )
+        ) if codex_utils else False
 
         if baseline_ok and not codex_enabled:
-            success_file = op_dir / "success"
+            success_file = op_dir / _success_filename()
             with open(success_file, "w") as f:
                 f.write("passed")
             completed += 1
@@ -710,9 +752,9 @@ def main():
         )
         if not success and baseline_ok:
             if baseline_code:
-                with open(op_dir / "kernel.cu", "w", encoding="utf-8") as f:
+                with open(op_dir / _kernel_filename(), "w", encoding="utf-8") as f:
                     f.write(baseline_code)
-            success_file = op_dir / "success"
+            success_file = op_dir / _success_filename()
             with open(success_file, "w") as f:
                 f.write("passed")
             try:

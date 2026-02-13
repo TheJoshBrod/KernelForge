@@ -301,10 +301,16 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
                 continue
 
             # Check if the kernel has been previously generated
-            if not (op_dir / "success").exists():
-                print(
-                    f"Skipping {op_dir.name}: No 'success' marker found (generation failed).")
-                continue
+            # Map backend extension to success marker name (e.g. .cu -> success.cuda, .py -> success.triton)
+            ext_to_device = {".cu": "cuda", ".py": "triton", ".metal": "metal"}
+            device_name = ext_to_device.get(backend.kernel_extension, "cuda")
+            success_marker = op_dir / f"success.{device_name}"
+            if not success_marker.exists():
+                # Also check legacy 'success' marker for backwards compatibility
+                if not (op_dir / "success").exists():
+                    print(
+                        f"Skipping {op_dir.name}: No 'success.{device_name}' marker found (generation failed).")
+                    continue
 
             # Prepare project op directory
             proj_op_dir = proj_dir / op_dir.name

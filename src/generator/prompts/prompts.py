@@ -45,6 +45,10 @@ Rules:
 - Generate a CUDA kernel and CUDA-aware C++ wrapper.
 - Enforce .is_cuda() checks for tensor inputs.
 """
+    elif target == "triton":
+        prompt = ""
+        with open("src/generator/prompts/TritonGeneratorSystemPrompt.md") as f:
+            prompt = f.read()
     return prompt
 
 
@@ -52,6 +56,8 @@ def _target_device() -> str:
     value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
     if value in {"gpu", "cuda"}:
         return "cuda"
+    if value in {"triton"}:
+        return "triton"
     if value == "mps":
         return "mps"
     if value == "cpu":
@@ -222,11 +228,17 @@ def generate_function_spec_from_calls(call_list, function_name):
 
         # --- Logic for Tensors ---
         if torch.Tensor in types:
-            spec["type"] = "torch::Tensor"
+            if _target_device() == "triton":
+                spec["type"] = "torch.Tensor"
+            else:
+                spec["type"] = "torch::Tensor"
 
             # Check if it is Optional (sometimes None)
             if type(None) in types:
-                spec["type"] = "std::optional<torch::Tensor>"
+                if _target_device() == "triton":
+                    spec["type"] = "torch.Tensor | None"
+                else:
+                    spec["type"] = "std::optional<torch::Tensor>"
                 spec["description"] += "Optional Tensor (handle null/None). "
 
             # Analyze Shapes for Dynamics
@@ -257,7 +269,7 @@ def generate_function_spec_from_calls(call_list, function_name):
 
         # --- Logic for Lists/Tuples ---
         elif list in types or tuple in types:
-            spec["type"] = "std::vector"
+            spec["type"] = "list" if _target_device() == "triton" else "std::vector"
             lens = stats["list_lens"]
             if len(lens) > 1:
                 spec["description"] = f"List/Tuple with varying lengths: {lens}"
@@ -267,11 +279,11 @@ def generate_function_spec_from_calls(call_list, function_name):
 
         # --- Logic for Scalars ---
         elif int in types:
-            spec["type"] = "int64_t"
+            spec["type"] = "int" if _target_device() == "triton" else "int64_t"
             spec["description"] = "Integer scalar"
             spec["stats"] = _summarize_scalar(stats["scalar_values"])
         elif float in types:
-            spec["type"] = "double"
+            spec["type"] = "float" if _target_device() == "triton" else "double"
             spec["description"] = "Float scalar"
             spec["stats"] = _summarize_scalar(stats["scalar_values"])
         elif bool in types:
@@ -279,7 +291,7 @@ def generate_function_spec_from_calls(call_list, function_name):
             spec["description"] = "Boolean flag"
             spec["stats"] = _summarize_scalar(stats["scalar_values"])
         elif str in types:
-            spec["type"] = "std::string"
+            spec["type"] = "str" if _target_device() == "triton" else "std::string"
             spec["description"] = "String parameter"
             spec["stats"] = _summarize_scalar(stats["scalar_values"])
         else:
@@ -404,8 +416,36 @@ matches the parameters above and the kernel is correct for this operator.
         prompt += template
         prompt += "\n```\n"
 
-    # Add implementation guidance
-    prompt += """
+    # Add implementation guidance — backend-specific
+    if _target_device() == "triton":
+        prompt += """
+### Implementation Requirements
+
+1. **Python Wrapper Function (`launch`):**
+   - Must accept ALL parameters listed above in the exact order
+   - Optional parameters (None) should be handled with conditional logic
+   - Return type must match the output specification
+
+2. **Triton Kernel (`@triton.jit`):**
+   - Must handle all tensor inputs via pointer arithmetic
+   - Use `tl.load`/`tl.store` with proper masking
+   - Block sizes should be `tl.constexpr` parameters
+
+3. **Parameter Handling:**
+   - Validate tensor inputs (`.is_cuda`, `.contiguous()`)
+   - Pass scalar parameters to kernel directly
+   - Handle optional tensors (check for None)
+
+4. **Output Format:**
+   - You MUST wrap the complete kernel.py file contents in special tags.
+   - Start with `# [START kernel.py]`
+   - End with `# [END kernel.py]`
+   - Do not include any other text inside these tags.
+
+Now generate the complete kernel.py file following the system prompt guidelines.
+"""
+    else:
+        prompt += """
 ### Implementation Requirements
 
 1. **C++ Wrapper Function Signature:**
@@ -540,6 +580,20 @@ def generate_full_llm_prompt(calls_list, function_name, profiler_output=None, te
 
 
 def get_repair_prompt(function_name: str, attempt: int, feedback: str) -> str:
+    if _target_device() == "triton":
+        return f"""
+The previous kernel for {function_name} failed validation on attempt {attempt + 1}.
+
+ERROR SUMMARY (do not ignore):
+{feedback}
+
+Repair instructions:
+- Keep the launch() signature EXACTLY the same.
+- Do NOT change argument order or types.
+- Only modify Triton kernel logic (@triton.jit), indexing, masking, and block sizes.
+- Ensure all tensor outputs match PyTorch numerically and in shape.
+- Use tl.load/tl.store with proper masks for boundary safety.
+""".strip()
     return f"""
 The previous kernel for {function_name} failed validation on attempt {attempt + 1}.
 
