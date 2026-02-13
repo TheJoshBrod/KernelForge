@@ -1,7 +1,7 @@
 """Main entry point for frontend."""
 import from walkers.globals { repo_root, config_path, config_store }
 import from walkers.config { GetConfig, SaveConfig }
-import from walkers.system { GetSystemInfo, CheckSshConnection, TestLLMConnection }
+import from walkers.system { GetSystemInfo, CheckSshConnection, TestLLMConnection, DetectHardware }
 import from walkers.project {
     CreateProject,
     GetProjects,
@@ -18,7 +18,9 @@ import from walkers.project {
     GetOpDetails,
     ReadRepoFile,
     DownloadExport,
-    GetProjectBenchmarks
+    GetProjectBenchmarks,
+    GetMctsTree,
+    GetProjectMctsSummary
 }
 
 cl import from react { useEffect }
@@ -73,7 +75,10 @@ cl {
                                 <Route index element={<Dashboard />} />
                                 <Route path="profiling" element={<Profiling />} />
                                 <Route path="workbench" element={<Workbench />} />
+                                <Route path="workbench/:opName" element={<Workbench />} />
                                 <Route path="arena" element={<Arena />} />
+
+
                                 <Route path="verification" element={<Verification />} />
                                 <Route path="export" element={<Export />} />
                             </Route>

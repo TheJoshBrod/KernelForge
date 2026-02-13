@@ -74,7 +74,9 @@ def:pub GpuPage {
     gpu_options = [];
     idx = 0;
     for g in gpus {
-        gpu_name = g["name"] if "name" in g else f"GPU {idx}";
+        base_name = g["name"] if "name" in g else f"GPU {idx}";
+        conn = g["connection"] if "connection" in g else "local";
+        gpu_name = f"{base_name} ({conn})" if conn != "local" else f"{base_name} (Local)";
         gpu_options.push(
             <option value={f"{idx}"} key={idx}>
                 {gpu_name}
@@ -91,6 +93,11 @@ def:pub GpuPage {
         new_config = {** config};
         idx_int = parseInt(index);
         new_config["selected_gpu_index"] = idx_int;
+        if idx_int != -1 and idx_int < gpus.length {
+            new_config["selected_gpu_info"] = gpus[idx_int];
+        } else {
+            new_config["selected_gpu_info"] = None;
+        }
         setConfig(new_config);
     }
 

@@ -8,6 +8,8 @@ import from zipfile { ZipFile }
 import sys;
 import subprocess;
 import os;
+import sqlite3;
+
 
 import from .globals { repo_root, config_path, config_store }
 
@@ -1172,3 +1174,104 @@ walker:pub GetProjectBenchmarks {
         }
     }
 }
+
+walker:pub GetMctsTree {
+    has projectName: str,
+        opName: str;
+
+    can run with `root entry {
+        project_dir = _project_dir(self.projectName);
+        db_path = path.join(project_dir, "trees", self.opName, "nodes.db");
+
+        if not path.exists(db_path) {
+            report {"success": False, "error": f"Database not found at {db_path}"};
+            return;
+        }
+
+        mcts_nodes = [];
+        edges = [];
+
+        try {
+            # Since Jac can interop with Python, we can use sqlite3 directly
+            conn = sqlite3.connect(db_path);
+            # Set row factory to dict-like if needed, but manual extraction is safer in Jac logic
+            cursor = conn.cursor();
+
+            # Fetch nodes
+            cursor.execute("SELECT id, visits, value, best_subtree_value, improvement_description, timestamp FROM nodes");
+            rows = cursor.fetchall();
+            for row in rows {
+                mcts_nodes.append({
+                    "id": row[0],
+                    "visits": row[1],
+                    "value": row[2],
+                    "best_subtree_value": row[3],
+                    "improvement_description": row[4],
+                    "timestamp": row[5]
+                });
+            }
+
+            # Fetch edges
+            cursor.execute("SELECT parent_id, child_id FROM edges");
+            rows = cursor.fetchall();
+            for row in rows {
+                edges.append({
+                    "parent_id": row[0],
+                    "child_id": row[1]
+                });
+            }
+
+            conn.close();
+            report {"success": True, "nodes": mcts_nodes, "edges": edges};
+        } except Exception as e {
+            report {"success": False, "error": str(e)};
+        }
+    }
+}
+
+walker:pub GetProjectMctsSummary {
+    has projectName: str;
+
+    can run with `root entry {
+        project_dir = _project_dir(self.projectName);
+        trees_dir = path.join(project_dir, "trees");
+        
+        total_nodes = 0;
+        op_summaries = [];
+
+        if path.exists(trees_dir) {
+            for op_name in listdir(trees_dir) {
+                db_path = path.join(trees_dir, op_name, "nodes.db");
+                if path.exists(db_path) {
+                    try {
+                        conn = sqlite3.connect(db_path);
+                        cursor = conn.cursor();
+                        
+                        cursor.execute("SELECT COUNT(*) FROM nodes");
+                        node_count = cursor.fetchone()[0];
+                        
+                        cursor.execute("SELECT MAX(value) FROM nodes");
+                        best_val = cursor.fetchone()[0] or 0.0;
+
+                        total_nodes += node_count;
+                        op_summaries.append({
+                            "op": op_name,
+                            "nodes": node_count,
+                            "best_value": best_val
+                        });
+                        conn.close();
+                    } except Exception as e {
+                        print(f"Error summarying {op_name}: {e}");
+                    }
+                }
+            }
+        }
+        
+        report {
+            "success": True, 
+            "total_nodes": total_nodes, 
+            "ops": op_summaries
+        };
+    }
+}
+
