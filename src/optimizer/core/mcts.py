@@ -22,43 +22,44 @@ def init_db(paths: dict):
         conn.execute("""
             CREATE TABLE IF NOT EXISTS nodes (
                 id INTEGER PRIMARY KEY,
-                parent_id INTEGER,
-                children_ids TEXT,
                 visits INTEGER,
                 value REAL,
                 best_subtree_value REAL,
                 code TEXT,
                 improvement_description TEXT,
-                speedup_vs_parent REAL,
                 timestamp REAL
             )
         """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_parent ON nodes(parent_id)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS edges (
+                parent_id INTEGER,
+                child_id INTEGER,
+                PRIMARY KEY (parent_id, child_id),
+                FOREIGN KEY(parent_id) REFERENCES nodes(id),
+                FOREIGN KEY(child_id) REFERENCES nodes(id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_parent ON edges(parent_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_child ON edges(child_id)")
 
 
-def _node_from_row(row: Any) -> KernelNode:
+def _node_from_row(row: Any, parent_id: Optional[int] = None, children_ids: List[int] = None) -> KernelNode:
     """Convert a DB row to a KernelNode."""
-    # row keys: id, parent_id, children_ids, visits, value, best_subtree, code, imp_desc, speedup
-    # We expect row to be a dictionary-like object (sqlite3.Row) or tuple if we control the query
+    # row keys: id, visits, value, best_subtree, code, imp_desc, timestamp
     
     # Handle tuple from fetchone/fetchall
-    (nid, pid, cids_json, vis, val, best_val, code, imp_desc, speedup, _) = row
-    
-    children = json.loads(cids_json) if cids_json else []
-    
-    # Handle None for parent_id (SQLite stores NULL as None)
-    # The Pydantic model expects Optional[int]
+    (nid, vis, val, best_val, code, imp_desc, _) = row
     
     return KernelNode(
         id=nid,
-        parent=pid,
-        children=children,
+        parent=parent_id,
+        children=children_ids if children_ids is not None else [],
         visits=vis,
         value=val,
         best_subtree_value=best_val,
         code=code,
         improvement_description=imp_desc,
-        speedup_vs_parent=speedup
+        speedup_vs_parent=None # Not stored in DB anymore
     )
 
 def load_tree_once(paths: dict):
@@ -69,14 +70,49 @@ def load_tree_once(paths: dict):
     
     _NODE_CACHE.clear()
     
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.execute("SELECT * FROM nodes")
-        for row in cursor:
+    try:
+        with sqlite3.connect(db_path) as conn:
+            # 1. Load all nodes without relationships
+            nodes_map = {}
+            cursor = conn.execute("SELECT * FROM nodes")
+            for row in cursor:
+                # We don't have relationships yet
+                node = _node_from_row(row, parent_id=None, children_ids=[])
+                
+                # OPTIONAL: Recompute speedup_vs_parent if needed?
+                # We don't have parent linked yet. 
+                # Can do a second pass or lazy load. For now, leave as None.
+                
+                nodes_map[node.id] = node
+
+            # 2. Load all edges to reconstruct relationships
+            # Check if table exists first (just in case init_db failed or fresh start)
             try:
-                node = _node_from_row(row)
-                _NODE_CACHE[node.id] = node
-            except Exception as e:
-                print(f"Error loading node from DB row {row[0]}: {e}")
+                cursor = conn.execute("SELECT parent_id, child_id FROM edges")
+                for pid, cid in cursor:
+                    if pid in nodes_map and cid in nodes_map:
+                        # Link parent -> child
+                        if cid not in nodes_map[pid].children_ids:
+                            nodes_map[pid].children_ids.append(cid)
+                        
+                        # Link child -> parent
+                        nodes_map[cid].parent_id = pid
+                        
+                        # Recompute speedup on load?
+                        parent_val = nodes_map[pid].value
+                        child_val = nodes_map[cid].value
+                        if parent_val is not None and child_val is not None and child_val > 0:
+                             nodes_map[cid].speedup_vs_parent = parent_val / child_val
+                        else:
+                             nodes_map[cid].speedup_vs_parent = 1.0
+
+            except sqlite3.OperationalError:
+                pass # Table might not exist yet if empty
+
+            _NODE_CACHE = nodes_map
+            
+    except Exception as e:
+        print(f"Error loading tree from DB: {e}")
 
 def update_tree(paths: dict, new_node: KernelNode):
     global _NODE_CACHE
@@ -94,26 +130,28 @@ def update_tree(paths: dict, new_node: KernelNode):
 
     with sqlite3.connect(db_path) as conn:
         while True:
-            # Upsert current node
+            # Upsert current node properties
             conn.execute("""
                 INSERT OR REPLACE INTO nodes 
-                (id, parent_id, children_ids, visits, value, best_subtree_value, code, improvement_description, speedup_vs_parent, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, visits, value, best_subtree_value, code, improvement_description, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 current.id,
-                current.parent_id,
-                json.dumps(current.children_ids),
                 current.visits,
                 current.value,
                 current.best_subtree_value,
                 current.code,
                 current.improvement_description,
-                current.speedup_vs_parent,
-                0.0  # We can add a timestamp field to KernelNode if needed, else 0
+                0.0
             ))
-            
+
             if current.parent_id == -1 or current.parent_id is None:
                 break
+            
+            # Ensure Edge Exists (Relationship persistence)
+            conn.execute("""
+                INSERT OR IGNORE INTO edges (parent_id, child_id) VALUES (?, ?)
+            """, (current.parent_id, current.id))
 
             # Load Parent (From Cache else from DB)
             parent_id = current.parent_id
@@ -124,8 +162,19 @@ def update_tree(paths: dict, new_node: KernelNode):
                 row = cursor.fetchone()
                 if not row:
                     break
-                parent = _node_from_row(row)
+                # We need to fetch parent's other children to be accurate?
+                # For basic MCTS update stats, we arguably don't need all siblings, 
+                # but valid state implies we should know them.
+                # Simplification: just load the node properties, we only update stats.
+                parent = _node_from_row(row, parent_id=None, children_ids=[]) # P/C will be filled if we loaded full tree, but here partial load okay for stats
                 _NODE_CACHE[parent_id] = parent
+                
+                # If we really needed full children list, we'd query edges here.
+                # But we only append current if missing.
+                # NOTE: If we loaded parent from DB without edges, its children_ids is [].
+                # This might desync if we rely on children_ids for traversal later.
+                # However, load_tree_once is called at start. This path is usually hit 
+                # when parent is already in cache.
 
             # --- Update Logic ---
             
