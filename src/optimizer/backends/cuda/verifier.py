@@ -310,7 +310,10 @@ def validate_remote_kernel(ssh_config: dict, generated_cu_code: str, paths: dict
     from src.optimizer.core.ssh_client import RemoteWorkerClient, upload_files
     
     try:
-        worker = RemoteWorkerClient(ssh_config)
+        worker_path = Path(__file__).parent / "remote_worker.py"
+        loader_path = Path(__file__).parent / "loader.py"
+        
+        worker = RemoteWorkerClient(ssh_config, worker_path, {str(loader_path): "loader.py"})
         
         # Upload IO files to shared cache
         io_dir = paths["io_dir"]

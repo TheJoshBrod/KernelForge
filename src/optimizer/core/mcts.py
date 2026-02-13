@@ -1,31 +1,235 @@
 import json
 import math
+import sqlite3
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from src.optimizer.core.types import KernelNode
 from src.optimizer.config.settings import settings
 
 _NODE_CACHE: Dict[int, KernelNode] = {}
 
+def get_db_path(paths: dict) -> Path:
+    return paths["proj_dir"] / "nodes.db"
+
+def init_db(paths: dict):
+    """Initialize the SQLite database schema."""
+    db_path = get_db_path(paths)
+    if db_path.exists():
+        return
+        
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS nodes (
+                id INTEGER PRIMARY KEY,
+                visits INTEGER,
+                value REAL,
+                best_subtree_value REAL,
+                code TEXT,
+                improvement_description TEXT,
+                timestamp REAL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS edges (
+                parent_id INTEGER,
+                child_id INTEGER,
+                PRIMARY KEY (parent_id, child_id),
+                FOREIGN KEY(parent_id) REFERENCES nodes(id),
+                FOREIGN KEY(child_id) REFERENCES nodes(id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_parent ON edges(parent_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_child ON edges(child_id)")
+
+
+def _node_from_row(row: Any, parent_id: Optional[int] = None, children_ids: List[int] = None) -> KernelNode:
+    """Convert a DB row to a KernelNode."""
+    # row keys: id, visits, value, best_subtree, code, imp_desc, timestamp
+    
+    # Handle tuple from fetchone/fetchall
+    (nid, vis, val, best_val, code, imp_desc, _) = row
+    
+    return KernelNode(
+        id=nid,
+        parent=parent_id,
+        children=children_ids if children_ids is not None else [],
+        visits=vis,
+        value=val,
+        best_subtree_value=best_val,
+        code=code,
+        improvement_description=imp_desc,
+        speedup_vs_parent=None # Not stored in DB anymore
+    )
+
 def load_tree_once(paths: dict):
     """Populates the cache once at startup."""
     global _NODE_CACHE
-    node_path = paths["proj_dir"] / "nodes"
+    init_db(paths)  # Ensure DB exists
+    db_path = get_db_path(paths)
+    
     _NODE_CACHE.clear()
     
-    # Check if dir exists first
-    if not node_path.exists():
-        return
+    try:
+        with sqlite3.connect(db_path) as conn:
+            # 1. Load all nodes without relationships
+            nodes_map = {}
+            cursor = conn.execute("SELECT * FROM nodes")
+            for row in cursor:
+                # We don't have relationships yet
+                node = _node_from_row(row, parent_id=None, children_ids=[])
+                
+                # OPTIONAL: Recompute speedup_vs_parent if needed?
+                # We don't have parent linked yet. 
+                # Can do a second pass or lazy load. For now, leave as None.
+                
+                nodes_map[node.id] = node
 
-    for file in node_path.glob("*.json"):
-        try:
-            with open(file, "r") as f:
-                data = json.load(f)
-                node = KernelNode.model_validate(data)
-                _NODE_CACHE[node.id] = node
-        except Exception as e:
-            print(f"Skipping corrupted node {file}: {e}")
+            # 2. Load all edges to reconstruct relationships
+            # Check if table exists first (just in case init_db failed or fresh start)
+            try:
+                cursor = conn.execute("SELECT parent_id, child_id FROM edges")
+                for pid, cid in cursor:
+                    if pid in nodes_map and cid in nodes_map:
+                        # Link parent -> child
+                        if cid not in nodes_map[pid].children_ids:
+                            nodes_map[pid].children_ids.append(cid)
+                        
+                        # Link child -> parent
+                        nodes_map[cid].parent_id = pid
+                        
+                        # Recompute speedup on load?
+                        parent_val = nodes_map[pid].value
+                        child_val = nodes_map[cid].value
+                        if parent_val is not None and child_val is not None and child_val > 0:
+                             nodes_map[cid].speedup_vs_parent = parent_val / child_val
+                        else:
+                             nodes_map[cid].speedup_vs_parent = 1.0
+
+            except sqlite3.OperationalError:
+                pass # Table might not exist yet if empty
+
+            _NODE_CACHE = nodes_map
+            
+    except Exception as e:
+        print(f"Error loading tree from DB: {e}")
+
+def update_tree(paths: dict, new_node: KernelNode):
+    global _NODE_CACHE
+    
+    # 1. Update Cache Immediately
+    _NODE_CACHE[new_node.id] = new_node
+    
+    db_path = get_db_path(paths)
+    
+    # We need a loop to propagate values up the tree
+    current = new_node
+    # Normalize value for math
+    current_best_val = current.best_subtree_value if current.best_subtree_value is not None else current.value
+    if current_best_val is None: current_best_val = float('inf')
+
+    with sqlite3.connect(db_path) as conn:
+        while True:
+            # Upsert current node properties
+            conn.execute("""
+                INSERT OR REPLACE INTO nodes 
+                (id, visits, value, best_subtree_value, code, improvement_description, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                current.id,
+                current.visits,
+                current.value,
+                current.best_subtree_value,
+                current.code,
+                current.improvement_description,
+                0.0
+            ))
+
+            if current.parent_id == -1 or current.parent_id is None:
+                break
+            
+            # Ensure Edge Exists (Relationship persistence)
+            conn.execute("""
+                INSERT OR IGNORE INTO edges (parent_id, child_id) VALUES (?, ?)
+            """, (current.parent_id, current.id))
+
+            # Load Parent (From Cache else from DB)
+            parent_id = current.parent_id
+            if parent_id in _NODE_CACHE:
+                parent = _NODE_CACHE[parent_id]
+            else:
+                cursor = conn.execute("SELECT * FROM nodes WHERE id = ?", (parent_id,))
+                row = cursor.fetchone()
+                if not row:
+                    break
+                # We need to fetch parent's other children to be accurate?
+                # For basic MCTS update stats, we arguably don't need all siblings, 
+                # but valid state implies we should know them.
+                # Simplification: just load the node properties, we only update stats.
+                parent = _node_from_row(row, parent_id=None, children_ids=[]) # P/C will be filled if we loaded full tree, but here partial load okay for stats
+                _NODE_CACHE[parent_id] = parent
+                
+                # If we really needed full children list, we'd query edges here.
+                # But we only append current if missing.
+                # NOTE: If we loaded parent from DB without edges, its children_ids is [].
+                # This might desync if we rely on children_ids for traversal later.
+                # However, load_tree_once is called at start. This path is usually hit 
+                # when parent is already in cache.
+
+            # --- Update Logic ---
+            
+            # 1. Link Child
+            if current.id not in parent.children_ids:
+                parent.children_ids.append(current.id)
+
+            # 2. Visits
+            parent.visits += 1
+
+            # 3. Propagate Best Score (Minimization)
+            parent_best = parent.best_subtree_value if parent.best_subtree_value is not None else parent.value
+            if parent_best is None: parent_best = float('inf')
+            
+            # 4. Update parent's best score if current is better
+            if current_best_val < parent_best:
+                parent.best_subtree_value = current_best_val
+            else:
+                current_best_val = parent_best
+
+            # Move Up
+            current = parent
+        
+        conn.commit()
+
+def get_next_node_id(paths: dict) -> int:
+    """Get the next available node ID from the DB."""
+    init_db(paths)
+    db_path = get_db_path(paths)
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.execute("SELECT MAX(id) FROM nodes")
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return row[0] + 1
+            return 0
+    except Exception:
+        return 0
+
+def save_node(paths: dict, node: KernelNode):
+    """Save a single node to the DB."""
+    update_tree(paths, node)
+
+def node_exists(paths: dict, node_id: int) -> bool:
+    """Check if a node ID exists in the DB."""
+    init_db(paths)
+    db_path = get_db_path(paths)
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,))
+            return cursor.fetchone() is not None
+    except Exception:
+        return False
+
+
 
 def choose_optimization(paths: dict, C: float = settings.mcts_c_constant, exclude_ids: set = None) -> KernelNode:
     """Select the most promising node to optimize next.
@@ -162,60 +366,7 @@ def select_n_distinct(paths: dict, n: int, in_flight_ids: set = None) -> list:
     
     return selected
 
-def update_tree(paths: dict, new_node: KernelNode):
-    global _NODE_CACHE
-    
-    base_path = paths["proj_dir"] / "nodes"
-    
-    # 1. Update Cache Immediately
-    _NODE_CACHE[new_node.id] = new_node
-    
-    current = new_node
-    # Normalize value for math
-    current_best_val = current.best_subtree_value if current.best_subtree_value is not None else current.value
-    if current_best_val is None: current_best_val = float('inf')
 
-    while True:
-        # Write CURRENT node to disk (Persist the changes from previous loop iteration)
-        node_file = base_path / f"{current.id}.json"
-        with open(node_file, 'w') as f:
-             f.write(current.model_dump_json(indent=4, by_alias=True))
-
-        if current.parent_id == -1 or current.parent_id is None:
-            break
-
-        # Load Parent (From Cache else from disk)
-        parent_id = current.parent_id
-        if parent_id in _NODE_CACHE:
-            parent = _NODE_CACHE[parent_id]
-        else:
-            parent_file = base_path / f"{parent_id}.json"
-            if not parent_file.exists(): break
-            with open(parent_file, 'r') as f:
-                parent = KernelNode.model_validate(json.load(f))
-                _NODE_CACHE[parent_id] = parent
-
-        # --- Update Logic ---
-        
-        # 1. Link Child
-        if current.id not in parent.children_ids:
-            parent.children_ids.append(current.id)
-
-        # 2. Visits
-        parent.visits += 1
-
-        # 3. Propagate Best Score (Minimization)
-        parent_best = parent.best_subtree_value if parent.best_subtree_value is not None else parent.value
-        if parent_best is None: parent_best = float('inf')
-        
-        # 4. Update parent's best score if current is better
-        if current_best_val < parent_best:
-            parent.best_subtree_value = current_best_val
-        else:
-            current_best_val = parent_best
-
-        # Move Up
-        current = parent
 
 def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -> tuple[list[dict], list[tuple[int, str]]]:
     """
@@ -272,15 +423,18 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
         if current.parent_id in _NODE_CACHE:
             current = _NODE_CACHE[current.parent_id]
         else:
-            p_path = paths["proj_dir"] / "nodes" / f"{current.parent_id}.json"
-            if p_path.exists():
-                try:
-                    with open(p_path, 'r') as f:
-                        current = KernelNode.model_validate(json.load(f))
-                except Exception as e:
-                    raise RuntimeError(f"CRITICAL: Corrupted parent node file at {p_path}") from e
-            else:
-                raise FileNotFoundError(f"CRITICAL: Orphaned node detected. Parent file {p_path} is missing for child {current.id}")
+            db_path = get_db_path(paths)
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.execute("SELECT * FROM nodes WHERE id = ?", (current.parent_id,))
+                row = cursor.fetchone()
+                if row:
+                    try:
+                        current = _node_from_row(row)
+                        _NODE_CACHE[current.id] = current
+                    except Exception as e:
+                       raise RuntimeError(f"CRITICAL: Corrupted parent node {current.parent_id} in DB") from e
+                else:
+                    raise FileNotFoundError(f"CRITICAL: Orphaned node detected. Parent {current.parent_id} missing in DB for child {current.id}")
 
     # 2. Reorder (Root -> Child)
     history.reverse()
@@ -311,42 +465,49 @@ def get_existing_roots(paths: dict) -> list[dict]:
     Returns:
         List of dicts with {id, runtime_ms, code_preview} sorted by runtime (best first)
     """
-    node_path: Path = paths["proj_dir"] / "nodes"
+    init_db(paths)
+    db_path = get_db_path(paths)
     roots = []
     
-    for file in node_path.glob("*.json"):
-        try:
-            with open(file, 'r') as f:
-                node = json.load(f)
-            
-            # Only include root nodes (parent == -1)
-            if node.get("parent") != -1:
-                continue
-            
-            # Read the kernel code - handle both absolute and relative paths
-            code_path_str = node.get("code", "")
-            code_path = Path(code_path_str)
-            
-            # If relative path, resolve from project parent directory
-            if not code_path.is_absolute():
-                # e.g., "torch_nn_functional_embedding/attempts/kernel_0.cu"
-                # proj_dir is like ".../NVIDIA.../torch_nn_functional_embedding"
-                # so parent is ".../NVIDIA..." and we join with relative path
-                code_path = paths["proj_dir"].parent / code_path_str
-            
-            if code_path.exists():
-                code_preview = code_path.read_text()[:4000]  # First 4KB
-            else:
-                code_preview = f"// Code file not found: {code_path}"
-            
-            roots.append({
-                "id": node["id"],
-                "runtime_ms": node.get("value", 0.0),
-                "code_preview": code_preview
-            })
-        except Exception as e:
-            print(f"Warning: Error loading root node from {file}: {e}")
-            continue
+    try:
+        with sqlite3.connect(db_path) as conn:
+            # -1 or NULL (if we used null for root parent, but we use -1)
+            cursor = conn.execute("SELECT * FROM nodes WHERE parent_id = -1")
+            for row in cursor:
+                try:
+                    # We can decode the whole node, or just extract what we need
+                    # _node_from_row is safer
+                    node = _node_from_row(row)
+                    
+                    # Read the kernel code - handle both absolute and relative paths
+                    code_path_str = node.code
+                    if not code_path_str:
+                        continue
+                        
+                    code_path = Path(code_path_str)
+                    
+                    # If relative path, resolve from project parent directory
+                    if not code_path.is_absolute():
+                        # e.g., "torch_nn_functional_embedding/attempts/kernel_0.cu"
+                        # proj_dir is like ".../NVIDIA.../torch_nn_functional_embedding"
+                        # so parent is ".../NVIDIA..." and we join with relative path
+                        code_path = paths["proj_dir"].parent / code_path_str
+                    
+                    if code_path.exists():
+                        code_preview = code_path.read_text()[:4000]  # First 4KB
+                    else:
+                        code_preview = f"// Code file not found: {code_path}"
+                    
+                    roots.append({
+                        "id": node.id,
+                        "runtime_ms": node.value if node.value is not None else 0.0,
+                        "code_preview": code_preview
+                    })
+                except Exception as e:
+                    print(f"Warning: Error loading root node from DB: {e}")
+                    continue
+    except Exception as e:
+        print(f"Error querying roots: {e}")
     
     # Sort by runtime (best/fastest first)
     return sorted(roots, key=lambda x: x["runtime_ms"])

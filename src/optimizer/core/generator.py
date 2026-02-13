@@ -13,6 +13,7 @@ from src.config import ensure_llm_config
 from src.optimizer.core.types import GPUSpecs
 from src.optimizer.config.settings import settings
 from src.optimizer.core.backend import Backend
+import src.optimizer.core.mcts as mcts
 
 
 def _log(msg: str):
@@ -142,9 +143,9 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
             paths["node_counter"].value += 1
     else:
         # Sequential mode: count existing nodes
-        next_node_id = len(list((paths["proj_dir"] / "nodes").glob("*.json")))
+        next_node_id = mcts.get_next_node_id(paths)
     
-    prompt_dump_path = paths["proj_dir"] / "attempts" / f"prompt_{next_node_id}.md"
+    prompt_dump_path = paths["proj_dir"] / "kernels" / f"prompt_{next_node_id}.md"
     prompt_dump_path.parent.mkdir(parents=True, exist_ok=True)
     with open(prompt_dump_path, "w") as f:
         f.write("# System Prompt\n\n")
