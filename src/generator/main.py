@@ -56,9 +56,7 @@ def _success_filename() -> str:
 def _validate_kernel(cu_code, entry_file, log_file_loc, tmpdir):
     """Route to the correct verifier based on target device."""
     if _is_triton():
-        print(f"[DEBUG] Using TRITON verifier (CGINS_TARGET_DEVICE={os.environ.get('CGINS_TARGET_DEVICE')})")
         return triton_verify.validate_kernel(cu_code, entry_file, log_file_loc, tmpdir)
-    print(f"[DEBUG] Using CUDA verifier (CGINS_TARGET_DEVICE={os.environ.get('CGINS_TARGET_DEVICE')})")
     return verify.validate_kernel(cu_code, entry_file, log_file_loc, tmpdir)
 
 # Configuration
@@ -603,6 +601,8 @@ def main():
         target_device = cfg_device
     if target_device in {"gpu", "cuda"}:
         target_device = "cuda"
+    elif target_device == "triton":
+        target_device = "triton"
     elif target_device == "mps":
         target_device = "mps"
     elif target_device == "cpu":
@@ -611,6 +611,9 @@ def main():
         target_device = "cuda"
     if target_device == "cuda" and not torch.cuda.is_available():
         print("CUDA not available; falling back to CPU target for generation.")
+        target_device = "cpu"
+    if target_device == "triton" and not torch.cuda.is_available():
+        print("CUDA not available (needed for Triton); falling back to CPU target.")
         target_device = "cpu"
     if target_device == "mps":
         if not (hasattr(torch, "backends") and torch.backends.mps.is_available()):
