@@ -5,7 +5,8 @@ import from "@jac/runtime" { jacSpawn }
 
 glob DEFAULT_CONFIG: dict = {
          "llm_info": {"model": "", "apikey": "", "provider": ""},
-         "providers": []
+         "providers": [],
+         "selected_gpu_info": None
      },
      ConfigContext = createContext(
          {

@@ -43,7 +43,9 @@ def:pub Dashboard {
         loading: bool = True,
         status: dict = {},
         hardwareInfo: dict = {},
-        hardwareLoading: bool = False;
+        hardwareLoading: bool = False,
+        mctsSummary: dict = {};
+
 
     COLORS = ['#86e6a9', '#5bbbd3', '#b7f0d0', '#d8f3ff'];
 
@@ -90,7 +92,13 @@ def:pub Dashboard {
                 hw_resp = await jacSpawn("DetectHardware", "", {});
                 hw_data = hw_resp.reports[0] if hw_resp and hw_resp.reports else {};
                 hardwareInfo = hw_data or {};
+
+                # Fetch MCTS Summary
+                mcts_resp = await jacSpawn("GetProjectMctsSummary", "", {"projectName": name});
+                mcts_data = mcts_resp.reports[0] if mcts_resp and mcts_resp.reports else {};
+                mctsSummary = mcts_data or {};
             }
+
         } except (error) {
             console.error("Failed to fetch dashboard data:", error);
         } finally {
@@ -154,7 +162,14 @@ def:pub Dashboard {
     gpu_compute = "";
     gpu_sms = "";
 
-    if selected_idx != -1 and selected_idx < gpus.length {
+    if config and "selected_gpu_info" in config and config["selected_gpu_info"] {
+        gpu_info = config["selected_gpu_info"];
+        gpu_name = gpu_info["name"] if "name" in gpu_info else "Unknown GPU";
+        gpu_mem = gpu_info["memory"] if "memory" in gpu_info else "";
+        gpu_compute = gpu_info["compute_capability"] if "compute_capability" in gpu_info else "";
+        gpu_sms = f"{gpu_info['sm_count']}" if "sm_count" in gpu_info else "";
+        hardwareStatus = gpu_name;
+    } elif selected_idx != -1 and selected_idx < gpus.length {
         selected_gpu = gpus[selected_idx];
         gpu_name = selected_gpu["name"] if "name" in selected_gpu else "Unknown GPU";
         gpu_mem = selected_gpu["memory"] if "memory" in selected_gpu else "";
@@ -202,6 +217,25 @@ def:pub Dashboard {
             </div>
         </div>
     );
+
+    # MCTS Explorer Card
+    status_cards.push(
+        <div key="mcts" className="bg-zinc-900 border border-zinc-800 p-4 rounded-lg cursor-pointer hover:border-indigo-500/50 transition-all" onClick={lambda -> None { navigate(f"/project/{name}/workbench"); }}>
+            <div className="flex justify-between items-start mb-2">
+                <div className="p-2 bg-indigo-500/10 rounded-lg">
+                    <ShieldCheckIcon className="text-indigo-400 w-5 h-5" />
+                </div>
+                <span className="text-xs text-zinc-500 bg-zinc-800 px-2 py-1 rounded">MCTS</span>
+            </div>
+            <div className="text-2xl font-bold text-white mb-1">
+                {mctsSummary["total_nodes"] if "total_nodes" in mctsSummary else 0}
+            </div>
+            <div className="text-xs text-zinc-400">
+                Nodes Explored
+            </div>
+        </div>
+    );
+
 
     # Hardware Card
     status_cards.push(
@@ -333,7 +367,7 @@ def:pub Dashboard {
     op_idx = 0;
     while op_idx < ops.length {
         op = ops[op_idx];
-        op_path = f"/project/{name}/{op['name']}";
+        op_path = f"/project/{name}/workbench/{op['name']}";
         op_list_items.push(
             <div key={op["name"]} className="group flex items-center justify-between p-3 hovering:bg-zinc-800/50 rounded-lg border border-transparent hover:border-zinc-800 transition-all cursor-pointer" onClick={lambda -> None { navigate(op_path); }}>
                 <div className="flex items-center gap-3">
