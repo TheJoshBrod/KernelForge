@@ -48,9 +48,10 @@ def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, impro
     """
     next_id = len(list(paths["proj_dir"].glob("nodes/*.json")))
 
-    # Export attempt's code
-    current_kernel_code = (paths["tmp_dir"] / "kernel.cu").read_text()
-    with open(paths["proj_dir"] / "attempts" / f"kernel_{next_id}.cu", "w") as f:
+    # Export attempt's code — use backend-appropriate extension
+    ext = backend.kernel_extension
+    current_kernel_code = (paths["tmp_dir"] / f"kernel{ext}").read_text()
+    with open(paths["proj_dir"] / "attempts" / f"kernel_{next_id}{ext}", "w") as f:
         f.write(current_kernel_code)
 
     # Log the attempt with results
@@ -72,7 +73,7 @@ def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, impro
             "speedup_vs_parent": log_entry['speedup_vs_parent'],
             "improvement_description": improvement_description,
             "parent": parent_info.id,
-            "code": str(Path(paths["proj_dir"].name) / "attempts" / f"kernel_{next_id}.cu"),
+            "code": str(Path(paths["proj_dir"].name) / "attempts" / f"kernel_{next_id}{ext}"),
             "visits": 1
         }
         # Validate and dump with Pydantic
@@ -122,7 +123,7 @@ def optimize(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path], pare
         # If its valid, log it and return the new node
         if is_valid:
             log_entry = save_iteration(
-                backend, paths, parent_node, improvement_description, str(paths["proj_dir"] / "attempts" / f"kernel_{parent_node.id}.cu"), ssh_config=ssh_config)
+                backend, paths, parent_node, improvement_description, str(paths["proj_dir"] / "attempts" / f"kernel_{parent_node.id}{backend.kernel_extension}"), ssh_config=ssh_config)
             
             # Load and return the newly created node
             new_node_id = len(list((paths["proj_dir"] / "nodes").glob("*.json"))) - 1
@@ -216,7 +217,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
             return None
         
         # Write to tmp for validation
-        (paths["tmp_dir"] / "kernel.cu").write_text(code)
+        (paths["tmp_dir"] / f"kernel{backend.kernel_extension}").write_text(code)
         
         # Validate the kernel with retries
         is_valid, error = backend.validate_kernel(code, paths)
@@ -230,7 +231,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
             # Save failed attempt to garbage dump
             dump_dir = paths["proj_dir"] / "garbage_dump"
             dump_dir.mkdir(parents=True, exist_ok=True)
-            (dump_dir / f"new_root_{next_id}_attempt{attempt}.cu").write_text(code)
+            (dump_dir / f"new_root_{next_id}_attempt{attempt}{backend.kernel_extension}").write_text(code)
             
             # Send error back to LLM for correction
             feedback, code = generator.extract_feedback_and_code(
@@ -242,14 +243,14 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
                 continue
             
             # Validate the new attempt
-            (paths["tmp_dir"] / "kernel.cu").write_text(code)
+            (paths["tmp_dir"] / f"kernel{backend.kernel_extension}").write_text(code)
             is_valid, error = backend.validate_kernel(code, paths)
         
         if not is_valid:
             print(f"\t\tValidation failed after {settings.retry_limit} retries: {error}")
             dump_dir = paths["proj_dir"] / "garbage_dump"
             dump_dir.mkdir(parents=True, exist_ok=True)
-            (dump_dir / f"new_root_{next_id}_final_failed.cu").write_text(code)
+            (dump_dir / f"new_root_{next_id}_final_failed{backend.kernel_extension}").write_text(code)
             return None
         
         # Profile the kernel
@@ -263,7 +264,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
             "value": current_stats['mean_time_ms'],
             "speedup_vs_parent": 1.0,
             "improvement_description": "Initial",
-            "code": f"{paths['proj_dir'].name}/attempts/kernel_{next_id}.cu",
+            "code": f"{paths['proj_dir'].name}/attempts/kernel_{next_id}{backend.kernel_extension}",
             "visits": 1
         }
         node = KernelNode.model_validate(node_data)
@@ -274,7 +275,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
             f.write(node.model_dump_json(indent=4, by_alias=True))
         
         # Save kernel code
-        (paths["proj_dir"] / "attempts" / f"kernel_{next_id}.cu").write_text(code)
+        (paths["proj_dir"] / "attempts" / f"kernel_{next_id}{backend.kernel_extension}").write_text(code)
         
         print(f"\t\tCreated new root: Node {next_id} ({current_stats['mean_time_ms']:.4f} ms)")
         return node
@@ -323,8 +324,10 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
                 "proj_dir": proj_op_dir
             }
 
-            # Copy kernel to tmp_dir for profiling
-            (tmp_path / "kernel.cu").write_text((op_dir / "kernel.cu").read_text())
+            # Copy kernel to tmp_dir for profiling — detect source extension
+            src_ext = ".cu" if (op_dir / "kernel.cu").exists() else ".py"
+            dst_ext = backend.kernel_extension
+            (tmp_path / f"kernel{dst_ext}").write_text((op_dir / f"kernel{src_ext}").read_text())
 
             # Profile kernel
             current_stats = backend.profile_kernel(paths, baseline=True, ssh_config=ssh_config)
@@ -336,7 +339,7 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
                 "speedup_vs_parent": 1.0,
                 "improvement_description": "Initial",
                 "parent": -1,
-                "code": str(Path(proj_op_dir.name) / "attempts" / "kernel_0.cu"),
+                "code": str(Path(proj_op_dir.name) / "attempts" / f"kernel_0{backend.kernel_extension}"),
                 "visits": 1
             }
             node = KernelNode.model_validate(node_data)
@@ -347,8 +350,8 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
                 
             # Copy kernel to attempts manually as well
             (paths["proj_dir"] / "attempts").mkdir(parents=True, exist_ok=True)
-            with open(paths["proj_dir"] / "attempts" / "kernel_0.cu", "w") as f:
-                f.write((op_dir / "kernel.cu").read_text())
+            with open(paths["proj_dir"] / "attempts" / f"kernel_0{backend.kernel_extension}", "w") as f:
+                f.write((op_dir / f"kernel{src_ext}").read_text())
 
     return proj_dir
 

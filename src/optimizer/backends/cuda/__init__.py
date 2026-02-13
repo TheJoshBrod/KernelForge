@@ -15,6 +15,10 @@ class CUDABackend(Backend):
     Backend for NVIDIA CUDA GPUs.
     """
 
+    @property
+    def kernel_extension(self) -> str:
+        return ".cu"
+
     def get_device_specs(self, device_index: int = 0, ssh_config: dict = None) -> GPUSpecs:
         if ssh_config:
             return profiler.get_remote_gpu_specs(ssh_config)

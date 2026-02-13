@@ -12,6 +12,10 @@ class MetalBackend(Backend):
     Backend for Apple Silicon (Metal) GPUs.
     """
 
+    @property
+    def kernel_extension(self) -> str:
+        return ".metal"
+
     def get_device_specs(self, device_index: int = 0, ssh_config: dict = None) -> GPUSpecs:
         # Placeholder for Metal specs detection
         # This would use pyobjc or similar to query Metal device info
