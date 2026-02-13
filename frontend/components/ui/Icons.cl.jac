@@ -171,7 +171,110 @@ def:pub ChevronDownIcon(className: str = "") -> Any {
         </svg>;
 }
 
+
 def:pub CGinSLogo(className: str = "") -> Any {
     return
         <img src={cginsLogo} alt="CGinS Logo" className={className} />;
+}
+
+def:pub ActivityIcon(className: str = "") -> Any {
+    return
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+        </svg>;
+}
+
+def:pub CodeIcon(className: str = "") -> Any {
+    return
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <polyline points="16 18 22 12 16 6" />
+            <polyline points="8 6 2 12 8 18" />
+        </svg>;
+}
+
+def:pub CpuIcon(className: str = "") -> Any {
+    return
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <rect x="4" y="4" width="16" height="16" rx="2" ry="2" />
+            <rect x="9" y="9" width="6" height="6" />
+            <line x1="9" x2="9" y1="1" y2="4" />
+            <line x1="15" x2="15" y1="1" y2="4" />
+            <line x1="9" x2="9" y1="20" y2="23" />
+            <line x1="15" x2="15" y1="20" y2="23" />
+            <line x1="20" x2="23" y1="9" y2="9" />
+            <line x1="20" x2="23" y1="15" y2="15" />
+            <line x1="1" x2="4" y1="9" y2="9" />
+            <line x1="1" x2="4" y1="15" y2="15" />
+        </svg>;
+}
+
+def:pub ShieldCheckIcon(className: str = "") -> Any {
+    return
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            <path d="m9 12 2 2 4-4" />
+        </svg>;
+}
+
+def:pub HomeIcon(className: str = "") -> Any {
+    return
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            <polyline points="9 22 9 12 15 12 15 22" />
+        </svg>;
 }
