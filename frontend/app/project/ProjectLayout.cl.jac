@@ -73,18 +73,15 @@ def:pub ProjectLayout {
                     {nav_links}
                 </nav>
                 <div className="p-4 border-t border-zinc-800">
-                    <button className="flex items-center gap-3 px-4 py-3 text-zinc-400 hover:text-white w-full rounded-lg hover:bg-zinc-900 transition-all">
+                    <Link to="/settings" className="flex items-center gap-3 px-4 py-3 text-zinc-400 hover:text-white w-full rounded-lg hover:bg-zinc-900 transition-all">
                         <SettingsIcon className="w-[18px] h-[18px]" />
                         <span className="text-sm">
                             Settings
                         </span>
-                    </button>
-                    <ArrowRightIcon/>
-                    <Link
-                        to="/"
-                        className="flex items-center gap-3 px-4 py-3 text-zinc-500 hover:text-white w-full rounded-lg hover:bg-zinc-900 transition-all mt-1"
-                    >
-                        <span className="text-xs">
+                    </Link>
+                    <Link to="/" className="flex items-center gap-3 px-4 py-3 text-zinc-400 hover:text-white w-full rounded-lg hover:bg-zinc-900 transition-all">
+                        <ArrowRightIcon className="w-[18px] h-[18px]"/>
+                        <span className="text-sm">
                             Back to Projects
                         </span>
                     </Link>
