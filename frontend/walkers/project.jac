@@ -1275,3 +1275,30 @@ walker:pub GetProjectMctsSummary {
     }
 }
 
+walker:pub GetDashboardCharts {
+    has projectName: str;
+
+    can return_charts with `root entry {
+        # Hardcoded data for now
+        operator_usage = [
+            {"name": "Conv2d", "count": 45, "total_time_ms": 1500},
+            {"name": "Attention", "count": 20, "total_time_ms": 2500},
+            {"name": "Linear", "count": 100, "total_time_ms": 800},
+            {"name": "LayerNorm", "count": 50, "total_time_ms": 300},
+            {"name": "ReLU", "count": 100, "total_time_ms": 100}
+        ];
+
+        speed_comparison = [
+            {"name": "Conv2d", "pytorch": 120, "optimized": 25},
+            {"name": "Attention", "pytorch": 200, "optimized": 45},
+            {"name": "Linear", "pytorch": 80, "optimized": 15},
+            {"name": "LayerNorm", "pytorch": 50, "optimized": 10},
+            {"name": "Softmax", "pytorch": 40, "optimized": 8}
+        ];
+
+        report {
+            "operator_usage": operator_usage,
+            "speed_comparison": speed_comparison
+        };
+    }
+}
