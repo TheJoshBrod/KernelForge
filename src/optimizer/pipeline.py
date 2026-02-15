@@ -19,7 +19,7 @@ from src.optimizer.backends.metal import MetalBackend
 from src.optimizer.backends.triton import TritonBackend
 
 
-def get_project_dir(gpu_name: str, optional_name: str = None):
+def get_project_dir(gpu_name: str, optional_name: str = None, backend_name: str = "cuda"):
     letters = string.ascii_letters + string.digits
     proj_name = ''.join(random.choices(letters, k=10))
     if optional_name:
@@ -29,7 +29,7 @@ def get_project_dir(gpu_name: str, optional_name: str = None):
     clean_gpu_name = gpu_name.replace(
         " ", "_").replace(":", "").replace("-", "_")
 
-    full_name = f"{clean_gpu_name}_{proj_name}/trees"
+    full_name = f"{clean_gpu_name}_{proj_name}-{backend_name}/trees"
 
     print(f"Beginning optimizing on project {full_name}...")
 
@@ -142,6 +142,13 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         The newly created root KernelNode, or None if generation failed
     """
     from src.llm_tools import GenModel
+    import src.generator.prompts.prompts as gen_prompts
+
+    # Select backend-specific prompts
+    if backend.kernel_extension == ".py":
+        import src.optimizer.backends.triton.prompts as opt_prompts
+    else:
+        import src.optimizer.backends.cuda.prompts as opt_prompts
     
     # Get next available node ID
     # Get next available node ID
@@ -277,8 +284,10 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
 def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, optional_proj_name: str = None, ssh_config: dict = None):
     """Creates a new optimization project for each individual operator kernel.
     """
-    # Output directory (access via dot notation now)
-    proj_dir = get_project_dir(gpu_specs.gpu_name, optional_proj_name)
+    # Derive backend name from extension (e.g. .cu -> cuda, .py -> triton)
+    ext_to_name = {".cu": "cuda", ".py": "triton", ".metal": "metal"}
+    bk_name = ext_to_name.get(backend.kernel_extension, "cuda")
+    proj_dir = get_project_dir(gpu_specs.gpu_name, optional_proj_name, backend_name=bk_name)
 
     # Directory containing initial wave of correct, but unoptimized kernels
     op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
@@ -357,16 +366,18 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
 
     return proj_dir
 
-def run_parallel_optimization(gpu_specs: GPUSpecs, paths: dict, n_workers: int = 4, max_iterations: int = 100):
+def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict, n_workers: int = 4, max_iterations: int = 100, ssh_config: dict = None):
     """Run parallel MCTS optimization using multiprocessing.
     
     Dispatches nodes to workers as they become available, stops after max_iterations.
     
     Args:
+        backend: The backend instance (CUDABackend, TritonBackend, etc.)
         gpu_specs: GPU specifications
         paths: Dictionary containing project paths
         n_workers: Number of worker processes
         max_iterations: Total number of nodes to process before stopping
+        ssh_config: Optional SSH configuration for remote execution
     """
     import multiprocessing as mp
     from multiprocessing import Process
@@ -404,8 +415,16 @@ def run_parallel_optimization(gpu_specs: GPUSpecs, paths: dict, n_workers: int =
     # Start persistent workers
     print(f"[INIT] Starting {n_workers} workers...")
     workers = []
+    
+    # helper to get backend class name or type
+    backend_type = "cuda"
+    if isinstance(backend, TritonBackend):
+        backend_type = "triton"
+    elif isinstance(backend, MetalBackend):
+        backend_type = "metal"
+
     for i in range(n_workers):
-        p = Process(target=worker_routine, args=(task_queue, result_queue, gpu_lock, node_counter, paths))
+        p = Process(target=worker_routine, args=(task_queue, result_queue, gpu_lock, node_counter, paths, backend_type))
         p.start()
         workers.append(p)
     
@@ -656,7 +675,6 @@ Examples:
 
     if args.new_root:
         op_name = args.new_root
-        proj_dir = get_project_dir(gpu_specs.gpu_name)
         op_dir_path = proj_dir / op_name
         
         if not op_dir_path.exists():
@@ -665,7 +683,8 @@ Examples:
             sys.exit(1)
         
         # Check if operator has at least node 0 (baseline)
-        if not (op_dir_path / "nodes" / "0.json").exists():
+        paths_check = {"proj_dir": op_dir_path}
+        if not mcts.node_exists(paths_check, 0):
             print(f"Error: Operator '{op_name}' has no baseline node. Run normal optimization first.")
             sys.exit(1)
         
