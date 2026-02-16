@@ -19,8 +19,8 @@ def:pub ProjectLayout {
 
     navItems = [
         {"name": "Dashboard", "href": f"/project/{projectName}", "icon": HomeIcon, "exact": True},
-        {"name": "Profiling", "href": f"/project/{projectName}/profiling", "icon": ActivityIcon, "exact": False},
         {"name": "Workbench", "href": f"/project/{projectName}/workbench", "icon": CodeIcon, "exact": False},
+        {"name": "Profiling", "href": f"/project/{projectName}/profiling", "icon": ActivityIcon, "exact": False},
         {"name": "Arena", "href": f"/project/{projectName}/arena", "icon": CpuIcon, "exact": False},
         {"name": "Verification", "href": f"/project/{projectName}/verification", "icon": ShieldCheckIcon, "exact": False},
         {"name": "Export", "href": f"/project/{projectName}/export", "icon": UploadIcon, "exact": False}
