@@ -58,6 +58,11 @@ def:pub Workbench {
     ops = ops_state[0];
     setOps = ops_state[1];
 
+    # View Mode State
+    view_mode_state = useState("graph"); # "graph" or "list"
+    viewMode = view_mode_state[0];
+    setViewMode = view_mode_state[1];
+
     # --- Helpers ---
 
     def get_layouted_elements(nodes_data: list, edges_data: list) -> dict {
@@ -315,6 +320,20 @@ def:pub Workbench {
     
     selectedNodeData = rawNodes[selectedNodeId] if selectedNodeId and selectedNodeId in rawNodes else {};
 
+    # Sorted Nodes for List View
+    sortedNodes = [];
+    if rawNodes {
+        # Convert map to list
+        vals = Object.values(rawNodes);
+        for v in vals {
+            sortedNodes.push(v);
+        }
+        # Sort by value descending
+        sortedNodes.sort(lambda a: any, b: any -> int {
+            return (b["value"] or 0) - (a["value"] or 0);
+        });
+    }
+
     # Iteration Log Logic (Ancestry)
     log_items = [];
     if selectedNodeId and nodes.length > 0 and edges.length > 0 {
@@ -453,68 +472,118 @@ def:pub Workbench {
             <div className="w-1/2 flex flex-col bg-zinc-950">
                 
                 # Tree Viz (Top, 50%)
+                # Tree Viz (Top, 50%)
                 <div className="h-[50%] border-b border-zinc-800 relative bg-[#09090b]">
-                    <div className="absolute top-2 left-2 z-10 bg-zinc-900/80 px-2 py-1 rounded border border-zinc-800 text-[10px] text-zinc-500 font-bold uppercase pointer-events-none">
-                        Generated Tree
+                    # View Toggle
+                    <div className="absolute top-2 left-2 z-10 bg-zinc-900/90 rounded-lg border border-zinc-800 p-1 flex gap-1 shadow-lg">
+                        <button 
+                            className={"px-3 py-1.5 text-xs font-bold rounded transition-all " + ("bg-zinc-700 text-white shadow-sm" if viewMode == "graph" else "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50")}
+                            onClick={lambda: setViewMode("graph")}
+                        >
+                            Graph
+                        </button>
+                        <button 
+                            className={"px-3 py-1.5 text-xs font-bold rounded transition-all " + ("bg-zinc-700 text-white shadow-sm" if viewMode == "list" else "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50")}
+                            onClick={lambda: setViewMode("list")}
+                        >
+                            List
+                        </button>
                     </div>
-                    <ReactFlow
-                        nodes={nodes}
-                        edges={edges}
-                        onNodesChange={onNodesChange}
-                        onEdgesChange={onEdgesChange}
-                        onNodeClick={onNodeClick}
-                        fitView={True}
-                        minZoom={0.1}
-                    >
-                        <Background color="#27272a" gap={20} />
-                        <Controls className="bg-zinc-800 border-zinc-700 fill-zinc-400" />
-                    </ReactFlow>
+
+                    {
+                        <ReactFlow
+                            nodes={nodes}
+                            edges={edges}
+                            onNodesChange={onNodesChange}
+                            onEdgesChange={onEdgesChange}
+                            onNodeClick={onNodeClick}
+                            fitView={True}
+                            minZoom={0.1}
+                            nodesDraggable={False}
+                            proOptions={{"hideAttribution": True}}
+                        >
+                            <Background color="#27272a" gap={20} />
+                        </ReactFlow>
+                        if viewMode == "graph"
+                        else
+                        <div className="h-full overflow-y-auto p-4 pt-14 space-y-2">
+                            {
+                                [
+                                    <div 
+                                        key={n["id"]}
+                                        className={"p-3 rounded-lg border cursor-pointer transition-all flex justify-between items-center group " + ("border-indigo-500 bg-indigo-500/10 shadow-[0_0_15px_rgba(99,102,241,0.15)]" if f"{n['id']}" == selectedNodeId else "border-zinc-800 bg-zinc-900/30 hover:border-zinc-700 hover:bg-zinc-900/80")}
+                                        onClick={lambda -> None { setSelectedNodeId(f"{n['id']}"); }}
+                                    >
+                                        <div className="flex flex-col gap-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className={"text-xs font-bold font-mono px-1.5 py-0.5 rounded " + ("bg-indigo-500/20 text-indigo-300" if f"{n['id']}" == selectedNodeId else "bg-zinc-800 text-zinc-500")}>
+                                                    {n["id"]}
+                                                </span>
+                                                <span className="text-zinc-500 text-xs text-nowrap">
+                                                    {
+                                                        Reflect.construct(Date, [n["timestamp"] * 1000]).toLocaleTimeString() 
+                                                        if "timestamp" in n 
+                                                        else ""
+                                                    }
+                                                </span>
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="text-right">
+                                            <div className="text-emerald-400 font-mono font-bold text-sm">
+                                                {(n["value"] or 0).toFixed(6)}
+                                            </div>
+                                            <div className="text-[10px] text-zinc-600 uppercase font-bold tracking-wider">
+                                                Score
+                                            </div>
+                                        </div>
+                                    </div>
+                                    for n in sortedNodes
+                                ]
+                            }
+                            {
+                                <div className="text-center py-10 text-zinc-600 italic text-sm">
+                                    No kernels found.
+                                </div>
+                                if sortedNodes.length == 0
+                                else <span />
+                            }
+                        </div>
+                    }
                 </div>
 
                 # Info Panel (Middle, Flex)
                 <div className="flex-1 p-6 overflow-y-auto">
-                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                        <ShieldCheckIcon className="w-5 h-5 text-emerald-500" />    
-                        Node Details
-                    </h3>
-                    
+                    <div className="flex justify-between items-center mb-4 border-b border-zinc-800 pb-2">
+                        <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                            <ShieldCheckIcon className="w-5 h-5 text-emerald-500" />    
+                            Node Details
+                        </h3>
+                        <span className="font-mono text-zinc-400 text-xs">
+                            {
+                                Reflect.construct(Date, [selectedNodeData["timestamp"] * 1000]).toLocaleString() 
+                                if "timestamp" in selectedNodeData 
+                                else ""
+                            }
+                        </span>
+                    </div>
                     {
-                        <div className="space-y-6">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-lg">
-                                    <div className="text-xs text-zinc-500 uppercase mb-1">Node ID</div>
-                                    <div className="text-xl font-mono text-indigo-400">{selectedNodeData["id"]}</div>
-                                </div>
-                                <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-lg">
-                                    <div className="text-xs text-zinc-500 uppercase mb-1">Visits</div>
-                                    <div className="text-xl font-mono text-white">{selectedNodeData["visits"]}</div>
-                                </div>
-                                <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-lg">
-                                    <div className="text-xs text-zinc-500 uppercase mb-1">Reward</div>
-                                    <div className="text-xl font-mono text-emerald-400">{(selectedNodeData["value"] or 0).toFixed(6)}</div>
-                                </div>
-                                <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-lg">
-                                    <div className="text-xs text-zinc-500 uppercase mb-1">Best Subtree</div>
-                                    <div className="text-xl font-mono text-purple-400">{(selectedNodeData["best_subtree_value"] or 0).toFixed(6)}</div>
-                                </div>
+                        <div className="space-y-4">
+                            <div className="flex justify-between items-center">
+                                <span className="text-zinc-500 text-sm">Node ID</span>
+                                <span className="font-mono text-indigo-400">{selectedNodeData["id"]}</span>
                             </div>
-                            
-                            <div>
-                                <h4 className="text-xs font-bold text-zinc-500 uppercase mb-2">Improvement Description</h4>
-                                <div className="p-4 bg-zinc-900/30 border border-zinc-800 rounded-lg text-sm text-zinc-300 leading-relaxed">
-                                    {selectedNodeData["improvement_description"]}
-                                </div>
+                            <div className="flex justify-between items-center">
+                                <span className="text-zinc-500 text-sm">Visits</span>
+                                <span className="font-mono text-white">{selectedNodeData["visits"]}</span>
                             </div>
-
-                            <div>
-                                <h4 className="text-xs font-bold text-zinc-500 uppercase mb-2">Timestamp</h4>
-                                <div className="text-sm text-zinc-400 font-mono">
-                                    {
-                                        Reflect.construct(Date, [selectedNodeData["timestamp"] * 1000]).toLocaleString() 
-                                        if "timestamp" in selectedNodeData 
-                                        else "N/A"
-                                    }
-                                </div>
+                            <div className="flex justify-between items-center">
+                                <span className="text-zinc-500 text-sm">Reward</span>
+                                <span className="font-mono text-emerald-400">{(selectedNodeData["value"] or 0).toFixed(6)}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                                <span className="text-zinc-500 text-sm">Best Subtree</span>
+                                <span className="font-mono text-purple-400">{(selectedNodeData["best_subtree_value"] or 0).toFixed(6)}</span>
                             </div>
                         </div>
                         if selectedNodeId 
