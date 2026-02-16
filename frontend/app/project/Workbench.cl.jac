@@ -33,12 +33,32 @@ def:pub Workbench {
     details = details_state[0];
     setDetails = details_state[1];
 
+    ops_state = useState([]);
+    ops = ops_state[0];
+    setOps = ops_state[1];
+
+    async def fetchOps -> None {
+        try {
+            ops_resp = await jacSpawn("GetProjectOps", "", {"projectName": projectName});
+            ops_data = ops_resp.reports[0] if ops_resp and ops_resp.reports else None;
+            op_list = ops_data["ops"] if ops_data and "ops" in ops_data else [];
+            setOps(op_list);
+        } except (error) {
+            console.error("Failed to fetch ops:", error);
+        }
+    }
+
+    useEffect(lambda -> None { if not opName { fetchOps(); } }, [opName]);
+
     loading_state = useState(True);
     loading = loading_state[0];
     setLoading = loading_state[1];
 
     async def fetchData -> None {
-        if not projectName or not opName { return; }
+        if not projectName or not opName { 
+            setLoading(False);
+            return; 
+        }
         setLoading(True);
         try {
             # Fetch Tree
@@ -48,40 +68,8 @@ def:pub Workbench {
                 setTree(tree_data);
                 setSelectedIdx(0);
             } else {
-                # Filler Data for Demonstration
-                filler = {
-                    "nodes": [
-                        {
-                            "id": 1, 
-                            "visits": 150, 
-                            "value": 0.85, 
-                            "best_subtree_value": 0.92, 
-                            "improvement_description": "Root state: Initial Triton implementation with default tiling.",
-                            "code": "import triton\nimport triton.language as tl\n\n@triton.jit\ndef kernel(x_ptr, y_ptr, BLOCK_SIZE: tl.constexpr):\n    pid = tl.program_id(0)\n    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)\n    mask = offsets < 1024\n    x = tl.load(x_ptr + offsets, mask=mask)\n    tl.store(y_ptr + offsets, x, mask=mask)",
-                            "timestamp": 1707782400
-                        },
-                        {
-                            "id": 2, 
-                            "visits": 45, 
-                            "value": 0.88, 
-                            "best_subtree_value": 0.88, 
-                            "improvement_description": "Increased block size to 256 for better occupancy.",
-                            "code": "# Optimized variant with BLOCK_SIZE=256\n@triton.jit\ndef kernel(x_ptr, y_ptr, BLOCK_SIZE: tl.constexpr):\n    # ... optimized logic ...",
-                            "timestamp": 1707782500
-                        },
-                        {
-                            "id": 3, 
-                            "visits": 12, 
-                            "value": 0.72, 
-                            "best_subtree_value": 0.72, 
-                            "improvement_description": "Trying warp-level shuffle for reduction (failed to improve throughput).",
-                            "code": "# Experimental warp shuffle...",
-                            "timestamp": 1707782600
-                        }
-                    ]
-                };
-                setTree(filler);
-                setSelectedIdx(0);
+                 # If no data and no filler from walker (shouldn't happen with new walker logic), just empty
+                 setTree({"nodes": [], "edges": []});
             }
 
             # Fetch Details
@@ -121,7 +109,7 @@ def:pub Workbench {
         # Capture current idx for lambda
         current_idx = n_idx; 
 
-        node_items.append(
+        node_items.push(
             <div 
                 key={mcts_node["id"]} 
                 className={"p-3 cursor-pointer border-l-2 transition-all " + ("border-indigo-500 bg-indigo-500/5" if is_selected else "border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900/50")}
@@ -146,8 +134,39 @@ def:pub Workbench {
         return <div className="flex-1 flex items-center justify-center bg-zinc-950 text-zinc-500">Loading Op Workbench...</div>;
     }
 
+
     if not opName {
-        return <div className="flex-1 flex items-center justify-center bg-zinc-950 text-zinc-500">Select an operator from the sidebar to begin exploration.</div>;
+        op_items = [];
+        for op in ops {
+            op_items.push(
+                <div 
+                    key={op["name"]}
+                    className="p-4 bg-zinc-900 border border-zinc-800 rounded-lg hover:border-indigo-500/50 cursor-pointer transition-all flex justify-between items-center group"
+                    onClick={lambda -> None { navigate(f"/project/{projectName}/workbench/{op['name']}"); }}
+                >
+                    <span className="font-mono text-sm text-zinc-300 group-hover:text-white">{format_op(op["name"])}</span>
+                    <span className="text-xs text-zinc-600 bg-zinc-950 px-2 py-1 rounded">{op["count"]} {" calls"}</span>
+                </div>
+            );
+        }
+
+        return 
+            <div className="flex-1 flex flex-col p-8 bg-zinc-950 text-zinc-100 h-screen overflow-hidden">
+                <div className="mb-8">
+                    <h2 className="text-2xl font-bold text-white mb-2">Workbench</h2>
+                    <p className="text-zinc-400">Select an operator to explore and optimize.</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto pb-20">
+                    {op_items}
+                    {
+                        <div className="col-span-full text-center text-zinc-500 py-12 italic">
+                            No operators found. Run profiling first.
+                        </div>
+                        if ops.length == 0
+                        else <span></span>
+                    }
+                </div>
+            </div>;
     }
 
     return
@@ -159,7 +178,7 @@ def:pub Workbench {
                         Search Explorer
                     </h3>
                     <span className="text-[10px] bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded-full font-bold">
-                        {mcts_nodes.length} Nodes
+                        {mcts_nodes.length} {" Nodes"}
                     </span>
                 </div>
                 <div className="overflow-y-auto flex-1 scrollbar-thin scrollbar-thumb-zinc-800">
