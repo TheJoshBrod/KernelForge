@@ -1220,6 +1220,7 @@ walker:pub GetMctsTree {
         mcts_nodes = [];
         edges = [];
 
+
         try {
             # Since Jac can interop with Python, we can use sqlite3 directly
             conn = sqlite3.connect(db_path);
@@ -1227,7 +1228,7 @@ walker:pub GetMctsTree {
             cursor = conn.cursor();
 
             # Fetch nodes
-            cursor.execute("SELECT id, visits, value, best_subtree_value, improvement_description, timestamp FROM nodes");
+            cursor.execute("SELECT id, visits, value, best_subtree_value, improvement_description, timestamp, code FROM nodes");
             rows = cursor.fetchall();
             for row in rows {
                 mcts_nodes.append({
@@ -1236,7 +1237,8 @@ walker:pub GetMctsTree {
                     "value": row[2],
                     "best_subtree_value": row[3],
                     "improvement_description": row[4],
-                    "timestamp": row[5]
+                    "timestamp": row[5],
+                    "code": row[6]
                 });
             }
 
@@ -1255,6 +1257,13 @@ walker:pub GetMctsTree {
         } except Exception as e {
             report {"success": False, "error": str(e)};
         }
+    }
+}
+
+walker:pub ImportKernel {
+    can run with `root entry {
+        print("upload!");
+        report {"success": True, "message": "upload!"};
     }
 }
 
