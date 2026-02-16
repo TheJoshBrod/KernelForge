@@ -1,8 +1,17 @@
 """Workbench Page"""
 
-import from react { useState, useEffect }
+import from react { useState, useEffect, useCallback }
 import from "react-router-dom" { useParams, useNavigate }
 import from "@jac/runtime" { jacSpawn }
+import from "reactflow" { 
+    ReactFlow, 
+    Background, 
+    Controls, 
+    MiniMap,
+    useNodesState,
+    useEdgesState,
+    MarkerType
+}
 import from "../../components/ui/Icons.cl.jac" {
     CodeIcon,
     CpuIcon,
@@ -14,28 +23,176 @@ import from "../../components/ui/Icons.cl.jac" {
     ArrowRightIcon
 }
 
-
 def:pub Workbench {
     params = useParams();
     projectName = params.projectName;
     opName = params.opName;
     navigate = useNavigate();
 
-    tree_state = useState({"nodes": [], "edges": []});
-    tree = tree_state[0];
-    setTree = tree_state[1];
+    # ReactFlow State
+    nodes_state = useNodesState([]);
+    nodes = nodes_state[0];
+    setNodes = nodes_state[1];
+    onNodesChange = nodes_state[2];
 
-    selected_node_idx = useState(0);
-    selectedIdx = selected_node_idx[0];
-    setSelectedIdx = selected_node_idx[1];
+    edges_state = useEdgesState([]);
+    edges = edges_state[0];
+    setEdges = edges_state[1];
+    onEdgesChange = edges_state[2];
+    
+    # Selection State
+    selected_node_id_state = useState(None);
+    selectedNodeId = selected_node_id_state[0];
+    setSelectedNodeId = selected_node_id_state[1];
 
-    details_state = useState({});
-    details = details_state[0];
-    setDetails = details_state[1];
+    # Data State
+    raw_nodes_state = useState({}); # Map ID -> Node Data
+    rawNodes = raw_nodes_state[0];
+    setRawNodes = raw_nodes_state[1];
+
+    loading_state = useState(True);
+    loading = loading_state[0];
+    setLoading = loading_state[1];
 
     ops_state = useState([]);
     ops = ops_state[0];
     setOps = ops_state[1];
+
+    # --- Helpers ---
+
+    def get_layouted_elements(nodes_data: list, edges_data: list) -> dict {
+        # Simple tree layout: 
+        # Organize by depth/levels.
+        # Root is level 0. Children are level 1, etc.
+        # X position based on index in level.
+        
+        levels = {};
+        node_map = {};
+        children_map = {};
+
+        # Build maps
+        for n in nodes_data {
+            node_map[n["id"]] = n;
+            children_map[n["id"]] = [];
+        }
+
+        # Identify parent/child relationships
+        has_parent = {};
+        for e in edges_data {
+            pid = e["parent_id"];
+            cid = e["child_id"];
+            if pid in children_map {
+                children_map[pid].append(cid);
+            }
+            has_parent[cid] = True;
+        }
+
+        # Find roots
+        roots = [];
+        for n in nodes_data {
+            if not n["id"] in has_parent {
+                roots.append(n["id"]);
+            }
+        }
+
+        # BFS for levels
+        queue = [];
+        for r in roots {
+            queue.append({"id": r, "level": 0});
+        }
+        
+        layouted_nodes = [];
+        visited = {};
+        
+        level_counts = {}; # Track how many nodes in each level for X positioning
+
+        while queue.length > 0 {
+            curr = queue.shift();
+            cid = curr["id"];
+            lvl = curr["level"];
+
+            if cid in visited {
+                continue;
+            }
+            visited[cid] = True;
+
+            # Assign position
+            if not lvl in level_counts {
+                level_counts[lvl] = 0;
+            }
+            
+            x_pos = level_counts[lvl] * 200; # 200px spacing
+            y_pos = lvl * 150; # 150px spacing
+            level_counts[lvl] += 1;
+
+            # Create ReactFlow Node
+            raw_node = node_map[cid];
+            is_best = False; # visual hint?
+            
+            # Label
+            label_val = (raw_node["value"] or 0).toFixed(4);
+            
+            layouted_nodes.append({
+                "id": str(cid),
+                "position": {"x": x_pos, "y": y_pos},
+                "data": {"label": f"ID: {cid}\nVal: {label_val}"},
+                "style": {
+                    "background": "#18181b", # zinc-900
+                    "color": "#e4e4e7", # zinc-200
+                    "border": "1px solid #3f3f46", # zinc-700
+                    "borderRadius": "8px",
+                    "padding": "10px",
+                    "fontSize": "12px",
+                    "fontFamily": "monospace",
+                    "width": 100,
+                    "textAlign": "center"
+                },
+                "type": "default"
+            });
+
+            # Add children to queue
+            children = children_map[cid] if cid in children_map else [];
+            for child_id in children {
+                queue.append({"id": child_id, "level": lvl + 1});
+            }
+        }
+
+        # Center align levels (heuristic)
+        # Calculate max width of a level
+        max_width = 0;
+        for lvl in level_counts {
+            w = level_counts[lvl] * 200;
+            if w > max_width {
+                max_width = w;
+            }
+        }
+        
+        # Adjust X to center
+        final_nodes = [];
+        for n in layouted_nodes {
+            # Recalculate based on row width? 
+            # For simplicity, keeping left-aligned for now as tree grows right/down usually
+            # But converting to standard format
+            final_nodes.append(n);
+        }
+
+        # Edges
+        rf_edges = [];
+        for e in edges_data {
+            rf_edges.append({
+                "id": f"e{e['parent_id']}-{e['child_id']}",
+                "source": str(e["parent_id"]),
+                "target": str(e["child_id"]),
+                "type": "smoothstep",
+                "animated": True,
+                "style": { "stroke": "#6366f1" } # indigo-500
+            });
+        }
+
+        return {"nodes": final_nodes, "edges": rf_edges};
+    }
+
+    # --- Fetchers ---
 
     async def fetchOps -> None {
         try {
@@ -48,12 +205,6 @@ def:pub Workbench {
         }
     }
 
-    useEffect(lambda -> None { if not opName { fetchOps(); } }, [opName]);
-
-    loading_state = useState(True);
-    loading = loading_state[0];
-    setLoading = loading_state[1];
-
     async def fetchData -> None {
         if not projectName or not opName { 
             setLoading(False);
@@ -61,21 +212,36 @@ def:pub Workbench {
         }
         setLoading(True);
         try {
-            # Fetch Tree
             tree_resp = await jacSpawn("GetMctsTree", "", {"projectName": projectName, "opName": opName});
             tree_data = tree_resp.reports[0] if tree_resp and tree_resp.reports else {};
-            if tree_data and "nodes" in tree_data and tree_data["nodes"].length > 0 {
-                setTree(tree_data);
-                setSelectedIdx(0);
-            } else {
-                 # If no data and no filler from walker (shouldn't happen with new walker logic), just empty
-                 setTree({"nodes": [], "edges": []});
-            }
+            
+            m_nodes = tree_data["nodes"] if tree_data and "nodes" in tree_data else [];
+            m_edges = tree_data["edges"] if tree_data and "edges" in tree_data else [];
 
-            # Fetch Details
-            details_resp = await jacSpawn("GetOpDetails", "", {"projectName": projectName, "opName": opName});
-            details_data = details_resp.reports[0] if details_resp and details_resp.reports else {};
-            setDetails(details_data);
+            layout = get_layouted_elements(m_nodes, m_edges);
+            
+            setNodes(layout["nodes"]);
+            setEdges(layout["edges"]);
+
+            # Populate Raw Map
+            r_map = {};
+            best_node_id = None;
+            max_val = -1;
+
+            for n in m_nodes {
+                r_map[str(n["id"])] = n;
+                val = n["value"] or 0;
+                if val > max_val {
+                    max_val = val;
+                    best_node_id = str(n["id"]);
+                }
+            }
+            setRawNodes(r_map);
+            
+            # Default select best node
+            if best_node_id {
+                setSelectedNodeId(best_node_id);
+            }
 
         } except (error) {
             console.error("Failed to fetch workbench data:", error);
@@ -84,12 +250,81 @@ def:pub Workbench {
         }
     }
 
+    useEffect(lambda -> None { if not opName { fetchOps(); } }, [opName]);
     useEffect(lambda -> None { fetchData(); }, [projectName, opName]);
 
-    mcts_nodes = tree["nodes"] if "nodes" in tree else [];
-    selectedMctsNode = mcts_nodes[selectedIdx] if mcts_nodes.length > selectedIdx else {};
+    # --- Actions ---
 
-    # Formatter for op name
+    onNodeClick = useCallback(lambda event, node -> None {
+        setSelectedNodeId(node.id);
+    }, []);
+
+    # Highlighting Effect
+    useEffect(lambda -> None {
+        setNodes(lambda nds -> list {
+            return nds.map(lambda n -> dict {
+                new_style = {
+                    "background": "#18181b", 
+                    "color": "#e4e4e7", 
+                    "border": "1px solid #3f3f46",
+                    "borderRadius": "8px",
+                    "padding": "10px",
+                    "fontSize": "12px",
+                    "fontFamily": "monospace",
+                    "width": 100,
+                    "textAlign": "center"
+                };
+                if n.id == selectedNodeId {
+                    new_style["border"] = "2px solid #6366f1"; # indigo-500
+                    new_style["background"] = "rgba(99, 102, 241, 0.1)"; # indigo tint
+                    new_style["boxShadow"] = "0 0 10px rgba(99, 102, 241, 0.3)";
+                }
+                return {
+                    "id": n.id,
+                    "position": n.position,
+                    "data": n.data,
+                    "style": new_style,
+                    "type": n.type
+                };
+            });
+        });
+    }, [selectedNodeId, setNodes]);
+
+    async def handleUpload -> None {
+        try {
+            console.log("Uploading custom kernel...");
+            resp = await jacSpawn("ImportKernel", "", {});
+            console.log("Upload result:", resp);
+            alert("Custom kernel uploaded!"); # Simple feedback
+        } except (error) {
+            console.error("Upload failed", error);
+        }
+    }
+
+    # --- Derived State ---
+    
+    selectedNodeData = rawNodes[selectedNodeId] if selectedNodeId and selectedNodeId in rawNodes else {};
+
+    # Iteration Log Logic (Ancestry)
+    log_items = [];
+    if selectedNodeId and nodes.length > 0 and edges.length > 0 {
+        # Build parent map
+        parent_map = {};
+        for e in edges {
+            parent_map[e.target] = e.source;
+        }
+
+        curr = selectedNodeId;
+        while curr {
+            n_data = rawNodes[curr];
+            if n_data {
+                log_items.unshift(n_data); # Add to front to make Root -> Leaf
+            }
+            curr = parent_map[curr] if curr in parent_map else None;
+        }
+    }
+
+    # Format Op Name
     def format_op(raw: str) -> str {
         raw_text = raw or "";
         prefix = "torch_nn_functional_";
@@ -99,43 +334,14 @@ def:pub Workbench {
         return raw_text.replace("_", ".");
     }
 
-    # Render Node List (Timeline-ish)
-    node_items = [];
-    n_idx = 0;
-    while n_idx < mcts_nodes.length {
-        mcts_node = mcts_nodes[n_idx];
-        is_selected = n_idx == selectedIdx;
-        
-        # Capture current idx for lambda
-        current_idx = n_idx; 
-
-        node_items.push(
-            <div 
-                key={mcts_node["id"]} 
-                className={"p-3 cursor-pointer border-l-2 transition-all " + ("border-indigo-500 bg-indigo-500/5" if is_selected else "border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900/50")}
-                onClick={lambda -> None { setSelectedIdx(current_idx); }}
-            >
-                <div className="flex justify-between items-start mb-1">
-                    <span className="text-xs font-mono text-zinc-500">ID: {mcts_node["id"]}</span>
-                    <span className="text-[10px] text-zinc-600 bg-zinc-900 px-1 rounded">v{mcts_node["visits"]}</span>
-                </div>
-                <div className={"text-xs leading-relaxed " + ("text-zinc-200" if is_selected else "text-zinc-400")}>
-                    {mcts_node["improvement_description"]}
-                </div>
-                <div className="mt-1 text-[10px] font-bold text-emerald-500/80">
-                    Reward: {(mcts_node["value"] or 0).toFixed(4)}
-                </div>
-            </div>
-        );
-        n_idx += 1;
-    }
+    # --- Renders ---
 
     if loading {
-        return <div className="flex-1 flex items-center justify-center bg-zinc-950 text-zinc-500">Loading Op Workbench...</div>;
+        return <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-500">Loading Workbench...</div>;
     }
 
-
     if not opName {
+        # (Keep existing Op Selector Logic)
         op_items = [];
         for op in ops {
             op_items.push(
@@ -149,18 +355,17 @@ def:pub Workbench {
                 </div>
             );
         }
-
         return 
             <div className="flex-1 flex flex-col p-8 bg-zinc-950 text-zinc-100 h-screen overflow-hidden">
                 <div className="mb-8">
                     <h2 className="text-2xl font-bold text-white mb-2">Workbench</h2>
-                    <p className="text-zinc-400">Select an operator to explore and optimize.</p>
+                    <p className="text-zinc-400">Select an operator to explore.</p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto pb-20">
                     {op_items}
                     {
                         <div className="col-span-full text-center text-zinc-500 py-12 italic">
-                            No operators found. Run profiling first.
+                            No operators found.
                         </div>
                         if ops.length == 0
                         else <span></span>
@@ -169,115 +374,157 @@ def:pub Workbench {
             </div>;
     }
 
+    # --- Main Split Layout ---
+
     return
-        <div className="flex h-screen bg-zinc-950 text-zinc-100 overflow-hidden">
+        <div className="flex h-screen w-full bg-zinc-950 text-zinc-100 overflow-hidden">
             
-            <div className="w-80 border-r border-zinc-800 flex flex-col bg-zinc-950">
-                <div className="p-4 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center">
-                    <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider">
-                        Search Explorer
-                    </h3>
-                    <span className="text-[10px] bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded-full font-bold">
-                        {mcts_nodes.length} {" Nodes"}
-                    </span>
-                </div>
-                <div className="overflow-y-auto flex-1 scrollbar-thin scrollbar-thumb-zinc-800">
-                    {node_items}
-                </div>
-            </div>
-
-            
-            <div className="flex-1 flex flex-col bg-[#0d0d0d]">
-                <div className="h-10 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-900/50">
-                    <div className="flex items-center gap-2">
-                        <span className="text-xs text-zinc-400 font-mono">
-                            {format_op(opName)}
-                        </span>
-                        <span className="text-xs text-zinc-600">/</span>
-                        <span className="text-xs text-indigo-400 font-mono">
-                            {selectedMctsNode["id"] if "id" in selectedMctsNode else "None"}
-                        </span>
-                    </div>
-                </div>
-                <div className="flex-1 p-4 font-mono text-sm overflow-auto text-zinc-300 bg-[#0d0d0d] whitespace-pre">
-                    {selectedMctsNode["code"] if "code" in selectedMctsNode else "# No code available for this node"}
-                </div>
+            # Left Panel: Code (Top) + Log (Bottom)
+            <div className="w-1/2 flex flex-col border-r border-zinc-800">
                 
-                <div className="h-32 border-t border-zinc-800 bg-zinc-950 p-2 font-mono text-xs overflow-y-auto">
-                    <div className="flex items-center gap-2 text-zinc-400 mb-1 border-b border-zinc-800 pb-1">
-                        <ShieldCheckIcon className="w-3 h-3" />
-                        <span>
-                            Node Metrics
+                # Code Section (Flex grow)
+                <div className="flex-1 flex flex-col min-h-0 border-b border-zinc-800">
+                    <div className="h-10 bg-zinc-900/50 border-b border-zinc-800 flex items-center px-4 justify-between">
+                        <span className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2">
+                            <CodeIcon className="w-4 h-4" /> Kernel Code
+                        </span>
+                        <span className="text-xs font-mono text-indigo-400">
+                            Node {selectedNodeId or "?"}
                         </span>
                     </div>
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-2 text-zinc-400">
-                        <div>
-                            <div className="text-[10px] text-zinc-500 uppercase">Visits</div>
-                            <div className="text-white text-sm">{selectedMctsNode["visits"] or 0}</div>
-                        </div>
-                        <div>
-                            <div className="text-[10px] text-zinc-500 uppercase">Current Value</div>
-                            <div className="text-emerald-400 text-sm font-bold">{(selectedMctsNode["value"] or 0).toFixed(6)}</div>
-                        </div>
-                        <div>
-                            <div className="text-[10px] text-zinc-500 uppercase">Best Subtree Value</div>
-                            <div className="text-indigo-400 text-sm font-bold">{(selectedMctsNode["best_subtree_value"] or 0).toFixed(6)}</div>
-                        </div>
-                        <div>
-                            <div className="text-[10px] text-zinc-500 uppercase">Timestamp</div>
-                            <div className="text-zinc-500 text-xs">
-                                {
-                                    Reflect.construct(Date, [selectedMctsNode["timestamp"] * 1000]).toLocaleString() 
-                                    if selectedMctsNode["timestamp"] 
-                                    else "N/A"
-                                }
-                            </div>
-                        </div>
+                    <div className="flex-1 overflow-auto bg-[#0d0d0d] p-4">
+                        <pre className="font-mono text-xs text-zinc-300 whitespace-pre">
+                            {selectedNodeData["code"] if "code" in selectedNodeData else "// Select a node to view code"}
+                        </pre>
+                    </div>
+                </div>
+
+                # Log Section (Fixed height or flex?) - "Below that... entire log... scrollable but start at selected node on bottom"
+                # Let's make it 40% height
+                <div className="h-[40%] flex flex-col bg-zinc-900/20">
+                    <div className="h-10 bg-zinc-900/50 border-b border-zinc-800 flex items-center px-4">
+                        <span className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2">
+                            <ActivityIcon className="w-4 h-4" /> Iteration Log
+                        </span>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-2 flex flex-col-reverse"> 
+                        # flex-col-reverse to have scroll start at bottom? No, typically "scroll to bottom" means the latest item is at the bottom and view is there.
+                        # Standard list, iterate normal order.
+                        
+                        {
+                            log_items.map(lambda item, idx -> any {
+                                is_sel = str(item["id"]) == selectedNodeId;
+                                return <div 
+                                    key={item["id"]}
+                                    className={"p-3 rounded border text-xs " + ("border-indigo-500/50 bg-indigo-500/10" if is_sel else "border-zinc-800 bg-zinc-900/50")}
+                                    ref={lambda el -> None { 
+                                        if is_sel and el { 
+                                            el.scrollIntoView({"behavior": "smooth", "block": "nearest"});
+                                        }
+                                    }}
+                                >
+                                    <div className="flex justify-between mb-1">
+                                        <span className="font-mono font-bold text-indigo-300">ID: {item["id"]}</span>
+                                        <span className="text-emerald-400 font-mono">{(item["value"] or 0).toFixed(4)}</span>
+                                    </div>
+                                    <div className="text-zinc-400">
+                                        {item["improvement_description"]}
+                                    </div>
+                                </div>;
+                            })
+                        }
                     </div>
                 </div>
             </div>
 
-            
-            <div className="w-96 border-l border-zinc-800 bg-zinc-950 flex flex-col">
-                <div className="p-3 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center">
-                    <span className="text-sm font-semibold flex gap-2 items-center text-zinc-200">
-                        <CpuIcon className="w-4 h-4" />
-                        <span>
-                            Kernel Architect
-                        </span>
-                    </span>
-                    <button className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] px-2 py-1 rounded transition-colors" onClick={fetchData}>
-                        Sync
-                    </button>
-                </div>
-                <div className="flex-1 p-4 space-y-4 overflow-y-auto bg-zinc-900/20">
-                    
-                    <div className="flex gap-3">
-                        <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] text-white font-bold flex-shrink-0">
-                            AI
-                        </div>
-                        <div className="bg-zinc-800 p-3 rounded-lg rounded-tl-none text-sm text-zinc-300 border border-zinc-700/50 shadow-sm">
-                            {selectedMctsNode["improvement_description"] if "improvement_description" in selectedMctsNode else "Selecting a node to see the optimization strategy..."}
-                        </div>
+            # Right Panel: Tree (Top) + Info (Middle) + Button (Bottom)
+            <div className="w-1/2 flex flex-col bg-zinc-950">
+                
+                # Tree Viz (Top, 50%)
+                <div className="h-[50%] border-b border-zinc-800 relative bg-[#09090b]">
+                    <div className="absolute top-2 left-2 z-10 bg-zinc-900/80 px-2 py-1 rounded border border-zinc-800 text-[10px] text-zinc-500 font-bold uppercase pointer-events-none">
+                        Generated Tree
                     </div>
+                    <ReactFlow
+                        nodes={nodes}
+                        edges={edges}
+                        onNodesChange={onNodesChange}
+                        onEdgesChange={onEdgesChange}
+                        onNodeClick={onNodeClick}
+                        fitView={True}
+                        minZoom={0.1}
+                    >
+                        <Background color="#27272a" gap={20} />
+                        <Controls className="bg-zinc-800 border-zinc-700 fill-zinc-400" />
+                    </ReactFlow>
+                </div>
 
+                # Info Panel (Middle, Flex)
+                <div className="flex-1 p-6 overflow-y-auto">
+                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <ShieldCheckIcon className="w-5 h-5 text-emerald-500" />    
+                        Node Details
+                    </h3>
+                    
                     {
-                        <div className="mt-4 p-4 border border-zinc-800 rounded bg-zinc-900/30">
-                            <h4 className="text-xs font-bold text-zinc-500 uppercase mb-2">History</h4>
-                            <div className="text-[10px] text-zinc-400 leading-relaxed">
-                                This node was explored during an MCTS iteration focusing on reducing memory overhead.
+                        <div className="space-y-6">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-lg">
+                                    <div className="text-xs text-zinc-500 uppercase mb-1">Node ID</div>
+                                    <div className="text-xl font-mono text-indigo-400">{selectedNodeData["id"]}</div>
+                                </div>
+                                <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-lg">
+                                    <div className="text-xs text-zinc-500 uppercase mb-1">Visits</div>
+                                    <div className="text-xl font-mono text-white">{selectedNodeData["visits"]}</div>
+                                </div>
+                                <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-lg">
+                                    <div className="text-xs text-zinc-500 uppercase mb-1">Reward</div>
+                                    <div className="text-xl font-mono text-emerald-400">{(selectedNodeData["value"] or 0).toFixed(6)}</div>
+                                </div>
+                                <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-lg">
+                                    <div className="text-xs text-zinc-500 uppercase mb-1">Best Subtree</div>
+                                    <div className="text-xl font-mono text-purple-400">{(selectedNodeData["best_subtree_value"] or 0).toFixed(6)}</div>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <h4 className="text-xs font-bold text-zinc-500 uppercase mb-2">Improvement Description</h4>
+                                <div className="p-4 bg-zinc-900/30 border border-zinc-800 rounded-lg text-sm text-zinc-300 leading-relaxed">
+                                    {selectedNodeData["improvement_description"]}
+                                </div>
+                            </div>
+
+                            <div>
+                                <h4 className="text-xs font-bold text-zinc-500 uppercase mb-2">Timestamp</h4>
+                                <div className="text-sm text-zinc-400 font-mono">
+                                    {
+                                        Reflect.construct(Date, [selectedNodeData["timestamp"] * 1000]).toLocaleString() 
+                                        if "timestamp" in selectedNodeData 
+                                        else "N/A"
+                                    }
+                                </div>
                             </div>
                         </div>
-                        if selectedMctsNode["id"]
-                        else <span></span>
+                        if selectedNodeId 
+                        else <div className="text-zinc-500 text-sm italic">Select a node from the tree to view details.</div>
                     }
+
                 </div>
-                <div className="p-3 border-t border-zinc-800 bg-zinc-900/50">
-                    <button className="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs py-2 rounded flex justify-center gap-2 items-center font-bold transition-all shadow-lg hover:shadow-indigo-500/20">
-                        Deploy this Variant
+
+                # Upload Button (Bottom)
+                <div className="p-4 border-t border-zinc-800 bg-zinc-900/30">
+                    <button 
+                        className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg transition-all shadow-lg hover:shadow-indigo-500/20 flex items-center justify-center gap-2"
+                        onClick={handleUpload}
+                    >
+                        <CpuIcon className="w-5 h-5" />
+                        Upload New Kernel
                     </button>
+                    <div className="text-center mt-2 text-[10px] text-zinc-500">
+                        Uploads the current kernel as a new root for optimization.
+                    </div>
                 </div>
+
             </div>
         </div>;
 }
-
