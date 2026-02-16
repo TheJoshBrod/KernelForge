@@ -521,10 +521,12 @@ walker:pub GetProjectOps {
                 full_path = path.join(base_dir, name);
                 if path.isdir(full_path) {
                     count = 0;
-                    for f in listdir(full_path) {
-                        if f.startswith("entry_") and f.endswith(".pt") {
-                            count = count + 1;
-                        }
+                    # Quick count: list only entry files
+                    try {
+                        entries = [f for f in listdir(full_path) if f.startswith("entry_") and f.endswith(".pt")];
+                        count = entries.length;
+                    } except Exception {
+                        count = 0;
                     }
                     ops.append({"name": name, "count": count});
                 }
