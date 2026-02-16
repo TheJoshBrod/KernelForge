@@ -145,7 +145,7 @@ def:pub Workbench {
             layouted_nodes.push({
                 "id": f"{cid}",
                 "position": {"x": x_pos, "y": y_pos},
-                "data": {"label": f"ID: {cid}\nVal: {label_val}"},
+                "data": {"label": f"Kernel_{cid}\n{label_val} ms"},
                 "style": {
                     "background": "#18181b", # zinc-900
                     "color": "#e4e4e7", # zinc-200
@@ -334,6 +334,42 @@ def:pub Workbench {
         });
     }
 
+    # Generate List View Items
+    listViewItems = [];
+    if viewMode == "list" {
+        idx = 0;
+        for n in sortedNodes {
+            idx += 1;
+            listViewItems.push(
+                <div 
+                    key={n["id"]}
+                    className={"p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-4 group " + ("border-indigo-500 bg-indigo-500/10 shadow-[0_0_15px_rgba(99,102,241,0.15)]" if f"{n['id']}" == selectedNodeId else "border-zinc-800 bg-zinc-900/30 hover:border-zinc-700 hover:bg-zinc-900/80")}
+                    onClick={lambda -> None { setSelectedNodeId(f"{n['id']}"); }}
+                >
+                    <div className="text-zinc-500 font-mono text-xs w-8 text-right">
+                        {"#" + idx}
+                    </div>
+
+                    <div className={"font-mono text-sm font-bold " + ("text-indigo-300" if f"{n['id']}" == selectedNodeId else "text-zinc-300")}>
+                        Kernel_{n["id"]}:
+                    </div>
+
+                    <div className="font-mono text-emerald-400 text-sm font-bold flex-1">
+                        {(n["value"] or 0).toFixed(6) + " ms"}
+                    </div>
+
+                    <div className="text-zinc-600 text-xs font-mono w-40 text-right">
+                        {
+                            Reflect.construct(Date, [n["timestamp"] * 1000]).toLocaleString() 
+                            if "timestamp" in n 
+                            else ""
+                        }
+                    </div>
+                </div>
+            );
+        }
+    }
+
     # Iteration Log Logic (Ancestry)
     log_items = [];
     if selectedNodeId and nodes.length > 0 and edges.length > 0 {
@@ -453,7 +489,7 @@ def:pub Workbench {
                                     }}
                                 >
                                     <div className="flex justify-between mb-1">
-                                        <span className="font-mono font-bold text-indigo-300">ID: {item["id"]}</span>
+                                        <span className="font-mono font-bold text-indigo-300">kernel_{item["id"]}</span>
                                         <span className="text-emerald-400 font-mono">{(item["value"] or 0).toFixed(4)}</span>
                                     </div>
                                     <div className="text-zinc-400">
@@ -507,40 +543,7 @@ def:pub Workbench {
                         if viewMode == "graph"
                         else
                         <div className="h-full overflow-y-auto p-4 pt-14 space-y-2">
-                            {
-                                [
-                                    <div 
-                                        key={n["id"]}
-                                        className={"p-3 rounded-lg border cursor-pointer transition-all flex justify-between items-center group " + ("border-indigo-500 bg-indigo-500/10 shadow-[0_0_15px_rgba(99,102,241,0.15)]" if f"{n['id']}" == selectedNodeId else "border-zinc-800 bg-zinc-900/30 hover:border-zinc-700 hover:bg-zinc-900/80")}
-                                        onClick={lambda -> None { setSelectedNodeId(f"{n['id']}"); }}
-                                    >
-                                        <div className="flex flex-col gap-1">
-                                            <div className="flex items-center gap-2">
-                                                <span className={"text-xs font-bold font-mono px-1.5 py-0.5 rounded " + ("bg-indigo-500/20 text-indigo-300" if f"{n['id']}" == selectedNodeId else "bg-zinc-800 text-zinc-500")}>
-                                                    {n["id"]}
-                                                </span>
-                                                <span className="text-zinc-500 text-xs text-nowrap">
-                                                    {
-                                                        Reflect.construct(Date, [n["timestamp"] * 1000]).toLocaleTimeString() 
-                                                        if "timestamp" in n 
-                                                        else ""
-                                                    }
-                                                </span>
-                                            </div>
-                                        </div>
-                                        
-                                        <div className="text-right">
-                                            <div className="text-emerald-400 font-mono font-bold text-sm">
-                                                {(n["value"] or 0).toFixed(6)}
-                                            </div>
-                                            <div className="text-[10px] text-zinc-600 uppercase font-bold tracking-wider">
-                                                Score
-                                            </div>
-                                        </div>
-                                    </div>
-                                    for n in sortedNodes
-                                ]
-                            }
+                            {listViewItems}
                             {
                                 <div className="text-center py-10 text-zinc-600 italic text-sm">
                                     No kernels found.
