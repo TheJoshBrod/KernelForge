@@ -121,8 +121,8 @@ def:pub Dashboard {
                 mctsSummary = mcts_data or {};
             }
 
-        } except (error) {
-            console.error("Failed to fetch dashboard data:", error);
+        } except Exception as e {
+            console.error("Failed to fetch dashboard data:", e);
         } finally {
             loading = False;
         }
@@ -137,6 +137,8 @@ def:pub Dashboard {
                 jacSpawn("GetProjectStatus", "", {"projectName": name}).then(lambda resp: any -> None {
                     data = resp.reports[0] if resp and resp.reports else {};
                     status = data or {};
+                }).catch(lambda e: any -> None {
+                    # console.error("Failed to poll project status:", e);
                 });
             }, 5000);
             return lambda -> None { clearInterval(timer); }; 
@@ -169,8 +171,8 @@ def:pub Dashboard {
             if data {
                 setSystemInfo(data);
             }
-        } except (error) {
-            console.error("Failed to fetch system info:", error);
+        } except Exception as e {
+            console.error("Failed to fetch system info:", e);
         }
     }
 
@@ -398,46 +400,53 @@ def:pub Dashboard {
                         <span className="text-xs text-zinc-500">Lower is better</span>
                     </div>
                     <div className="p-4 flex-1 flex items-center justify-center min-h-[220px]">
-                         <div className="w-full h-[220px]">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart
-                                    data={speedData}
-                                    margin={{
-                                        "top": 5,
-                                        "right": 30,
-                                        "left": 20,
-                                        "bottom": 5
-                                    }}
-                                >
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={False} />
-                                    <XAxis
-                                        dataKey="name"
-                                        stroke="#71717a"
-                                        fontSize={12}
-                                        tickLine={False}
-                                        axisLine={False}
-                                    />
-                                    <YAxis
-                                        stroke="#71717a"
-                                        fontSize={12}
-                                        tickLine={False}
-                                        axisLine={False}
-                                        tickFormatter={lambda value: str -> str { return f"{value}ms"; }}
-                                    />
-                                    <Tooltip
-                                        cursor={{ "fill": '#27272a' }}
-                                        contentStyle={{
-                                            "backgroundColor": '#18181b',
-                                            "borderColor": '#27272a',
-                                            "borderRadius": '8px',
-                                            "color": '#f4f4f5'
+                         <div className="w-full h-[220px] min-h-[220px]">
+                            {
+                                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                                    <BarChart
+                                        data={speedData}
+                                        margin={{
+                                            "top": 5,
+                                            "right": 30,
+                                            "left": 20,
+                                            "bottom": 5
                                         }}
-                                    />
-                                    <Legend />
-                                    <Bar dataKey="pytorch" name="PyTorch" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                                    <Bar dataKey="optimized" name="Optimized" fill="#10b981" radius={[4, 4, 0, 0]} />
-                                </BarChart>
-                            </ResponsiveContainer>
+                                    >
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={False} />
+                                        <XAxis
+                                            dataKey="name"
+                                            stroke="#71717a"
+                                            fontSize={12}
+                                            tickLine={False}
+                                            axisLine={False}
+                                        />
+                                        <YAxis
+                                            stroke="#71717a"
+                                            fontSize={12}
+                                            tickLine={False}
+                                            axisLine={False}
+                                            tickFormatter={lambda value: str -> str { return f"{value}ms"; }}
+                                        />
+                                        <Tooltip
+                                            cursor={{ "fill": '#27272a' }}
+                                            contentStyle={{
+                                                "backgroundColor": '#18181b',
+                                                "borderColor": '#27272a',
+                                                "borderRadius": '8px',
+                                                "color": '#f4f4f5'
+                                            }}
+                                        />
+                                        <Legend />
+                                         <Bar dataKey="optimized" name="Optimized" fill="#1062b9ff" radius={[4, 4, 0, 0]} />
+                                         <Bar dataKey="pytorch" name="PyTorch" fill="#EE4C2C" radius={[4, 4, 0, 0]} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                                if speedData.length > 0
+                                else
+                                <div className="text-zinc-500 text-sm italic">
+                                    No data available
+                                </div>
+                            }
                         </div>
                     </div>
                 </div>
@@ -449,8 +458,8 @@ def:pub Dashboard {
                     </div>
                     <div className="p-4 flex-1 flex items-center justify-center min-h-[220px]">
                         {
-                            <div className="w-full h-[220px]">
-                                <ResponsiveContainer width="100%" height="100%">
+                            <div className="w-full h-[220px] min-h-[220px]">
+                                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                                     <PieChart>
                                         <Pie
                                             data={pieData}

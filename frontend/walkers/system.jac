@@ -421,22 +421,23 @@ walker:pub TestLLMConnection {
 
 walker:pub DetectHardware {
     can detect with `root entry {
+        global _hw_cache;
         if _hw_cache {
             report _hw_cache;
-            disengage;
-        }
-        try {
-            code = "import json, torch; info={'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count() if torch.cuda.is_available() else 0, 'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else '', 'cuda_version': torch.version.cuda or '', 'mps_available': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available(), 'mps_built': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_built()}; print(json.dumps(info))";
-            out = subprocess.check_output([sys.executable, "-c", code], cwd=repo_root);
-            text = out.decode("utf-8").strip();
-            if text {
-                _hw_cache = loads(text);
-                report _hw_cache;
-            } else {
-                report {"cuda_available": False, "mps_available": False};
+        } else {
+            try {
+                code = "import json, torch; info={'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count() if torch.cuda.is_available() else 0, 'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else '', 'cuda_version': torch.version.cuda or '', 'mps_available': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available(), 'mps_built': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_built()}; print(json.dumps(info))";
+                out = subprocess.check_output([sys.executable, "-c", code], cwd=repo_root);
+                text = out.decode("utf-8").strip();
+                if text {
+                    _hw_cache = loads(text);
+                    report _hw_cache;
+                } else {
+                    report {"cuda_available": False, "mps_available": False};
+                }
+            } except Exception as e {
+                report {"cuda_available": False, "mps_available": False, "error": str(e)};
             }
-        } except Exception as e {
-            report {"cuda_available": False, "mps_available": False, "error": str(e)};
         }
     }
 }
