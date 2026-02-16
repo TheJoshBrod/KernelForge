@@ -82,7 +82,7 @@ def:pub Workbench {
             pid = e["parent_id"];
             cid = e["child_id"];
             if pid in children_map {
-                children_map[pid].append(cid);
+                children_map[pid].push(cid);
             }
             has_parent[cid] = True;
         }
@@ -91,25 +91,30 @@ def:pub Workbench {
         roots = [];
         for n in nodes_data {
             if not n["id"] in has_parent {
-                roots.append(n["id"]);
+                roots.push(n["id"]);
             }
         }
 
         # BFS for levels
         queue = [];
         for r in roots {
-            queue.append({"id": r, "level": 0});
+            queue.push({"id": r, "level": 0});
         }
         
         layouted_nodes = [];
         visited = {};
         
         level_counts = {}; # Track how many nodes in each level for X positioning
+        max_level = 0;
 
         while queue.length > 0 {
             curr = queue.shift();
             cid = curr["id"];
             lvl = curr["level"];
+            
+            if lvl > max_level {
+                max_level = lvl;
+            }
 
             if cid in visited {
                 continue;
@@ -132,8 +137,8 @@ def:pub Workbench {
             # Label
             label_val = (raw_node["value"] or 0).toFixed(4);
             
-            layouted_nodes.append({
-                "id": str(cid),
+            layouted_nodes.push({
+                "id": f"{cid}",
                 "position": {"x": x_pos, "y": y_pos},
                 "data": {"label": f"ID: {cid}\nVal: {label_val}"},
                 "style": {
@@ -153,18 +158,21 @@ def:pub Workbench {
             # Add children to queue
             children = children_map[cid] if cid in children_map else [];
             for child_id in children {
-                queue.append({"id": child_id, "level": lvl + 1});
+                queue.push({"id": child_id, "level": lvl + 1});
             }
         }
 
         # Center align levels (heuristic)
         # Calculate max width of a level
         max_width = 0;
-        for lvl in level_counts {
-            w = level_counts[lvl] * 200;
+        itr_l = 0;
+        while itr_l <= max_level {
+            cnt = level_counts[itr_l] if itr_l in level_counts else 0;
+            w = cnt * 200;
             if w > max_width {
                 max_width = w;
             }
+            itr_l += 1;
         }
         
         # Adjust X to center
@@ -173,16 +181,16 @@ def:pub Workbench {
             # Recalculate based on row width? 
             # For simplicity, keeping left-aligned for now as tree grows right/down usually
             # But converting to standard format
-            final_nodes.append(n);
+            final_nodes.push(n);
         }
 
         # Edges
         rf_edges = [];
         for e in edges_data {
-            rf_edges.append({
+            rf_edges.push({
                 "id": f"e{e['parent_id']}-{e['child_id']}",
-                "source": str(e["parent_id"]),
-                "target": str(e["child_id"]),
+                "source": f"{e['parent_id']}",
+                "target": f"{e['child_id']}",
                 "type": "smoothstep",
                 "animated": True,
                 "style": { "stroke": "#6366f1" } # indigo-500
@@ -200,8 +208,8 @@ def:pub Workbench {
             ops_data = ops_resp.reports[0] if ops_resp and ops_resp.reports else None;
             op_list = ops_data["ops"] if ops_data and "ops" in ops_data else [];
             setOps(op_list);
-        } except (error) {
-            console.error("Failed to fetch ops:", error);
+        } except Exception as e {
+            console.error("Failed to fetch ops:", e);
         }
     }
 
@@ -229,11 +237,11 @@ def:pub Workbench {
             max_val = -1;
 
             for n in m_nodes {
-                r_map[str(n["id"])] = n;
+                r_map[f"{n['id']}"] = n;
                 val = n["value"] or 0;
                 if val > max_val {
                     max_val = val;
-                    best_node_id = str(n["id"]);
+                    best_node_id = f"{n['id']}";
                 }
             }
             setRawNodes(r_map);
@@ -243,8 +251,8 @@ def:pub Workbench {
                 setSelectedNodeId(best_node_id);
             }
 
-        } except (error) {
-            console.error("Failed to fetch workbench data:", error);
+        } except Exception as e {
+            console.error("Failed to fetch workbench data:", e);
         } finally {
             setLoading(False);
         }
@@ -255,14 +263,15 @@ def:pub Workbench {
 
     # --- Actions ---
 
-    onNodeClick = useCallback(lambda event, node -> None {
+    onNodeClick = useCallback(lambda event: any, node: any -> None {
         setSelectedNodeId(node.id);
     }, []);
 
     # Highlighting Effect
     useEffect(lambda -> None {
-        setNodes(lambda nds -> list {
-            return nds.map(lambda n -> dict {
+        setNodes(lambda nds: list -> list {
+            new_nodes = [];
+            for n in nds {
                 new_style = {
                     "background": "#18181b", 
                     "color": "#e4e4e7", 
@@ -279,14 +288,15 @@ def:pub Workbench {
                     new_style["background"] = "rgba(99, 102, 241, 0.1)"; # indigo tint
                     new_style["boxShadow"] = "0 0 10px rgba(99, 102, 241, 0.3)";
                 }
-                return {
+                new_nodes.push({
                     "id": n.id,
                     "position": n.position,
                     "data": n.data,
                     "style": new_style,
                     "type": n.type
-                };
-            });
+                });
+            }
+            return new_nodes;
         });
     }, [selectedNodeId, setNodes]);
 
@@ -296,8 +306,8 @@ def:pub Workbench {
             resp = await jacSpawn("ImportKernel", "", {});
             console.log("Upload result:", resp);
             alert("Custom kernel uploaded!"); # Simple feedback
-        } except (error) {
-            console.error("Upload failed", error);
+        } except (e) {
+            console.error("Upload failed", e);
         }
     }
 
@@ -412,13 +422,13 @@ def:pub Workbench {
                         # Standard list, iterate normal order.
                         
                         {
-                            log_items.map(lambda item, idx -> any {
-                                is_sel = str(item["id"]) == selectedNodeId;
-                                return <div 
+                        {
+                            [
+                                <div 
                                     key={item["id"]}
-                                    className={"p-3 rounded border text-xs " + ("border-indigo-500/50 bg-indigo-500/10" if is_sel else "border-zinc-800 bg-zinc-900/50")}
-                                    ref={lambda el -> None { 
-                                        if is_sel and el { 
+                                    className={"p-3 rounded border text-xs " + ("border-indigo-500/50 bg-indigo-500/10" if f"{item['id']}" == selectedNodeId else "border-zinc-800 bg-zinc-900/50")}
+                                    ref={lambda el: any -> None { 
+                                        if f"{item['id']}" == selectedNodeId and el { 
                                             el.scrollIntoView({"behavior": "smooth", "block": "nearest"});
                                         }
                                     }}
@@ -430,8 +440,10 @@ def:pub Workbench {
                                     <div className="text-zinc-400">
                                         {item["improvement_description"]}
                                     </div>
-                                </div>;
-                            })
+                                </div>
+                                for item in log_items
+                            ]
+                        }
                         }
                     </div>
                 </div>
