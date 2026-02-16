@@ -421,7 +421,7 @@ def:pub Workbench {
             );
         }
         return 
-            <div className="flex-1 flex flex-col p-8 bg-zinc-950 text-zinc-100 h-screen overflow-hidden">
+            <div className="flex-1 flex flex-col p-8 bg-zinc-900 text-zinc-100 h-screen overflow-hidden">
                 <div className="mb-8">
                     <h2 className="text-2xl font-bold text-white mb-2">Workbench</h2>
                     <p className="text-zinc-400">Select an operator to explore.</p>
