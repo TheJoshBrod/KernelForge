@@ -58,6 +58,10 @@ def:pub Workbench {
     ops = ops_state[0];
     setOps = ops_state[1];
 
+    loading_ops_state = useState(True);
+    loadingOps = loading_ops_state[0];
+    setLoadingOps = loading_ops_state[1];
+
     # View Mode State
     view_mode_state = useState("graph"); # "graph" or "list"
     viewMode = view_mode_state[0];
@@ -208,6 +212,7 @@ def:pub Workbench {
     # --- Fetchers ---
 
     async def fetchOps -> None {
+        setLoadingOps(True);
         try {
             ops_resp = await jacSpawn("GetProjectOps", "", {"projectName": projectName});
             ops_data = ops_resp.reports[0] if ops_resp and ops_resp.reports else None;
@@ -215,6 +220,8 @@ def:pub Workbench {
             setOps(op_list);
         } except Exception as e {
             console.error("Failed to fetch ops:", e);
+        } finally {
+            setLoadingOps(False);
         }
     }
 
@@ -263,7 +270,7 @@ def:pub Workbench {
         }
     }
 
-    useEffect(lambda -> None { if not opName { fetchOps(); } }, [opName]);
+    useEffect(lambda -> None { if not opName { fetchOps(); } }, [opName, projectName]);
     useEffect(lambda -> None { fetchData(); }, [projectName, opName]);
 
     # --- Actions ---
@@ -429,6 +436,11 @@ def:pub Workbench {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto pb-20">
                     {op_items}
                     {
+                        <div className="col-span-full text-center text-zinc-500 py-12 italic">
+                            Loading operators...
+                        </div>
+                        if loadingOps
+                        else
                         <div className="col-span-full text-center text-zinc-500 py-12 italic">
                             No operators found.
                         </div>
