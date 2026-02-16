@@ -1214,7 +1214,12 @@ walker:pub GetMctsTree {
                     "timestamp": 1707782600
                 }
             ];
-            report {"success": True, "nodes": filler_nodes, "edges": []};
+            filler_edges = [
+                {"parent_id": 1, "child_id": 2},
+                {"parent_id": 1, "child_id": 3}
+            ];
+            report {"success": True, "nodes": filler_nodes, "edges": filler_edges};
+            disengage;
         }
 
         mcts_nodes = [];

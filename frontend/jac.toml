@@ -18,7 +18,7 @@ tailwind-merge = "latest"
 clsx = "latest"
 watchdog = "latest"
 "@vitejs/plugin-react" = "latest"
-react-flow = "latest"
+reactflow = "latest"
 
 [dev-dependencies]
 watchdog = ">=3.0.0"
@@ -28,18 +28,20 @@ base_route_app = "app"
 
 [plugins.client.vite]
 plugins = ["jacExtensionFix()", "tailwindcss()"]
-lib_imports = ["import tailwindcss from '@tailwindcss/vite'", "function jacExtensionFix() {
+lib_imports = [
+    "import tailwindcss from '@tailwindcss/vite'", 
+    """function jacExtensionFix() {
   return {
-    name: \"jac-extension-fix\",
-    enforce: \"pre\",
+    name: "jac-extension-fix",
+    enforce: "pre",
     async resolveId(source, importer) {
-      if (source.endsWith(\".cl.jac\")) {
-        const newSource = source.replace(/\\.cl\\.jac$/, \".js\");
+      if (source.endsWith(".cl.jac")) {
+        const newSource = source.replace(/\\.cl\\.jac$/, ".js");
         const resolution = await this.resolve(newSource, importer, { skipSelf: true });
         if (resolution) return resolution;
       }
       return null;
     }
   };
-}
-"]
+}"""
+]
