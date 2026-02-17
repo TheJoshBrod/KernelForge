@@ -1,7 +1,7 @@
 """Splash Screen Component"""
 
-import from "./backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
-import from "./ui/Icons.cl.jac" { CGinSLogo }
+import from .backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from .ui.Icons { CGinSLogo }
 
 def:pub SplashScreen(exiting: bool) -> Any {
     splashClass = "splash-screen";

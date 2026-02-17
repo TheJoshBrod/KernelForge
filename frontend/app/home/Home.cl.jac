@@ -1,14 +1,11 @@
 """Home Page Component"""
 
 import from react { useEffect }
-import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
-import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
-    GameOfLifeBackground
-}
-import from "../../components/ui/GlowButton.cl.jac" { GlowButton }
-import from "../../components/ui/Icons.cl.jac" { CGinSLogo }
-import from "../../components/SplashScreen.cl.jac" { SplashScreen }
+import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from ...components.ui.GlowButton { GlowButton }
+import from ...components.ui.Icons { CGinSLogo }
+import from ...components.SplashScreen { SplashScreen }
 
 def:pub Home {
     navigate = useNavigate();
@@ -20,7 +17,7 @@ def:pub Home {
     async def fetchProjects -> None {
         start: float = Date.now();
         try {
-            resp = await jacSpawn("GetProjects", "", {});
+            resp = await __jacSpawn("GetProjects", "", {});
             data = resp.reports[0]
             if resp and resp.reports and resp.reports.length > 0
             else None;

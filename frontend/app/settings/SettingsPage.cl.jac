@@ -2,11 +2,9 @@
 
 import from react { useEffect }
 import from "react-router-dom" { useNavigate }
-import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
-    GameOfLifeBackground
-}
-import from "../../components/settings/SettingsMenu.cl.jac" { SettingsMenu }
-import from "../../context/ConfigContext.cl.jac" { useConfig }
+import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from ...components.settings.SettingsMenu { SettingsMenu }
+import from ...context.ConfigContext { useConfig }
 
 def:pub SettingsPage {
     navigate = useNavigate();

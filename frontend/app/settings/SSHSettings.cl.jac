@@ -1,5 +1,5 @@
 import from react { useState, useEffect }
-import from "../../components/ui/Icons.cl.jac" { ChevronDownIcon, TrashIcon }
+import from ...components.ui.Icons { ChevronDownIcon, TrashIcon }
 
 def:pub SSHSettings(
     config: dict,
@@ -58,7 +58,7 @@ def:pub SSHSettings(
                 weeks: int = Math.floor(diff / 604800);
                 return f"{weeks} week{'s' if weeks != 1 else ''} ago";
             }
-        } except (e) {
+        } except Exception as e {
             return date_str;
         }
     }

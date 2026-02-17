@@ -1,6 +1,6 @@
 """UI Icons Component"""
 
-import from "../../assets/CGinS-logo.svg" { default as cginsLogo }
+import from "@jac-client/assets/CGinS-logo.svg" { default as cginsLogo }
 
 def:pub FolderIcon(className: str = "") -> Any {
     return
@@ -171,7 +171,6 @@ def:pub ChevronDownIcon(className: str = "") -> Any {
         </svg>;
 }
 
-
 def:pub CGinSLogo(className: str = "") -> Any {
     return
         <img src={cginsLogo} alt="CGinS Logo" className={className} />;
@@ -316,7 +315,6 @@ def:pub AlertCircleIcon(className: str = "") -> Any {
             <line x1="12" x2="12.01" y1="16" y2="16" />
         </svg>;
 }
-
 
 def:pub PlusIcon(className: str = "") -> Any {
     return

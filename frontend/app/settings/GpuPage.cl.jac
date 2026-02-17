@@ -2,11 +2,8 @@
 
 import from react { useState, useEffect }
 import from "react-router-dom" { useNavigate }
-import from "@jac/runtime" { jacSpawn }
-import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
-    GameOfLifeBackground
-}
-import from "../../context/ConfigContext.cl.jac" { useConfig }
+import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from ...context.ConfigContext { useConfig }
 
 def:pub GpuPage {
     navigate = useNavigate();
@@ -54,7 +51,7 @@ def:pub GpuPage {
                 };
             }
 
-            resp = await jacSpawn("GetSystemInfo", "", payload);
+            resp = await __jacSpawn("GetSystemInfo", "", payload);
 
             data = resp.reports[0]
             if resp and resp.reports and resp.reports.length > 0
@@ -63,9 +60,9 @@ def:pub GpuPage {
             if data {
                 setSystemInfo(data);
             }
-        } except (error) {
-            console.error("Failed to fetch system info:", error);
-            console.error("Error stack:", error.stack);
+        } except Exception as e {
+            console.error("Failed to fetch system info:", e);
+            console.error("Error stack:", e.stack);
         }
     }
 
@@ -76,7 +73,9 @@ def:pub GpuPage {
     for g in gpus {
         base_name = g["name"] if "name" in g else f"GPU {idx}";
         conn = g["connection"] if "connection" in g else "local";
-        gpu_name = f"{base_name} ({conn})" if conn != "local" else f"{base_name} (Local)";
+        gpu_name = f"{base_name} ({conn})"
+        if conn != "local"
+        else f"{base_name} (Local)";
         gpu_options.push(
             <option value={f"{idx}"} key={idx}>
                 {gpu_name}

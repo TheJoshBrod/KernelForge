@@ -1,12 +1,9 @@
 """API Keys Page"""
 
-import from react { useState }
 import from "react-router-dom" { useNavigate }
-import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
-    GameOfLifeBackground
-}
-import from "../../components/settings/ApiKeysSettings.cl.jac" { ApiKeysSettings }
-import from "../../context/ConfigContext.cl.jac" { useConfig }
+import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from ...components.settings.ApiKeysSettings { ApiKeysSettings }
+import from ...context.ConfigContext { useConfig }
 
 def:pub ApiKeysPage {
     navigate = useNavigate();
@@ -22,14 +19,13 @@ def:pub ApiKeysPage {
         navigate("/settings");
     }
 
-    def handleApiKeyChange(provider: str, value: str) -> None {
-        new_api_keys = config["api_keys"] if "api_keys" in config else {};
-        new_api_keys[provider] = value;
+    def handleLlmInfoChange(field: str, value: str) -> None {
+        llm_info = config["llm_info"] if config and "llm_info" in config else {};
+        new_llm_info = {** llm_info};
+        new_llm_info[field] = value;
 
-        # We need to update the entire config object
         new_config = {** config};
-        new_config["api_keys"] = new_api_keys;
-
+        new_config["llm_info"] = new_llm_info;
         setConfig(new_config);
     }
 
@@ -62,12 +58,12 @@ def:pub ApiKeysPage {
                         API Keys
                     </h1>
                     <p className="settings-subtitle">
-                        Manage your LLM provider keys
+                        Configure your LLM provider, model, and API key
                     </p>
                 </div>
                 <ApiKeysSettings
                     config={config}
-                    handleApiKeyChange={handleApiKeyChange}
+                    handleLlmInfoChange={handleLlmInfoChange}
                     handleSave={handleSave}
                     saving={saving}
                 />

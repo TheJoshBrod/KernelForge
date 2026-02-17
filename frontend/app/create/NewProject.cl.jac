@@ -2,9 +2,8 @@
 
 import from react { useEffect }
 import from sonner { toast }
-import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
-import from "../../components/ui/Icons.cl.jac" {
+import from ...components.ui.Icons {
     SettingsIcon,
     BackIcon,
     UploadIcon,
@@ -118,7 +117,7 @@ def:pub NewProject {
             # Call the walker passed from parent
             # Call the walker passed from parent
             submitStage = "Creating project";
-            resp = await jacSpawn(
+            resp = await __jacSpawn(
                 "CreateProject",
                 "",
                 {

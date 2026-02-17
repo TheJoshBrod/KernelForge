@@ -1,7 +1,6 @@
 """Config Context Provider"""
 
 import from react { createContext, useContext, useEffect, useState }
-import from "@jac/runtime" { jacSpawn }
 
 glob DEFAULT_CONFIG: dict = {
          "llm_info": {"model": "", "apikey": "", "provider": ""},
@@ -30,7 +29,7 @@ def:pub ConfigProvider(children: any) -> Any {
     # Load config on mount
     async def fetchConfig -> None {
         try {
-            resp = await jacSpawn("GetConfig", "", {});
+            resp = await __jacSpawn("GetConfig", "", {});
             data = resp.reports[0]
             if resp and resp.reports and resp.reports.length > 0
             else None;
@@ -49,8 +48,8 @@ def:pub ConfigProvider(children: any) -> Any {
             } else {
                 setConfigState(DEFAULT_CONFIG);
             }
-        } except (error) {
-            console.error("Failed to load config:", error);
+        } except Exception as e {
+            console.error("Failed to load config:", e);
             setConfigState(DEFAULT_CONFIG);
         } finally {
             setLoading(False);
@@ -62,7 +61,7 @@ def:pub ConfigProvider(children: any) -> Any {
     async def save_config_handler(newConfig: dict) -> bool {
         try {
             # Calls the passed saveConfig
-            resp = await jacSpawn("SaveConfig", "", {"cfg": newConfig});
+            resp = await __jacSpawn("SaveConfig", "", {"cfg": newConfig});
             res = resp.reports[0]
             if resp and resp.reports and resp.reports.length > 0
             else False;
@@ -71,8 +70,8 @@ def:pub ConfigProvider(children: any) -> Any {
                 return True;
             }
             return False;
-        } except (error) {
-            console.error("Failed to save config:", error);
+        } except Exception as e {
+            console.error("Failed to save config:", e);
             return False;
         }
     }

@@ -1,8 +1,8 @@
 """Mascot component with PNG default and MP4 hover (desktop only)."""
 
 import from react { useEffect, useRef }
-import from "../../assets/mascot.mp4" { default as mascotVideo }
-import from "../../assets/new-mascot.png" { default as mascotImage }
+import from "@jac-client/assets/mascot.mp4" { default as mascotVideo }
+import from "@jac-client/assets/new-mascot.png" { default as mascotImage }
 
 def:pub Mascot(
     variant: str = "hero",
