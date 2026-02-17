@@ -1325,22 +1325,125 @@ walker:pub GetDashboardCharts {
     has projectName: str;
 
     can return_charts with `root entry {
-        # Hardcoded data for now
-        operator_usage = [
-            {"name": "Conv2d", "count": 45, "total_time_ms": 1500},
-            {"name": "Attention", "count": 20, "total_time_ms": 2500},
-            {"name": "Linear", "count": 100, "total_time_ms": 800},
-            {"name": "LayerNorm", "count": 50, "total_time_ms": 300},
-            {"name": "ReLU", "count": 100, "total_time_ms": 100}
-        ];
+        project_dir = _project_dir(self.projectName);
 
-        speed_comparison = [
-            {"name": "Conv2d", "pytorch": 120, "optimized": 25},
-            {"name": "Attention", "pytorch": 200, "optimized": 45},
-            {"name": "Linear", "pytorch": 80, "optimized": 15},
-            {"name": "LayerNorm", "pytorch": 50, "optimized": 10},
-            {"name": "Softmax", "pytorch": 40, "optimized": 8}
-        ];
+        bench_results = [];
+        bench_path = path.join(project_dir, "benchmarks", "op_benchmarks.json");
+        if path.exists(bench_path) {
+            try {
+                with open(bench_path, "r") as f {
+                    bench_data = load(f);
+                }
+                bench_results = bench_data["results"]
+                if bench_data and "results" in bench_data
+                else [];
+            } except Exception as e {
+                print(f"Error reading op_benchmarks.json: {e}");
+                bench_results = [];
+            }
+        }
+
+        op_counts = {};
+        summary_path = path.join(project_dir, "io", "summary.json");
+        if path.exists(summary_path) {
+            try {
+                with open(summary_path, "r") as f {
+                    summary_data = load(f);
+                }
+                op_counts = summary_data["op_counts"]
+                if summary_data and "op_counts" in summary_data
+                else {};
+            } except Exception as e {
+                print(f"Error reading io/summary.json: {e}");
+                op_counts = {};
+            }
+        }
+
+        # Convert counts to the on-disk op directory naming convention:
+        # "torch.nn.functional.linear" -> "torch_nn_functional_linear"
+        count_by_op = {};
+        for full_name in op_counts {
+            try {
+                op_dir_name = full_name.replace(".", "_").replace("/", "_");
+                count_by_op[op_dir_name] = op_counts[full_name];
+            } except Exception {
+                continue;
+            }
+        }
+
+        bench_by_op = {};
+        for r in bench_results {
+            if r and "op" in r and r["op"] {
+                bench_by_op[r["op"]] = r;
+            }
+        }
+
+        speed_comparison = [];
+        for r in bench_results {
+            if not r or not ("op" in r) {
+                continue;
+            }
+            op_name = r["op"];
+            pytorch_ms = 0.0;
+            if r and "pytorch_ms" in r and r["pytorch_ms"] is not None {
+                try {
+                    pytorch_ms = float(r["pytorch_ms"]);
+                } except Exception {
+                    pytorch_ms = 0.0;
+                }
+            }
+
+            row = {"name": op_name, "pytorch": pytorch_ms};
+
+            if (
+                r
+                and "kernel_status" in r
+                and r["kernel_status"] == "ok"
+                and "kernel_ms" in r
+                and r["kernel_ms"] is not None
+            ) {
+                optimized_ms = None;
+                try {
+                    optimized_ms = float(r["kernel_ms"]);
+                } except Exception {
+                    optimized_ms = None;
+                }
+                if optimized_ms is not None {
+                    row["optimized"] = optimized_ms;
+                }
+            }
+            speed_comparison.append(row);
+        }
+
+        operator_usage = [];
+        for op_name in bench_by_op {
+            b = bench_by_op[op_name];
+            pytorch_ms = 0.0;
+            if b and "pytorch_ms" in b and b["pytorch_ms"] is not None {
+                try {
+                    pytorch_ms = float(b["pytorch_ms"]);
+                } except Exception {
+                    pytorch_ms = 0.0;
+                }
+            }
+
+            count = count_by_op[op_name] if op_name in count_by_op else 0;
+            if count <= 0 and b and "entries" in b and b["entries"] {
+                count = b["entries"];
+            }
+            try {
+                count = int(count);
+            } except Exception {
+                count = 0;
+            }
+
+            total_time_ms = pytorch_ms * count if pytorch_ms and count else 0.0;
+            if total_time_ms > 0.0 {
+                operator_usage.append(
+                    {"name": op_name, "count": count, "total_time_ms": total_time_ms}
+                );
+            }
+        }
 
         report {"operator_usage": operator_usage, "speed_comparison": speed_comparison} ;
     }
