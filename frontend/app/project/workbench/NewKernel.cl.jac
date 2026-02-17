@@ -59,7 +59,7 @@ def:pub NewKernel {
 
             {
                 <div className="absolute bottom-full left-0 w-full mb-2 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-20 flex flex-col">
-                    <UploadTrigger onUpload={handle_upload_click} test="HELLO_DEBUG" />
+                    <UploadTrigger onUpload={handle_upload_click} />
                     <GenerateMenu onComplete={on_complete} />
                     <OptimizeMenu onComplete={on_complete} />
                 </div>
