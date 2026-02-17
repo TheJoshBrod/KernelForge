@@ -2,12 +2,12 @@
 
 import from react { useState, useRef, useEffect }
 import from "../../../components/ui/Icons.cl.jac" {
-    CpuIcon,
-    UploadIcon,
-    PlusIcon,
-    ZapIcon
+    CpuIcon
 }
-import from "@jac/runtime" { jacSpawn }
+import from "./menus/UploadModal.cl.jac" { UploadModal }
+import from "./menus/UploadTrigger.cl.jac" { UploadTrigger }
+import from "./menus/GenerateMenu.cl.jac" { GenerateMenu }
+import from "./menus/OptimizeMenu.cl.jac" { OptimizeMenu }
 
 def:pub NewKernel {
     has projectName: str;
@@ -16,12 +16,17 @@ def:pub NewKernel {
     isOpen = is_open_state[0];
     setIsOpen = is_open_state[1];
 
+    upload_modal_open_state = useState(False);
+    uploadModalOpen = upload_modal_open_state[0];
+    setUploadModalOpen = upload_modal_open_state[1];
+
     menu_ref = useRef(None);
 
     # Close menu on outside click
     useEffect(lambda -> None {
         def handle_click_outside(event: any) {
             if menu_ref.current and not menu_ref.current.contains(event.target) {
+                # console.log("NewKernel: Click outside detected, closing menu.");
                 setIsOpen(False);
             }
         }
@@ -31,27 +36,13 @@ def:pub NewKernel {
         };
     }, []);
 
-    async def handleUpload -> None {
-        try {
-            console.log("Uploading custom kernel...");
-            resp = await jacSpawn("ImportKernel", "", {});
-            console.log("Upload result:", resp);
-            alert("Custom kernel uploaded!"); 
-            setIsOpen(False);
-        } except (e) {
-            console.error("Upload failed", e);
-        }
-    }
+    on_complete = lambda -> None { setIsOpen(False); };
 
-    def handleGenerate -> None {
-        alert("Generate New Root: Coming soon!");
+    handle_upload_click = lambda -> None {
+        console.log("NewKernel: UploadTrigger clicked, opening modal");
+        setUploadModalOpen(True);
         setIsOpen(False);
-    }
-
-    def handleOptimize -> None {
-        alert("Optimize Existing Tree: Coming soon!");
-        setIsOpen(False);
-    }
+    };
 
     return 
         <div className="relative" ref={menu_ref}>
@@ -68,39 +59,24 @@ def:pub NewKernel {
 
             {
                 <div className="absolute bottom-full left-0 w-full mb-2 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-20 flex flex-col">
-                    <button 
-                        className="p-3 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-3 transition-colors"
-                        onClick={handleUpload}
-                    >
-                        <UploadIcon className="w-4 h-4 text-indigo-400" />
-                        <div>
-                            <div className="font-semibold">Upload Custom Kernel</div>
-                            <div className="text-[10px] text-zinc-500">Import a manually written kernel</div>
-                        </div>
-                    </button>
-                    <button 
-                        className="p-3 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-3 transition-colors border-t border-zinc-800"
-                        onClick={handleGenerate}
-                    >
-                        <PlusIcon className="w-4 h-4 text-emerald-400" />
-                        <div>
-                            <div className="font-semibold">Generate New Root</div>
-                            <div className="text-[10px] text-zinc-500">AI generates a new starting kernel</div>
-                        </div>
-                    </button>
-                    <button 
-                        className="p-3 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-3 transition-colors border-t border-zinc-800"
-                        onClick={handleOptimize}
-                    >
-                        <ZapIcon className="w-4 h-4 text-amber-400" />
-                        <div>
-                            <div className="font-semibold">Optimize Existing Tree</div>
-                            <div className="text-[10px] text-zinc-500">Continue optimizing current best</div>
-                        </div>
-                    </button>
+                    <UploadTrigger onUpload={handle_upload_click} test="HELLO_DEBUG" />
+                    <GenerateMenu onComplete={on_complete} />
+                    <OptimizeMenu onComplete={on_complete} />
                 </div>
                 if isOpen
-                else <span></span>
+                else <span />
             }
+
+            {console.log("NewKernel: Rendering UploadModal, isOpen:", uploadModalOpen) if True else None}
+            <UploadModal 
+                isOpen={uploadModalOpen} 
+                onClose={lambda -> None { 
+                    console.log("NewKernel: Closing modal");
+                    setUploadModalOpen(False); 
+                }}
+                onSuccess={lambda -> None { 
+                    # Refresh logic could go here
+                }}
+            />
         </div>;
 }
