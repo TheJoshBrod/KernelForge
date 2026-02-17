@@ -37,7 +37,7 @@ cl import from "./app/create/NewProject.cl.jac" { NewProject }
 cl import from "./app/project/ProjectLayout.cl.jac" { ProjectLayout }
 cl import from "./app/project/Dashboard.cl.jac" { Dashboard }
 cl import from "./app/project/Profiling.cl.jac" { Profiling }
-cl import from "./app/project/Workbench.cl.jac" { Workbench }
+cl import from "./app/project/workbench/Workbench.cl.jac" { Workbench }
 cl import from "./app/project/Arena.cl.jac" { Arena }
 cl import from "./app/project/Verification.cl.jac" { Verification }
 cl import from "./app/project/Export.cl.jac" { Export }

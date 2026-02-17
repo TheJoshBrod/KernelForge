@@ -1,7 +1,7 @@
-"""Workbench Page"""
+"""Kernel Workbench Component"""
 
 import from react { useState, useEffect, useCallback }
-import from "react-router-dom" { useParams, useNavigate }
+import from "react-router-dom" { useNavigate, useParams }
 import from "@jac/runtime" { jacSpawn }
 import from "reactflow" { 
     ReactFlow, 
@@ -12,7 +12,7 @@ import from "reactflow" {
     useEdgesState,
     MarkerType
 }
-import from "../../components/ui/Icons.cl.jac" {
+import from "../../../components/ui/Icons.cl.jac" {
     CodeIcon,
     CpuIcon,
     ShieldCheckIcon,
@@ -22,12 +22,16 @@ import from "../../components/ui/Icons.cl.jac" {
     AlertCircleIcon,
     ArrowRightIcon
 }
+import from "./NewKernel.cl.jac" { NewKernel }
 
-def:pub Workbench {
-    params = useParams();
-    projectName = params.projectName;
-    opName = params.opName;
+def:pub KernelWorkbench {
+    has projectName: str,
+        opName: str;
+
     navigate = useNavigate();
+    params = useParams();
+    resolvedProjectName = projectName or params.projectName;
+    resolvedOpName = opName or params.opName;
 
     # ReactFlow State
     nodes_state = useNodesState([]);
@@ -54,14 +58,6 @@ def:pub Workbench {
     loading = loading_state[0];
     setLoading = loading_state[1];
 
-    ops_state = useState([]);
-    ops = ops_state[0];
-    setOps = ops_state[1];
-
-    loading_ops_state = useState(True);
-    loadingOps = loading_ops_state[0];
-    setLoadingOps = loading_ops_state[1];
-
     # View Mode State
     view_mode_state = useState("graph"); # "graph" or "list"
     viewMode = view_mode_state[0];
@@ -70,22 +66,15 @@ def:pub Workbench {
     # --- Helpers ---
 
     def get_layouted_elements(nodes_data: list, edges_data: list) -> dict {
-        # Simple tree layout: 
-        # Organize by depth/levels.
-        # Root is level 0. Children are level 1, etc.
-        # X position based on index in level.
-        
         levels = {};
         node_map = {};
         children_map = {};
 
-        # Build maps
         for n in nodes_data {
             node_map[n["id"]] = n;
             children_map[n["id"]] = [];
         }
 
-        # Identify parent/child relationships
         has_parent = {};
         for e in edges_data {
             pid = e["parent_id"];
@@ -96,7 +85,6 @@ def:pub Workbench {
             has_parent[cid] = True;
         }
 
-        # Find roots
         roots = [];
         for n in nodes_data {
             if not n["id"] in has_parent {
@@ -104,7 +92,6 @@ def:pub Workbench {
             }
         }
 
-        # BFS for levels
         queue = [];
         for r in roots {
             queue.push({"id": r, "level": 0});
@@ -112,8 +99,7 @@ def:pub Workbench {
         
         layouted_nodes = [];
         visited = {};
-        
-        level_counts = {}; # Track how many nodes in each level for X positioning
+        level_counts = {};
         max_level = 0;
 
         while queue.length > 0 {
@@ -130,20 +116,15 @@ def:pub Workbench {
             }
             visited[cid] = True;
 
-            # Assign position
             if not lvl in level_counts {
                 level_counts[lvl] = 0;
             }
             
-            x_pos = level_counts[lvl] * 200; # 200px spacing
-            y_pos = lvl * 150; # 150px spacing
+            x_pos = level_counts[lvl] * 200;
+            y_pos = lvl * 150;
             level_counts[lvl] += 1;
 
-            # Create ReactFlow Node
             raw_node = node_map[cid];
-            is_best = False; # visual hint?
-            
-            # Label
             label_val = (raw_node["value"] or 0).toFixed(4);
             
             layouted_nodes.push({
@@ -151,9 +132,9 @@ def:pub Workbench {
                 "position": {"x": x_pos, "y": y_pos},
                 "data": {"label": f"Kernel_{cid}\n{label_val} ms"},
                 "style": {
-                    "background": "#18181b", # zinc-900
-                    "color": "#e4e4e7", # zinc-200
-                    "border": "1px solid #3f3f46", # zinc-700
+                    "background": "#18181b",
+                    "color": "#e4e4e7",
+                    "border": "1px solid #3f3f46",
                     "borderRadius": "8px",
                     "padding": "10px",
                     "fontSize": "12px",
@@ -164,36 +145,12 @@ def:pub Workbench {
                 "type": "default"
             });
 
-            # Add children to queue
             children = children_map[cid] if cid in children_map else [];
             for child_id in children {
                 queue.push({"id": child_id, "level": lvl + 1});
             }
         }
 
-        # Center align levels (heuristic)
-        # Calculate max width of a level
-        max_width = 0;
-        itr_l = 0;
-        while itr_l <= max_level {
-            cnt = level_counts[itr_l] if itr_l in level_counts else 0;
-            w = cnt * 200;
-            if w > max_width {
-                max_width = w;
-            }
-            itr_l += 1;
-        }
-        
-        # Adjust X to center
-        final_nodes = [];
-        for n in layouted_nodes {
-            # Recalculate based on row width? 
-            # For simplicity, keeping left-aligned for now as tree grows right/down usually
-            # But converting to standard format
-            final_nodes.push(n);
-        }
-
-        # Edges
         rf_edges = [];
         for e in edges_data {
             rf_edges.push({
@@ -202,37 +159,21 @@ def:pub Workbench {
                 "target": f"{e['child_id']}",
                 "type": "smoothstep",
                 "animated": True,
-                "style": { "stroke": "#6366f1" } # indigo-500
+                "style": { "stroke": "#6366f1" }
             });
         }
 
-        return {"nodes": final_nodes, "edges": rf_edges};
-    }
-
-    # --- Fetchers ---
-
-    async def fetchOps -> None {
-        setLoadingOps(True);
-        try {
-            ops_resp = await jacSpawn("GetProjectOps", "", {"projectName": projectName});
-            ops_data = ops_resp.reports[0] if ops_resp and ops_resp.reports else None;
-            op_list = ops_data["ops"] if ops_data and "ops" in ops_data else [];
-            setOps(op_list);
-        } except Exception as e {
-            console.error("Failed to fetch ops:", e);
-        } finally {
-            setLoadingOps(False);
-        }
+        return {"nodes": layouted_nodes, "edges": rf_edges};
     }
 
     async def fetchData -> None {
-        if not projectName or not opName { 
+        if not resolvedProjectName or not resolvedOpName { 
             setLoading(False);
             return; 
         }
         setLoading(True);
         try {
-            tree_resp = await jacSpawn("GetMctsTree", "", {"projectName": projectName, "opName": opName});
+            tree_resp = await jacSpawn("GetMctsTree", "", {"projectName": resolvedProjectName, "opName": resolvedOpName});
             tree_data = tree_resp.reports[0] if tree_resp and tree_resp.reports else {};
             
             m_nodes = tree_data["nodes"] if tree_data and "nodes" in tree_data else [];
@@ -243,7 +184,6 @@ def:pub Workbench {
             setNodes(layout["nodes"]);
             setEdges(layout["edges"]);
 
-            # Populate Raw Map
             r_map = {};
             best_node_id = None;
             max_val = -1;
@@ -258,7 +198,6 @@ def:pub Workbench {
             }
             setRawNodes(r_map);
             
-            # Default select best node
             if best_node_id {
                 setSelectedNodeId(best_node_id);
             }
@@ -270,16 +209,12 @@ def:pub Workbench {
         }
     }
 
-    useEffect(lambda -> None { if not opName { fetchOps(); } }, [opName, projectName]);
-    useEffect(lambda -> None { fetchData(); }, [projectName, opName]);
-
-    # --- Actions ---
+    useEffect(lambda -> None { fetchData(); }, [resolvedProjectName, resolvedOpName]);
 
     onNodeClick = useCallback(lambda event: any, node: any -> None {
         setSelectedNodeId(node.id);
     }, []);
 
-    # Highlighting Effect
     useEffect(lambda -> None {
         setNodes(lambda nds: list -> list {
             new_nodes = [];
@@ -296,8 +231,8 @@ def:pub Workbench {
                     "textAlign": "center"
                 };
                 if n.id == selectedNodeId {
-                    new_style["border"] = "2px solid #6366f1"; # indigo-500
-                    new_style["background"] = "rgba(99, 102, 241, 0.1)"; # indigo tint
+                    new_style["border"] = "2px solid #6366f1";
+                    new_style["background"] = "rgba(99, 102, 241, 0.1)";
                     new_style["boxShadow"] = "0 0 10px rgba(99, 102, 241, 0.3)";
                 }
                 new_nodes.push({
@@ -312,36 +247,21 @@ def:pub Workbench {
         });
     }, [selectedNodeId, setNodes]);
 
-    async def handleUpload -> None {
-        try {
-            console.log("Uploading custom kernel...");
-            resp = await jacSpawn("ImportKernel", "", {});
-            console.log("Upload result:", resp);
-            alert("Custom kernel uploaded!"); # Simple feedback
-        } except (e) {
-            console.error("Upload failed", e);
-        }
-    }
 
-    # --- Derived State ---
-    
+
     selectedNodeData = rawNodes[selectedNodeId] if selectedNodeId and selectedNodeId in rawNodes else {};
 
-    # Sorted Nodes for List View
     sortedNodes = [];
     if rawNodes {
-        # Convert map to list
         vals = Object.values(rawNodes);
         for v in vals {
             sortedNodes.push(v);
         }
-        # Sort by value descending
         sortedNodes.sort(lambda a: any, b: any -> int {
             return (b["value"] or 0) - (a["value"] or 0);
         });
     }
 
-    # Generate List View Items
     listViewItems = [];
     if viewMode == "list" {
         idx = 0;
@@ -377,10 +297,8 @@ def:pub Workbench {
         }
     }
 
-    # Iteration Log Logic (Ancestry)
     log_items = [];
     if selectedNodeId and nodes.length > 0 and edges.length > 0 {
-        # Build parent map
         parent_map = {};
         for e in edges {
             parent_map[e.target] = e.source;
@@ -390,76 +308,19 @@ def:pub Workbench {
         while curr {
             n_data = rawNodes[curr];
             if n_data {
-                log_items.unshift(n_data); # Add to front to make Root -> Leaf
+                log_items.unshift(n_data);
             }
             curr = parent_map[curr] if curr in parent_map else None;
         }
     }
 
-    # Format Op Name
-    def format_op(raw: str) -> str {
-        raw_text = raw or "";
-        prefix = "torch_nn_functional_";
-        if raw_text.startswith(prefix) {
-            return "torch.nn.functional." + raw_text.replace(prefix, "");
-        }
-        return raw_text.replace("_", ".");
-    }
-
-    # --- Renders ---
-
     if loading {
         return <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-500">Loading Workbench...</div>;
     }
 
-    if not opName {
-        # (Keep existing Op Selector Logic)
-        op_items = [];
-        for op in ops {
-            op_items.push(
-                <div 
-                    key={op["name"]}
-                    className="p-4 bg-zinc-900 border border-zinc-800 rounded-lg hover:border-indigo-500/50 cursor-pointer transition-all flex justify-between items-center group"
-                    onClick={lambda -> None { navigate(f"/project/{projectName}/workbench/{op['name']}"); }}
-                >
-                    <span className="font-mono text-sm text-zinc-300 group-hover:text-white">{format_op(op["name"])}</span>
-                    <span className="text-xs text-zinc-600 bg-zinc-950 px-2 py-1 rounded">{op["count"]} {" calls"}</span>
-                </div>
-            );
-        }
-        return 
-            <div className="flex-1 flex flex-col p-8 bg-zinc-900 text-zinc-100 h-screen overflow-hidden">
-                <div className="mb-8">
-                    <h2 className="text-2xl font-bold text-white mb-2">Workbench</h2>
-                    <p className="text-zinc-400">Select an operator to explore.</p>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto pb-20">
-                    {op_items}
-                    {
-                        <div className="col-span-full text-center text-zinc-500 py-12 italic">
-                            Loading operators...
-                        </div>
-                        if loadingOps
-                        else
-                        <div className="col-span-full text-center text-zinc-500 py-12 italic">
-                            No operators found.
-                        </div>
-                        if ops.length == 0
-                        else <span></span>
-                    }
-                </div>
-            </div>;
-    }
-
-    # --- Main Split Layout ---
-
     return
         <div className="flex h-screen w-full bg-zinc-950 text-zinc-100 overflow-hidden">
-            
-            # Left Panel: Code (Top) + Log (Bottom)
             <div className="w-1/2 flex flex-col border-r border-zinc-800">
-                
-                # Code Section (Flex grow)
                 <div className="flex-1 flex flex-col min-h-0 border-b border-zinc-800">
                     <div className="h-10 bg-zinc-900/50 border-b border-zinc-800 flex items-center px-4 justify-between">
                         <span className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2">
@@ -476,8 +337,6 @@ def:pub Workbench {
                     </div>
                 </div>
 
-                # Log Section (Fixed height or flex?) - "Below that... entire log... scrollable but start at selected node on bottom"
-                # Let's make it 40% height
                 <div className="h-[40%] flex flex-col bg-zinc-900/20">
                     <div className="h-10 bg-zinc-900/50 border-b border-zinc-800 flex items-center px-4">
                         <span className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2">
@@ -485,10 +344,6 @@ def:pub Workbench {
                         </span>
                     </div>
                     <div className="flex-1 overflow-y-auto p-4 space-y-2 flex flex-col-reverse"> 
-                        # flex-col-reverse to have scroll start at bottom? No, typically "scroll to bottom" means the latest item is at the bottom and view is there.
-                        # Standard list, iterate normal order.
-                        
-                        {
                         {
                             [
                                 <div 
@@ -511,18 +366,12 @@ def:pub Workbench {
                                 for item in log_items
                             ]
                         }
-                        }
                     </div>
                 </div>
             </div>
 
-            # Right Panel: Tree (Top) + Info (Middle) + Button (Bottom)
             <div className="w-1/2 flex flex-col bg-zinc-950">
-                
-                # Tree Viz (Top, 50%)
-                # Tree Viz (Top, 50%)
                 <div className="h-[50%] border-b border-zinc-800 relative bg-[#09090b]">
-                    # View Toggle
                     <div className="absolute top-2 left-2 z-10 bg-zinc-900/90 rounded-lg border border-zinc-800 p-1 flex gap-1 shadow-lg">
                         <button 
                             className={"px-3 py-1.5 text-xs font-bold rounded transition-all " + ("bg-zinc-700 text-white shadow-sm" if viewMode == "graph" else "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50")}
@@ -567,7 +416,6 @@ def:pub Workbench {
                     }
                 </div>
 
-                # Info Panel (Middle, Flex)
                 <div className="flex-1 p-6 overflow-y-auto">
                     <div className="flex justify-between items-center mb-4 border-b border-zinc-800 pb-2">
                         <h3 className="text-lg font-bold text-white flex items-center gap-2">
@@ -604,23 +452,11 @@ def:pub Workbench {
                         if selectedNodeId 
                         else <div className="text-zinc-500 text-sm italic">Select a node from the tree to view details.</div>
                     }
-
                 </div>
 
-                # Upload Button (Bottom)
                 <div className="p-4 border-t border-zinc-800 bg-zinc-900/30">
-                    <button 
-                        className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg transition-all shadow-lg hover:shadow-indigo-500/20 flex items-center justify-center gap-2"
-                        onClick={handleUpload}
-                    >
-                        <CpuIcon className="w-5 h-5" />
-                        Upload New Kernel
-                    </button>
-                    <div className="text-center mt-2 text-[10px] text-zinc-500">
-                        Uploads the current kernel as a new root for optimization.
-                    </div>
+                    <NewKernel projectName={resolvedProjectName} />
                 </div>
-
             </div>
         </div>;
 }
