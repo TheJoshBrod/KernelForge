@@ -123,7 +123,7 @@ def:pub KernelWorkbench {
             level_counts[lvl] += 1;
 
             raw_node = node_map[cid];
-            label_val = (raw_node["value"] or 0).toFixed(4);
+            label_val = Number(raw_node["value"] or 0).toFixed(4);
 
             layouted_nodes.push(
                 {
@@ -301,7 +301,7 @@ def:pub KernelWorkbench {
                         className="font-mono text-emerald-400 text-sm font-bold flex-1"
                     >
                         <span>
-                            {(n["value"] or 0).toFixed(6)}
+                            {Number(n["value"] or 0).toFixed(6)}
                         </span>
                         <span>
                             {" ms"}
@@ -353,7 +353,7 @@ def:pub KernelWorkbench {
                         kernel_{item["id"]}
                     </span>
                     <span className="text-emerald-400 font-mono">
-                        {(item["value"] or 0).toFixed(4)}
+                        {Number(item["value"] or 0).toFixed(4)}
                     </span>
                 </div>
                 <div className="text-zinc-400">
@@ -511,7 +511,7 @@ def:pub KernelWorkbench {
                                 Reward
                             </span>
                             <span className="font-mono text-emerald-400">
-                                {(selectedNodeData["value"] or 0).toFixed(6)}
+                                {Number(selectedNodeData["value"] or 0).toFixed(6)}
                             </span>
                         </div>
                         <div className="flex justify-between items-center">
@@ -519,7 +519,7 @@ def:pub KernelWorkbench {
                                 Best Subtree
                             </span>
                             <span className="font-mono text-purple-400">
-                                {(selectedNodeData["best_subtree_value"] or 0).toFixed(
+                                {Number(selectedNodeData["best_subtree_value"] or 0).toFixed(
                                     6
                                 )}
                             </span>

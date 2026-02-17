@@ -213,7 +213,9 @@ def:pub Dashboard {
     useEffect(lambda -> None { fetchSystemInfo();}, [config]);
 
     # Helper for hardware status
-    hardwareStatus = "Unknown";
+    hardwareStatus = "Scanning...";
+    activeBackend = "CPU";
+    gpu_name = "";
     gpus = systemInfo["gpus"] if systemInfo and "gpus" in systemInfo else [];
     selected_idx = config["selected_gpu_index"]
     if config and "selected_gpu_index" in config
@@ -224,51 +226,51 @@ def:pub Dashboard {
     gpu_compute = "";
     gpu_sms = "";
 
+    display_gpu = None;
+    auto_gpu = False;
     if config and "selected_gpu_info" in config and config["selected_gpu_info"] {
-        gpu_info = config["selected_gpu_info"];
-        gpu_name = gpu_info["name"] if "name" in gpu_info else "Unknown GPU";
-        gpu_mem = gpu_info["memory"] if "memory" in gpu_info else "";
-        gpu_compute = gpu_info["compute_capability"]
-        if "compute_capability" in gpu_info
-        else "";
-        gpu_sms = f"{gpu_info['sm_count']}" if "sm_count" in gpu_info else "";
-        hardwareStatus = gpu_name;
+        display_gpu = config["selected_gpu_info"];
     } elif selected_idx != -1 and selected_idx < gpus.length {
-        selected_gpu = gpus[selected_idx];
-        gpu_name = selected_gpu["name"] if "name" in selected_gpu else "Unknown GPU";
-        gpu_mem = selected_gpu["memory"] if "memory" in selected_gpu else "";
-        gpu_compute = selected_gpu["compute_capability"]
-        if "compute_capability" in selected_gpu
-        else "";
-        gpu_sms = f"{selected_gpu['sm_count']}" if "sm_count" in selected_gpu else "";
-        hardwareStatus = gpu_name;
+        display_gpu = gpus[selected_idx];
     } elif gpus.length > 0 {
-        hardwareStatus = "No GPU Selected (using CPU)";
+        display_gpu = gpus[0];
+        auto_gpu = True;
+    }
+
+    if display_gpu {
+        conn = display_gpu["connection"] if "connection" in display_gpu else "local";
+        gpu_name = display_gpu["name"] if "name" in display_gpu else "Unknown GPU";
+        gpu_mem = display_gpu["memory"] if "memory" in display_gpu else "";
+        gpu_compute = display_gpu["compute_capability"]
+        if "compute_capability" in display_gpu
+        else "";
+        gpu_sms = f"{display_gpu['sm_count']}" if "sm_count" in display_gpu else "";
+        suffix = " (Auto)" if auto_gpu else "";
+        hardwareStatus = f"{gpu_name}{suffix}";
+        if conn and conn != "local" {
+            hardwareStatus = hardwareStatus + f" ({conn})";
+        }
+        activeBackend = "CUDA";
     } else {
-        # Fallback to detection if no settings found (or just show checking)
+        # Fallback to detection if we have no detailed GPU list
         if hardwareInfo
         and "mps_available" in hardwareInfo
         and hardwareInfo["mps_available"] {
             hardwareStatus = "MPS: Apple Silicon";
+            activeBackend = "MPS";
         } elif hardwareInfo and "cuda_available" in hardwareInfo {
             if hardwareInfo["cuda_available"] {
                 gpu_name = hardwareInfo["device_name"] or "GPU";
-                if selected_idx == -1 {
-                    hardwareStatus = f"CUDA: {gpu_name} (Auto)";
-                }
+                hardwareStatus = f"CUDA: {gpu_name} (Auto)";
+                activeBackend = "CUDA";
             } else {
                 hardwareStatus = "CPU Only";
+                activeBackend = "CPU";
             }
         } else {
             hardwareStatus = "Scanning...";
+            activeBackend = "CPU";
         }
-    }
-
-    activeBackend = "CPU";
-    if hardwareStatus.startswith("MPS") {
-        activeBackend = "MPS";
-    } elif hardwareStatus.startswith("CUDA") or gpu_mem {
-        activeBackend = "CUDA";
     }
 
     # Helper for Status Cards
