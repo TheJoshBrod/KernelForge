@@ -3,11 +3,9 @@
 import from "../../../../components/ui/Icons.cl.jac" { UploadIcon }
 
 def:pub UploadTrigger(props: any) {
-    console.log("UploadTrigger: Render", props);
     onUpload = props.onUpload;
 
     def handleClick -> None {
-        console.log("UploadTrigger: handleClick", onUpload);
         if onUpload { onUpload(); }
     }
 

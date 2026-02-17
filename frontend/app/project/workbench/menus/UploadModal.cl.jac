@@ -46,15 +46,12 @@ def:pub UploadModal(props: any) {
 
         setIsLoading(True);
         try {
-            console.log("Importing kernel...", {backend, code});
-            
             # Call the ImportKernel walker with the code and backend
             resp = await jacSpawn("ImportKernel", "", {
                 "source": code,
                 "backend": backend
             });
             
-            console.log("Upload result:", resp);
             alert("Kernel created successfully!"); 
             
             onClose();
