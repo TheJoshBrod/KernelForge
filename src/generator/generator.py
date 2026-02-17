@@ -124,7 +124,7 @@ def chatgpt_generator(conversation_history: list, model: str = "gpt-4o", outputI
     print("Generating code...")
     sys_prompt = src.generator.prompts.prompts.get_system_prompt()
 
-    conversation_history.insert(0, sys_prompt)
+    conversation_history.insert(0, {"role": "system", "content": sys_prompt})
     response = client.chat.completions.create(
         model=model,
         messages=conversation_history
