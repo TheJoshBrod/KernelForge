@@ -1,7 +1,6 @@
 """Project Page Component"""
 
 import from react { useEffect }
-import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate, useParams }
 import from recharts {
     PieChart,
@@ -15,11 +14,9 @@ import from recharts {
     Legend,
     ResponsiveContainer
 }
-import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
-    GameOfLifeBackground
-}
-import from "../../components/ui/GlowButton.cl.jac" { GlowButton }
-import from "../../components/ui/Icons.cl.jac" { CGinSLogo }
+import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from ...components.ui.GlowButton { GlowButton }
+import from ...components.ui.Icons { CGinSLogo }
 
 def:pub Project {
     navigate = useNavigate();
@@ -64,7 +61,7 @@ def:pub Project {
         loading = True;
         try {
             if name {
-                resp = await jacSpawn("GetProjectOps", "", {"projectName": name});
+                resp = await __jacSpawn("GetProjectOps", "", {"projectName": name});
                 data = resp.reports[0]
                 if resp and resp.reports and resp.reports.length > 0
                 else None;
@@ -76,8 +73,8 @@ def:pub Project {
             } else {
                 ops = [];
             }
-        } except (error) {
-            console.error("Failed to fetch ops:", error);
+        } except Exception as e {
+            console.error("Failed to fetch ops:", e);
             ops = [];
         } finally {
             loading = False;
@@ -87,7 +84,7 @@ def:pub Project {
     async def refreshStatus -> None {
         try {
             if name {
-                resp = await jacSpawn("GetProjectStatus", "", {"projectName": name});
+                resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name});
                 data = resp.reports[0]
                 if resp and resp.reports and resp.reports.length > 0
                 else {};
@@ -101,8 +98,8 @@ def:pub Project {
             } else {
                 status = {};
             }
-        } except (error) {
-            console.error("Failed to fetch status:", error);
+        } except Exception as e {
+            console.error("Failed to fetch status:", e);
             status = {};
         }
     }
@@ -114,7 +111,7 @@ def:pub Project {
         advLogLoading = True;
         try {
             rel_path = f"projects/{name}/logs/generate_adv.log";
-            resp = await jacSpawn(
+            resp = await __jacSpawn(
                 "ReadRepoFile", "", {"projectName": name, "relPath": rel_path}
             );
             data = resp.reports[0]
@@ -131,8 +128,8 @@ def:pub Project {
             } else {
                 advLog = "";
             }
-        } except (error) {
-            console.error("Failed to fetch advanced log:", error);
+        } except Exception as e {
+            console.error("Failed to fetch advanced log:", e);
             advLog = "";
         } finally {
             advLogLoading = False;
@@ -143,7 +140,7 @@ def:pub Project {
         benchLoading = True;
         try {
             if name {
-                resp = await jacSpawn(
+                resp = await __jacSpawn(
                     "GetProjectBenchmarks", "", {"projectName": name}
                 );
                 data = resp.reports[0]
@@ -160,8 +157,8 @@ def:pub Project {
             } else {
                 benchResults = [];
             }
-        } except (error) {
-            console.error("Failed to fetch benchmarks:", error);
+        } except Exception as e {
+            console.error("Failed to fetch benchmarks:", e);
             benchResults = [];
         } finally {
             benchLoading = False;
@@ -177,7 +174,7 @@ def:pub Project {
     async def detectHardware -> None {
         hardwareLoading = True;
         try {
-            resp = await jacSpawn("DetectHardware", "", {});
+            resp = await __jacSpawn("DetectHardware", "", {});
             data = resp.reports[0]
             if resp and resp.reports and resp.reports.length > 0
             else {};
@@ -193,8 +190,8 @@ def:pub Project {
                     targetDevice = "cuda";
                 }
             }
-        } except (error) {
-            console.error("Failed to detect hardware:", error);
+        } except Exception as e {
+            console.error("Failed to detect hardware:", e);
             hardwareInfo = {};
         } finally {
             hardwareLoading = False;
@@ -211,14 +208,14 @@ def:pub Project {
 
     async def handleProfile -> None {
         if name {
-            await jacSpawn("StartProfile", "", {"projectName": name});
+            await __jacSpawn("StartProfile", "", {"projectName": name});
             await refreshStatus();
         }
     }
 
     async def handleGenerate -> None {
         if name {
-            await jacSpawn("StartGenerate", "", {"projectName": name});
+            await __jacSpawn("StartGenerate", "", {"projectName": name});
             await refreshStatus();
         }
     }
@@ -236,7 +233,7 @@ def:pub Project {
                 }
             }
             advLog = "";
-            await jacSpawn(
+            await __jacSpawn(
                 "StartGenerateAdvanced",
                 "",
                 {
@@ -269,7 +266,7 @@ def:pub Project {
                     }
                 }
             }
-            await jacSpawn(
+            await __jacSpawn(
                 "StartOptimizeAdvanced",
                 "",
                 {
@@ -289,14 +286,14 @@ def:pub Project {
 
     async def handleOptimize -> None {
         if name {
-            await jacSpawn("StartOptimize", "", {"projectName": name});
+            await __jacSpawn("StartOptimize", "", {"projectName": name});
             await refreshStatus();
         }
     }
 
     async def handleBenchmark -> None {
         if name {
-            await jacSpawn("StartBenchmark", "", {"projectName": name});
+            await __jacSpawn("StartBenchmark", "", {"projectName": name});
             await refreshStatus();
             await refreshBench();
         }
@@ -304,7 +301,7 @@ def:pub Project {
 
     async def setJobControl(jobKey: str, action: str) -> None {
         if name {
-            await jacSpawn(
+            await __jacSpawn(
                 "SetJobControl",
                 "",
                 {"projectName": name, "jobKey": jobKey, "action": action}
@@ -325,7 +322,7 @@ def:pub Project {
                 }
                 export_ops = winners;
             }
-            resp = await jacSpawn(
+            resp = await __jacSpawn(
                 "ExportProject", "", {"projectName": name, "ops": export_ops}
             );
             result = resp.reports[0]
@@ -351,7 +348,7 @@ def:pub Project {
                     }
                     export_ops = winners;
                 }
-                resp = await jacSpawn(
+                resp = await __jacSpawn(
                     "DownloadExport", "", {"projectName": name, "ops": export_ops}
                 );
                 data = resp.reports[0]
@@ -369,8 +366,8 @@ def:pub Project {
                     link.click();
                     URL.revokeObjectURL(url);
                 }
-            } except (error) {
-                console.error("Failed to download export:", error);
+            } except Exception as e {
+                console.error("Failed to download export:", e);
             } finally {
                 downloading = False;
             }

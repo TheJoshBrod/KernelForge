@@ -1,12 +1,9 @@
 """Op Details Component"""
 
 import from react { useEffect }
-import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate, useParams }
-import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
-    GameOfLifeBackground
-}
-import from "../../components/ui/Icons.cl.jac" { CGinSLogo }
+import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from ...components.ui.Icons { CGinSLogo }
 
 def:pub OpDetails {
     navigate = useNavigate();
@@ -29,7 +26,7 @@ def:pub OpDetails {
             return;
         }
         try {
-            resp = await jacSpawn(
+            resp = await __jacSpawn(
                 "GetOpDetails", "", {"projectName": projectName, "opName": opName}
             );
             data = resp.reports[0]
@@ -40,8 +37,8 @@ def:pub OpDetails {
             } else {
                 errorMsg = "No data returned.";
             }
-        } except (error) {
-            console.error("Failed to load op details:", error);
+        } except Exception as e {
+            console.error("Failed to load op details:", e);
             errorMsg = "Failed to load op details.";
         } finally {
             loading = False;
@@ -59,7 +56,7 @@ def:pub OpDetails {
             return;
         }
         try {
-            resp = await jacSpawn(
+            resp = await __jacSpawn(
                 "ReadRepoFile",
                 "",
                 {"projectName": projectName, "relPath": file["path"]}
@@ -72,8 +69,8 @@ def:pub OpDetails {
             } else {
                 fileContent = data["error"] if data else "Failed to read file.";
             }
-        } except (error) {
-            console.error("Failed to read file:", error);
+        } except Exception as e {
+            console.error("Failed to read file:", e);
             fileContent = "Failed to read file.";
         }
     }

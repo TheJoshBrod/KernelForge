@@ -2,10 +2,9 @@
 
 import from react { useState }
 import from "react-router-dom" { useNavigate }
-import from "@jac/runtime" { jacSpawn }
-import from "../../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
-import from "./SSHSettings.cl.jac" { SSHSettings }
-import from "../../context/ConfigContext.cl.jac" { useConfig }
+import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from .SSHSettings { SSHSettings }
+import from ...context.ConfigContext { useConfig }
 
 def:pub SshPage {
     navigate = useNavigate();
@@ -25,7 +24,7 @@ def:pub SshPage {
         new_connections = config["ssh_connections"]
         if "ssh_connections" in config
         else [];
-       
+
         new_connections.push(connection);
 
         new_config = {** config};
@@ -85,7 +84,7 @@ def:pub SshPage {
         host: str, user: str, password: str, key_path: str
     ) -> dict {
         try {
-            resp = await jacSpawn(
+            resp = await __jacSpawn(
                 "CheckSshConnection",
                 "",
                 {
@@ -103,9 +102,9 @@ def:pub SshPage {
                 return data;
             }
             return {"success": False, "error": "No response"};
-        } except (error) {
-            console.error("SSH Check failed", error);
-            return {"success": False, "error": str(error)};
+        } except Exception as e {
+            console.error("SSH Check failed", e);
+            return {"success": False, "error": str(e)};
         }
     }
 
