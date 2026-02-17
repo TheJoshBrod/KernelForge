@@ -13,7 +13,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from src.optimizer.GPUprofiler import load_batch, get_module
+from src.optimizer.backends.cuda.profiler import load_batch, get_module
 from src.progress import update_job_progress, wait_if_paused, check_cancelled
 
 
