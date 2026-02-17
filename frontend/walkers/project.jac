@@ -10,7 +10,6 @@ import subprocess;
 import os;
 import sqlite3;
 
-
 import from .globals { repo_root, config_path, config_store }
 
 # --- Helpers ---
@@ -352,7 +351,7 @@ walker:pub CreateProject {
             project_path = path.join(projects_dir, self.projectName);
 
             if path.exists(project_path) {
-                report {"error": "Project already exists", "success": False};
+                report {"error": "Project already exists", "success": False} ;
                 disengage;
             }
 
@@ -471,10 +470,10 @@ walker:pub CreateProject {
                 "name": self.projectName,
                 "profile": profile_result,
                 "prepare": prepare_result
-            };
+            } ;
         } except Exception as e {
             print(f"Error creating project: {e}");
-            report {"error": "Failed to create project", "success": False};
+            report {"error": "Failed to create project", "success": False} ;
         }
     }
 }
@@ -484,7 +483,7 @@ walker:pub GetProjects {
         try {
             projects_dir = path.join(repo_root, "projects");
             if not path.exists(projects_dir) {
-                report {"projects": []};
+                report {"projects": []} ;
                 disengage;
             }
 
@@ -495,10 +494,10 @@ walker:pub GetProjects {
                     projects.append({"name": name});
                 }
             }
-            report {"projects": projects};
+            report {"projects": projects} ;
         } except Exception as e {
             print(f"Error listing projects: {e}");
-            report {"projects": []};
+            report {"projects": []} ;
         }
     }
 }
@@ -512,7 +511,7 @@ walker:pub GetProjectOps {
                 repo_root, "projects", self.projectName, "io", "individual_ops"
             );
             if not path.exists(base_dir) {
-                report {"ops": []};
+                report {"ops": []} ;
                 disengage;
             }
 
@@ -523,7 +522,11 @@ walker:pub GetProjectOps {
                     count = 0;
                     # Quick count: list only entry files
                     try {
-                        entries = [f for f in listdir(full_path) if f.startswith("entry_") and f.endswith(".pt")];
+                        entries = [
+                            f
+                            for f in listdir(full_path)
+                            if f.startswith("entry_") and f.endswith(".pt")
+                        ];
                         count = entries.length;
                     } except Exception {
                         count = 0;
@@ -532,10 +535,10 @@ walker:pub GetProjectOps {
                 }
             }
 
-            report {"ops": ops};
+            report {"ops": ops} ;
         } except Exception as e {
             print(f"Error listing ops: {e}");
-            report {"ops": []};
+            report {"ops": []} ;
         }
     }
 }
@@ -545,7 +548,7 @@ walker:pub GetProjectStatus {
 
     can return_status with `root entry {
         state = _read_state(self.projectName);
-        report state;
+        report state ;
     }
 }
 
@@ -565,14 +568,14 @@ walker:pub SetJobControl {
             } elif action == "cancel" {
                 updates = {"control": "cancelled", "status": "cancelled"};
             } else {
-                report {"success": False, "error": "Unknown action"};
+                report {"success": False, "error": "Unknown action"} ;
                 disengage;
             }
             _update_job_state(self.projectName, self.jobKey, updates);
-            report {"success": True};
+            report {"success": True} ;
         } except Exception as e {
             print(f"Error setting job control: {e}");
-            report {"success": False, "error": "Failed to update job state"};
+            report {"success": False, "error": "Failed to update job state"} ;
         }
     }
 }
@@ -588,7 +591,7 @@ walker:pub StartProfile {
             self.projectName
         ];
         result = _start_job(self.projectName, "profile", cmd, "profile.log");
-        report result;
+        report result ;
     }
 }
 
@@ -609,7 +612,7 @@ walker:pub StartGenerate {
             out_dir
         ];
         result = _start_job(self.projectName, "generate", cmd, "generate.log");
-        report result;
+        report result ;
     }
 }
 
@@ -684,7 +687,7 @@ walker:pub StartGenerateAdvanced {
                     "generate_adv",
                     {"status": "error", "message": "No ops selected or discovered."}
                 );
-                report {"success": False, "error": "No ops selected or discovered."};
+                report {"success": False, "error": "No ops selected or discovered."} ;
                 disengage;
             }
             io_root = path.join(_project_dir(self.projectName), "io", "individual_ops");
@@ -715,7 +718,7 @@ walker:pub StartGenerateAdvanced {
                     "generate_adv",
                     {"status": "error", "message": error_msg}
                 );
-                report {"success": False, "error": error_msg};
+                report {"success": False, "error": error_msg} ;
                 disengage;
             }
 
@@ -779,7 +782,7 @@ walker:pub StartGenerateAdvanced {
             result = _start_job_container(
                 self.projectName, "generate_adv", cmd, "generate_adv.log", self.image
             );
-            report result;
+            report result ;
         } except Exception as e {
             print(f"StartGenerateAdvanced failed: {e}");
             _update_job_state(
@@ -787,7 +790,7 @@ walker:pub StartGenerateAdvanced {
                 "generate_adv",
                 {"status": "error", "message": f"StartGenerateAdvanced failed: {e}"}
             );
-            report {"success": False, "error": "StartGenerateAdvanced failed."};
+            report {"success": False, "error": "StartGenerateAdvanced failed."} ;
         }
     }
 }
@@ -860,7 +863,7 @@ walker:pub StartOptimizeAdvanced {
                     "optimize_adv",
                     {"status": "error", "message": "No ops selected or discovered."}
                 );
-                report {"success": False, "error": "No ops selected or discovered."};
+                report {"success": False, "error": "No ops selected or discovered."} ;
                 disengage;
             }
             io_root = path.join(_project_dir(self.projectName), "io", "individual_ops");
@@ -891,7 +894,7 @@ walker:pub StartOptimizeAdvanced {
                     "optimize_adv",
                     {"status": "error", "message": error_msg}
                 );
-                report {"success": False, "error": error_msg};
+                report {"success": False, "error": error_msg} ;
                 disengage;
             }
 
@@ -947,7 +950,7 @@ walker:pub StartOptimizeAdvanced {
             result = _start_job_container(
                 self.projectName, "optimize_adv", cmd, "optimize_adv.log", self.image
             );
-            report result;
+            report result ;
         } except Exception as e {
             print(f"StartOptimizeAdvanced failed: {e}");
             _update_job_state(
@@ -955,7 +958,7 @@ walker:pub StartOptimizeAdvanced {
                 "optimize_adv",
                 {"status": "error", "message": f"StartOptimizeAdvanced failed: {e}"}
             );
-            report {"success": False, "error": "StartOptimizeAdvanced failed."};
+            report {"success": False, "error": "StartOptimizeAdvanced failed."} ;
         }
     }
 }
@@ -986,7 +989,7 @@ walker:pub StartOptimize {
             kernel_dir
         ];
         result = _start_job(self.projectName, "optimize", cmd, "optimize.log");
-        report result;
+        report result ;
     }
 }
 
@@ -1001,7 +1004,7 @@ walker:pub StartBenchmark {
             self.projectName
         ];
         result = _start_job(self.projectName, "benchmark", cmd, "benchmark.log");
-        report result;
+        report result ;
     }
 }
 
@@ -1011,7 +1014,7 @@ walker:pub ExportProject {
 
     can run with `root entry {
         result = _export_project_zip(self.projectName, self.ops);
-        report result;
+        report result ;
     }
 }
 
@@ -1077,7 +1080,7 @@ walker:pub GetOpDetails {
                 "kernels": opt_kernels,
                 "logs": opt_logs
             }
-        };
+        } ;
     }
 }
 
@@ -1088,13 +1091,13 @@ walker:pub ReadRepoFile {
     can run with `root entry {
         try {
             if not _is_allowed_repo_path(self.relPath, self.projectName) {
-                report {"success": False, "error": "Path not allowed"};
+                report {"success": False, "error": "Path not allowed"} ;
                 disengage;
             }
             safe_rel = path.normpath(self.relPath);
             full_path = path.join(repo_root, safe_rel);
             if not path.exists(full_path) {
-                report {"success": False, "error": "File not found"};
+                report {"success": False, "error": "File not found"} ;
                 disengage;
             }
             with open(full_path, "r", encoding="utf-8", errors="ignore") as f {
@@ -1104,10 +1107,10 @@ walker:pub ReadRepoFile {
                 "success": True,
                 "content": content,
                 "name": path.basename(full_path)
-            };
+            } ;
         } except Exception as e {
             print(f"Error reading file: {e}");
-            report {"success": False, "error": "Failed to read file"};
+            report {"success": False, "error": "Failed to read file"} ;
         }
     }
 }
@@ -1120,7 +1123,7 @@ walker:pub DownloadExport {
         if self.ops and self.ops.length > 0 {
             export_result = _export_project_zip(self.projectName, self.ops);
             if not export_result["success"] {
-                report export_result;
+                report export_result ;
                 disengage;
             }
             export_path = export_result["path"];
@@ -1133,7 +1136,7 @@ walker:pub DownloadExport {
             if not path.exists(export_path) {
                 export_result = _export_project_zip(self.projectName, []);
                 if not export_result["success"] {
-                    report export_result;
+                    report export_result ;
                     disengage;
                 }
                 export_path = export_result["path"];
@@ -1143,7 +1146,7 @@ walker:pub DownloadExport {
             data = f.read();
         }
         b64 = b64encode(data).decode("utf-8");
-        report {"success": True, "name": path.basename(export_path), "data": b64};
+        report {"success": True, "name": path.basename(export_path), "data": b64} ;
     }
 }
 
@@ -1155,7 +1158,7 @@ walker:pub GetProjectBenchmarks {
             _project_dir(self.projectName), "benchmarks", "op_benchmarks.json"
         );
         if not path.exists(bench_path) {
-            report {"results": [], "winners": []};
+            report {"results": [], "winners": []} ;
             disengage;
         }
         try {
@@ -1169,10 +1172,10 @@ walker:pub GetProjectBenchmarks {
                     winners.append(r["op"]);
                 }
             }
-            report {"results": results, "winners": winners};
+            report {"results": results, "winners": winners} ;
         } except Exception as e {
             print(f"Error reading benchmarks: {e}");
-            report {"results": [], "winners": []};
+            report {"results": [], "winners": []} ;
         }
     }
 }
@@ -1189,28 +1192,28 @@ walker:pub GetMctsTree {
             # Filler Data for Demonstration if DB doesn't exist
             filler_nodes = [
                 {
-                    "id": 1, 
-                    "visits": 150, 
-                    "value": 0.85, 
-                    "best_subtree_value": 0.92, 
+                    "id": 1,
+                    "visits": 150,
+                    "value": 0.85,
+                    "best_subtree_value": 0.92,
                     "improvement_description": "Root state: Initial Triton implementation with default tiling.",
                     "code": "// [START kernel.cu]\n#include <cuda.h>\n#include <cuda_runtime.h>\n#include <torch/extension.h>\n\n// ============ DEVICE CODE (CUDA kernels only) ============\n\ntemplate <typename scalar_t>\n__global__ void adaptive_avg_pool2d_kernel(\n    const scalar_t* __restrict__ input,\n    scalar_t* __restrict__ output,\n    int batch_size,\n    int channels,\n    int input_height,\n    int input_width,\n    int output_height,\n    int output_width\n) {\n    // Each thread handles one output element\n    int idx = blockIdx.x * blockDim.x + threadIdx.x;\n    int total_elements = batch_size * channels * output_height * output_width;\n    \n    if (idx >= total_elements) return;\n    \n    // Decode indices\n    int ow = idx % output_width;\n    int oh = (idx / output_width) % output_height;\n    int c = (idx / (output_width * output_height)) % channels;\n    int b = idx / (output_width * output_height * channels);\n    \n    // Compute input pooling region\n    int ih_start = (oh * input_height) / output_height;\n    int ih_end = ((oh + 1) * input_height + output_height - 1) / output_height;\n    \n    int iw_start = (ow * input_width) / output_width;\n    int iw_end = ((ow + 1) * input_width + output_width - 1) / output_width;\n    \n    // Clamp to valid range\n    ih_end = min(ih_end, input_height);\n    iw_end = min(iw_end, input_width);\n    \n    // Compute average over the region\n    scalar_t sum = 0;\n    int count = 0;\n    \n    for (int ih = ih_start; ih < ih_end; ++ih) {\n        for (int iw = iw_start; iw < iw_end; ++iw) {\n            int input_idx = b * (channels * input_height * input_width) +\n                          c * (input_height * input_width) +\n                          ih * input_width +\n                          iw;\n            sum += input[input_idx];\n            count++;\n        }\n    }\n    \n    output[idx] = (count > 0) ? (sum / static_cast<scalar_t>(count)) : static_cast<scalar_t>(0);\n}\n\n// ============ HOST CODE ============\n\ntorch::Tensor launch(torch::Tensor input, std::vector<int64_t> output_size) {\n    // 1. Input validation\n    TORCH_CHECK(input.is_cuda(), \"input must be a CUDA tensor\");\n    TORCH_CHECK(input.dim() == 4, \"input must be 4D (NCHW)\");\n    TORCH_CHECK(output_size.size() == 2, \"output_size must have 2 elements\");\n    \n    // Make contiguous\n    input = input.contiguous();\n    \n    // Extract dimensions\n    int64_t batch_size = input.size(0);\n    int64_t channels = input.size(1);\n    int64_t input_height = input.size(2);\n    int64_t input_width = input.size(3);\n    int64_t output_height = output_size[0];\n    int64_t output_width = output_size[1];\n    \n    // 2. Output tensor creation\n    auto output = torch::empty({batch_size, channels, output_height, output_width}, \n                               input.options());\n    \n    // 3. Kernel launch parameters\n    int64_t total_elements = batch_size * channels * output_height * output_width;\n    int threads = 256;\n    int blocks = (total_elements + threads - 1) / threads;\n    \n    // 4. Launch kernel with dtype dispatch\n    AT_DISPATCH_FLOATING_TYPES_AND_HALF(input.scalar_type(),     AT_DISPATCH_FLOATING_TYPES_AND_HALF(input.scalar_type(),     AT_DISPATCH_FLOATING_TYPES_AND_HALF(input.scalar_type(), \"adaptive_avg_pool2d_kernel\", ([&] {\n        adaptive_avg_pool2d_kernel<scalar_t><<<blocks, threads>>>(\n            input.data_ptr<scalar_t>(),\n            output.data_ptr<scalar_t>(),\n            batch_size,\n            channels,\n            input_height,\n            input_width,\n            output_height,\n            output_width\n        );\n    }));\n    \n    // Check for errors\n    cudaError_t err = cudaGetLastError();\n    TORCH_CHECK(err == cudaSuccess, \"CUDA kernel launch error: \", cudaGetErrorString(err));\n    \n    // 5. Return tensor\n    return output;\n}\n\n// [END kernel.cu]",
                     "timestamp": 1707782400
                 },
                 {
-                    "id": 2, 
-                    "visits": 45, 
-                    "value": 0.88, 
-                    "best_subtree_value": 0.88, 
+                    "id": 2,
+                    "visits": 45,
+                    "value": 0.88,
+                    "best_subtree_value": 0.88,
                     "improvement_description": "Increased block size to 256 for better occupancy.",
                     "code": "# Optimized variant with BLOCK_SIZE=256\n@triton.jit\ndef kernel(x_ptr, y_ptr, BLOCK_SIZE: tl.constexpr):\n    # ... optimized logic ...",
                     "timestamp": 1707782500
                 },
                 {
-                    "id": 3, 
-                    "visits": 12, 
-                    "value": 0.72, 
-                    "best_subtree_value": 0.72, 
+                    "id": 3,
+                    "visits": 12,
+                    "value": 0.72,
+                    "best_subtree_value": 0.72,
                     "improvement_description": "Trying warp-level shuffle for reduction (failed to improve throughput).",
                     "code": "# Experimental warp shuffle...",
                     "timestamp": 1707782600
@@ -1220,13 +1223,12 @@ walker:pub GetMctsTree {
                 {"parent_id": 1, "child_id": 2},
                 {"parent_id": 1, "child_id": 3}
             ];
-            report {"success": True, "nodes": filler_nodes, "edges": filler_edges};
+            report {"success": True, "nodes": filler_nodes, "edges": filler_edges} ;
             disengage;
         }
 
         mcts_nodes = [];
         edges = [];
-
 
         try {
             # Since Jac can interop with Python, we can use sqlite3 directly
@@ -1235,34 +1237,35 @@ walker:pub GetMctsTree {
             cursor = conn.cursor();
 
             # Fetch nodes
-            cursor.execute("SELECT id, visits, value, best_subtree_value, improvement_description, timestamp, code FROM nodes");
+            cursor.execute(
+                "SELECT id, visits, value, best_subtree_value, improvement_description, timestamp, code FROM nodes"
+            );
             rows = cursor.fetchall();
             for row in rows {
-                mcts_nodes.append({
-                    "id": row[0],
-                    "visits": row[1],
-                    "value": row[2],
-                    "best_subtree_value": row[3],
-                    "improvement_description": row[4],
-                    "timestamp": row[5],
-                    "code": row[6]
-                });
+                mcts_nodes.append(
+                    {
+                        "id": row[0],
+                        "visits": row[1],
+                        "value": row[2],
+                        "best_subtree_value": row[3],
+                        "improvement_description": row[4],
+                        "timestamp": row[5],
+                        "code": row[6]
+                    }
+                );
             }
 
             # Fetch edges
             cursor.execute("SELECT parent_id, child_id FROM edges");
             rows = cursor.fetchall();
             for row in rows {
-                edges.append({
-                    "parent_id": row[0],
-                    "child_id": row[1]
-                });
+                edges.append({"parent_id": row[0], "child_id": row[1]});
             }
 
             conn.close();
-            report {"success": True, "nodes": mcts_nodes, "edges": edges};
+            report {"success": True, "nodes": mcts_nodes, "edges": edges} ;
         } except Exception as e {
-            report {"success": False, "error": str(e)};
+            report {"success": False, "error": str(e)} ;
         }
     }
 }
@@ -1270,7 +1273,7 @@ walker:pub GetMctsTree {
 walker:pub ImportKernel {
     can run with `root entry {
         print("upload!");
-        report {"success": True, "message": "upload!"};
+        report {"success": True, "message": "upload!"} ;
     }
 }
 
@@ -1280,7 +1283,7 @@ walker:pub GetProjectMctsSummary {
     can run with `root entry {
         project_dir = _project_dir(self.projectName);
         trees_dir = path.join(project_dir, "trees");
-        
+
         total_nodes = 0;
         op_summaries = [];
 
@@ -1291,19 +1294,21 @@ walker:pub GetProjectMctsSummary {
                     try {
                         conn = sqlite3.connect(db_path);
                         cursor = conn.cursor();
-                        
+
                         cursor.execute("SELECT COUNT(*) FROM nodes");
                         node_count = cursor.fetchone()[0];
-                        
+
                         cursor.execute("SELECT MAX(value) FROM nodes");
                         best_val = cursor.fetchone()[0] or 0.0;
 
                         total_nodes += node_count;
-                        op_summaries.append({
-                            "op": op_name,
-                            "nodes": node_count,
-                            "best_value": best_val
-                        });
+                        op_summaries.append(
+                            {
+                                "op": op_name,
+                                "nodes": node_count,
+                                "best_value": best_val
+                            }
+                        );
                         conn.close();
                     } except Exception as e {
                         print(f"Error summarying {op_name}: {e}");
@@ -1311,12 +1316,8 @@ walker:pub GetProjectMctsSummary {
                 }
             }
         }
-        
-        report {
-            "success": True, 
-            "total_nodes": total_nodes, 
-            "ops": op_summaries
-        };
+
+        report {"success": True, "total_nodes": total_nodes, "ops": op_summaries} ;
     }
 }
 
@@ -1341,9 +1342,6 @@ walker:pub GetDashboardCharts {
             {"name": "Softmax", "pytorch": 40, "optimized": 8}
         ];
 
-        report {
-            "operator_usage": operator_usage,
-            "speed_comparison": speed_comparison
-        };
+        report {"operator_usage": operator_usage, "speed_comparison": speed_comparison} ;
     }
 }

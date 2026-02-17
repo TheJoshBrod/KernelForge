@@ -32,7 +32,7 @@ import from walkers.project {
 
 cl import from react { useEffect }
 cl import from sonner { Toaster }
-cl import from "react-router-dom" { BrowserRouter as Router, Routes, Route }
+cl import from "react-router-dom" { BrowserRouter as Router, Routes, Route, Navigate }
 cl import from .context.ConfigContext { ConfigProvider }
 cl import from .app.home.Home { Home }
 cl import from .app.settings.SettingsPage { SettingsPage }
@@ -79,6 +79,10 @@ cl {
                                 element={<ProjectLayout />}
                             >
                                 <Route index element={<Dashboard />} />
+                                <Route
+                                    path="settings/*"
+                                    element={<Navigate to="/settings" replace={True} />}
+                                />
                                 <Route path="workbench" element={<Workbench />} />
                                 <Route
                                     path="workbench/:opName"

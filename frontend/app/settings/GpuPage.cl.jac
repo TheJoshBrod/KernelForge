@@ -3,6 +3,7 @@
 import from react { useState, useEffect }
 import from "react-router-dom" { useNavigate }
 import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from ...components.settings.SettingsMenu { SettingsMenu }
 import from ...context.ConfigContext { useConfig }
 
 def:pub GpuPage {
@@ -19,8 +20,6 @@ def:pub GpuPage {
 
     system_info_state = useState({});  # Contains 'gpus' list
     systemInfo = system_info_state[0];
-    setSystemInfo = system_info_state[1];
-
     setSystemInfo = system_info_state[1];
 
     gpus = systemInfo["gpus"] if systemInfo and "gpus" in systemInfo else [];
@@ -136,6 +135,7 @@ def:pub GpuPage {
                         Select your active GPU
                     </p>
                 </div>
+                <SettingsMenu />
                 <div className="space-y-4">
                     <div className="space-y-2">
                         <div className="text-sm font-semibold text-zinc-300">

@@ -11,11 +11,11 @@ walker:pub GetConfig {
             print(f"DEBUG: Loading config from {abs_path}");
             with open(config_path, "r") as f {
                 config = load(f);
-                report config;
+                report config ;
             }
         } except Exception as e {
             print(f"Error loading config: {e}");
-            report config_store;
+            report config_store ;
         }
     }
 }
@@ -30,11 +30,11 @@ walker:pub SaveConfig {
                 dump(self.cfg, f, indent=2);
                 global config_store;
                 config_store = self.cfg;
-                report True;
+                report True ;
             }
         } except Exception as e {
             print(f"Error saving config: {e}");
-            report False;
+            report False ;
         }
     }
 }

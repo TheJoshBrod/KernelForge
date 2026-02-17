@@ -243,9 +243,9 @@ print(json.dumps(get_gpu_info()))
                 "available": True if all_gpus else False,
                 "gpus": all_gpus,
                 "source": "mixed"
-            };
+            } ;
         } except Exception as e {
-            report {"available": False, "error": str(e)};
+            report {"available": False, "error": str(e)} ;
         }
     }
 }
@@ -381,14 +381,14 @@ print(json.dumps(get_gpu_info()))
                     "gpus": remote_gpus,
                     "message": f"Connected to {self.host} successfully.",
                     "timestamp": datetime.now().isoformat()
-                };
+                } ;
             } else {
                 err = stderr.read().decode().strip();
-                report {"success": False, "error": f"Remote script failed: {err}"};
+                report {"success": False, "error": f"Remote script failed: {err}"} ;
             }
             client.close();
         } except Exception as e {
-            report {"success": False, "error": f"Connection failed: {str(e)}"};
+            report {"success": False, "error": f"Connection failed: {str(e)}"} ;
         }
     }
 }
@@ -415,7 +415,7 @@ walker:pub TestLLMConnection {
         model = llm["model"] if llm and "model" in llm else "";
         apikey = llm["apikey"] if llm and "apikey" in llm else "";
         result = _run_llm_test(provider, model, apikey);
-        report result;
+        report result ;
     }
 }
 
@@ -423,20 +423,26 @@ walker:pub DetectHardware {
     can detect with `root entry {
         global _hw_cache;
         if _hw_cache {
-            report _hw_cache;
+            report _hw_cache ;
         } else {
             try {
                 code = "import json, torch; info={'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count() if torch.cuda.is_available() else 0, 'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else '', 'cuda_version': torch.version.cuda or '', 'mps_available': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available(), 'mps_built': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_built()}; print(json.dumps(info))";
-                out = subprocess.check_output([sys.executable, "-c", code], cwd=repo_root);
+                out = subprocess.check_output(
+                    [sys.executable, "-c", code], cwd=repo_root
+                );
                 text = out.decode("utf-8").strip();
                 if text {
                     _hw_cache = loads(text);
-                    report _hw_cache;
+                    report _hw_cache ;
                 } else {
-                    report {"cuda_available": False, "mps_available": False};
+                    report {"cuda_available": False, "mps_available": False} ;
                 }
             } except Exception as e {
-                report {"cuda_available": False, "mps_available": False, "error": str(e)};
+                report {
+                    "cuda_available": False,
+                    "mps_available": False,
+                    "error": str(e)
+                } ;
             }
         }
     }
