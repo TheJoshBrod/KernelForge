@@ -60,24 +60,35 @@ def:pub Dashboard {
 
     pieData = [];
     hasPie = False;
+    pieTotal = 0;
 
     op_idx = 0;
     for op in ops {
+        slice_val = op["total_time_ms"] if "total_time_ms" in op else 0;
+        pieTotal += slice_val;
         pieData.push(
             {
                 "name": format_op(op["name"]),
-                "value": op["total_time_ms"] if "total_time_ms" in op else 0,
+                "value": slice_val,
                 "fill": COLORS[op_idx % COLORS.length]
             }
         );
         op_idx += 1;
     }
-    hasPie = pieData.length > 0;
+    hasPie = pieData.length > 0 and pieTotal > 0;
 
     # Speed Comparison Data State
     speedData_state = useState([]);
     speedData = speedData_state[0];
     setSpeedData = speedData_state[1];
+
+    hasOptimized = False;
+    for row in speedData {
+        if row and "optimized" in row and row["optimized"] is not None {
+            hasOptimized = True;
+            break;
+        }
+    }
 
     def format_op(raw: str) -> str {
         raw_text = raw or "";
@@ -86,6 +97,15 @@ def:pub Dashboard {
             return "torch.nn.functional." + raw_text.replace(prefix, "");
         }
         return raw_text.replace("_", ".");
+    }
+
+    def format_op_short(raw: str) -> str {
+        full = format_op(raw);
+        prefix = "torch.nn.functional.";
+        if full.startswith(prefix) {
+            return full.replace(prefix, "");
+        }
+        return full;
     }
 
     def normalize_job_status(raw: str) -> str {
@@ -539,6 +559,9 @@ def:pub Dashboard {
                                         fontSize={12}
                                         tickLine={False}
                                         axisLine={False}
+                                        tickFormatter={lambda value: str  -> str { return format_op_short(
+                                            value
+                                        ); }}
                                     />
                                     <YAxis
                                         stroke="#71717a"
@@ -555,6 +578,9 @@ def:pub Dashboard {
                                             "borderRadius": '8px',
                                             "color": '#f4f4f5'
                                         }}
+                                        labelFormatter={lambda label: str  -> str { return format_op_short(
+                                            label
+                                        ); }}
                                     />
                                     <Legend />
                                     <Bar
@@ -562,6 +588,7 @@ def:pub Dashboard {
                                         name="Optimized"
                                         fill="#1062b9ff"
                                         radius={[4, 4, 0, 0]}
+                                        hide={not hasOptimized}
                                     />
                                     <Bar
                                         dataKey="pytorch"
