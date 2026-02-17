@@ -15,13 +15,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-from src.config import ensure_llm_config
+from src.config import ensure_llm_config, load_project_config
 
 ensure_llm_config()
 
 import torch
 from tqdm import tqdm
 
+from src.llm_tools import GenModel
 import src.generator.generator as generator
 import src.generator.monitor as monitor
 import src.generator.prompts.prompts as prompts
@@ -230,7 +231,8 @@ def _validate_static_kernel(
 def validate_with_retries(
     output_dir: Path,
     entry_files: list[str],
-    conversation_history: list,
+    gen_model: GenModel,
+    initial_prompt: str,
     function_name: str,
     *,
     op_key: str,
@@ -243,7 +245,8 @@ def validate_with_retries(
     Args:
         output_dir: Directory to save kernel outputs
         entry_files: List of paths to entry_*.pt files containing inputs/outputs
-        conversation_history: LLM conversation history
+        gen_model: GenModel instance with system prompt and history
+        initial_prompt: The initial prompt for generation
 
     Returns:
         bool: is the final kernel successful
@@ -261,7 +264,6 @@ def validate_with_retries(
     last_feedback = ""
     last_stage = "llm"
 
-    base_prompt = conversation_history[0]["content"] if conversation_history else ""
     use_codex_generate = codex_utils.op_enabled(
         "CGINS_CODEX_GENERATE", "CGINS_CODEX_GENERATE_OPS", op_key
     ) if codex_utils else False
@@ -274,8 +276,25 @@ def validate_with_retries(
     codex_model = _codex_model()
     codex_sandbox = _codex_sandbox()
 
+    # Get model name from config for normal LLM generation
+    llm_provider = ensure_llm_config()
+    llm_model = ""
+    if llm_provider == "openai":
+        llm_model = os.environ.get("OPENAI_MODEL", "gpt-5")
+    elif llm_provider == "anthropic":
+        llm_model = os.environ.get("ANTHROPIC_MODEL", "claude-4-6-sonnet")
+    elif llm_provider == "gemini":
+        llm_model = os.environ.get("GEMINI_MODEL", "gemini-3-pro")
+    
     attempts_total = codex_max_attempts if use_codex_generate else max_attempts + 1
+
     def _run_codex_repair(feedback: str, attempt_idx: int) -> tuple[bool, str, str]:
+        # Note: This still uses base_prompt logic which isn't carried here perfectly
+        # For now, we assume codex uses its own prompt construction.
+        # But we need base_prompt for Codex...
+        # Let's extract base_prompt from initial_prompt for now
+        base_prompt = initial_prompt 
+        
         repair_prompt = _build_codex_prompt(
             base_prompt,
             function_name,
@@ -328,7 +347,7 @@ def validate_with_retries(
         # Generate kernel
         if use_codex_generate:
             prompt = _build_codex_prompt(
-                base_prompt,
+                initial_prompt, # Use initial prompt as base
                 function_name,
                 op_key,
                 project_dir,
@@ -351,27 +370,49 @@ def validate_with_retries(
                 last_stage = "codex_generate"
                 continue
         else:
-            provider = ensure_llm_config() or "openai"
-            if provider in {"openai", "gpt", "chatgpt"} and not os.environ.get("OPENAI_API_KEY"):
-                return False, "Missing OPENAI_API_KEY for LLM generation.", "llm_api"
-            if provider == "gemini" and not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
-                return False, "Missing GEMINI_API_KEY/GOOGLE_API_KEY for LLM generation.", "llm_api"
-            if provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
-                return False, "Missing ANTHROPIC_API_KEY for LLM generation.", "llm_api"
+            if not llm_model:
+                return False, f"Missing configuration for LLM provider {llm_provider}.", "llm_api"
+            
             try:
-                if provider == "anthropic":
-                    cu_code = generator.anthropic_generator(conversation_history)
-                elif provider == "gemini":
-                    cu_code = generator.gemini_generator(conversation_history)
-                elif provider in {"openai", "gpt", "chatgpt"}:
-                    cu_code = generator.chatgpt_generator(conversation_history)
+                # FIRST ATTEMPT: Use initial_prompt
+                if attempt == 0:
+                    current_prompt = initial_prompt
+                # SUBSEQUENT ATTEMPTS: Use repair prompt (handled in loop end) which is added to history
+                # But here we just call generate which uses history
+                # However, generator.generate takes a msg. 
+                # If we already added to history, we might pass empty msg? 
+                # Let's adjust logic: 
+                # On attempt 0, we pass initial_prompt.
+                # On attempt > 0, we've already appended USER message with feedback to history (see end of loop).
+                # But generator.generate takes a prompt and calls chat().
+                # GenModel.chat() appends user message.
+                # So we should pass the prompt we want to send.
+                # BUT wait, the loop logic below appends to `conversation_history` list in the OLD code.
+                # In the NEW code, we need to pass the prompt to `generator.generate`.
+                
+                # Logic:
+                # If attempt 0: prompt = initial_prompt
+                # If attempt > 0: prompt has been determined at end of previous loop (repair prompt)
+                
+                prompt_to_send = initial_prompt
+                if attempt > 0:
+                    # Previous loop failure logic should have set prompt_to_send (repair msg)
+                    # Use a variable `next_prompt`?
+                    # Let's refactor the loop slightly.
+                    pass
+                
+                # Actually, simpler:
+                # We need a `current_prompt` variable.
+                if attempt == 0:
+                     msg = initial_prompt
                 else:
-                    raise ValueError(
-                        f"Unknown LLM provider: {provider}. Supported: anthropic, gemini, openai"
-                    )
+                    # In previous iteration failure block, we generated the repair prompt
+                    # We need to make sure we use it here.
+                    # See `repair` variable below.
+                    msg = last_repair_prompt
+                
+                cu_code = generator.generate(gen_model, msg, llm_model)
 
-                conversation_history.append(
-                    {"role": "assistant", "content": cu_code})
             except Exception as e:
                 print(f"Failed on attempt {attempt}\n{e}")
                 last_feedback = f"LLM generation failed: {e}"
@@ -428,19 +469,18 @@ def validate_with_retries(
                         return True, "", "success"
                     last_feedback = repair_feedback
                     last_stage = repair_stage
-                    repair = prompts.get_repair_prompt(
+                    last_repair_prompt = prompts.get_repair_prompt(
                         function_name=function_name,
                         attempt=attempt,
                         feedback=last_feedback,
                     )
-                    conversation_history.append({"role": "user", "content": repair})
+                    # GenModel history updated when we call generate next time with this prompt
                 else:
-                    repair = prompts.get_repair_prompt(
+                    last_repair_prompt = prompts.get_repair_prompt(
                         function_name=function_name,
                         attempt=attempt,
                         feedback=feedback,
                     )
-                    conversation_history.append({"role": "user", "content": repair})
                     last_feedback = feedback
                     last_stage = "llm_validate"
                 break
@@ -500,8 +540,9 @@ def process_function(
     print(function_name)
     exec_str = f"{function_name}(*args, **kwargs)"
 
-    # Set up conversation history
-    conversation_history = []
+    # Set up GenModel
+    sys_prompt = prompts.get_system_prompt()
+    gen_model = GenModel(sys_prompt)
 
     # Profile operation
     try:
@@ -531,7 +572,6 @@ def process_function(
     prompt = prompts.generate_full_llm_prompt(
         call_list, function_name, op_details, template=template
     )
-    conversation_history.append({"role": "user", "content": prompt})
 
     call_list.clear()
 
@@ -541,7 +581,8 @@ def process_function(
     success, failure_msg, failure_stage = validate_with_retries(
         op_dir,
         entry_files,
-        conversation_history,
+        gen_model,
+        prompt,
         function_name,
         op_key=op_key,
         project_dir=project_dir,
@@ -594,7 +635,19 @@ def main():
         OUTPUT_BASE_DIR = Path(args.out_dir)
 
     project_dir = _find_project_dir(Path(io_dir))
-    gen_cfg = _load_generator_config(project_dir)
+    
+    # Use src.config to handle LLM configuration from project config
+    if project_dir:
+        config_path = project_dir / "config.json"
+        if config_path.exists():
+            os.environ["CGINS_CONFIG_PATH"] = str(config_path)
+            # Reload config to apply project-specific settings
+            ensure_llm_config()
+
+    # Load generator specific config manually for other settings (skip_ops, etc)
+    project_cfg = load_project_config(project_dir)
+    gen_cfg = project_cfg.get("generator", {})
+
     target_device = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
     if not target_device:
         cfg_device = str(gen_cfg.get("target_device", "")).strip().lower() if isinstance(gen_cfg, dict) else ""
