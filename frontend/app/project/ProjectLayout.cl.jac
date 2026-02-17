@@ -79,6 +79,7 @@ def:pub ProjectLayout {
                 <div className="p-4 border-t border-zinc-800">
                     <Link
                         to="/settings"
+                        state={{"return_to": location.pathname}}
                         className="flex items-center gap-3 px-4 py-3 text-zinc-400 hover:text-white w-full rounded-lg hover:bg-zinc-900 transition-all"
                     >
                         <SettingsIcon className="w-[18px] h-[18px]" />
