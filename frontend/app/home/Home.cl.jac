@@ -98,34 +98,7 @@ def:pub Home -> Any {
         }
     }
 
-    cssStyles = """
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 6px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: transparent;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background-color: rgba(255, 255, 255, 0.1);
-            border-radius: 20px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background-color: rgba(255, 255, 255, 0.2);
-        }
-        .animation-fade-in-up {
-            animation: fadeInUp 0.5s ease-out forwards;
-        }
-        @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-    """;
+
 
     return
         <main className="relative h-screen w-screen overflow-hidden bg-black flex items-center justify-center font-sans text-white">
@@ -184,9 +157,5 @@ def:pub Home -> Any {
                     />
                 </div>
             </div>
-            
-            <style>
-                {cssStyles}
-            </style>
         </main>;
 }
