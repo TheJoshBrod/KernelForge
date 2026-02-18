@@ -98,7 +98,7 @@ def:pub Dashboard {
     def format_op(raw: str) -> str {
         raw_text = raw or "";
         prefix = "torch_nn_functional_";
-        if raw_text.startswith(prefix) {
+        if raw_text.startsWith(prefix) {
             return "torch.nn.functional." + raw_text.replace(prefix, "");
         }
         return raw_text.replace("_", ".");
@@ -107,14 +107,14 @@ def:pub Dashboard {
     def format_op_short(raw: str) -> str {
         full = format_op(raw);
         prefix = "torch.nn.functional.";
-        if full.startswith(prefix) {
+        if full.startsWith(prefix) {
             return full.replace(prefix, "");
         }
         return full;
     }
 
     def normalize_job_status(raw: str) -> str {
-        status_text = (raw or "").lower();
+        status_text = (raw or "").toLowerCase();
         if status_text == "success" or status_text == "completed" {
             return "completed";
         }
@@ -523,17 +523,17 @@ def:pub Dashboard {
     }
 
     prepare_job = status["prepare"] if status and "prepare" in status else {};
-    prepare_raw = (prepare_job["status"] or "").lower()
+    prepare_raw = (prepare_job["status"] or "").toLowerCase()
     if prepare_job and "status" in prepare_job
     else "";
 
     profile_job = status["profile"] if status and "profile" in status else {};
-    profile_raw = (profile_job["status"] or "").lower()
+    profile_raw = (profile_job["status"] or "").toLowerCase()
     if profile_job and "status" in profile_job
     else "";
 
     bench_job = status["benchmark"] if status and "benchmark" in status else {};
-    bench_raw = (bench_job["status"] or "").lower()
+    bench_raw = (bench_job["status"] or "").toLowerCase()
     if bench_job and "status" in bench_job
     else "";
     bench_message = bench_job["message"]

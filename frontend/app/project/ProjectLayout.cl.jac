@@ -27,7 +27,7 @@ def:pub ProjectLayout {
         if item["exact"] {
             return location.pathname == item["href"];
         }
-        return location.pathname.startswith(item["href"]);
+        return location.pathname.startsWith(item["href"]);
     }
 
     nav_links = [];

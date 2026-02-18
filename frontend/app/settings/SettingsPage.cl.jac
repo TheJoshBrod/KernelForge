@@ -23,15 +23,15 @@ def:pub SettingsPage {
             }
 
             if candidate
-            and str(candidate).startswith("/")
-            and not str(candidate).startswith("/settings") {
+            and str(candidate).startsWith("/")
+            and not str(candidate).startsWith("/settings") {
                 sessionStorage.setItem("settings_return_to", str(candidate));
                 returnTo = str(candidate);
             } else {
                 stored = sessionStorage.getItem("settings_return_to");
                 if stored
-                and str(stored).startswith("/")
-                and not str(stored).startswith("/settings") {
+                and str(stored).startsWith("/")
+                and not str(stored).startsWith("/settings") {
                     returnTo = str(stored);
                 } else {
                     returnTo = "/";

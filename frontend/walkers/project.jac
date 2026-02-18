@@ -1218,7 +1218,7 @@ walker:pub GetMctsTree {
     has projectName: str,
         opName: str;
 
-    can run with `root entry {
+    can run with entry {
         project_dir = _project_dir(self.projectName);
         db_path = path.join(project_dir, "trees", self.opName, "nodes.db");
 
@@ -1276,7 +1276,7 @@ walker:pub GetMctsTree {
 }
 
 walker:pub ImportKernel {
-    can run with `root entry {
+    can run with entry {
         print("upload!");
         report {"success": True, "message": "upload!"} ;
     }
@@ -1285,7 +1285,7 @@ walker:pub ImportKernel {
 walker:pub GetProjectMctsSummary {
     has projectName: str;
 
-    can run with `root entry {
+    can run with entry {
         project_dir = _project_dir(self.projectName);
         trees_dir = path.join(project_dir, "trees");
 
@@ -1329,7 +1329,7 @@ walker:pub GetProjectMctsSummary {
 walker:pub GetDashboardCharts {
     has projectName: str;
 
-    can return_charts with `root entry {
+    can return_charts with entry {
         project_dir = _project_dir(self.projectName);
 
         bench_results = [];

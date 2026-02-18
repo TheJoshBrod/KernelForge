@@ -38,7 +38,7 @@ def _run_llm_test(provider: str, model: str, apikey: str) -> dict {
         apikey
     ];
     try {
-        result = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True);
+        result = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True, timeout=10);
         stdout = result.stdout.strip();
         stderr = result.stderr.strip();
         if stdout {
@@ -443,7 +443,7 @@ walker:pub DetectHardware {
             try {
                 code = "import json, torch; info={'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count() if torch.cuda.is_available() else 0, 'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else '', 'cuda_version': torch.version.cuda or '', 'mps_available': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available(), 'mps_built': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_built()}; print(json.dumps(info))";
                 out = subprocess.check_output(
-                    [sys.executable, "-c", code], cwd=repo_root
+                    [sys.executable, "-c", code], cwd=repo_root, timeout=5
                 );
                 text = out.decode("utf-8").strip();
                 if text {

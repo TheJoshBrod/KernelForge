@@ -22,7 +22,7 @@ def:pub OpSelector {
     def format_op(raw: str) -> str {
         raw_text = raw or "";
         prefix = "torch_nn_functional_";
-        if raw_text.startswith(prefix) {
+        if raw_text.startsWith(prefix) {
             # Keep labels compact in the Workbench list.
             return raw_text.replace(prefix, "");
         }

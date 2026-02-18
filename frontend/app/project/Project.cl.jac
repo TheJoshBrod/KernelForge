@@ -56,7 +56,7 @@ def:pub Project {
     def format_op(raw: str) -> str {
         raw_text = raw or "";
         prefix = "torch_nn_functional_";
-        if raw_text.startswith(prefix) {
+        if raw_text.startsWith(prefix) {
             return "torch.nn.functional." + raw_text.replace(prefix, "");
         }
         return raw_text.replace("_", ".");
