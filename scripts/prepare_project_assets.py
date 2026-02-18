@@ -108,7 +108,7 @@ def _start_profile(project_dir: Path, repo_root: Path) -> None:
         str(repo_root),
         "--",
         sys.executable,
-        str(repo_root / "benchmarks" / "profiler" / "profile_project.py"),
+        str(repo_root / "scripts" / "profile_then_benchmark.py"),
         "--project",
         project_dir.name,
     ]
