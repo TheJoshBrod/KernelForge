@@ -3,7 +3,7 @@
 import from react { useState, useEffect }
 import from "react-router-dom" { useNavigate }
 import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
-import from ...components.settings.SettingsMenu { SettingsMenu }
+
 import from ...context.ConfigContext { useConfig }
 
 def:pub GpuPage {
@@ -135,7 +135,7 @@ def:pub GpuPage {
                         Select your active GPU
                     </p>
                 </div>
-                <SettingsMenu />
+
                 <div className="space-y-4">
                     <div className="space-y-2">
                         <div className="text-sm font-semibold text-zinc-300">

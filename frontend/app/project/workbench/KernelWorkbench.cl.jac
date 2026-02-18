@@ -264,9 +264,11 @@ def:pub KernelWorkbench {
             sortedNodes.push(v);
         }
         sortedNodes.sort(
-            key=lambda n: any  -> float { return Number(n["value"])
-            if n and "value" in n
-            else 0; }
+            lambda a: any, b: any -> float {
+                val_a = Number(a["value"]) if a and "value" in a else 0;
+                val_b = Number(b["value"]) if b and "value" in b else 0;
+                return val_a - val_b;
+            }
         );
     }
 
