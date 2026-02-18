@@ -23,7 +23,7 @@ import from ....components.ui.Icons {
 }
 import from .NewKernel { NewKernel }
 
-def:pub KernelWorkbench {
+def:pub OperatorWorkbenchView {
     has projectName: str,
         opName: str;
 
@@ -208,7 +208,7 @@ def:pub KernelWorkbench {
                 setSelectedNodeId(best_node_id);
             }
         } except Exception as e {
-            console.error("Failed to fetch workbench data:", e);
+            console.error("Failed to fetch operator workbench data:", e);
         } finally {
             setLoading(False);
         }
@@ -288,7 +288,7 @@ def:pub KernelWorkbench {
                     onClick={lambda -> None { setSelectedNodeId(f"{n['id']}");}}
                 >
                     <div className="text-zinc-500 font-mono text-xs w-8 text-right">
-                        {"#" + str(idx)}
+                        {"#" + idx}
                     </div>
                     <div
                         className={"font-mono text-sm font-bold " + (
@@ -370,7 +370,7 @@ def:pub KernelWorkbench {
             <div
                 className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-500"
             >
-                Loading Workbench...
+                Loading Operator Workbench...
             </div>;
     }
 

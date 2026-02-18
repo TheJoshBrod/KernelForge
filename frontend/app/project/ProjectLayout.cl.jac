@@ -16,8 +16,8 @@ def:pub ProjectLayout {
             "exact": True
         },
         {
-            "name": "Optimization Log",
-            "href": f"/project/{projectName}/workbench",
+            "name": "Operator Workbench",
+            "href": f"/project/{projectName}/operator-workbench",
             "icon": CodeIcon,
             "exact": False
         }

@@ -58,7 +58,7 @@ def:pub OpSelector {
                 key={op["name"]}
                 className="p-4 bg-zinc-900 border border-zinc-800 rounded-lg hover:border-indigo-500/50 cursor-pointer transition-all flex justify-between items-center group"
                 onClick={lambda -> None { navigate(
-                    f"/project/{resolvedProjectName}/workbench/{op['name']}"
+                    f"/project/{resolvedProjectName}/operator-workbench/{op['name']}"
                 );}}
             >
                 <span
@@ -79,7 +79,7 @@ def:pub OpSelector {
         >
             <div className="mb-8">
                 <h2 className="text-2xl font-bold text-white mb-2">
-                    Workbench
+                    Operator Workbench
                 </h2>
                 <p className="text-zinc-400">
                     Select an operator to explore.

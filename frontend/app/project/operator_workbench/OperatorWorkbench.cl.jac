@@ -3,9 +3,9 @@
 import from react { useEffect }
 import from "react-router-dom" { useParams, useNavigate }
 import from .OpSelector { OpSelector }
-import from .KernelWorkbench { KernelWorkbench }
+import from .OperatorWorkbenchView { OperatorWorkbenchView }
 
-def:pub Workbench {
+def:pub OperatorWorkbench {
     params = useParams();
     projectName = params.projectName;
     opName = params.opName;
@@ -26,5 +26,5 @@ def:pub Workbench {
     }
 
     return
-        <KernelWorkbench projectName={projectName} opName={opName} />;
+        <OperatorWorkbenchView projectName={projectName} opName={opName} />;
 }

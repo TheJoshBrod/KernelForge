@@ -42,7 +42,7 @@ cl import from .app.settings.SshPage { SshPage }
 cl import from .app.create.NewProject { NewProject }
 cl import from .app.project.ProjectLayout { ProjectLayout }
 cl import from .app.project.Dashboard { Dashboard }
-cl import from .app.project.workbench.Workbench { Workbench }
+cl import from .app.project.operator_workbench.OperatorWorkbench { OperatorWorkbench }
 cl import "./styles.css";
 
 cl {
@@ -83,10 +83,10 @@ cl {
                                     path="settings/*"
                                     element={<Navigate to="/settings" replace={True} />}
                                 />
-                                <Route path="workbench" element={<Workbench />} />
+                                <Route path="operator-workbench" element={<OperatorWorkbench />} />
                                 <Route
-                                    path="workbench/:opName"
-                                    element={<Workbench />}
+                                    path="operator-workbench/:opName"
+                                    element={<OperatorWorkbench />}
                                 />
                             </Route>
                             <Route path="*" element={<NotFound />} />

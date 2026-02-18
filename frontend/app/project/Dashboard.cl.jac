@@ -314,7 +314,7 @@ def:pub Dashboard {
         <div
             key="mcts"
             className="bg-zinc-900 border border-zinc-800 p-4 rounded-lg cursor-pointer hover:border-indigo-500/50 transition-all"
-            onClick={lambda -> None { navigate(f"/project/{name}/workbench");}}
+            onClick={lambda -> None { navigate(f"/project/{name}/operator-workbench");}}
         >
             <div className="flex justify-between items-start mb-2">
                 <div className="p-2 bg-indigo-500/10 rounded-lg">
