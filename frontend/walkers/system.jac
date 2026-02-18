@@ -72,6 +72,8 @@ walker:pub GetSystemInfo {
     has key_path: str = "";
 
     can return_info with entry {
+        global _sys_info_cache;
+        global _sys_info_ts;
         try {
             # Check cache (1 minute TTL)
             now_ts = datetime.now().timestamp();
