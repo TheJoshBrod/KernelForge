@@ -130,9 +130,9 @@ def:pub Home -> Any {
     return
         <main className="relative h-screen w-screen overflow-hidden bg-black flex items-center justify-center font-sans text-white">
             <SplashScreen exiting={splashDone} />
-            <GameOfLifeBackground className="absolute inset-0 z-0 opacity-30" />
+            <GameOfLifeBackground className="absolute inset-0 z-0" />
             
-            <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/50 z-0 pointer-events-none"></div>
+            <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/50 z-10 pointer-events-none"></div>
 
             <div className="absolute top-6 right-6 z-50">
                 <button

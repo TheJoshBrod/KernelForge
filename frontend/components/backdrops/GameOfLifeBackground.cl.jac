@@ -10,7 +10,7 @@ def:pub GameOfLifeBackground(className: str = "") -> any {
             return;
         }ctx = canvas.getContext("2d");
         # Configuration
-        cellSize = 10;deadColor = "rgba(0, 0, 0, 0)";aliveColor = "rgba(134, 230, 169, 0.12)";frameCount = 0;tickInterval = 3;cols = 0;rows = 0;grid = [];
+        cellSize = 10;deadColor = "rgba(0, 0, 0, 0)";aliveColor = "rgba(134, 230, 169, 0.8)";frameCount = 0;tickInterval = 3;cols = 0;rows = 0;grid = [];
         # Track reset state to prevent multiple timers
         resetPending = False;def createGrid() -> list {
             newGrid = [];
