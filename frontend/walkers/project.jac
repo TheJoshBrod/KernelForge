@@ -525,7 +525,7 @@ walker:pub GetProjectOps {
                             for f in listdir(full_path)
                             if f.startswith("entry_") and f.endswith(".pt")
                         ];
-                        count = entries.length;
+                        count = len(entries);
                     } except Exception {
                         count = 0;
                     }

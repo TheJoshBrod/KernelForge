@@ -198,7 +198,24 @@ def:pub Dashboard {
             lambda -> None { __jacSpawn("GetProjectStatus", "", {"projectName": name}).then(
                 lambda resp: any  -> None { data = resp.reports[0]
                 if resp and resp.reports
-                else {};status = data or {};}
+                else {};status = data or {};__jacSpawn(
+                    "GetDashboardCharts", "", {"projectName": name}
+                ).then(
+                    lambda c_resp: any  -> None { c_data = c_resp.reports[0]
+                    if c_resp and c_resp.reports
+                    else {};if c_data {
+                        if "operator_usage" in c_data {
+                            ops = c_data["operator_usage"];
+                        }
+                        if "speed_comparison" in c_data {
+                            setSpeedData(c_data["speed_comparison"]);
+                        }
+                    }}
+                ).catch(
+                    lambda e: any  -> None {
+                    # console.error("Failed to poll dashboard charts:", e);
+                    }
+                );}
             ).catch(
                 lambda e: any  -> None {
                 # console.error("Failed to poll project status:", e);
@@ -500,6 +517,56 @@ def:pub Dashboard {
         step_idx += 1;
     }
 
+    prepare_job = status["prepare"] if status and "prepare" in status else {};
+    prepare_raw = (prepare_job["status"] or "").lower()
+    if prepare_job and "status" in prepare_job
+    else "";
+
+    profile_job = status["profile"] if status and "profile" in status else {};
+    profile_raw = (profile_job["status"] or "").lower()
+    if profile_job and "status" in profile_job
+    else "";
+
+    bench_job = status["benchmark"] if status and "benchmark" in status else {};
+    bench_raw = (bench_job["status"] or "").lower()
+    if bench_job and "status" in bench_job
+    else "";
+    bench_message = bench_job["message"]
+    if bench_job and "message" in bench_job and bench_job["message"]
+    else "";
+
+    bench_progress = bench_job["progress"]
+    if bench_job and "progress" in bench_job
+    else {};
+    bench_current = bench_progress["current"]
+    if bench_progress and "current" in bench_progress
+    else 0;
+    bench_total = bench_progress["total"]
+    if bench_progress and "total" in bench_progress
+    else 0;
+    bench_progress_text = (
+        f" ({bench_current}/{bench_total})" if bench_total and bench_total > 0 else ""
+    );
+
+    charts_empty_message = "No benchmark results yet. Run Benchmark to see PyTorch timings.";
+    if prepare_raw == "queued" or prepare_raw == "running" {
+        charts_empty_message = "Preparing assets...";
+    } elif profile_raw == "queued" or profile_raw == "running" {
+        charts_empty_message = "Profiling model...";
+    } elif bench_raw == "queued" {
+        charts_empty_message = "Benchmark queued...";
+    } elif bench_raw == "running" {
+        charts_empty_message = (
+            bench_message + bench_progress_text
+            if bench_message
+            else "Benchmarking PyTorch baseline..." + bench_progress_text
+        );
+    } elif bench_raw == "error" or bench_raw == "failed" {
+        charts_empty_message = "Benchmark failed (see benchmark.log).";
+    } elif bench_raw == "success" or bench_raw == "completed" {
+        charts_empty_message = "No benchmark data available.";
+    }
+
     return
         <div className="p-8 max-w-7xl mx-auto space-y-8">
             <div>
@@ -613,7 +680,7 @@ def:pub Dashboard {
                             </ResponsiveContainer>
                             if speedData.length > 0
                             else <div className="text-zinc-500 text-sm italic">
-                                No data available
+                                {charts_empty_message}
                             </div>}
                         </div>
                     </div>
@@ -675,7 +742,7 @@ def:pub Dashboard {
                         </div>
                         if hasPie
                         else <div className="text-zinc-500 text-sm italic">
-                            No data available
+                            {charts_empty_message}
                         </div>}
                     </div>
                 </div>

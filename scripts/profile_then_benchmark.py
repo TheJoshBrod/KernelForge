@@ -45,6 +45,21 @@ def main() -> int:
     state_path_env = os.environ.get("CGINS_STATE_PATH", "").strip()
     state_path = Path(state_path_env).resolve() if state_path_env else (project_dir / "state.json")
 
+    logs_dir = project_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    bench_log = logs_dir / "benchmark.log"
+
+    # Surface "baseline benchmark pending" in the UI while profiling runs.
+    _update_state(
+        state_path,
+        "benchmark",
+        {
+            "status": "queued",
+            "log": str(bench_log),
+            "message": "Waiting for profiling to finish",
+        },
+    )
+
     # 1) Profile: writes projects/<name>/io/individual_ops/**/entry_*.pt and io/summary.json
     profile_cmd = [
         sys.executable,
@@ -55,13 +70,19 @@ def main() -> int:
     prof = subprocess.run(profile_cmd, cwd=str(repo_root))
     if prof.returncode != 0:
         print(f"Profile failed with exit code {prof.returncode}")
+        _update_state(
+            state_path,
+            "benchmark",
+            {
+                "status": "error",
+                "finished_at": time.time(),
+                "return_code": int(prof.returncode),
+                "message": "Profile failed; benchmark skipped",
+            },
+        )
         return int(prof.returncode)
 
     # 2) Benchmark: produces projects/<name>/benchmarks/op_benchmarks.json
-    logs_dir = project_dir / "logs"
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    bench_log = logs_dir / "benchmark.log"
-
     started_at = time.time()
     _update_state(
         state_path,
@@ -120,4 +141,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
