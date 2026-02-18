@@ -3,7 +3,7 @@
 import from "react-router-dom" { useNavigate }
 import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
 import from ...components.settings.ApiKeysSettings { ApiKeysSettings }
-import from ...components.settings.SettingsMenu { SettingsMenu }
+
 import from ...context.ConfigContext { useConfig }
 
 def:pub ApiKeysPage {
@@ -62,7 +62,7 @@ def:pub ApiKeysPage {
                         Configure your LLM provider, model, and API key
                     </p>
                 </div>
-                <SettingsMenu />
+
                 <ApiKeysSettings
                     config={config}
                     handleLlmInfoChange={handleLlmInfoChange}

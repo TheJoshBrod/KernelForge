@@ -3,7 +3,7 @@
 import from react { useState }
 import from "react-router-dom" { useNavigate }
 import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
-import from ...components.settings.SettingsMenu { SettingsMenu }
+
 import from .SSHSettings { SSHSettings }
 import from ...context.ConfigContext { useConfig }
 
@@ -135,7 +135,7 @@ def:pub SshPage {
                         Manage remote connections
                     </p>
                 </div>
-                <SettingsMenu />
+
                 <SSHSettings
                     config={config}
                     handleSaveSshConnection={handleSaveSshConnection}
