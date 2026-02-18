@@ -13,6 +13,8 @@ import from .globals { repo_root, config_path, config_store }
 import from json { load }
 
 glob _hw_cache: dict = {};
+glob _sys_info_cache: dict = {};
+glob _sys_info_ts: float = 0.0;
 
 def _run_llm_test(provider: str, model: str, apikey: str) -> dict {
     if not provider {
@@ -71,6 +73,13 @@ walker:pub GetSystemInfo {
 
     can return_info with `root entry {
         try {
+            # Check cache (1 minute TTL)
+            now_ts = datetime.now().timestamp();
+            if _sys_info_cache and (now_ts - _sys_info_ts) < 60 {
+                report _sys_info_cache ;
+                disengage;
+            }
+
             all_gpus = [];
 
             try {
@@ -239,11 +248,17 @@ print(json.dumps(get_gpu_info()))
                 }
             }
 
-            report {
+            result_payload = {
                 "available": True if all_gpus else False,
                 "gpus": all_gpus,
                 "source": "mixed"
-            } ;
+            };
+            
+            # Update cache
+            _sys_info_cache = result_payload;
+            _sys_info_ts = datetime.now().timestamp();
+
+            report result_payload ;
         } except Exception as e {
             report {"available": False, "error": str(e)} ;
         }

@@ -128,16 +128,33 @@ def:pub Dashboard {
         loading = True;
         try {
             if name {
-                # Fetch Ops (keeping for list view if needed, or remove if fully replaced)
-                ops_resp = await __jacSpawn("GetProjectOps", "", {"projectName": name});
+                # Spawn all requests concurrently
+                ops_req = __jacSpawn("GetProjectOps", "", {"projectName": name});
+                charts_req = __jacSpawn(
+                    "GetDashboardCharts", "", {"projectName": name}
+                );
+                status_req = __jacSpawn(
+                    "GetProjectStatus", "", {"projectName": name}
+                );
+                hw_req = __jacSpawn("DetectHardware", "", {});
+                mcts_req = __jacSpawn(
+                    "GetProjectMctsSummary", "", {"projectName": name}
+                );
+
+                # Await all responses
+                ops_resp = await ops_req;
+                charts_resp = await charts_req;
+                status_resp = await status_req;
+                hw_resp = await hw_req;
+                mcts_resp = await mcts_req;
+
+                # Process Ops
                 ops_data = ops_resp.reports[0]
                 if ops_resp and ops_resp.reports
                 else None;
                 ops = ops_data["ops"] if ops_data and "ops" in ops_data else [];
-                # Fetch Dashboard Charts
-                charts_resp = await __jacSpawn(
-                    "GetDashboardCharts", "", {"projectName": name}
-                );
+
+                # Process Charts
                 charts_data = charts_resp.reports[0]
                 if charts_resp and charts_resp.reports
                 else {};
@@ -149,22 +166,18 @@ def:pub Dashboard {
                         setSpeedData(charts_data["speed_comparison"]);
                     }
                 }
-                # Fetch Status
-                status_resp = await __jacSpawn(
-                    "GetProjectStatus", "", {"projectName": name}
-                );
+
+                # Process Status
                 status_data = status_resp.reports[0]
                 if status_resp and status_resp.reports
                 else {};
                 status = status_data or {};
-                # Detect Hardware
-                hw_resp = await __jacSpawn("DetectHardware", "", {});
+
+                # Process Hardware
                 hw_data = hw_resp.reports[0] if hw_resp and hw_resp.reports else {};
                 hardwareInfo = hw_data or {};
-                # Fetch MCTS Summary
-                mcts_resp = await __jacSpawn(
-                    "GetProjectMctsSummary", "", {"projectName": name}
-                );
+
+                # Process MCTS
                 mcts_data = mcts_resp.reports[0]
                 if mcts_resp and mcts_resp.reports
                 else {};
