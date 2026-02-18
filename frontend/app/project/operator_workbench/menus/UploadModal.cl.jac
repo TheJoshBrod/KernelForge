@@ -1,8 +1,10 @@
 """Upload Menu Component"""
 
-import from react { useState, useRef }
+import from react { useState, useRef, useEffect }
 import from .....components.ui.Icons { UploadIcon, CodeIcon, SettingsIcon }
 import from .....components.ui.Modal { Modal }
+
+import from .....context.ConfigContext { useConfig }
 
 def:pub UploadModal(props: any) {
     isOpen = props.isOpen;
@@ -10,6 +12,10 @@ def:pub UploadModal(props: any) {
     onSuccess = props.onSuccess;
     projectName = props.projectName;
     opName = props.opName;
+
+    # Context
+    config_ctx = useConfig();
+    hwInfo = config_ctx.hwInfo if "hwInfo" in config_ctx else {};
 
     # State
     code_state = useState("");
@@ -23,6 +29,28 @@ def:pub UploadModal(props: any) {
     is_loading_state = useState(False);
     isLoading = is_loading_state[0];
     setIsLoading = is_loading_state[1];
+
+    # Determine available backends
+    available_devices = [{"label": "Triton (Python)", "value": "Triton"}];
+    if hwInfo and "cuda_available" in hwInfo and hwInfo["cuda_available"] {
+        available_devices.splice(0, 0, {"label": "CUDA", "value": "CUDA"});
+    } elif hwInfo and "mps_available" in hwInfo and hwInfo["mps_available"] {
+        available_devices.splice(0, 0, {"label": "MPS", "value": "MPS"});
+    }
+
+    # Update default backend
+    useEffect(lambda -> None {
+        current_valid = False;
+        for dev in available_devices {
+            if dev["value"] == backend {
+                current_valid = True;
+                break;
+            }
+        }
+        if not current_valid and available_devices.length > 0 {
+            setBackend(available_devices[0]["value"]);
+        }
+    }, [hwInfo, backend]);
 
     file_input_ref = useRef(None);
 
@@ -153,12 +181,9 @@ def:pub UploadModal(props: any) {
                                 );}}
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 appearance-none"
                             >
-                                <option value="CUDA">
-                                    CUDA
-                                </option>
-                                <option value="Triton">
-                                    Triton (Python)
-                                </option>
+                                {available_devices.map(lambda d: dict -> Any {
+                                    return <option key={d["value"]} value={d["value"]}>{d["label"]}</option>;
+                                })}
                             </select>
                             <div
                                 className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"

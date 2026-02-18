@@ -617,15 +617,17 @@ walker:pub StartGenerate {
 walker:pub StartGenerateAdvanced {
     has projectName: str,
         ops: list = [],
-        optimize: bool = False,
+        optimize: bool = True,
         benchmark: bool = True,
-        iterations: int = 3,
-        patience: int = 2,
+        iterations: int = 0,
+        patience: int = 0,
+        genAttempts: int = 3,
         minImproveMs: float = 0.0,
         minSpeedupPct: float = 5.0,
-        genAttempts: int = 4,
         image: str = "cgins-codex:latest",
-        targetDevice: str = "cuda";
+        llm_model: str = "",
+        generator_config: dict = {},
+        optimizer_config: dict = {};
 
     can run with `root entry {
         try {
@@ -638,9 +640,18 @@ walker:pub StartGenerateAdvanced {
                 print(f"Error loading config: {e}");
                 cfg = config_store;
             }
+            if self.llm_model {
+                cfg["llm_info"]["model"] = self.llm_model;
+            }
             _apply_llm_env_from_config(cfg);
 
-            target_device = (self.targetDevice or "cuda").lower();
+            # Extract generator config overrides
+            target_device = "cuda";
+            if self.generator_config and "target_device" in self.generator_config {
+                target_device = self.generator_config["target_device"];
+            }
+
+            target_device = target_device.lower();
             if target_device == "gpu" or target_device == "cuda" {
                 target_device = "cuda";
             } elif target_device == "mps" {
@@ -649,6 +660,8 @@ walker:pub StartGenerateAdvanced {
                 target_device = "cuda";
             }
             os.environ["CGINS_TARGET_DEVICE"] = target_device;
+            
+            # Persist project config overrides if needed
             try {
                 project_cfg_path = path.join(
                     _project_dir(self.projectName), "config.json"
@@ -659,16 +672,33 @@ walker:pub StartGenerateAdvanced {
                         project_cfg = load(f);
                     }
                 }
-                gen_cfg = project_cfg["generator"]
-                if project_cfg and "generator" in project_cfg
-                else {};
+                
+                # Update generator config
+                gen_cfg = project_cfg["generator"] if project_cfg and "generator" in project_cfg else {};
                 gen_cfg["target_device"] = target_device;
+                
+                if self.generator_config {
+                     # Apply other generator overrides
+                     if "max_attempts" in self.generator_config {
+                         gen_cfg["max_attempts"] = self.generator_config["max_attempts"];
+                     }
+                     if "use_baseline_kernels" in self.generator_config {
+                         gen_cfg["use_baseline_kernels"] = self.generator_config["use_baseline_kernels"];
+                     }
+                     if "use_baseline_as_template" in self.generator_config {
+                         gen_cfg["use_baseline_as_template"] = self.generator_config["use_baseline_as_template"];
+                     }
+                     if "extra_validation_cases" in self.generator_config {
+                         gen_cfg["extra_validation_cases"] = self.generator_config["extra_validation_cases"];
+                     }
+                }
                 project_cfg["generator"] = gen_cfg;
+
                 with open(project_cfg_path, "w") as f {
                     dump(project_cfg, f, indent=2);
                 }
             } except Exception as e {
-                print(f"Failed to persist target device: {e}");
+                print(f"Failed to persist config overrides: {e}");
             }
 
             ops_list = [];
@@ -773,6 +803,15 @@ walker:pub StartGenerateAdvanced {
                 cmd.append("--generate-attempts");
                 cmd.append(str(self.genAttempts));
             }
+            if self.generator_config and "max_attempts" in self.generator_config {
+                cmd.append("--generate-attempts");
+                cmd.append(str(self.generator_config["max_attempts"]));
+            }
+            
+            if self.llm_model {
+                cmd.append("--codex-model");
+                cmd.append(self.llm_model);
+            }
             cmd.append("--opt-min-improve-ms");
             cmd.append(str(self.minImproveMs));
             cmd.append("--opt-min-speedup-pct");
@@ -801,7 +840,8 @@ walker:pub StartOptimizeAdvanced {
         minImproveMs: float = 0.0,
         minSpeedupPct: float = 5.0,
         image: str = "cgins-codex:latest",
-        targetDevice: str = "cuda";
+        llm_model: str = "",
+        optimizer_config: dict = {};
 
     can run with `root entry {
         try {
@@ -814,38 +854,29 @@ walker:pub StartOptimizeAdvanced {
                 print(f"Error loading config: {e}");
                 cfg = config_store;
             }
+            if self.llm_model {
+                cfg["llm_info"]["model"] = self.llm_model;
+            }
             _apply_llm_env_from_config(cfg);
 
-            target_device = (self.targetDevice or "cuda").lower();
-            if target_device == "gpu" or target_device == "cuda" {
-                target_device = "cuda";
-            } elif target_device == "mps" {
-                target_device = "mps";
-            } elif target_device != "cpu" {
-                target_device = "cuda";
-            }
-            os.environ["CGINS_TARGET_DEVICE"] = target_device;
+            # Load target device from project config
+            target_device = "cuda";
             try {
                 project_cfg_path = path.join(
                     _project_dir(self.projectName), "config.json"
                 );
-                project_cfg = {};
                 if path.exists(project_cfg_path) {
-                    with open(project_cfg_path, "r") as f {
+                     with open(project_cfg_path, "r") as f {
                         project_cfg = load(f);
+                        if project_cfg and "generator" in project_cfg and "target_device" in project_cfg["generator"] {
+                            target_device = project_cfg["generator"]["target_device"];
+                        }
                     }
                 }
-                gen_cfg = project_cfg["generator"]
-                if project_cfg and "generator" in project_cfg
-                else {};
-                gen_cfg["target_device"] = target_device;
-                project_cfg["generator"] = gen_cfg;
-                with open(project_cfg_path, "w") as f {
-                    dump(project_cfg, f, indent=2);
-                }
             } except Exception as e {
-                print(f"Failed to persist target device: {e}");
+                print(f"Failed to load target device: {e}");
             }
+            os.environ["CGINS_TARGET_DEVICE"] = target_device;
 
             ops_list = [];
             ops_total = 0;
@@ -940,6 +971,11 @@ walker:pub StartOptimizeAdvanced {
             if self.patience > 0 {
                 cmd.append("--opt-patience");
                 cmd.append(str(self.patience));
+            }
+            
+            if self.llm_model {
+                cmd.append("--codex-model");
+                cmd.append(self.llm_model);
             }
             cmd.append("--opt-min-improve-ms");
             cmd.append(str(self.minImproveMs));

@@ -4,8 +4,10 @@ import from react { useState, useRef, useEffect }
 import from ....components.ui.Icons { CpuIcon }
 import from .menus.UploadModal { UploadModal }
 import from .menus.UploadTrigger { UploadTrigger }
-import from .menus.GenerateMenu { GenerateMenu }
-import from .menus.OptimizeMenu { OptimizeMenu }
+import from .menus.GenerateModal { GenerateModal }
+import from .menus.GenerateTrigger { GenerateTrigger }
+import from .menus.OptimizeModal { OptimizeModal }
+import from .menus.OptimizeTrigger { OptimizeTrigger }
 
 def:pub NewKernel {
     has projectName: str,
@@ -15,9 +17,18 @@ def:pub NewKernel {
     isOpen = is_open_state[0];
     setIsOpen = is_open_state[1];
 
+    # Modal States
     upload_modal_open_state = useState(False);
     uploadModalOpen = upload_modal_open_state[0];
     setUploadModalOpen = upload_modal_open_state[1];
+
+    generate_modal_open_state = useState(False);
+    generateModalOpen = generate_modal_open_state[0];
+    setGenerateModalOpen = generate_modal_open_state[1];
+
+    optimize_modal_open_state = useState(False);
+    optimizeModalOpen = optimize_modal_open_state[0];
+    setOptimizeModalOpen = optimize_modal_open_state[1];
 
     menu_ref = useRef(None);
 
@@ -25,7 +36,6 @@ def:pub NewKernel {
     useEffect(
         lambda -> None { def handle_click_outside(event: any) {
             if menu_ref.current and not menu_ref.current.contains(event.target) {
-                # console.log("NewKernel: Click outside detected, closing menu.");
                 setIsOpen(False);
             }
         } document.addEventListener("mousedown", handle_click_outside);return lambda -> None { document.removeEventListener(
@@ -36,7 +46,10 @@ def:pub NewKernel {
 
     on_complete = lambda data: any = None  -> None { setIsOpen(False);};
 
-    handle_upload_click = lambda -> None { setUploadModalOpen(True);setIsOpen(False);};
+    # Trigger Handlers
+    handle_upload_click = lambda -> None { setUploadModalOpen(True); setIsOpen(False); };
+    handle_generate_click = lambda -> None { setGenerateModalOpen(True); setIsOpen(False); };
+    handle_optimize_click = lambda -> None { setOptimizeModalOpen(True); setIsOpen(False); };
 
     return
         <div className="relative" ref={menu_ref}>
@@ -54,25 +67,32 @@ def:pub NewKernel {
                 className="absolute bottom-full left-0 w-full mb-2 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-20 flex flex-col"
             >
                 <UploadTrigger onUpload={handle_upload_click} />
-                <GenerateMenu
-                    onComplete={lambda -> None { setIsOpen(False);}}
-                    onStarted={on_complete}
-                    projectName={projectName}
-                    opName={opName}
-                />
-                <OptimizeMenu
-                    onComplete={lambda -> None { setIsOpen(False);}}
-                    onStarted={on_complete}
-                    projectName={projectName}
-                    opName={opName}
-                />
+                <GenerateTrigger onGenerate={handle_generate_click} />
+                <OptimizeTrigger onOptimize={handle_optimize_click} />
             </div>
             if isOpen
             else <span />}
+            
             <UploadModal
                 isOpen={uploadModalOpen}
                 onClose={lambda -> None { setUploadModalOpen(False);}}
                 onSuccess={lambda -> None { setIsOpen(False);}}
+                projectName={projectName}
+                opName={opName}
+            />
+            <GenerateModal
+                isOpen={generateModalOpen}
+                onClose={lambda -> None { setGenerateModalOpen(False);}}
+                onComplete={lambda -> None { setIsOpen(False);}}
+                onStarted={on_complete}
+                projectName={projectName}
+                opName={opName}
+            />
+            <OptimizeModal
+                isOpen={optimizeModalOpen}
+                onClose={lambda -> None { setOptimizeModalOpen(False);}}
+                onComplete={lambda -> None { setIsOpen(False);}}
+                onStarted={on_complete}
                 projectName={projectName}
                 opName={opName}
             />

@@ -29,39 +29,48 @@ def:pub ConfigProvider(children: any) -> Any {
     loading = loading_state[0];
     setLoading = loading_state[1];
 
+    hw_info_state = useState({"cuda_available": False, "mps_available": False});
+    hwInfo = hw_info_state[0];
+    setHwInfo = hw_info_state[1];
+
     # Load config on mount
     async def fetchConfig -> None {
         try {
-            resp = await __jacSpawn("GetConfig", "", {});
-            data = resp.reports[0]
-            if resp and resp.reports and resp.reports.length > 0
-            else None;
+            # Run in parallel
+            cmd_config = __jacSpawn("GetConfig", "", {});
+            cmd_hw = __jacSpawn("DetectHardware", "", {});
+
+            resp_config = await cmd_config;
+            resp_hw = await cmd_hw;
+            
+            # Process Config
+            data = resp_config.reports[0] if resp_config and resp_config.reports and resp_config.reports.length > 0 else None;
             loaded = data if data else {};
             loaded_llm = loaded["llm_info"] if loaded and "llm_info" in loaded else {};
             merged_llm = {** DEFAULT_CONFIG["llm_info"], ** loaded_llm};
             merged = {** DEFAULT_CONFIG, ** loaded};
             merged["llm_info"] = merged_llm;
 
-            # Normalize SSH config to avoid out-of-range active index
+            # Normalize SSH config
             conns = merged["ssh_connections"] if "ssh_connections" in merged else [];
-            active_idx = merged["active_ssh_index"]
-            if "active_ssh_index" in merged
-            else -1;
+            active_idx = merged["active_ssh_index"] if "active_ssh_index" in merged else -1;
             if active_idx < -1 or active_idx >= conns.length {
                 merged["active_ssh_index"] = -1;
             }
 
             # Normalize selected GPU index
-            selected_idx = merged["selected_gpu_index"]
-            if "selected_gpu_index" in merged
-            else -1;
+            selected_idx = merged["selected_gpu_index"] if "selected_gpu_index" in merged else -1;
             if selected_idx < -1 {
                 merged["selected_gpu_index"] = -1;
             }
-
             setConfigState(merged);
+
+            # Process Hardware Info
+            hw_data = resp_hw.reports[0] if resp_hw and resp_hw.reports and resp_hw.reports.length > 0 else {};
+            setHwInfo(hw_data);
+
         } except Exception as e {
-            console.error("Failed to load config:", e);
+            console.error("Failed to load config/hardware:", e);
             setConfigState(DEFAULT_CONFIG);
         } finally {
             setLoading(False);
@@ -72,11 +81,8 @@ def:pub ConfigProvider(children: any) -> Any {
 
     async def save_config_handler(newConfig: dict) -> bool {
         try {
-            # Calls the passed saveConfig
             resp = await __jacSpawn("SaveConfig", "", {"cfg": newConfig});
-            res = resp.reports[0]
-            if resp and resp.reports and resp.reports.length > 0
-            else False;
+            res = resp.reports[0] if resp and resp.reports and resp.reports.length > 0 else False;
             if res {
                 setConfigState(newConfig);
                 return True;
@@ -92,11 +98,10 @@ def:pub ConfigProvider(children: any) -> Any {
         <ConfigContext.Provider
             value={{
                 "config": config,
-                "setConfig": lambda newConfig: dict  -> None { setConfigState(
-                    newConfig
-                );},
+                "setConfig": lambda newConfig: dict  -> None { setConfigState(newConfig);},
                 "saveConfig": save_config_handler,
-                "loading": loading
+                "loading": loading,
+                "hwInfo": hwInfo
             }}
         >
             {children}
