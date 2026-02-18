@@ -53,6 +53,51 @@ def summarize_issue_with_traceback(
         """
 
 
+def _short_error(msg: str, limit: int = 2000) -> str:
+    if not msg:
+        return ""
+    if len(msg) <= limit:
+        return msg
+    return msg[: limit - 3] + "..."
+
+
+def handle_output(traceback_error: str, triton_code: str, log_file_path: Path, input_and_output: dict) -> str:
+    """
+    Format error with simplified traceback and optional LLM feedback.
+    """
+    disable_summary = os.environ.get("CGINS_DISABLE_SUMMARY", "").lower() in {"1", "true", "yes"}
+    model_configured = bool(settings.llm_model_name)
+
+    raw_error = _short_error(traceback_error)
+    feedback = raw_error
+
+    if not disable_summary and model_configured:
+        try:
+            # Clone input to avoid modifying original
+            io_copy = input_and_output.copy()
+            if "correct-output" not in io_copy and "output" in io_copy:
+                io_copy["correct-output"] = io_copy["output"]
+                del io_copy["output"]
+            
+            feedback = summarize_issue_with_traceback(
+                traceback_error, triton_code, io_copy
+            )
+        except Exception as e:
+            feedback = f"{raw_error}\n[LLM Feedback Error: {str(e)}]"
+
+    output = (
+        f"[Raw Error]:\n{raw_error}\n\n"
+        f"[LLM Generated Feedback]:\n{feedback}"
+    )
+    
+    if log_file_path:
+        try:
+            with open(log_file_path, "w") as f:
+                f.write(output)
+        except Exception:
+            pass
+
+    return output
 def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:
     """
     Normalize args and kwargs into a complete positional argument list.
@@ -74,7 +119,7 @@ def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tup
         elif param_name in defaults:
             normalized.append(defaults[param_name])
         else:
-            print(f"Warning: No value for parameter '{param_name}' at position {i}")
+            # print(f"Warning: No value for parameter '{param_name}' at position {i}")
             break
 
     return normalized, remaining_kwargs
@@ -114,10 +159,6 @@ def _load_triton_module(kernel_path: Path):
 def validate_kernel(generated_py_code: str, paths: dict[str, Path]) -> tuple[bool, str]:
     """
     Validates a Triton kernel by importing it and comparing outputs.
-
-    Unlike CUDA validation, no persistent worker is needed because Triton 
-    kernels are Python — they compile JIT on first call and don't require 
-    subprocess isolation.
     """
     tmpdir = paths["tmp_dir"]
     io_dir = paths["io_dir"]
@@ -128,7 +169,14 @@ def validate_kernel(generated_py_code: str, paths: dict[str, Path]) -> tuple[boo
 
     try:
         # Import the module
-        module = _load_triton_module(kernel_path)
+        try:
+            module = _load_triton_module(kernel_path)
+        except Exception as e:
+            # Import/Compilation Error
+            tb = traceback.format_exc()
+            dummy_entry = {"input": "Unknown", "output": "Unknown"}
+            log_msg = handle_output(tb, generated_py_code, None, dummy_entry)
+            return False, f"[Import/Compilation Failed]\n{log_msg}"
 
         if not hasattr(module, 'launch'):
             return False, "[Error] Triton kernel module has no 'launch()' function"
@@ -140,6 +188,8 @@ def validate_kernel(generated_py_code: str, paths: dict[str, Path]) -> tuple[boo
 
         all_valid = True
         error_logs = []
+        llm_analysis_count = 0 
+        MAX_LLM_ANALYSIS = 1
 
         for entry_file in entry_files:
             try:
@@ -149,6 +199,7 @@ def validate_kernel(generated_py_code: str, paths: dict[str, Path]) -> tuple[boo
                 signature_info = entry.get("signature", {"params": [], "defaults": {}})
 
                 normalized_args, remaining_kwargs = normalize_args_kwargs(args, kwargs, signature_info)
+                # Triton uses CUDA logic for tensors usually
                 cuda_args = [move_to_cuda(item) for item in normalized_args]
 
                 output_generated = module.launch(*cuda_args)
@@ -165,27 +216,46 @@ def validate_kernel(generated_py_code: str, paths: dict[str, Path]) -> tuple[boo
                 if torch.is_tensor(ground_truth):
                     ground_truth = ground_truth.to(output_generated.device)
 
-                is_correct = torch.allclose(
-                    output_generated, ground_truth, atol=1e-2, rtol=1e-1)
+                if torch.is_tensor(ground_truth) and not ground_truth.is_floating_point():
+                    is_correct = torch.equal(output_generated, ground_truth)
+                else:
+                    is_correct = torch.allclose(
+                        output_generated, ground_truth, atol=1e-2, rtol=1e-1)
 
                 if not is_correct:
                     all_valid = False
                     diff = torch.abs(output_generated - ground_truth)
-                    error_logs.append(
-                        f"[Output Mismatch {entry_file.name}] Max diff: {diff.max().item():.6f}")
+                    analysis_msg = (
+                        f"[Output Mismatch {entry_file.name}]\n"
+                        f"Max diff: {diff.max().item():.6f}\n"
+                        f"Mean diff: {diff.mean().item():.6f}\n"
+                    )
+                    
+                    # Generate detailed analysis only for the first few failures
+                    if llm_analysis_count < MAX_LLM_ANALYSIS:
+                        entry["generated-incorrect-output"] = output_generated
+                        log_msg = handle_output(analysis_msg, generated_py_code, None, entry)
+                        llm_analysis_count += 1
+                    else:
+                        log_msg = f"{analysis_msg}\n(LLM Analysis skipped for subsequent errors)"
+                        
+                    error_logs.append(log_msg)
 
             except Exception as e:
                 all_valid = False
-                error_logs.append(
-                    f"[Runtime Error {entry_file.name}] {str(e)}")
+                tb = traceback.format_exc()
+                if llm_analysis_count < MAX_LLM_ANALYSIS:
+                    log_msg = handle_output(tb, generated_py_code, None, entry)
+                    llm_analysis_count += 1
+                else:
+                    log_msg = f"[Runtime Error {entry_file.name}]\n{str(e)}\n(LLM Analysis skipped)"
+                error_logs.append(log_msg)
 
         if all_valid:
             return True, f"[Success] All {len(entry_files)} tests passed"
         else:
-            return False, "\n".join(error_logs)
+            return False, "\n\n".join(error_logs)
 
-    except ImportError as e:
-        return False, f"[Import Error] {str(e)}"
     except Exception as e:
         return False, f"[System Error] {str(e)}"
 

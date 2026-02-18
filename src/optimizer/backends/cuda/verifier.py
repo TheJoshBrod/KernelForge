@@ -128,6 +128,65 @@ def move_to_target(item):
     return move_to_cuda(item)
 
 
+
+def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:
+    """
+    Normalize args and kwargs into a complete positional argument list.
+    """
+    params = signature_info.get("params", [])
+    defaults = signature_info.get("defaults", {})
+
+    if not params:
+        return args, kwargs
+
+    normalized = list(args)
+    remaining_kwargs = dict(kwargs)
+
+    for i in range(len(normalized), len(params)):
+        param_name = params[i]
+        if param_name in remaining_kwargs:
+            normalized.append(remaining_kwargs.pop(param_name))
+        elif param_name in defaults:
+            normalized.append(defaults[param_name])
+        else:
+            print(f"Warning: No value for parameter '{param_name}' at position {i}")
+            break
+
+    return normalized, remaining_kwargs
+
+
+def move_to_cuda(item):
+    """Recursively move tensors to CUDA."""
+    if torch.is_tensor(item):
+        return item.cuda()
+    elif isinstance(item, (list, tuple)):
+        return type(item)(move_to_cuda(x) for x in item)
+    elif isinstance(item, dict):
+        return {k: move_to_cuda(v) for k, v in item.items()}
+    return item
+
+
+def move_to_target(item):
+    target = loader.target_device()
+    if target == "cpu":
+        if torch.is_tensor(item):
+            return item.cpu()
+        if isinstance(item, (list, tuple)):
+            return type(item)(move_to_target(x) for x in item)
+        if isinstance(item, dict):
+            return {k: move_to_target(v) for k, v in item.items()}
+        return item
+    if target == "mps":
+        if torch.is_tensor(item):
+            return item.to("mps")
+        if isinstance(item, (list, tuple)):
+            return type(item)(move_to_target(x) for x in item)
+        if isinstance(item, dict):
+            return {k: move_to_target(v) for k, v in item.items()}
+        return item
+    return move_to_cuda(item)
+
+
 # --- Persistent Worker Globals ---
 _WORKER_PROCESS = None
 _WORKER_Q_IN = None
@@ -142,6 +201,8 @@ def _validate_worker_loop(q_in, q_out):
     """
     # Set environment variables ONCE
     import sys
+    import traceback
+    
     # Delegate environment setup to loader
     if loader.target_device() == "cuda":
         loader.ensure_cuda_env()
@@ -162,12 +223,22 @@ def _validate_worker_loop(q_in, q_out):
             try:
                 # Compile using shared loader logic
                 # This handles environment setup and platform differences (CUDA vs CPU/MPS)
-                module = loader.compile_code_string(
-                    code=generated_cu_code,
-                    name=f"generated_module_{os.path.basename(tmpdir)}",
-                    build_dir=tmpdir,
-                    verbose=False
-                )
+                try:
+                    module = loader.compile_code_string(
+                        code=generated_cu_code,
+                        name=f"generated_module_{os.path.basename(tmpdir)}",
+                        build_dir=tmpdir,
+                        verbose=False
+                    )
+                except Exception as e:
+                    # Compilation Error
+                    tb = traceback.format_exc()
+                    # We don't have a specific entry yet, so provide a dummy one for LLM context
+                    dummy_entry = {"input": "Unknown", "output": "Unknown"}
+                    log_msg = handle_output(tb, generated_cu_code, None, dummy_entry)
+                    q_out.put((False, f"[Compilation Failed]\n{log_msg}"))
+                    continue
+
                 # Execution Test
                 entry_files = sorted(Path(io_dir).glob("entry_*.pt"))
                 if not entry_files:
@@ -177,6 +248,8 @@ def _validate_worker_loop(q_in, q_out):
 
                 all_valid = True
                 error_logs = []
+                llm_analysis_count = 0
+                MAX_LLM_ANALYSIS = 1
 
                 for entry_file in entry_files:
                     try:
@@ -203,28 +276,50 @@ def _validate_worker_loop(q_in, q_out):
                             ground_truth = ground_truth.to(
                                 output_generated.device)
 
-                        is_correct = torch.allclose(
-                            output_generated, ground_truth, atol=1e-2, rtol=1e-1)
+                        if torch.is_tensor(ground_truth) and not ground_truth.is_floating_point():
+                            is_correct = torch.equal(output_generated, ground_truth)
+                        else:
+                            is_correct = torch.allclose(
+                                output_generated, ground_truth, atol=1e-2, rtol=1e-1)
 
                         if not is_correct:
                             all_valid = False
                             diff = torch.abs(output_generated - ground_truth)
-                            error_logs.append(
-                                f"[Output Mismatch {entry_file.name}] Max diff: {diff.max().item():.6f}")
+                            
+                            # Generate Mismatch Analysis via LLM
+                            analysis_msg = (
+                                f"[Output Mismatch {entry_file.name}]\n"
+                                f"Max diff: {diff.max().item():.6f}\n"
+                                f"Mean diff: {diff.mean().item():.6f}\n"
+                            )
+                            
+                            if llm_analysis_count < MAX_LLM_ANALYSIS:
+                                entry["generated-incorrect-output"] = output_generated
+                                log_msg = handle_output(analysis_msg, generated_cu_code, None, entry)
+                                llm_analysis_count += 1
+                            else:
+                                log_msg = f"{analysis_msg}\n(LLM Analysis skipped)"
+                                
+                            error_logs.append(log_msg)
 
                     except Exception as e:
                         all_valid = False
-                        error_logs.append(
-                            f"[Runtime Error {entry_file.name}] {str(e)}")
+                        tb = traceback.format_exc()
+                        if llm_analysis_count < MAX_LLM_ANALYSIS:
+                            log_msg = handle_output(tb, generated_cu_code, None, entry)
+                            llm_analysis_count += 1
+                        else:
+                             log_msg = f"[Runtime Error {entry_file.name}]\n{str(e)}\n(LLM Analysis skipped)"
+                        error_logs.append(log_msg)
 
                 if all_valid:
                     q_out.put(
                         (True, f"[Success] All {len(entry_files)} tests passed"))
                 else:
-                    q_out.put((False, "\n".join(error_logs)))
+                    q_out.put((False, "\n\n".join(error_logs)))
 
             except Exception as e:
-                # Compilation or other top-level error
+                # Other top-level error
                 q_out.put((False, f"[System Error] {str(e)}"))
 
         except KeyboardInterrupt:

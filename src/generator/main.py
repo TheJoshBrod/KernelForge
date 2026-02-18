@@ -26,9 +26,9 @@ from src.llm_tools import GenModel
 import src.generator.generator as generator
 import src.generator.monitor as monitor
 import src.generator.prompts.prompts as prompts
-import src.generator.verifier as verify
-import src.generator.triton_verifier as triton_verify
 import src.generator.templates as templates
+from src.optimizer.backends.cuda import CUDABackend
+from src.optimizer.backends.triton import TritonBackend
 from src.progress import update_job_progress, wait_if_paused, check_cancelled
 try:
     from src import codex_utils
@@ -55,10 +55,42 @@ def _success_filename() -> str:
 
 
 def _validate_kernel(cu_code, entry_file, log_file_loc, tmpdir):
-    """Route to the correct verifier based on target device."""
+    """Route to the unified backend verifier."""
+    # Derive io_dir from entry_file path
+    io_dir = Path(entry_file).parent
+    paths = {
+        "io_dir": io_dir,
+        "tmp_dir": Path(tmpdir),
+    }
+
     if _is_triton():
-        return triton_verify.validate_kernel(cu_code, entry_file, log_file_loc, tmpdir)
-    return verify.validate_kernel(cu_code, entry_file, log_file_loc, tmpdir)
+        backend = TritonBackend()
+    else:
+        # Default to CUDA
+        backend = CUDABackend()
+
+    # Backend validates all files in io_dir
+    success, log_msg = backend.validate_kernel(cu_code, paths)
+
+    # Decode success flags from log message for compatibility with generator logic
+    # Generator expects: (call_success, exec_success, feedback)
+    call_success = True
+    if "[Compilation Failed]" in log_msg or "[Import/Compilation Failed]" in log_msg:
+        call_success = False
+    
+    exec_success = success
+    if not success and call_success:
+        # If compilation passed but Overall success is False, then it's a runtime/mismatch error
+        exec_success = False
+        
+    # Write log file manually as we didn't pass it to validate_kernel (it just returns string)
+    try:
+        with open(log_file_loc, "w") as f:
+            f.write(log_msg)
+    except Exception:
+        pass
+
+    return call_success, exec_success, log_msg
 
 # Configuration
 MAX_ATTEMPTS = int(os.environ.get("CGINS_MAX_ATTEMPTS", "8"))
@@ -426,42 +458,32 @@ def validate_with_retries(
             f.write(cu_code)
 
         # For each generated kernel validate ALL input/output
-        is_valid = True
-        for i, entry_file in enumerate(tqdm(entry_files, desc="Input Tests")):
-            if not wait_if_paused():
-                return False, "Generation cancelled.", "control"
-            if check_cancelled():
-                return False, "Generation cancelled.", "control"
+        # Unified Validation (Batch)
+        log_file_loc = output_dir / "attempts" / f"log-{attempt}.txt"
+        os.makedirs(log_file_loc.parent, exist_ok=True)
 
-            # Validate current kernel with entry file
-            log_file_loc = output_dir / "attempts" / f"log-{attempt}-{i}.txt"
-            os.makedirs(log_file_loc.parent, exist_ok=True)
-            call_success, exec_success, feedback = _validate_kernel(
-                cu_code, entry_file, log_file_loc, tmpdir
-            )
+        if not entry_files:
+             return False, "No entry files", "setup"
 
-            print(feedback)
+        # Validate all inputs at once using backend
+        call_success, exec_success, feedback = _validate_kernel(
+            cu_code, entry_files[0], log_file_loc, tmpdir
+        )
 
-            # If failed on a testcase regenerate
-            is_valid = is_valid and call_success and exec_success
-            if not is_valid:
-                # Save kernel
-                with open(kernel_dir / f"kernel-{attempt}-{i}{_kernel_ext()}", "w") as f:
-                    f.write(cu_code)
+        print(feedback)
 
-                if use_codex_generate:
-                    if use_codex_repair:
-                        repaired_ok, repair_feedback, repair_stage = _run_codex_repair(
-                            feedback, attempt
-                        )
-                        if repaired_ok:
-                            return True, "", "success"
-                        last_feedback = repair_feedback
-                        last_stage = repair_stage
-                    else:
-                        last_feedback = feedback
-                        last_stage = "codex_validate"
-                elif use_codex_repair and not use_codex_generate:
+        is_valid = call_success and exec_success
+        if not is_valid:
+            # Save failed kernel
+            with open(kernel_dir / f"kernel-{attempt}-failed{_kernel_ext()}", "w") as f:
+                f.write(cu_code)
+
+            last_feedback = feedback
+            last_stage = "llm_validate"
+
+            # Optional Codex/Repair logic
+            if use_codex_repair:
+                try:
                     repaired_ok, repair_feedback, repair_stage = _run_codex_repair(
                         feedback, attempt
                     )
@@ -469,21 +491,14 @@ def validate_with_retries(
                         return True, "", "success"
                     last_feedback = repair_feedback
                     last_stage = repair_stage
-                    last_repair_prompt = prompts.get_repair_prompt(
-                        function_name=function_name,
-                        attempt=attempt,
-                        feedback=last_feedback,
-                    )
-                    # GenModel history updated when we call generate next time with this prompt
-                else:
-                    last_repair_prompt = prompts.get_repair_prompt(
-                        function_name=function_name,
-                        attempt=attempt,
-                        feedback=feedback,
-                    )
-                    last_feedback = feedback
-                    last_stage = "llm_validate"
-                break
+                except NameError:
+                    pass
+
+            last_repair_prompt = prompts.get_repair_prompt(
+                function_name=function_name,
+                attempt=attempt,
+                feedback=last_feedback,
+            )
 
         # Delete tmp directory before next generation
         if os.path.exists(tmpdir):
