@@ -341,7 +341,7 @@ walker:pub CreateProject {
         validationZipB64: str = "",
         validationZipName: str = "";
 
-    can create with `root entry {
+    can create with entry {
         try {
             projects_dir = path.join(repo_root, "projects");
             if not path.exists(projects_dir) {
@@ -477,7 +477,7 @@ walker:pub CreateProject {
 }
 
 walker:pub GetProjects {
-    can return_projects with `root entry {
+    can return_projects with entry {
         try {
             projects_dir = path.join(repo_root, "projects");
             if not path.exists(projects_dir) {
@@ -503,7 +503,7 @@ walker:pub GetProjects {
 walker:pub GetProjectOps {
     has projectName: str;
 
-    can return_ops with `root entry {
+    can return_ops with entry {
         try {
             base_dir = path.join(
                 repo_root, "projects", self.projectName, "io", "individual_ops"
@@ -544,7 +544,7 @@ walker:pub GetProjectOps {
 walker:pub GetProjectStatus {
     has projectName: str;
 
-    can return_status with `root entry {
+    can return_status with entry {
         state = _read_state(self.projectName);
         report state ;
     }
@@ -555,7 +555,7 @@ walker:pub SetJobControl {
         jobKey: str,
         action: str;
 
-    can run with `root entry {
+    can run with entry {
         try {
             action = self.action.lower();
             updates = {};
@@ -581,7 +581,7 @@ walker:pub SetJobControl {
 walker:pub StartProfile {
     has projectName: str;
 
-    can run with `root entry {
+    can run with entry {
         cmd = [
             sys.executable,
             path.join(repo_root, "scripts", "profile_then_benchmark.py"),
@@ -596,7 +596,7 @@ walker:pub StartProfile {
 walker:pub StartGenerate {
     has projectName: str;
 
-    can run with `root entry {
+    can run with entry {
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
         out_dir = path.join(_project_dir(self.projectName), "kernels", "generated");
         _ensure_dir(out_dir);
@@ -629,7 +629,7 @@ walker:pub StartGenerateAdvanced {
         generator_config: dict = {},
         optimizer_config: dict = {};
 
-    can run with `root entry {
+    can run with entry {
         try {
             cfg = {};
             try {

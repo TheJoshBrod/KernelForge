@@ -71,6 +71,31 @@ def:pub ConfigProvider(children: any) -> Any {
 
         } except Exception as e {
             console.error("Failed to load config/hardware:", e);
+            err_str = e.toString();
+            if err_str.includes("Invalid anchor id") or err_str.includes("500") or err_str.includes("Internal Server Error") {
+                console.warn("Detected stale session.");
+                
+                # Retry Loop Protection
+                stored_retries = localStorage.getItem("session_retries");
+                retry_count = parseInt(stored_retries) if stored_retries else 0;
+
+                if retry_count >= 3 {
+                    console.error("Critical: Max session retries exceeded.");
+                    alert("Session Error: Please manually clear your browser cookies and refresh the page.");
+                    # Stop here to prevent infinite loop
+                    setLoading(False);
+                    return;
+                }
+
+                console.warn("Resetting session (Attempt " + (retry_count + 1).toString() + "/3)...");
+                localStorage.clear();
+                sessionStorage.clear();
+                
+                # Persist retry count after clear
+                localStorage.setItem("session_retries", (retry_count + 1).toString());
+                
+                window.location.reload();
+            }
             setConfigState(DEFAULT_CONFIG);
         } finally {
             setLoading(False);
@@ -108,7 +133,7 @@ def:pub ConfigProvider(children: any) -> Any {
         </ConfigContext.Provider>;
 }
 
-def:pub useConfig {
+def:pub useConfig -> Any {
     return useContext(ConfigContext);
 }
 # Create Context

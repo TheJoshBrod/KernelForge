@@ -71,7 +71,7 @@ walker:pub GetSystemInfo {
     has password: str = "";
     has key_path: str = "";
 
-    can return_info with `root entry {
+    can return_info with entry {
         try {
             # Check cache (1 minute TTL)
             now_ts = datetime.now().timestamp();
@@ -271,7 +271,7 @@ walker:pub CheckSshConnection {
         password: str,
         key_path: str;
 
-    can return_status with `root entry {
+    can return_status with entry {
         try {
             client = paramiko.SSHClient();
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy());
@@ -411,7 +411,7 @@ print(json.dumps(get_gpu_info()))
 walker:pub TestLLMConnection {
     has cfg: dict = {};
 
-    can run with `root entry {
+    can run with entry {
         cfg = self.cfg;
         if not cfg {
             try {
@@ -435,7 +435,7 @@ walker:pub TestLLMConnection {
 }
 
 walker:pub DetectHardware {
-    can detect with `root entry {
+    can detect with entry {
         global _hw_cache;
         if _hw_cache {
             report _hw_cache ;

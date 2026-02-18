@@ -5,7 +5,7 @@ import from os { path }
 import from .globals { config_path, config_store }
 
 walker:pub GetConfig {
-    can return_config with `root entry {
+    can return_config with entry {
         try {
             abs_path = path.abspath(config_path);
             print(f"DEBUG: Loading config from {abs_path}");
@@ -23,7 +23,7 @@ walker:pub GetConfig {
 walker:pub SaveConfig {
     has cfg: dict;
 
-    can update_config with `root entry {
+    can update_config with entry {
         try {
             abs_path = path.abspath(config_path);
             with open(config_path, "w") as f {

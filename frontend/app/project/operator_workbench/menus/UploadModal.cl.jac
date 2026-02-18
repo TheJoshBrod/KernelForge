@@ -6,7 +6,7 @@ import from .....components.ui.Modal { Modal }
 
 import from .....context.ConfigContext { useConfig }
 
-def:pub UploadModal(props: any) {
+def:pub UploadModal(props: any) -> Any {
     isOpen = props.isOpen;
     onClose = props.onClose;
     onSuccess = props.onSuccess;
@@ -122,7 +122,7 @@ def:pub UploadModal(props: any) {
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Upload Custom Kernel">
             <div className="p-6 space-y-6">
-                # {/* Code Editor Section */}
+
                 <div className="space-y-4">
                     <div className="flex items-center justify-between">
                         <label
@@ -131,7 +131,7 @@ def:pub UploadModal(props: any) {
                             <CodeIcon className="w-4 h-4 text-indigo-400" />
                             Kernel Source Code
                         </label>
-                        # {/* File Upload Trigger */}
+
                         <div>
                             <input
                                 type="file"
@@ -164,7 +164,7 @@ def:pub UploadModal(props: any) {
                         </div>
                     </div>
                 </div>
-                # {/* Settings Section */}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                         <label
@@ -208,7 +208,7 @@ def:pub UploadModal(props: any) {
                         </p>
                     </div>
                 </div>
-                # {/* Actions */}
+
                 <div className="pt-6 flex justify-end gap-3 border-t border-zinc-800">
                     <button
                         onClick={onClose}

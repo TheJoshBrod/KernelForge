@@ -7,7 +7,7 @@ import from ...components.ui.GlowButton { GlowButton }
 import from ...components.ui.Icons { CGinSLogo }
 import from ...components.SplashScreen { SplashScreen }
 
-def:pub Home {
+def:pub Home -> Any {
     navigate = useNavigate();
     has projects: list = [],
         loading: bool = True,
@@ -28,6 +28,31 @@ def:pub Home {
             }
         } except Exception as e {
             console.error("Failed to fetch projects", e);
+            err_str = e.toString();
+            if err_str.includes("Invalid anchor id") or err_str.includes("500") or err_str.includes("Internal Server Error") {
+                console.warn("Detected stale session.");
+
+                # Retry Loop Protection
+                stored_retries = localStorage.getItem("session_retries");
+                retry_count = parseInt(stored_retries) if stored_retries else 0;
+
+                if retry_count >= 3 {
+                    console.error("Critical: Max session retries exceeded.");
+                    alert("Session Error: Please manually clear your browser cookies and refresh the page.");
+                    # Stop here
+                    loading = False;
+                    return;
+                }
+
+                console.warn("Resetting session (Attempt " + (retry_count + 1).toString() + "/3)...");
+                localStorage.clear();
+                sessionStorage.clear();
+                
+                # Persist retry count after clear
+                localStorage.setItem("session_retries", (retry_count + 1).toString());
+
+                window.location.reload();
+            }
         } finally {
             elapsed = Date.now() - start;
             if not splashDone and elapsed < 3000 {

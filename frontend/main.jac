@@ -59,7 +59,10 @@ cl {
     }
 
     def:pub app {
-        useEffect(lambda -> None { document.title = "CGinS";}, []);
+        useEffect(lambda -> None {
+            window.Exception = Error;
+            document.title = "CGinS";
+        }, []);
         return
             <Router>
                 <ConfigProvider>
