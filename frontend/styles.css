@@ -1,43 +1,55 @@
-@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+@import url('https://fonts.googleapis.com/css2?family=Bitter:ital,wght@0,100..900;1,100..900&family=Oswald:wght@200..700&family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap');
 @import "tailwindcss";
 @import "reactflow/dist/style.css";
 
 @theme {
   --color-background: var(--bg);
   --color-foreground: var(--text);
-  --font-sans: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-display: "Oswald", sans-serif;
+  --font-body: "Bitter", serif;
+  --font-mono: "Source Code Pro", monospace;
 }
 
 :root {
-  --bg-0: #04070b;
-  --bg-1: #0a0f14;
-  --bg-2: #0f1620;
-  --surface-0: rgba(12, 18, 26, 0.72);
-  --surface-1: rgba(14, 21, 30, 0.92);
-  --surface-2: #111a24;
-  --text-strong: #f3f7ff;
-  --text: #dbe7f3;
-  --muted: #93a3b7;
-  --text-muted: #93a3b7;
-  --text-subtle: #6f7f92;
-  --border: rgba(148, 163, 184, 0.18);
-  --border-strong: rgba(134, 230, 169, 0.32);
-  --accent: #86e6a9;
-  --accent-strong: #67d49a;
-  --accent2: #5bbbd3;
-  --accent-soft: rgba(134, 230, 169, 0.16);
-  --mint-shadow: rgba(134, 230, 169, 0.18);
-  --cream: rgba(12, 18, 26, 0.7);
-  --ink: var(--text-strong);
-  --ring: rgba(134, 230, 169, 0.45);
-  --shadow-soft: 0 14px 36px rgba(2, 6, 12, 0.65);
-  --shadow-card: 0 18px 45px rgba(2, 6, 12, 0.6);
-  --glow-accent: 0 0 24px rgba(134, 230, 169, 0.2);
-  --danger: #f87171;
-  --success: #34d399;
-  --bg: var(--bg-0);
-  --surface: var(--surface-1);
+  /* Industrial / Forge Palette */
+  --bg-charcoal: #1a1d21;
+  --bg-darker: #121417;
+  --bg-panel: #22262b;
+
+  --accent-copper: #c75b39;
+  --accent-orange: #e17055;
+  --ember-red: #d63031;
+  --molten-gold: #fdcb6e;
+  --molten-gold-dark: #e8a838;
+
+  --text-smoke: #b2becd;
+  --text-light: #e0e6ed;
+
+  /* Mappings */
+  --bg: var(--bg-charcoal);
+  --bg-0: var(--bg-charcoal);
+  --bg-1: var(--bg-darker);
+  --surface: var(--bg-panel);
+  --surface-1: var(--bg-panel);
+  --surface-0: var(--bg-darker);
+
+  --text: var(--text-light);
+  --text-strong: #ffffff;
+  --text-muted: var(--text-smoke);
+
+  --border: #363b42;
+  --border-strong: var(--accent-copper);
+
+  --accent: var(--accent-copper);
+  --accent-strong: var(--accent-orange);
+  --accent-glow: rgba(225, 112, 85, 0.4);
+
+  --success: #27ae60;
+  --danger: var(--ember-red);
+
+  /* Fonts */
+  --font-sans: "Bitter", serif;
+  /* Mapping Bitter as default body font */
 }
 
 * {
@@ -528,12 +540,12 @@ video {
 
 .glow-button.primary {
   color: #071018;
-  border-color: rgba(134, 230, 169, 0.55);
+  border-color: var(--accent-glow);
 }
 
 .glow-button.primary:hover {
   transform: translateY(-1px);
-  border-color: rgba(134, 230, 169, 0.8);
+  border-color: var(--accent);
 }
 
 .glow-button.secondary {
@@ -556,7 +568,7 @@ video {
 
 .glow-button::before {
   content: "";
-  background: linear-gradient(45deg, rgba(134, 230, 169, 0.4), rgba(91, 187, 211, 0.85), rgba(134, 230, 169, 0.4));
+  background: linear-gradient(45deg, var(--accent-glow), var(--accent2), var(--accent-glow));
   position: absolute;
   top: -3px;
   left: -3px;
@@ -576,7 +588,7 @@ video {
   position: absolute;
   inset: 0;
   border-radius: 999px;
-  background: linear-gradient(135deg, rgba(134, 230, 169, 0.95), rgba(91, 187, 211, 0.75));
+  background: linear-gradient(135deg, var(--accent), var(--molten-gold));
   z-index: 0;
   transition: opacity 0.3s ease;
   pointer-events: none;
@@ -2157,13 +2169,16 @@ video {
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
 }
+
 .custom-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
+
 .custom-scrollbar::-webkit-scrollbar-thumb {
   background-color: rgba(255, 255, 255, 0.1);
   border-radius: 20px;
 }
+
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background-color: rgba(255, 255, 255, 0.2);
 }
@@ -2172,14 +2187,100 @@ video {
 .animation-fade-in-up {
   animation: fadeInUp 0.5s ease-out forwards;
 }
+
 @keyframes fadeInUp {
   from {
     opacity: 0;
     transform: translateY(20px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
   }
 }
 
+/* === Industrial Visuals === */
+
+.industrial-font-display {
+  font-family: "Oswald", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.industrial-grid-bg {
+  background-size: 40px 40px;
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+}
+
+.clip-anvil {
+  clip-path: polygon(12px 0,
+      100% 0,
+      100% calc(100% - 12px),
+      calc(100% - 12px) 100%,
+      0 100%,
+      0 12px);
+}
+
+.clip-hex {
+  clip-path: polygon(40px 0,
+      100% 0,
+      100% calc(100% - 40px),
+      calc(100% - 40px) 100%,
+      0 100%,
+      0 40px);
+}
+
+.noise-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22 opacity=%220.08%22/%3E%3C/svg%3E");
+  z-index: 5;
+  mix-blend-mode: overlay;
+}
+
+@keyframes ember-rise {
+  0% {
+    transform: translateY(100vh) scale(0.5);
+    opacity: 0;
+  }
+
+  20% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateY(-10vh) scale(1.2);
+    opacity: 0;
+  }
+}
+
+.ember-particle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  background: var(--accent-orange);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--ember-red);
+  animation: ember-rise linear infinite;
+}
+
+/* Scrollbar tuning for charcoal theme */
+.charcoal-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.charcoal-scrollbar::-webkit-scrollbar-track {
+  background: #121417;
+}
+
+.charcoal-scrollbar::-webkit-scrollbar-thumb {
+  background: #363b42;
+  border-radius: 2px;
+}
+
+.charcoal-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-copper);
+}
