@@ -454,9 +454,7 @@ walker:pub CreateProject {
             } else {
                 profile_cmd = [
                     sys.executable,
-                    path.join(
-                        repo_root, "benchmarks", "profiler", "profile_project.py"
-                    ),
+                    path.join(repo_root, "scripts", "profile_then_benchmark.py"),
                     "--project",
                     self.projectName
                 ];
@@ -586,7 +584,7 @@ walker:pub StartProfile {
     can run with `root entry {
         cmd = [
             sys.executable,
-            path.join(repo_root, "benchmarks", "profiler", "profile_project.py"),
+            path.join(repo_root, "scripts", "profile_then_benchmark.py"),
             "--project",
             self.projectName
         ];
