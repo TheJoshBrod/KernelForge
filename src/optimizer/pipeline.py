@@ -5,9 +5,12 @@ import string
 import argparse
 import tempfile
 import queue
+import os
 from pathlib import Path
 
 import torch
+
+from src.config import ensure_llm_config, load_project_config
 
 import src.optimizer.core.generator as generator
 import src.optimizer.core.mcts as mcts
@@ -625,6 +628,39 @@ Examples:
     args = parser.parse_args()
     io_parent_dir = args.io_dir
     optional_proj_name = args.project_name
+
+    # --- Load Project Config (LLM Settings) ---
+    # Try to find config.json relative to IO dir (e.g. projects/Test-project/io -> projects/Test-project/config.json)
+    current_path = io_parent_dir.absolute()
+    project_config_path = None
+    for _ in range(3): # Check up to 3 levels up
+        candidate = current_path / "config.json"
+        if candidate.exists():
+            project_config_path = candidate
+            break
+        current_path = current_path.parent
+    
+    if project_config_path:
+        print(f"Loading project config from: {project_config_path}")
+        os.environ["CGINS_CONFIG_PATH"] = str(project_config_path)
+    
+    # Initialize LLM config from environment/file
+    ensure_llm_config()
+
+    # Export active model name to environment so settings.py can pick it up
+    # ensure_llm_config sets LLM_PROVIDER and specific model vars (e.g. ANTHROPIC_MODEL)
+    provider = os.environ.get("LLM_PROVIDER", "").lower()
+    model_name = ""
+    if provider == "openai":
+        model_name = os.environ.get("OPENAI_MODEL", "")
+    elif provider == "anthropic":
+        model_name = os.environ.get("ANTHROPIC_MODEL", "")
+    elif provider == "gemini":
+        model_name = os.environ.get("GEMINI_MODEL", "")
+    
+    if model_name:
+        print(f"Using LLM Model: {model_name} (Provider: {provider})")
+        os.environ["OPTIMIZER_LLM_MODEL_NAME"] = model_name
 
     ssh_config = None
     
