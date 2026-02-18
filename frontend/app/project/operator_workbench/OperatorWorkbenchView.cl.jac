@@ -280,13 +280,24 @@ def:pub OperatorWorkbenchView {
         for v in vals {
             sortedNodes.push(v);
         }
-        sortedNodes.sort(
-            lambda a: any, b: any -> float {
-                val_a = Number(a["value"]) if a and "value" in a else 0;
-                val_b = Number(b["value"]) if b and "value" in b else 0;
-                return val_a - val_b;
+        # Avoid Array.sort comparator type issues in Jac transpilation.
+        i = 0;
+        while i < sortedNodes.length {
+            j = 0;
+            while j < sortedNodes.length - 1 {
+                a = sortedNodes[j];
+                b = sortedNodes[j + 1];
+                av = Number(a["value"]) if a and "value" in a else 0;
+                bv = Number(b["value"]) if b and "value" in b else 0;
+                if av > bv {
+                    tmp = sortedNodes[j];
+                    sortedNodes[j] = sortedNodes[j + 1];
+                    sortedNodes[j + 1] = tmp;
+                }
+                j += 1;
             }
-        );
+            i += 1;
+        }
     }
 
     listViewItems = [];
