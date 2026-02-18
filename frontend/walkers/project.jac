@@ -843,7 +843,7 @@ walker:pub StartOptimizeAdvanced {
         llm_model: str = "",
         optimizer_config: dict = {};
 
-    can run with `root entry {
+    can run with entry {
         try {
             cfg = {};
             try {
@@ -1000,7 +1000,7 @@ walker:pub StartOptimizeAdvanced {
 walker:pub StartOptimize {
     has projectName: str;
 
-    can run with `root entry {
+    can run with entry {
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
         kernel_dir = path.join(
             _project_dir(self.projectName),
@@ -1030,7 +1030,7 @@ walker:pub StartOptimize {
 walker:pub StartBenchmark {
     has projectName: str;
 
-    can run with `root entry {
+    can run with entry {
         cmd = [
             sys.executable,
             path.join(repo_root, "scripts", "benchmark_project_ops.py"),
@@ -1046,7 +1046,7 @@ walker:pub ExportProject {
     has projectName: str,
         ops: list = [];
 
-    can run with `root entry {
+    can run with entry {
         result = _export_project_zip(self.projectName, self.ops);
         report result ;
     }
@@ -1056,7 +1056,7 @@ walker:pub GetOpDetails {
     has projectName: str,
         opName: str;
 
-    can run with `root entry {
+    can run with entry {
         project_dir = _project_dir(self.projectName);
         profile_dir = path.join(project_dir, "io", "individual_ops", self.opName);
         entry_files = [];
@@ -1122,7 +1122,7 @@ walker:pub ReadRepoFile {
     has projectName: str,
         relPath: str;
 
-    can run with `root entry {
+    can run with entry {
         try {
             if not _is_allowed_repo_path(self.relPath, self.projectName) {
                 report {"success": False, "error": "Path not allowed"} ;
@@ -1153,7 +1153,7 @@ walker:pub DownloadExport {
     has projectName: str,
         ops: list = [];
 
-    can run with `root entry {
+    can run with entry {
         if self.ops and self.ops.length > 0 {
             export_result = _export_project_zip(self.projectName, self.ops);
             if not export_result["success"] {
@@ -1187,7 +1187,7 @@ walker:pub DownloadExport {
 walker:pub GetProjectBenchmarks {
     has projectName: str;
 
-    can run with `root entry {
+    can run with entry {
         bench_path = path.join(
             _project_dir(self.projectName), "benchmarks", "op_benchmarks.json"
         );
