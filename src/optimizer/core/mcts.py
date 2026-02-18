@@ -109,6 +109,11 @@ def load_tree_once(paths: dict):
             except sqlite3.OperationalError:
                 pass # Table might not exist yet if empty
 
+            # 3. Any node not linked as a child in edges is a root
+            for node in nodes_map.values():
+                if node.parent_id is None:
+                    node.parent_id = -1
+
             _NODE_CACHE = nodes_map
             
     except Exception as e:
@@ -471,8 +476,12 @@ def get_existing_roots(paths: dict) -> list[dict]:
     
     try:
         with sqlite3.connect(db_path) as conn:
-            # -1 or NULL (if we used null for root parent, but we use -1)
-            cursor = conn.execute("SELECT * FROM nodes WHERE parent_id = -1")
+            # Root nodes are those with no incoming edge in the edges table
+            cursor = conn.execute("""
+                SELECT n.* FROM nodes n
+                LEFT JOIN edges e ON n.id = e.child_id
+                WHERE e.child_id IS NULL
+            """)
             for row in cursor:
                 try:
                     # We can decode the whole node, or just extract what we need

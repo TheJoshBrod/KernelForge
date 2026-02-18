@@ -5,9 +5,12 @@ import string
 import argparse
 import tempfile
 import queue
+import os
 from pathlib import Path
 
 import torch
+
+from src.config import ensure_llm_config, load_project_config
 
 import src.optimizer.core.generator as generator
 import src.optimizer.core.mcts as mcts
@@ -19,7 +22,7 @@ from src.optimizer.backends.metal import MetalBackend
 from src.optimizer.backends.triton import TritonBackend
 
 
-def get_project_dir(gpu_name: str, optional_name: str = None):
+def get_project_dir(gpu_name: str, optional_name: str = None, backend_name: str = "cuda"):
     letters = string.ascii_letters + string.digits
     proj_name = ''.join(random.choices(letters, k=10))
     if optional_name:
@@ -29,7 +32,7 @@ def get_project_dir(gpu_name: str, optional_name: str = None):
     clean_gpu_name = gpu_name.replace(
         " ", "_").replace(":", "").replace("-", "_")
 
-    full_name = f"{clean_gpu_name}_{proj_name}/trees"
+    full_name = f"{clean_gpu_name}_{proj_name}-{backend_name}/trees"
 
     print(f"Beginning optimizing on project {full_name}...")
 
@@ -48,9 +51,10 @@ def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, impro
     """
     next_id = mcts.get_next_node_id(paths)
 
-    # Export attempt's code
-    current_kernel_code = (paths["tmp_dir"] / "kernel.cu").read_text()
-    with open(paths["proj_dir"] / "kernels" / f"kernel_{next_id}.cu", "w") as f:
+    # Export attempt's code — use backend-appropriate extension
+    ext = backend.kernel_extension
+    current_kernel_code = (paths["tmp_dir"] / f"kernel{ext}").read_text()
+    with open(paths["proj_dir"] / "kernels" / f"kernel_{next_id}{ext}", "w") as f:
         f.write(current_kernel_code)
 
     # Log the attempt with results
@@ -71,7 +75,7 @@ def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, impro
         "speedup_vs_parent": log_entry['speedup_vs_parent'],
         "improvement_description": improvement_description,
         "parent": parent_info.id,
-        "code": str(Path(paths["proj_dir"].name) / "kernels" / f"kernel_{next_id}.cu"),
+        "code": str(Path(paths["proj_dir"].name) / "kernels" / f"kernel_{next_id}{ext}"),
         "visits": 1
     }
     # Validate and dump with Pydantic
@@ -120,7 +124,7 @@ def optimize(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path], pare
         # If its valid, log it and return the new node
         if is_valid:
             log_entry, new_node = save_iteration(
-                backend, paths, parent_node, improvement_description, str(paths["proj_dir"] / "kernels" / f"kernel_{parent_node.id}.cu"), ssh_config=ssh_config)
+                backend, paths, parent_node, improvement_description, str(paths["proj_dir"] / "kernels" / f"kernel_{parent_node.id}{backend.kernel_extension}"), ssh_config=ssh_config)
             
             return new_node
     
@@ -141,6 +145,13 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         The newly created root KernelNode, or None if generation failed
     """
     from src.llm_tools import GenModel
+    import src.generator.prompts.prompts as gen_prompts
+
+    # Select backend-specific prompts
+    if backend.kernel_extension == ".py":
+        import src.optimizer.backends.triton.prompts as opt_prompts
+    else:
+        import src.optimizer.backends.cuda.prompts as opt_prompts
     
     # Get next available node ID
     # Get next available node ID
@@ -210,7 +221,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
             return None
         
         # Write to tmp for validation
-        (paths["tmp_dir"] / "kernel.cu").write_text(code)
+        (paths["tmp_dir"] / f"kernel{backend.kernel_extension}").write_text(code)
         
         # Validate the kernel with retries
         is_valid, error = backend.validate_kernel(code, paths)
@@ -224,7 +235,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
             # Save failed attempt to garbage dump
             dump_dir = paths["proj_dir"] / "garbage_dump"
             dump_dir.mkdir(parents=True, exist_ok=True)
-            (dump_dir / f"new_root_{next_id}_attempt{attempt}.cu").write_text(code)
+            (dump_dir / f"new_root_{next_id}_attempt{attempt}{backend.kernel_extension}").write_text(code)
             
             # Send error back to LLM for correction
             feedback, code = generator.extract_feedback_and_code(
@@ -236,14 +247,14 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
                 continue
             
             # Validate the new attempt
-            (paths["tmp_dir"] / "kernel.cu").write_text(code)
+            (paths["tmp_dir"] / f"kernel{backend.kernel_extension}").write_text(code)
             is_valid, error = backend.validate_kernel(code, paths)
         
         if not is_valid:
             print(f"\t\tValidation failed after {settings.retry_limit} retries: {error}")
             dump_dir = paths["proj_dir"] / "garbage_dump"
             dump_dir.mkdir(parents=True, exist_ok=True)
-            (dump_dir / f"new_root_{next_id}_final_failed.cu").write_text(code)
+            (dump_dir / f"new_root_{next_id}_final_failed{backend.kernel_extension}").write_text(code)
             return None
         
         # Profile the kernel
@@ -257,7 +268,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
             "value": current_stats['mean_time_ms'],
             "speedup_vs_parent": 1.0,
             "improvement_description": "Initial",
-            "code": f"{paths['proj_dir'].name}/kernels/kernel_{next_id}.cu",
+            "code": f"{paths['proj_dir'].name}/kernels/kernel_{next_id}{backend.kernel_extension}",
             "visits": 1
         }
         node = KernelNode.model_validate(node_data)
@@ -267,7 +278,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         mcts.save_node(paths, node)
         
         # Save kernel code
-        (paths["proj_dir"] / "kernels" / f"kernel_{next_id}.cu").write_text(code)
+        (paths["proj_dir"] / "kernels" / f"kernel_{next_id}{backend.kernel_extension}").write_text(code)
         
         print(f"\t\tCreated new root: Node {next_id} ({current_stats['mean_time_ms']:.4f} ms)")
         return node
@@ -276,8 +287,10 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
 def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, optional_proj_name: str = None, ssh_config: dict = None):
     """Creates a new optimization project for each individual operator kernel.
     """
-    # Output directory (access via dot notation now)
-    proj_dir = get_project_dir(gpu_specs.gpu_name, optional_proj_name)
+    # Derive backend name from extension (e.g. .cu -> cuda, .py -> triton)
+    ext_to_name = {".cu": "cuda", ".py": "triton", ".metal": "metal"}
+    bk_name = ext_to_name.get(backend.kernel_extension, "cuda")
+    proj_dir = get_project_dir(gpu_specs.gpu_name, optional_proj_name, backend_name=bk_name)
 
     # Directory containing initial wave of correct, but unoptimized kernels
     op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
@@ -293,9 +306,13 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
                 continue
 
             # Check if the kernel has been previously generated
-            if not (op_dir / "success").exists():
+            # Map backend extension to success marker name (e.g. .cu -> success.cuda, .py -> success.triton)
+            ext_to_device = {".cu": "cuda", ".py": "triton", ".metal": "metal"}
+            device_name = ext_to_device.get(backend.kernel_extension, "cuda")
+            success_marker = op_dir / f"success.{device_name}"
+            if not success_marker.exists():
                 print(
-                    f"Skipping {op_dir.name}: No 'success' marker found (generation failed).")
+                    f"Skipping {op_dir.name}: No 'success.{device_name}' marker found (generation failed).")
                 continue
 
             # Prepare project op directory
@@ -315,8 +332,15 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
                     f"{op_dir.name} already initialized, skipping baseline profile.")
                 continue
 
-            # Copy kernel to tmp_dir for profiling
-            (tmp_path / "kernel.cu").write_text((op_dir / "kernel.cu").read_text())
+            # Copy kernel to tmp_dir for profiling — prefer backend's own extension
+            if (op_dir / f"kernel{backend.kernel_extension}").exists():
+                src_ext = backend.kernel_extension
+            elif (op_dir / "kernel.cu").exists():
+                src_ext = ".cu"
+            else:
+                src_ext = ".py"
+            dst_ext = backend.kernel_extension
+            (tmp_path / f"kernel{dst_ext}").write_text((op_dir / f"kernel{src_ext}").read_text())
 
             # Profile kernel
             current_stats = backend.profile_kernel(paths, baseline=True, ssh_config=ssh_config)
@@ -328,7 +352,7 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
                 "speedup_vs_parent": 1.0,
                 "improvement_description": "Initial",
                 "parent": -1,
-                "code": str(Path(proj_op_dir.name) / "kernels" / "kernel_0.cu"),
+                "code": str(Path(proj_op_dir.name) / "kernels" / f"kernel_0{backend.kernel_extension}"),
                 "visits": 1
             }
             node = KernelNode.model_validate(node_data)
@@ -338,21 +362,23 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
                 
             # Copy kernel to kernels manually as well
             (paths["proj_dir"] / "kernels").mkdir(parents=True, exist_ok=True)
-            with open(paths["proj_dir"] / "kernels" / "kernel_0.cu", "w") as f:
-                f.write((op_dir / "kernel.cu").read_text())
+            with open(paths["proj_dir"] / "kernels" / f"kernel_0{backend.kernel_extension}", "w") as f:
+                f.write((op_dir / f"kernel{src_ext}").read_text())
 
     return proj_dir
 
-def run_parallel_optimization(gpu_specs: GPUSpecs, paths: dict, n_workers: int = 4, max_iterations: int = 100):
+def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict, n_workers: int = 4, max_iterations: int = 100, ssh_config: dict = None):
     """Run parallel MCTS optimization using multiprocessing.
     
     Dispatches nodes to workers as they become available, stops after max_iterations.
     
     Args:
+        backend: The backend instance (CUDABackend, TritonBackend, etc.)
         gpu_specs: GPU specifications
         paths: Dictionary containing project paths
         n_workers: Number of worker processes
         max_iterations: Total number of nodes to process before stopping
+        ssh_config: Optional SSH configuration for remote execution
     """
     import multiprocessing as mp
     from multiprocessing import Process
@@ -390,8 +416,16 @@ def run_parallel_optimization(gpu_specs: GPUSpecs, paths: dict, n_workers: int =
     # Start persistent workers
     print(f"[INIT] Starting {n_workers} workers...")
     workers = []
+    
+    # helper to get backend class name or type
+    backend_type = "cuda"
+    if isinstance(backend, TritonBackend):
+        backend_type = "triton"
+    elif isinstance(backend, MetalBackend):
+        backend_type = "metal"
+
     for i in range(n_workers):
-        p = Process(target=worker_routine, args=(task_queue, result_queue, gpu_lock, node_counter, paths))
+        p = Process(target=worker_routine, args=(task_queue, result_queue, gpu_lock, node_counter, paths, backend_type))
         p.start()
         workers.append(p)
     
@@ -595,6 +629,39 @@ Examples:
     io_parent_dir = args.io_dir
     optional_proj_name = args.project_name
 
+    # --- Load Project Config (LLM Settings) ---
+    # Try to find config.json relative to IO dir (e.g. projects/Test-project/io -> projects/Test-project/config.json)
+    current_path = io_parent_dir.absolute()
+    project_config_path = None
+    for _ in range(3): # Check up to 3 levels up
+        candidate = current_path / "config.json"
+        if candidate.exists():
+            project_config_path = candidate
+            break
+        current_path = current_path.parent
+    
+    if project_config_path:
+        print(f"Loading project config from: {project_config_path}")
+        os.environ["CGINS_CONFIG_PATH"] = str(project_config_path)
+    
+    # Initialize LLM config from environment/file
+    ensure_llm_config()
+
+    # Export active model name to environment so settings.py can pick it up
+    # ensure_llm_config sets LLM_PROVIDER and specific model vars (e.g. ANTHROPIC_MODEL)
+    provider = os.environ.get("LLM_PROVIDER", "").lower()
+    model_name = ""
+    if provider == "openai":
+        model_name = os.environ.get("OPENAI_MODEL", "")
+    elif provider == "anthropic":
+        model_name = os.environ.get("ANTHROPIC_MODEL", "")
+    elif provider == "gemini":
+        model_name = os.environ.get("GEMINI_MODEL", "")
+    
+    if model_name:
+        print(f"Using LLM Model: {model_name} (Provider: {provider})")
+        os.environ["OPTIMIZER_LLM_MODEL_NAME"] = model_name
+
     ssh_config = None
     
     # Instantiate Backend based on arguments
@@ -642,7 +709,6 @@ Examples:
 
     if args.new_root:
         op_name = args.new_root
-        proj_dir = get_project_dir(gpu_specs.gpu_name)
         op_dir_path = proj_dir / op_name
         
         if not op_dir_path.exists():
@@ -651,7 +717,8 @@ Examples:
             sys.exit(1)
         
         # Check if operator has at least node 0 (baseline)
-        if not (op_dir_path / "nodes" / "0.json").exists():
+        paths_check = {"proj_dir": op_dir_path}
+        if not mcts.node_exists(paths_check, 0):
             print(f"Error: Operator '{op_name}' has no baseline node. Run normal optimization first.")
             sys.exit(1)
         

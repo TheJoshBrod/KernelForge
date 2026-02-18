@@ -10,7 +10,13 @@ def _normalize_op_name(op_name: str) -> str:
 
 def baseline_kernel_path(op_name: str) -> Path:
     op_key = _normalize_op_name(op_name)
-    return BASELINE_ROOT / op_key / "kernel.cu"
+    cu_path = BASELINE_ROOT / op_key / "kernel.cu"
+    if cu_path.exists():
+        return cu_path
+    py_path = BASELINE_ROOT / op_key / "kernel.py"
+    if py_path.exists():
+        return py_path
+    return cu_path  # default to .cu even if it doesn't exist
 
 
 def has_baseline_kernel(op_name: str) -> bool:

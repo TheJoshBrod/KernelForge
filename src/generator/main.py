@@ -15,20 +15,82 @@ import sys
 import tempfile
 from pathlib import Path
 
-from src.config import ensure_llm_config
+from src.config import ensure_llm_config, load_project_config
 
 ensure_llm_config()
 
 import torch
 from tqdm import tqdm
 
+from src.llm_tools import GenModel
 import src.generator.generator as generator
 import src.generator.monitor as monitor
 import src.generator.prompts.prompts as prompts
-import src.generator.verifier as verify
 import src.generator.templates as templates
+from src.optimizer.backends.cuda import CUDABackend
+from src.optimizer.backends.triton import TritonBackend
 from src.progress import update_job_progress, wait_if_paused, check_cancelled
-from src import codex_utils
+try:
+    from src import codex_utils
+except ImportError:
+    codex_utils = None  # codex is optional
+
+
+def _is_triton() -> bool:
+    return os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower() == "triton"
+
+
+def _kernel_ext() -> str:
+    return ".py" if _is_triton() else ".cu"
+
+
+def _kernel_filename() -> str:
+    return f"kernel{_kernel_ext()}"
+
+
+def _success_filename() -> str:
+    """Backend-specific success marker, e.g. 'success.cuda', 'success.triton'."""
+    device = os.environ.get("CGINS_TARGET_DEVICE", "cuda").strip().lower()
+    return f"success.{device}"
+
+
+def _validate_kernel(cu_code, entry_file, log_file_loc, tmpdir):
+    """Route to the unified backend verifier."""
+    # Derive io_dir from entry_file path
+    io_dir = Path(entry_file).parent
+    paths = {
+        "io_dir": io_dir,
+        "tmp_dir": Path(tmpdir),
+    }
+
+    if _is_triton():
+        backend = TritonBackend()
+    else:
+        # Default to CUDA
+        backend = CUDABackend()
+
+    # Backend validates all files in io_dir
+    success, log_msg = backend.validate_kernel(cu_code, paths)
+
+    # Decode success flags from log message for compatibility with generator logic
+    # Generator expects: (call_success, exec_success, feedback)
+    call_success = True
+    if "[Compilation Failed]" in log_msg or "[Import/Compilation Failed]" in log_msg:
+        call_success = False
+    
+    exec_success = success
+    if not success and call_success:
+        # If compilation passed but Overall success is False, then it's a runtime/mismatch error
+        exec_success = False
+        
+    # Write log file manually as we didn't pass it to validate_kernel (it just returns string)
+    try:
+        with open(log_file_loc, "w") as f:
+            f.write(log_msg)
+    except Exception:
+        pass
+
+    return call_success, exec_success, log_msg
 
 # Configuration
 MAX_ATTEMPTS = int(os.environ.get("CGINS_MAX_ATTEMPTS", "8"))
@@ -102,10 +164,15 @@ def _build_codex_prompt(
     feedback: str | None = None,
     mode: str = "generate",
 ) -> str:
+    kf = _kernel_filename()
+    if _is_triton():
+        sig_hint = "Keep the launch(...) signature exactly unchanged."
+    else:
+        sig_hint = "Keep the torch::Tensor launch(...) signature exactly unchanged."
     parts = [
         f"Mode: {mode}",
-        "Edit kernel.cu only.",
-        "Keep the torch::Tensor launch(...) signature exactly unchanged.",
+        f"Edit {kf} only.",
+        sig_hint,
     ]
     if project_dir:
         parts.append(
@@ -114,7 +181,7 @@ def _build_codex_prompt(
     if feedback:
         parts.append("Previous validation error:\n" + feedback)
     parts.append(
-        "Specification (use as the source of truth; do NOT output tags, just edit kernel.cu):\n"
+        f"Specification (use as the source of truth; do NOT output tags, just edit {kf}):\n"
         + base_prompt
     )
     return "\n\n".join(parts)
@@ -171,23 +238,24 @@ def _validate_static_kernel(
         log_file_loc = op_dir / "attempts" / f"log-{tag}-{i}.txt"
         os.makedirs(log_file_loc.parent, exist_ok=True)
 
-        call_success, exec_success, feedback = verify.validate_kernel(
+        call_success, exec_success, feedback = _validate_kernel(
             cu_code, entry_file, log_file_loc, tmpdir
         )
 
         if os.path.exists(tmpdir):
             shutil.rmtree(tmpdir)
 
+        ext = _kernel_ext()
         if not (call_success and exec_success):
-            with open(kernel_dir / f"kernel-{tag}-{i}.cu", "w") as f:
+            with open(kernel_dir / f"kernel-{tag}-{i}{ext}", "w") as f:
                 f.write(cu_code)
             with open(op_dir / "attempts" / f"feedback-{tag}-{i}.txt", "w") as f:
                 f.write(feedback)
             return False, feedback
 
-    with open(op_dir / "kernel.cu", "w", encoding="utf-8") as f:
+    with open(op_dir / _kernel_filename(), "w", encoding="utf-8") as f:
         f.write(cu_code)
-    with open(kernel_dir / f"kernel-{tag}-g.cu", "w") as f:
+    with open(kernel_dir / f"kernel-{tag}-g{ext}", "w") as f:
         f.write(cu_code)
     return True, ""
 
@@ -195,7 +263,8 @@ def _validate_static_kernel(
 def validate_with_retries(
     output_dir: Path,
     entry_files: list[str],
-    conversation_history: list,
+    gen_model: GenModel,
+    initial_prompt: str,
     function_name: str,
     *,
     op_key: str,
@@ -208,7 +277,8 @@ def validate_with_retries(
     Args:
         output_dir: Directory to save kernel outputs
         entry_files: List of paths to entry_*.pt files containing inputs/outputs
-        conversation_history: LLM conversation history
+        gen_model: GenModel instance with system prompt and history
+        initial_prompt: The initial prompt for generation
 
     Returns:
         bool: is the final kernel successful
@@ -226,21 +296,37 @@ def validate_with_retries(
     last_feedback = ""
     last_stage = "llm"
 
-    base_prompt = conversation_history[0]["content"] if conversation_history else ""
     use_codex_generate = codex_utils.op_enabled(
         "CGINS_CODEX_GENERATE", "CGINS_CODEX_GENERATE_OPS", op_key
-    )
+    ) if codex_utils else False
     use_codex_repair = codex_utils.op_enabled(
         "CGINS_CODEX_REPAIR", "CGINS_CODEX_REPAIR_OPS", op_key
-    )
+    ) if codex_utils else False
     codex_work_dir = output_dir / "work"
-    codex_seed = template or "// TODO: implement kernel.cu\n"
+    codex_seed = template or ("# TODO: implement kernel.py\n" if _is_triton() else "// TODO: implement kernel.cu\n")
     codex_max_attempts = _codex_attempts()
     codex_model = _codex_model()
     codex_sandbox = _codex_sandbox()
 
+    # Get model name from config for normal LLM generation
+    llm_provider = ensure_llm_config()
+    llm_model = ""
+    if llm_provider == "openai":
+        llm_model = os.environ.get("OPENAI_MODEL", "gpt-5")
+    elif llm_provider == "anthropic":
+        llm_model = os.environ.get("ANTHROPIC_MODEL", "claude-4-6-sonnet")
+    elif llm_provider == "gemini":
+        llm_model = os.environ.get("GEMINI_MODEL", "gemini-3-pro")
+    
     attempts_total = codex_max_attempts if use_codex_generate else max_attempts + 1
+
     def _run_codex_repair(feedback: str, attempt_idx: int) -> tuple[bool, str, str]:
+        # Note: This still uses base_prompt logic which isn't carried here perfectly
+        # For now, we assume codex uses its own prompt construction.
+        # But we need base_prompt for Codex...
+        # Let's extract base_prompt from initial_prompt for now
+        base_prompt = initial_prompt 
+        
         repair_prompt = _build_codex_prompt(
             base_prompt,
             function_name,
@@ -249,13 +335,13 @@ def validate_with_retries(
             feedback=feedback,
             mode="repair",
         )
-        codex_utils.prepare_work_dir(codex_work_dir, cu_code, task=repair_prompt)
+        codex_utils.prepare_work_dir(codex_work_dir, cu_code, task=repair_prompt, filename=_kernel_filename())
         ok, err = codex_utils.run_codex(
             codex_work_dir, repair_prompt, model=codex_model, sandbox=codex_sandbox
         )
         if ok:
             try:
-                repaired = (codex_work_dir / "kernel.cu").read_text(encoding="utf-8")
+                repaired = (codex_work_dir / _kernel_filename()).read_text(encoding="utf-8")
             except Exception as exc:
                 repaired = ""
                 err = f"Codex repair read failed: {exc}"
@@ -266,20 +352,20 @@ def validate_with_retries(
                 for j, entry_file in enumerate(tqdm(entry_files, desc="Repair Tests")):
                     log_file_loc = output_dir / "attempts" / f"log-repair-{attempt_idx}-{j}.txt"
                     os.makedirs(log_file_loc.parent, exist_ok=True)
-                    call_success, exec_success, repair_feedback = verify.validate_kernel(
+                    call_success, exec_success, repair_feedback = _validate_kernel(
                         repaired, entry_file, log_file_loc, repair_tmpdir
                     )
                     repaired_ok = repaired_ok and call_success and exec_success
                     if not repaired_ok:
-                        with open(kernel_dir / f"kernel-repair-{attempt_idx}-{j}.cu", "w") as f:
+                        with open(kernel_dir / f"kernel-repair-{attempt_idx}-{j}{_kernel_ext()}", "w") as f:
                             f.write(repaired)
                         return False, repair_feedback, "codex_repair"
                 if os.path.exists(repair_tmpdir):
                     shutil.rmtree(repair_tmpdir)
                 if repaired_ok:
-                    with open(kernel_dir / f"kernel-repair-{attempt_idx}-g.cu", "w") as f:
+                    with open(kernel_dir / f"kernel-repair-{attempt_idx}-g{_kernel_ext()}", "w") as f:
                         f.write(repaired)
-                    with open(output_dir / "kernel.cu", "w", encoding="utf-8") as f:
+                    with open(output_dir / _kernel_filename(), "w", encoding="utf-8") as f:
                         f.write(repaired)
                     return True, "", "success"
         return False, err or feedback, "codex_repair"
@@ -293,14 +379,14 @@ def validate_with_retries(
         # Generate kernel
         if use_codex_generate:
             prompt = _build_codex_prompt(
-                base_prompt,
+                initial_prompt, # Use initial prompt as base
                 function_name,
                 op_key,
                 project_dir,
                 feedback=last_feedback if attempt > 0 else None,
                 mode="generate",
             )
-            codex_utils.prepare_work_dir(codex_work_dir, codex_seed, task=prompt)
+            codex_utils.prepare_work_dir(codex_work_dir, codex_seed, task=prompt, filename=_kernel_filename())
             ok, err = codex_utils.run_codex(
                 codex_work_dir, prompt, model=codex_model, sandbox=codex_sandbox
             )
@@ -309,34 +395,56 @@ def validate_with_retries(
                 last_stage = "codex_generate"
                 continue
             try:
-                cu_code = (codex_work_dir / "kernel.cu").read_text(encoding="utf-8")
+                cu_code = (codex_work_dir / _kernel_filename()).read_text(encoding="utf-8")
                 codex_seed = cu_code
             except Exception as e:
                 last_feedback = f"Codex output read failed: {e}"
                 last_stage = "codex_generate"
                 continue
         else:
-            provider = ensure_llm_config() or "openai"
-            if provider in {"openai", "gpt", "chatgpt"} and not os.environ.get("OPENAI_API_KEY"):
-                return False, "Missing OPENAI_API_KEY for LLM generation.", "llm_api"
-            if provider == "gemini" and not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
-                return False, "Missing GEMINI_API_KEY/GOOGLE_API_KEY for LLM generation.", "llm_api"
-            if provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
-                return False, "Missing ANTHROPIC_API_KEY for LLM generation.", "llm_api"
+            if not llm_model:
+                return False, f"Missing configuration for LLM provider {llm_provider}.", "llm_api"
+            
             try:
-                if provider == "anthropic":
-                    cu_code = generator.anthropic_generator(conversation_history)
-                elif provider == "gemini":
-                    cu_code = generator.gemini_generator(conversation_history)
-                elif provider in {"openai", "gpt", "chatgpt"}:
-                    cu_code = generator.chatgpt_generator(conversation_history)
+                # FIRST ATTEMPT: Use initial_prompt
+                if attempt == 0:
+                    current_prompt = initial_prompt
+                # SUBSEQUENT ATTEMPTS: Use repair prompt (handled in loop end) which is added to history
+                # But here we just call generate which uses history
+                # However, generator.generate takes a msg. 
+                # If we already added to history, we might pass empty msg? 
+                # Let's adjust logic: 
+                # On attempt 0, we pass initial_prompt.
+                # On attempt > 0, we've already appended USER message with feedback to history (see end of loop).
+                # But generator.generate takes a prompt and calls chat().
+                # GenModel.chat() appends user message.
+                # So we should pass the prompt we want to send.
+                # BUT wait, the loop logic below appends to `conversation_history` list in the OLD code.
+                # In the NEW code, we need to pass the prompt to `generator.generate`.
+                
+                # Logic:
+                # If attempt 0: prompt = initial_prompt
+                # If attempt > 0: prompt has been determined at end of previous loop (repair prompt)
+                
+                prompt_to_send = initial_prompt
+                if attempt > 0:
+                    # Previous loop failure logic should have set prompt_to_send (repair msg)
+                    # Use a variable `next_prompt`?
+                    # Let's refactor the loop slightly.
+                    pass
+                
+                # Actually, simpler:
+                # We need a `current_prompt` variable.
+                if attempt == 0:
+                     msg = initial_prompt
                 else:
-                    raise ValueError(
-                        f"Unknown LLM provider: {provider}. Supported: anthropic, gemini, openai"
-                    )
+                    # In previous iteration failure block, we generated the repair prompt
+                    # We need to make sure we use it here.
+                    # See `repair` variable below.
+                    msg = last_repair_prompt
+                
+                cu_code = generator.generate(gen_model, msg, llm_model)
 
-                conversation_history.append(
-                    {"role": "assistant", "content": cu_code})
             except Exception as e:
                 print(f"Failed on attempt {attempt}\n{e}")
                 last_feedback = f"LLM generation failed: {e}"
@@ -346,46 +454,36 @@ def validate_with_retries(
         tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
 
         # Output newest version of kernel
-        with open(output_dir / "kernel.cu", "w", encoding="utf-8") as f:
+        with open(output_dir / _kernel_filename(), "w", encoding="utf-8") as f:
             f.write(cu_code)
 
         # For each generated kernel validate ALL input/output
-        is_valid = True
-        for i, entry_file in enumerate(tqdm(entry_files, desc="Input Tests")):
-            if not wait_if_paused():
-                return False, "Generation cancelled.", "control"
-            if check_cancelled():
-                return False, "Generation cancelled.", "control"
+        # Unified Validation (Batch)
+        log_file_loc = output_dir / "attempts" / f"log-{attempt}.txt"
+        os.makedirs(log_file_loc.parent, exist_ok=True)
 
-            # Validate current kernel with entry file
-            log_file_loc = output_dir / "attempts" / f"log-{attempt}-{i}.txt"
-            os.makedirs(log_file_loc.parent, exist_ok=True)
-            call_success, exec_success, feedback = verify.validate_kernel(
-                cu_code, entry_file, log_file_loc, tmpdir
-            )
+        if not entry_files:
+             return False, "No entry files", "setup"
 
-            print(feedback)
+        # Validate all inputs at once using backend
+        call_success, exec_success, feedback = _validate_kernel(
+            cu_code, entry_files[0], log_file_loc, tmpdir
+        )
 
-            # If failed on a testcase regenerate
-            is_valid = is_valid and call_success and exec_success
-            if not is_valid:
-                # Save kernel
-                with open(kernel_dir / f"kernel-{attempt}-{i}.cu", "w") as f:
-                    f.write(cu_code)
+        print(feedback)
 
-                if use_codex_generate:
-                    if use_codex_repair:
-                        repaired_ok, repair_feedback, repair_stage = _run_codex_repair(
-                            feedback, attempt
-                        )
-                        if repaired_ok:
-                            return True, "", "success"
-                        last_feedback = repair_feedback
-                        last_stage = repair_stage
-                    else:
-                        last_feedback = feedback
-                        last_stage = "codex_validate"
-                elif use_codex_repair and not use_codex_generate:
+        is_valid = call_success and exec_success
+        if not is_valid:
+            # Save failed kernel
+            with open(kernel_dir / f"kernel-{attempt}-failed{_kernel_ext()}", "w") as f:
+                f.write(cu_code)
+
+            last_feedback = feedback
+            last_stage = "llm_validate"
+
+            # Optional Codex/Repair logic
+            if use_codex_repair:
+                try:
                     repaired_ok, repair_feedback, repair_stage = _run_codex_repair(
                         feedback, attempt
                     )
@@ -393,22 +491,14 @@ def validate_with_retries(
                         return True, "", "success"
                     last_feedback = repair_feedback
                     last_stage = repair_stage
-                    repair = prompts.get_repair_prompt(
-                        function_name=function_name,
-                        attempt=attempt,
-                        feedback=last_feedback,
-                    )
-                    conversation_history.append({"role": "user", "content": repair})
-                else:
-                    repair = prompts.get_repair_prompt(
-                        function_name=function_name,
-                        attempt=attempt,
-                        feedback=feedback,
-                    )
-                    conversation_history.append({"role": "user", "content": repair})
-                    last_feedback = feedback
-                    last_stage = "llm_validate"
-                break
+                except NameError:
+                    pass
+
+            last_repair_prompt = prompts.get_repair_prompt(
+                function_name=function_name,
+                attempt=attempt,
+                feedback=last_feedback,
+            )
 
         # Delete tmp directory before next generation
         if os.path.exists(tmpdir):
@@ -418,7 +508,7 @@ def validate_with_retries(
         if is_valid:
             print(f"SUCCESSFUL on {attempt + 1}")
             # Save kernel
-            with open(kernel_dir / f"kernel-{attempt}-g.cu", "w") as f:
+            with open(kernel_dir / f"kernel-{attempt}-g{_kernel_ext()}", "w") as f:
                 f.write(cu_code)
 
             return True, "", "success"
@@ -465,8 +555,9 @@ def process_function(
     print(function_name)
     exec_str = f"{function_name}(*args, **kwargs)"
 
-    # Set up conversation history
-    conversation_history = []
+    # Set up GenModel
+    sys_prompt = prompts.get_system_prompt()
+    gen_model = GenModel(sys_prompt)
 
     # Profile operation
     try:
@@ -496,7 +587,6 @@ def process_function(
     prompt = prompts.generate_full_llm_prompt(
         call_list, function_name, op_details, template=template
     )
-    conversation_history.append({"role": "user", "content": prompt})
 
     call_list.clear()
 
@@ -506,7 +596,8 @@ def process_function(
     success, failure_msg, failure_stage = validate_with_retries(
         op_dir,
         entry_files,
-        conversation_history,
+        gen_model,
+        prompt,
         function_name,
         op_key=op_key,
         project_dir=project_dir,
@@ -515,7 +606,7 @@ def process_function(
 
     # Track performance
     if success:
-        success_file = op_dir / "success"
+        success_file = op_dir / _success_filename()
         with open(success_file, "w") as f:
             f.write("passed")
     else:
@@ -559,13 +650,27 @@ def main():
         OUTPUT_BASE_DIR = Path(args.out_dir)
 
     project_dir = _find_project_dir(Path(io_dir))
-    gen_cfg = _load_generator_config(project_dir)
+    
+    # Use src.config to handle LLM configuration from project config
+    if project_dir:
+        config_path = project_dir / "config.json"
+        if config_path.exists():
+            os.environ["CGINS_CONFIG_PATH"] = str(config_path)
+            # Reload config to apply project-specific settings
+            ensure_llm_config()
+
+    # Load generator specific config manually for other settings (skip_ops, etc)
+    project_cfg = load_project_config(project_dir)
+    gen_cfg = project_cfg.get("generator", {})
+
     target_device = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
     if not target_device:
         cfg_device = str(gen_cfg.get("target_device", "")).strip().lower() if isinstance(gen_cfg, dict) else ""
         target_device = cfg_device
     if target_device in {"gpu", "cuda"}:
         target_device = "cuda"
+    elif target_device == "triton":
+        target_device = "triton"
     elif target_device == "mps":
         target_device = "mps"
     elif target_device == "cpu":
@@ -574,6 +679,9 @@ def main():
         target_device = "cuda"
     if target_device == "cuda" and not torch.cuda.is_available():
         print("CUDA not available; falling back to CPU target for generation.")
+        target_device = "cpu"
+    if target_device == "triton" and not torch.cuda.is_available():
+        print("CUDA not available (needed for Triton); falling back to CPU target.")
         target_device = "cpu"
     if target_device == "mps":
         if not (hasattr(torch, "backends") and torch.backends.mps.is_available()):
@@ -653,7 +761,7 @@ def main():
         op_dir = OUTPUT_BASE_DIR / "individual_op_kernels" / op_key
         op_dir.mkdir(parents=True, exist_ok=True)
 
-        performance_file = op_dir / "success"
+        performance_file = op_dir / _success_filename()
         if performance_file.exists():
             completed += 1
             update_job_progress(completed, total_jobs, function_name)
@@ -675,25 +783,30 @@ def main():
         baseline_code = None
         baseline_ok = False
         if use_baseline and templates.has_baseline_kernel(function_name):
-            baseline_code = templates.load_baseline_kernel(function_name)
-            if baseline_code:
-                baseline_ok, baseline_error = _validate_static_kernel(
-                    baseline_code, entry_files, op_dir, "baseline"
-                )
-                if not baseline_ok:
-                    _write_failure_report(
-                        op_dir,
-                        "baseline",
-                        baseline_error or "Baseline kernel failed validation.",
-                        {"function": function_name},
+            baseline_path = templates.baseline_kernel_path(function_name)
+            # Skip baselines that don't match the target backend's extension
+            if baseline_path.suffix != _kernel_ext():
+                print(f"  Skipping {baseline_path.suffix} baseline (target is {_kernel_ext()}): {function_name}")
+            else:
+                baseline_code = templates.load_baseline_kernel(function_name)
+                if baseline_code:
+                    baseline_ok, baseline_error = _validate_static_kernel(
+                        baseline_code, entry_files, op_dir, "baseline"
                     )
+                    if not baseline_ok:
+                        _write_failure_report(
+                            op_dir,
+                            "baseline",
+                            baseline_error or "Baseline kernel failed validation.",
+                            {"function": function_name},
+                        )
 
         codex_enabled = codex_utils.op_enabled(
             "CGINS_CODEX_GENERATE", "CGINS_CODEX_GENERATE_OPS", op_key
-        )
+        ) if codex_utils else False
 
         if baseline_ok and not codex_enabled:
-            success_file = op_dir / "success"
+            success_file = op_dir / _success_filename()
             with open(success_file, "w") as f:
                 f.write("passed")
             completed += 1
@@ -710,9 +823,9 @@ def main():
         )
         if not success and baseline_ok:
             if baseline_code:
-                with open(op_dir / "kernel.cu", "w", encoding="utf-8") as f:
+                with open(op_dir / _kernel_filename(), "w", encoding="utf-8") as f:
                     f.write(baseline_code)
-            success_file = op_dir / "success"
+            success_file = op_dir / _success_filename()
             with open(success_file, "w") as f:
                 f.write("passed")
             try:

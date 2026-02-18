@@ -11,6 +11,17 @@ class Backend(ABC):
     Abstract base class for optimization backends (CUDA, Metal, Triton, etc.).
     """
 
+    @property
+    @abstractmethod
+    def kernel_extension(self) -> str:
+        """File extension for kernel source files (e.g., '.cu' or '.py')."""
+        pass
+
+    @abstractmethod
+    def get_sys_prompt(self) -> str:
+        """Returns the system prompt for LLM optimization."""
+        pass
+
     @abstractmethod
     def get_device_specs(self, device_index: int = 0, ssh_config: dict = None) -> GPUSpecs:
         """

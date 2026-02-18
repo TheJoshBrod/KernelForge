@@ -21,11 +21,35 @@ def _find_config_path() -> Path | None:
     return None
 
 
+def load_project_config(project_dir: Path | None) -> dict:
+    if not project_dir:
+        return {}
+    config_path = project_dir / "config.json"
+    if not config_path.exists():
+        # Fallback: check if project_dir IS the config file
+        if project_dir.suffix == ".json" and project_dir.exists():
+           try:
+              return json.loads(project_dir.read_text(encoding="utf-8"))
+           except Exception:
+              return {}
+        return {}
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def apply_llm_config() -> bool:
     config_path = _find_config_path()
     if not config_path:
         return False
-
+    
+    # config_path is the file path, so we pass its parent or handle it
+    # _find_config_path returns the FILE path.
+    # load_project_config expects a DIR (or we adjust it).
+    # Let's just manually load here to avoid circular logic or path confusion, 
+    # OR make load_project_config smarter.
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
     except Exception:

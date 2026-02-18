@@ -32,7 +32,7 @@ def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str
     """
 
     # Extract feedback section (tolerant to spacing)
-    feedback_pattern = r'//\s*\[START FEEDBACK\](.*?)//\s*\[END FEEDBACK\]'
+    feedback_pattern = r'(?://|#)\s*\[START FEEDBACK\](.*?)(?://|#)\s*\[END FEEDBACK\]'
     feedback_match = re.search(
         feedback_pattern, content, re.DOTALL | re.IGNORECASE)
     feedback = feedback_match.group(1).strip(
@@ -40,7 +40,7 @@ def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str
 
     # Extract code section (tolerant to spacing)
     # 1. Try strict tags
-    code_pattern = r'//\s*\[START kernel\.cu\](.*?)//\s*\[END kernel\.cu\]'
+    code_pattern = r'(?://|#)\s*\[START kernel\.(?:cu|py)\](.*?)(?://|#)\s*\[END kernel\.(?:cu|py)\]'
     code_match = re.search(code_pattern, content, re.DOTALL | re.IGNORECASE)
 
     if code_match:
@@ -48,7 +48,7 @@ def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str
     else:
         # 2. Markdown fallback
         # This handles ```cpp\n ... ``` or ```cuda\n ... ```
-        fallback_pattern = r"```(?:C\+\+|cpp|cuda|c)?\s*\n(.*?)```"
+        fallback_pattern = r"```(?:C\+\+|cpp|cuda|c|python|triton)?\s*\n(.*?)```"
         fallback_match = re.search(
             fallback_pattern, content, re.DOTALL | re.IGNORECASE)
         code = fallback_match.group(1).strip() if fallback_match else None
@@ -98,7 +98,8 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
             iteration = paths.get("iteration", "unknown")
             attempt = paths.get("attempt", "unknown")
 
-            filename = f"kernel_iter{iteration}_attempt{attempt}.cu"
+            ext = ".py" if "@triton.jit" in cu_code else ".cu"
+            filename = f"kernel_iter{iteration}_attempt{attempt}{ext}"
             dump_path = dump_dir / filename
 
             try:
