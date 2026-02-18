@@ -1418,6 +1418,8 @@ video {
   height: 6px;
   border-radius: 999px;
   background: var(--accent);
+  transition: width 220ms ease-out;
+  will-change: width;
 }
 
 .progress-meta {

@@ -12,6 +12,7 @@ import from ...components.ui.Icons {
     AlertCircleIcon
 }
 import from ...components.ui.GlowButton { GlowButton }
+import from ...components.ui.Modal { Modal }
 import from recharts {
     PieChart,
     Pie,
@@ -43,7 +44,11 @@ def:pub Dashboard {
         status: dict = {},
         hardwareInfo: dict = {},
         hardwareLoading: bool = False,
-        mctsSummary: dict = {};
+        mctsSummary: dict = {},
+        benchLogOpen: bool = False,
+        benchLogLoading: bool = False,
+        benchLogCopied: bool = False,
+        benchLog: str = "";
 
     COLORS = [
         '#86e6a9',
@@ -298,7 +303,7 @@ def:pub Dashboard {
         suffix = " (Auto)" if auto_gpu else "";
         hardwareStatus = f"{gpu_name}{suffix}";
         if conn and conn != "local" {
-            hardwareStatus = hardwareStatus + f" ({conn})";
+            hardwareStatus = f"{hardwareStatus} ({conn})";
         }
         activeBackend = "CUDA";
     } else {
@@ -538,15 +543,26 @@ def:pub Dashboard {
     bench_progress = bench_job["progress"]
     if bench_job and "progress" in bench_job
     else {};
-    bench_current = bench_progress["current"]
+    bench_current = parseInt(f"{bench_progress['current']}")
     if bench_progress and "current" in bench_progress
     else 0;
-    bench_total = bench_progress["total"]
+    bench_total = parseInt(f"{bench_progress['total']}")
     if bench_progress and "total" in bench_progress
     else 0;
     bench_progress_text = (
         f" ({bench_current}/{bench_total})" if bench_total and bench_total > 0 else ""
     );
+    bench_pct = bench_progress["percent"] * 100
+    if bench_progress and "percent" in bench_progress
+    else 0;
+    bar_pct = bench_pct;
+    if bar_pct > 100 {
+        bar_pct = 100;
+    }
+    if bar_pct < 4 {
+        bar_pct = 4;
+    }
+    bench_bar_width = f"{bar_pct}%";
 
     charts_empty_message = "No benchmark results yet. Run Benchmark to see PyTorch timings.";
     if prepare_raw == "queued" or prepare_raw == "running" {
@@ -557,9 +573,9 @@ def:pub Dashboard {
         charts_empty_message = "Benchmark queued...";
     } elif bench_raw == "running" {
         charts_empty_message = (
-            bench_message + bench_progress_text
+            f"{bench_message}{bench_progress_text}"
             if bench_message
-            else "Benchmarking PyTorch baseline..." + bench_progress_text
+            else f"Benchmarking PyTorch baseline...{bench_progress_text}"
         );
     } elif bench_raw == "error" or bench_raw == "failed" {
         charts_empty_message = "Benchmark failed (see benchmark.log).";
@@ -747,5 +763,43 @@ def:pub Dashboard {
                     </div>
                 </div>
             </div>
+            <Modal
+                isOpen={benchLogOpen}
+                onClose={lambda -> None { benchLogOpen = False;}}
+                title="Benchmark log"
+            >
+                <div className="p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                        <div
+                            className="text-[10px] uppercase tracking-wider font-bold text-zinc-500"
+                        >
+                            projects/{name}/logs/benchmark.log
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={lambda -> None { refreshBenchLog();}}
+                                className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded-md text-xs text-zinc-300 border border-zinc-700 transition-colors"
+                            >
+                                Refresh
+                            </button>
+                            <button
+                                onClick={lambda -> None { copyBenchLog();}}
+                                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-md text-xs text-white border border-indigo-500/40 transition-colors"
+                            >
+                                {"Copied" if benchLogCopied else "Copy"}
+                            </button>
+                        </div>
+                    </div>
+                    {<div className="text-xs text-zinc-400">
+                        Loading...
+                    </div>
+                    if benchLogLoading
+                    else <pre
+                        className="text-xs font-mono text-zinc-200 whitespace-pre-wrap break-words bg-zinc-950 border border-zinc-800 rounded-lg p-3"
+                    >
+                        {benchLog or "No log yet."}
+                    </pre>}
+                </div>
+            </Modal>
         </div>;
 }

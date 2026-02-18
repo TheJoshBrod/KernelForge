@@ -17,6 +17,7 @@ import from recharts {
 import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
 import from ...components.ui.GlowButton { GlowButton }
 import from ...components.ui.Icons { CGinSLogo }
+import from ...components.ui.Modal { Modal }
 
 def:pub Project {
     navigate = useNavigate();
@@ -46,7 +47,11 @@ def:pub Project {
         hardwareInfo: dict = {},
         hardwareLoading: bool = False,
         advLog: str = "",
-        advLogLoading: bool = False;
+        advLogLoading: bool = False,
+        benchLogOpen: bool = False,
+        benchLogLoading: bool = False,
+        benchLogCopied: bool = False,
+        benchLog: str = "";
 
     def format_op(raw: str) -> str {
         raw_text = raw or "";
@@ -133,6 +138,55 @@ def:pub Project {
             advLog = "";
         } finally {
             advLogLoading = False;
+        }
+    }
+
+    async def refreshBenchLog -> None {
+        if not name {
+            benchLog = "";
+            return;
+        }
+        benchLogLoading = True;
+        try {
+            rel_path = f"projects/{name}/logs/benchmark.log";
+            resp = await __jacSpawn(
+                "ReadRepoFile", "", {"projectName": name, "relPath": rel_path}
+            );
+            data = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else {};
+            if data and "success" in data and data["success"] {
+                content = data["content"] if data and "content" in data else "";
+                max_len = 8000;
+                if content and content.length > max_len {
+                    benchLog = content.slice(content.length - max_len);
+                } else {
+                    benchLog = content or "";
+                }
+            } else {
+                benchLog = "";
+            }
+        } except Exception as e {
+            console.error("Failed to fetch benchmark log:", e);
+            benchLog = "";
+        } finally {
+            benchLogLoading = False;
+        }
+    }
+
+    async def openBenchLog -> None {
+        benchLogOpen = True;
+        await refreshBenchLog();
+    }
+
+    async def copyBenchLog -> None {
+        try {
+            await navigator.clipboard.writeText(benchLog or "");
+            benchLogCopied = True;
+            setTimeout(lambda -> None { benchLogCopied = False;}, 1200);
+        } except Exception as e {
+            console.error("Failed to copy log:", e);
+            alert("Failed to copy log to clipboard.");
         }
     }
 
@@ -590,7 +644,15 @@ def:pub Project {
     bench_pct = bench_progress["percent"] * 100
     if bench_progress and "percent" in bench_progress
     else 0;
-    bench_bar_width = f"{bench_pct}%" if bench_pct > 2 else "8%";
+    # Keep a small visible fill while progress is initializing, without shrinking.
+    bar_pct = bench_pct;
+    if bar_pct > 100 {
+        bar_pct = 100;
+    }
+    if bar_pct < 4 {
+        bar_pct = 4;
+    }
+    bench_bar_width = f"{bar_pct}%";
     bench_message = bench_job["message"]
     if bench_job and "message" in bench_job
     else "";
@@ -1283,12 +1345,20 @@ def:pub Project {
                             <span className="panel-title">
                                 Benchmark results
                             </span>
-                            <button
-                                onClick={lambda -> None { refreshBench();}}
-                                className="chip-button"
-                            >
-                                Refresh
-                            </button>
+                            <div className="button-row">
+                                <button
+                                    onClick={lambda -> None { openBenchLog();}}
+                                    className="chip-button"
+                                >
+                                    View log
+                                </button>
+                                <button
+                                    onClick={lambda -> None { refreshBench();}}
+                                    className="chip-button"
+                                >
+                                    Refresh
+                                </button>
+                            </div>
                         </div>
                         <div className="panel-body">
                             {<div className="skeleton skeleton-block"></div>
@@ -1439,5 +1509,43 @@ def:pub Project {
                     </div>
                 </main>
             </div>
+            <Modal
+                isOpen={benchLogOpen}
+                onClose={lambda -> None { benchLogOpen = False;}}
+                title="Benchmark log"
+            >
+                <div className="p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                        <div
+                            className="text-[10px] uppercase tracking-wider font-bold text-zinc-500"
+                        >
+                            projects/{name}/logs/benchmark.log
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={lambda -> None { refreshBenchLog();}}
+                                className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded-md text-xs text-zinc-300 border border-zinc-700 transition-colors"
+                            >
+                                Refresh
+                            </button>
+                            <button
+                                onClick={lambda -> None { copyBenchLog();}}
+                                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-md text-xs text-white border border-indigo-500/40 transition-colors"
+                            >
+                                {"Copied" if benchLogCopied else "Copy"}
+                            </button>
+                        </div>
+                    </div>
+                    {<div className="text-xs text-zinc-400">
+                        Loading...
+                    </div>
+                    if benchLogLoading
+                    else <pre
+                        className="text-xs font-mono text-zinc-200 whitespace-pre-wrap break-words bg-zinc-950 border border-zinc-800 rounded-lg p-3"
+                    >
+                        {benchLog or "No log yet."}
+                    </pre>}
+                </div>
+            </Modal>
         </div>;
 }
