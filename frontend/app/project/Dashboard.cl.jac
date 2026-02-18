@@ -73,7 +73,7 @@ def:pub Dashboard {
         pieTotal += slice_val;
         pieData.push(
             {
-                "name": format_op(op["name"]),
+                "name": format_op_short(op["name"]),
                 "value": slice_val,
                 "fill": COLORS[op_idx % COLORS.length]
             }

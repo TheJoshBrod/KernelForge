@@ -11,7 +11,8 @@ import from .menus.OptimizeTrigger { OptimizeTrigger }
 
 def:pub NewKernel {
     has projectName: str,
-        opName: str;
+        opName: str,
+        hasTree: bool = False;
 
     is_open_state = useState(False);
     isOpen = is_open_state[0];
@@ -68,7 +69,7 @@ def:pub NewKernel {
             >
                 <UploadTrigger onUpload={handle_upload_click} />
                 <GenerateTrigger onGenerate={handle_generate_click} />
-                <OptimizeTrigger onOptimize={handle_optimize_click} />
+                <OptimizeTrigger onOptimize={handle_optimize_click} hasTree={hasTree} />
             </div>
             if isOpen
             else <span />}
@@ -95,6 +96,7 @@ def:pub NewKernel {
                 onStarted={on_complete}
                 projectName={projectName}
                 opName={opName}
+                hasTree={hasTree}
             />
         </div>;
 }

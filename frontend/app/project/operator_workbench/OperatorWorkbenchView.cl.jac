@@ -77,9 +77,15 @@ def:pub OperatorWorkbenchView {
         for e in edges_data {
             pid = e["parent_id"];
             cid = e["child_id"];
-            if pid in children_map {
-                children_map[pid].push(cid);
+            # Tree data can be incomplete while generation/optimization is running.
+            # If an edge references a node that doesn't exist yet, skip it to avoid UI crashes.
+            if not (pid in children_map) {
+                continue;
             }
+            if not (cid in node_map) {
+                continue;
+            }
+            children_map[pid].push(cid);
             has_parent[cid] = True;
         }
 
@@ -122,7 +128,10 @@ def:pub OperatorWorkbenchView {
             y_pos = lvl * 150;
             level_counts[lvl] += 1;
 
-            raw_node = node_map[cid];
+            raw_node = node_map[cid] if cid in node_map else None;
+            if not raw_node {
+                continue;
+            }
             label_val = Number(raw_node["value"] or 0).toFixed(4);
 
             layouted_nodes.push(
@@ -153,6 +162,12 @@ def:pub OperatorWorkbenchView {
 
         rf_edges = [];
         for e in edges_data {
+            if not (e["parent_id"] in node_map) {
+                continue;
+            }
+            if not (e["child_id"] in node_map) {
+                continue;
+            }
             rf_edges.push(
                 {
                     "id": f"e{e['parent_id']}-{e['child_id']}",
@@ -206,6 +221,8 @@ def:pub OperatorWorkbenchView {
 
             if best_node_id {
                 setSelectedNodeId(best_node_id);
+            } else {
+                setSelectedNodeId(None);
             }
         } except Exception as e {
             console.error("Failed to fetch operator workbench data:", e);
@@ -374,6 +391,8 @@ def:pub OperatorWorkbenchView {
             </div>;
     }
 
+    hasTree = nodes.length > 0;
+
     return
         <div
             className="flex h-screen w-full bg-zinc-950 text-zinc-100 overflow-hidden"
@@ -462,6 +481,19 @@ def:pub OperatorWorkbenchView {
                     >
                         <Background color="#27272a" gap={20} />
                     </ReactFlow>
+                    if viewMode == "graph" and hasTree
+                    else <div
+                        className="h-full w-full flex items-center justify-center p-6 text-center"
+                    >
+                        <div className="max-w-sm">
+                            <div className="text-sm font-semibold text-zinc-200">
+                                No kernels yet for this operator
+                            </div>
+                            <div className="mt-1 text-xs text-zinc-500">
+                                Generate a new root node to start building an optimization tree.
+                            </div>
+                        </div>
+                    </div>
                     if viewMode == "graph"
                     else <div className="h-full overflow-y-auto p-4 pt-14 space-y-2">
                         {listViewItems}{<div
@@ -536,6 +568,7 @@ def:pub OperatorWorkbenchView {
                     <NewKernel
                         projectName={resolvedProjectName}
                         opName={resolvedOpName}
+                        hasTree={hasTree}
                     />
                 </div>
             </div>

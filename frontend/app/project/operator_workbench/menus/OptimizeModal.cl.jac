@@ -12,6 +12,7 @@ def:pub OptimizeModal(props: any) {
     onStarted = props.onStarted;
     projectName = props.projectName;
     opName = props.opName;
+    hasTree = props.hasTree if props and "hasTree" in props else True;
 
     config_ctx = useConfig();
     config = config_ctx.config;
@@ -36,6 +37,10 @@ def:pub OptimizeModal(props: any) {
     setPatience = patience_state[1];
 
     async def handleOptimize -> None {
+        if not hasTree {
+            alert("No optimization tree yet for this operator. Generate a new root first.");
+            return;
+        }
         if not projectName or not opName {
             alert("Missing project or operator.");
             return;

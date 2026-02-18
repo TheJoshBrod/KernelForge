@@ -23,9 +23,10 @@ def:pub OpSelector {
         raw_text = raw or "";
         prefix = "torch_nn_functional_";
         if raw_text.startswith(prefix) {
-            return "torch.nn.functional." + raw_text.replace(prefix, "");
+            # Keep labels compact in the Workbench list.
+            return raw_text.replace(prefix, "");
         }
-        return raw_text.replace("_", ".");
+        return raw_text;
     }
 
     async def fetchOps -> None {
