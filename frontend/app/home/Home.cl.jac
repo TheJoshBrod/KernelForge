@@ -136,7 +136,7 @@ def:pub Home -> Any {
                     className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden"
                 >
                     <div
-                        className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-[var(--accent)] to-transparent opacity-50"
+                        className="absolute top-0 left-0 right-0 heat-divider"
                     ></div>
                     <div className="flex items-center gap-4">
                         <div

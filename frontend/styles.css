@@ -59,9 +59,19 @@
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-body);
   margin: 0;
   letter-spacing: -0.01em;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opactity='0.4' /%3E%3C/svg%3E");
+  opacity: 0.04;
+  pointer-events: none;
+  z-index: 9999;
 }
 
 ::selection {
@@ -94,7 +104,7 @@ video {
   width: 520px;
   height: 520px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(216, 242, 162, 0.55), rgba(216, 242, 162, 0));
+  background: radial-gradient(circle, rgba(199, 91, 57, 0.15), rgba(199, 91, 57, 0));
   filter: blur(2px);
   z-index: 0;
   pointer-events: none;
@@ -108,6 +118,7 @@ video {
 .page::after {
   bottom: -320px;
   left: -200px;
+  background: radial-gradient(circle, rgba(232, 168, 56, 0.1), rgba(232, 168, 56, 0));
 }
 
 .container {
@@ -172,8 +183,8 @@ video {
   content: "";
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 20% 20%, rgba(216, 242, 162, 0.35), rgba(216, 242, 162, 0) 48%),
-    radial-gradient(circle at 80% 10%, rgba(176, 224, 104, 0.28), rgba(176, 224, 104, 0) 45%);
+  background: radial-gradient(circle at 20% 20%, rgba(214, 48, 49, 0.15), rgba(214, 48, 49, 0) 48%),
+    radial-gradient(circle at 80% 10%, rgba(225, 112, 85, 0.1), rgba(225, 112, 85, 0) 45%);
   z-index: 0;
   pointer-events: none;
 }
@@ -198,11 +209,13 @@ video {
 }
 
 .hero-title {
+  font-family: var(--font-display);
   font-size: clamp(2.8rem, 3vw + 1.6rem, 4.4rem);
-  line-height: 1.03;
-  letter-spacing: -0.035em;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
   margin: 0.65rem 0 0;
-  color: var(--ink);
+  color: var(--text-strong);
+  text-transform: uppercase;
 }
 
 .hero-sub {
@@ -297,10 +310,12 @@ video {
 }
 
 .section-title {
-  font-size: 1.9rem;
+  font-family: var(--font-display);
+  font-size: 2.2rem;
   margin: 0;
-  letter-spacing: -0.02em;
-  color: var(--ink);
+  letter-spacing: 0.02em;
+  color: var(--text-strong);
+  text-transform: uppercase;
 }
 
 .section-sub {
@@ -599,6 +614,19 @@ video {
   animation: glowing 18s linear infinite;
 }
 
+.glow-button.danger {
+  border-color: rgba(214, 48, 49, 0.5);
+  color: var(--text-light);
+}
+
+.glow-button.danger::before {
+  background: linear-gradient(45deg, rgba(214, 48, 49, 0.6), rgba(225, 112, 85, 0.6), rgba(214, 48, 49, 0.6));
+}
+
+.glow-button.danger::after {
+  background: linear-gradient(135deg, var(--danger), var(--accent-orange));
+}
+
 .glow-button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 4px;
@@ -734,6 +762,25 @@ video {
   color: var(--text);
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
   cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.app-button::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--molten-gold), var(--accent-orange), transparent);
+  transform: scaleX(0);
+  transition: transform 0.3s ease;
+  z-index: 10;
+}
+
+.app-button:hover::after {
+  transform: scaleX(1);
 }
 
 .app-button:disabled {
@@ -2086,12 +2133,10 @@ video {
 .project-loading-bar-fill {
   position: absolute;
   inset: -1px 0;
-  background: repeating-linear-gradient(
-    90deg,
-    rgba(253, 203, 110, 0.32) 0px 22px,
-    rgba(225, 112, 85, 0.78) 22px 44px,
-    rgba(244, 165, 110, 0.4) 44px 66px
-  );
+  background: repeating-linear-gradient(90deg,
+      rgba(253, 203, 110, 0.32) 0px 22px,
+      rgba(225, 112, 85, 0.78) 22px 44px,
+      rgba(244, 165, 110, 0.4) 44px 66px);
   background-size: 198px 100%;
   animation: loadingBarFlow 1.25s linear infinite;
 }
@@ -2109,10 +2154,12 @@ video {
     transform: scale(0.98);
     filter: drop-shadow(0 0 16px rgba(225, 112, 85, 0.28));
   }
+
   50% {
     transform: scale(1.02);
     filter: drop-shadow(0 0 24px rgba(253, 203, 110, 0.56));
   }
+
   100% {
     transform: scale(0.98);
     filter: drop-shadow(0 0 16px rgba(225, 112, 85, 0.28));
@@ -2376,6 +2423,56 @@ video {
   background-image: url("data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22 opacity=%220.08%22/%3E%3C/svg%3E");
   z-index: 5;
   mix-blend-mode: overlay;
+}
+
+.heat-divider {
+  height: 2px;
+  width: 100%;
+  background: linear-gradient(90deg, transparent, var(--accent-orange), var(--molten-gold), var(--accent-orange), transparent);
+  background-size: 200% 100%;
+  animation: heat-shimmer 3s ease-in-out infinite;
+  border: none;
+}
+
+@keyframes heat-shimmer {
+  0% {
+    background-position: 100% 0;
+    opacity: 0.4;
+    transform: scaleY(1);
+    box-shadow: 0 0 5px transparent;
+  }
+
+  50% {
+    opacity: 0.9;
+    transform: scaleY(1.5);
+    box-shadow: 0 0 10px var(--accent-glow);
+  }
+
+  100% {
+    background-position: -100% 0;
+    opacity: 0.4;
+    transform: scaleY(1);
+    box-shadow: 0 0 5px transparent;
+  }
+}
+
+/* === Syntax Highlighting === */
+.hl-kw {
+  color: var(--accent-orange);
+  font-weight: bold;
+}
+
+.hl-built {
+  color: var(--molten-gold);
+}
+
+.hl-num {
+  color: var(--ember-red);
+}
+
+.hl-comment {
+  color: var(--text-smoke);
+  font-style: italic;
 }
 
 @keyframes ember-rise {
