@@ -60,7 +60,7 @@ def:pub ProjectLayout -> Any {
             >
                 <div className="p-6 border-b border-[var(--border)] relative bg-[var(--bg-darker)]">
                     <div className="absolute top-0 left-0 right-0 heat-divider"></div>
-                    <div className="flex items-center gap-3 mb-1">
+                    <Link to="/" className="flex items-center gap-3 mb-1 hover:opacity-80 transition-opacity">
                         <img src="/KernelForge.svg" alt="Logo" className="w-8 h-8" />
                         <h1
                             className="text-xl font-bold text-[var(--text-light)] tracking-wider uppercase industrial-font-display"
@@ -68,7 +68,7 @@ def:pub ProjectLayout -> Any {
                         >
                             Kernel Forge
                         </h1>
-                    </div>
+                    </Link>
                     <div className="text-[10px] text-[var(--accent)] font-mono uppercase tracking-widest truncate mt-2">
                         Project: {projectName}
                     </div>
