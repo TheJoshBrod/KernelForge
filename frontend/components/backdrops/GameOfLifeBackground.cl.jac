@@ -142,5 +142,5 @@ def:pub GameOfLifeBackground(className: str = "") -> any {
     }
 
     return
-        <canvas ref={canvasRef} className={baseClass} />;
+        <canvas ref={canvasRef} className={baseClass}/>;
 }

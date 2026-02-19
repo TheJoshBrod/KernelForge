@@ -16,7 +16,7 @@ def:pub UploadTrigger(props: any) {
             className="w-full p-3 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-3 transition-colors"
             onClick={handleClick}
         >
-            <UploadIcon className="w-4 h-4 text-indigo-400" />
+            <UploadIcon className="w-4 h-4 text-indigo-400"/>
             <div>
                 <div className="font-semibold">
                     Upload Custom Kernel

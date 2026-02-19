@@ -45,12 +45,16 @@ def:pub NewKernel {
         []
     );
 
-    on_complete = lambda data: any = None  -> None { setIsOpen(False);};
+    on_complete = lambda data: anyNone  -> None { setIsOpen(False);};
 
     # Trigger Handlers
-    handle_upload_click = lambda -> None { setUploadModalOpen(True); setIsOpen(False); };
-    handle_generate_click = lambda -> None { setGenerateModalOpen(True); setIsOpen(False); };
-    handle_optimize_click = lambda -> None { setOptimizeModalOpen(True); setIsOpen(False); };
+    handle_upload_click = lambda -> None { setUploadModalOpen(True);setIsOpen(False);};
+    handle_generate_click = lambda -> None { setGenerateModalOpen(True);setIsOpen(
+        False
+    );};
+    handle_optimize_click = lambda -> None { setOptimizeModalOpen(True);setIsOpen(
+        False
+    );};
 
     return
         <div className="relative" ref={menu_ref}>
@@ -58,7 +62,7 @@ def:pub NewKernel {
                 className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg transition-all shadow-lg hover:shadow-indigo-500/20 flex items-center justify-center gap-2"
                 onClick={lambda -> None { setIsOpen(not isOpen);}}
             >
-                <CpuIcon className="w-5 h-5" />
+                <CpuIcon className="w-5 h-5"/>
                 Create New Kernel Node
             </button>
             <div className="text-center mt-2 text-[10px] text-zinc-500">
@@ -67,13 +71,12 @@ def:pub NewKernel {
             {<div
                 className="absolute bottom-full left-0 w-full mb-2 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-20 flex flex-col"
             >
-                <UploadTrigger onUpload={handle_upload_click} />
-                <GenerateTrigger onGenerate={handle_generate_click} />
-                <OptimizeTrigger onOptimize={handle_optimize_click} hasTree={hasTree} />
+                <UploadTrigger onUpload={handle_upload_click}/>
+                <GenerateTrigger onGenerate={handle_generate_click}/>
+                <OptimizeTrigger onOptimize={handle_optimize_click} hasTree={hasTree}/>
             </div>
             if isOpen
-            else <span />}
-            
+            else <span/>}
             <UploadModal
                 isOpen={uploadModalOpen}
                 onClose={lambda -> None { setUploadModalOpen(False);}}

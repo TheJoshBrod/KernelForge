@@ -9,9 +9,7 @@ import from walkers.system {
     TestLLMConnection,
     DetectHardware
 }
-import from walkers.llm {
-    GetOpenLLMModels
-}
+import from walkers.llm { GetOpenLLMModels }
 import from walkers.project {
     CreateProject,
     GetProjects,
@@ -64,42 +62,41 @@ cl {
     }
 
     def:pub app {
-        useEffect(lambda -> None {
-            window.Exception = Error;
-            document.title = "CGinS";
-        }, []);
+        useEffect(
+            lambda -> None { window.Exception = Error;document.title = "CGinS";}, []
+        );
         return
             <Router>
                 <ConfigProvider>
                     <div className="min-h-screen font-sans antialiased">
                         <Routes>
-                            <Route path="/" element={<Home />} />
-                            <Route path="/settings" element={<SettingsPage />} />
-                            <Route
-                                path="/settings/api-keys"
-                                element={<ApiKeysPage />}
-                            />
-                            <Route path="/settings/gpu" element={<GpuPage />} />
-                            <Route path="/settings/ssh" element={<SshPage />} />
-                            <Route path="/new-project" element={<NewProject />} />
+                            <Route path="/" element={<Home/>}/>
+                            <Route path="/settings" element={<SettingsPage/>}/>
+                            <Route path="/settings/api-keys" element={<ApiKeysPage/>}/>
+                            <Route path="/settings/gpu" element={<GpuPage/>}/>
+                            <Route path="/settings/ssh" element={<SshPage/>}/>
+                            <Route path="/new-project" element={<NewProject/>}/>
                             <Route
                                 path="/project/:projectName"
-                                element={<ProjectLayout />}
+                                element={<ProjectLayout/>}
                             >
-                                <Route index element={<Dashboard />} />
+                                <Route index element={<Dashboard/>}/>
                                 <Route
                                     path="settings/*"
-                                    element={<Navigate to="/settings" replace={True} />}
+                                    element={<Navigate to="/settings" replace={True}/>}
                                 />
-                                <Route path="operator-workbench" element={<OperatorWorkbench />} />
+                                <Route
+                                    path="operator-workbench"
+                                    element={<OperatorWorkbench/>}
+                                />
                                 <Route
                                     path="operator-workbench/:opName"
-                                    element={<OperatorWorkbench />}
+                                    element={<OperatorWorkbench/>}
                                 />
                             </Route>
-                            <Route path="*" element={<NotFound />} />
+                            <Route path="*" element={<NotFound/>}/>
                         </Routes>
-                        <Toaster richColors={True} theme="dark" />
+                        <Toaster richColors={True} theme="dark"/>
                     </div>
                 </ConfigProvider>
             </Router>;

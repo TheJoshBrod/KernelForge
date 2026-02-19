@@ -39,18 +39,17 @@ def:pub UploadModal(props: any) -> Any {
     }
 
     # Update default backend
-    useEffect(lambda -> None {
-        current_valid = False;
-        for dev in available_devices {
+    useEffect(
+        lambda -> None { current_valid = False;for dev in available_devices {
             if dev["value"] == backend {
                 current_valid = True;
                 break;
             }
-        }
-        if not current_valid and available_devices.length > 0 {
+        }if not current_valid and available_devices.length > 0 {
             setBackend(available_devices[0]["value"]);
-        }
-    }, [hwInfo, backend]);
+        }},
+        [hwInfo, backend]
+    );
 
     file_input_ref = useRef(None);
 
@@ -122,16 +121,14 @@ def:pub UploadModal(props: any) -> Any {
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Upload Custom Kernel">
             <div className="p-6 space-y-6">
-
                 <div className="space-y-4">
                     <div className="flex items-center justify-between">
                         <label
                             className="text-sm font-medium text-zinc-300 flex items-center gap-2"
                         >
-                            <CodeIcon className="w-4 h-4 text-indigo-400" />
+                            <CodeIcon className="w-4 h-4 text-indigo-400"/>
                             Kernel Source Code
                         </label>
-
                         <div>
                             <input
                                 type="file"
@@ -144,7 +141,7 @@ def:pub UploadModal(props: any) -> Any {
                                 onClick={lambda -> None { file_input_ref.current.click();}}
                                 className="text-xs flex items-center gap-2 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 hover:text-white rounded-md text-zinc-400 transition-colors border border-zinc-700"
                             >
-                                <UploadIcon className="w-3 h-3" />
+                                <UploadIcon className="w-3 h-3"/>
                                 Load from File
                             </button>
                         </div>
@@ -164,13 +161,12 @@ def:pub UploadModal(props: any) -> Any {
                         </div>
                     </div>
                 </div>
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                         <label
                             className="text-sm font-medium text-zinc-300 flex items-center gap-2"
                         >
-                            <SettingsIcon className="w-4 h-4 text-amber-400" />
+                            <SettingsIcon className="w-4 h-4 text-amber-400"/>
                             Target Backend
                         </label>
                         <div className="relative">
@@ -181,9 +177,12 @@ def:pub UploadModal(props: any) -> Any {
                                 );}}
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 appearance-none"
                             >
-                                {available_devices.map(lambda d: dict -> Any {
-                                    return <option key={d["value"]} value={d["value"]}>{d["label"]}</option>;
-                                })}
+                                {available_devices.map(
+                                    lambda d: dict  -> Any { return
+                                        <option key={d["value"]} value={d["value"]}>
+                                            {d["label"]}
+                                        </option>; }
+                                )}
                             </select>
                             <div
                                 className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -208,7 +207,6 @@ def:pub UploadModal(props: any) -> Any {
                         </p>
                     </div>
                 </div>
-
                 <div className="pt-6 flex justify-end gap-3 border-t border-zinc-800">
                     <button
                         onClick={onClose}

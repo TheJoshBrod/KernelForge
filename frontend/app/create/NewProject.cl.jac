@@ -3,17 +3,11 @@
 import from react { useEffect }
 import from sonner { toast }
 import from "react-router-dom" { useNavigate }
-import from ...components.ui.Icons {
-    SettingsIcon,
-    BackIcon,
-    UploadIcon,
-    FolderIcon
-}
+import from ...components.ui.Icons { SettingsIcon, BackIcon, UploadIcon, FolderIcon }
 import from ...components.editor.ForgePythonEditor { ForgePythonEditor }
 import from "@jac-client/assets/KernelForge.svg" { default as loadingLogo }
 
 # Client-side helper for reading file as base64
-
 def fileToBase64(file: Any) -> Any {
     def executor(resolve: Any, reject: Any) -> None {
         reader = Reflect.construct(FileReader, []);
@@ -23,7 +17,7 @@ def fileToBase64(file: Any) -> Any {
         );};
         reader.onerror = lambda -> None { reject.call(
             None, "Failed to read file as base64"
-        ); };
+        );};
     }
     return Reflect.construct(Promise, [executor]);
 }
@@ -35,7 +29,7 @@ def fileToText(file: Any) -> Any {
         reader.onload = lambda -> None { resolve.call(None, reader.result);};
         reader.onerror = lambda -> None { reject.call(
             None, "Failed to read file as text"
-        ); };
+        );};
     }
     return Reflect.construct(Promise, [executor]);
 }
@@ -79,17 +73,16 @@ def:pub NewProject -> Any {
         }
         handleInputChange("modelFile", file);
         reader = Reflect.construct(FileReader, []);
-        reader.onload = lambda -> None {
-            text_value = reader.result if reader.result else "";
-            if text_value and text_value.trim() {
-                code = text_value;
-            } else {
-                toast.error("Selected model file is empty");
-            }
-        };
-        reader.onerror = lambda -> None {
-            toast.error("Failed to read model file for preview");
-        };
+        reader.onload = lambda -> None { text_value = reader.result
+        if reader.result
+        else "";if text_value and text_value.trim() {
+            code = text_value;
+        } else {
+            toast.error("Selected model file is empty");
+        } };
+        reader.onerror = lambda -> None { toast.error(
+            "Failed to read model file for preview"
+        );};
         reader.readAsText(file);
     }
 
@@ -100,31 +93,20 @@ def:pub NewProject -> Any {
     }
 
     useEffect(
-        lambda -> Any {
-            window.addEventListener("keydown", handleKeyDown);
-            return lambda -> None { window.removeEventListener(
-                "keydown", handleKeyDown
-            );};
-        },
+        lambda -> Any { window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
+            "keydown", handleKeyDown
+        );}; },
         []
     );
 
     useEffect(
-        lambda -> Any {
-            if not isSubmitting {
-                stageIndex = 0;
-                return;
-            }
-
-            stageIndex = Math.floor(Date.now() / 1300) % stageCycle.length;
-            timer = setInterval(
-                lambda -> None {
-                    stageIndex = Math.floor(Date.now() / 1300) % stageCycle.length;
-                },
-                650
-            );
-            return lambda -> None { clearInterval(timer);};
-        },
+        lambda -> Any { if not isSubmitting {
+            stageIndex = 0;
+            return;
+        }stageIndex = Math.floor(Date.now() / 1300) % stageCycle.length;timer = setInterval(
+            lambda -> None { stageIndex = Math.floor(Date.now() / 1300) % stageCycle.length;},
+            650
+        );return lambda -> None { clearInterval(timer);}; },
         [isSubmitting]
     );
 
@@ -193,7 +175,8 @@ def:pub NewProject -> Any {
                     "weightsFileB64": weights_b64,
                     "weightsFileName": (
                         formData["weightsFile"].name
-                        if formData["weightsFile"] and "name" in formData["weightsFile"]
+                        if formData["weightsFile"]
+                        and "name" in formData["weightsFile"]
                         else "weights.pt"
                     ),
                     "validationSetPath": "",
@@ -242,7 +225,7 @@ def:pub NewProject -> Any {
                     <span className="project-loading-bar-fill"></span>
                 </div>
                 <div className="project-loading-foot">
-                    Status: {submitStage or "Working on it..."} | Large weights or validation zips may take a moment.
+                    Status:{submitStage or "Working on it..."} | Large weights or validation zips may take a moment.
                 </div>
             </div>
         </div>;
@@ -261,7 +244,7 @@ def:pub NewProject -> Any {
                     className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white cursor-pointer"
                     aria-label="Settings"
                 >
-                    <SettingsIcon />
+                    <SettingsIcon/>
                 </a>
             </div>
             <div className="absolute top-2 right-16 z-10">
@@ -270,7 +253,7 @@ def:pub NewProject -> Any {
                     className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white bg-zinc-950/50 backdrop-blur-sm cursor-pointer"
                     aria-label="Go Back"
                 >
-                    <BackIcon />
+                    <BackIcon/>
                 </a>
             </div>
             <div className="w-1/2 flex flex-col border-r border-zinc-900">
@@ -286,9 +269,11 @@ def:pub NewProject -> Any {
                 <div className="flex-1 relative">
                     <ForgePythonEditor
                         value={code}
-                        onChange={lambda next_code: Any -> None { code = str(
+                        onChange={lambda next_code: Any  -> None { code = str(
                             next_code
-                        ) if next_code else "";}}
+                        )
+                        if next_code
+                        else "";}}
                         readOnly={isSubmitting}
                         placeholder="# Paste your model code here or upload model.py"
                     />
@@ -369,7 +354,7 @@ def:pub NewProject -> Any {
                                 className="w-full h-32 bg-zinc-900/50 border-2 border-dashed border-zinc-800 group-hover:border-zinc-600 rounded-xl flex flex-col items-center justify-center transition-all"
                             >
                                 <div className="p-3 rounded-full bg-zinc-900 mb-2">
-                                    <UploadIcon className="text-zinc-400" />
+                                    <UploadIcon className="text-zinc-400"/>
                                 </div>
                                 <p className="text-sm text-zinc-400 font-medium">
                                     {formData["weightsFile"].name
@@ -400,7 +385,7 @@ def:pub NewProject -> Any {
                             <div
                                 className="w-full h-12 bg-zinc-900 border border-zinc-800 group-hover:border-zinc-600 rounded-lg px-4 flex items-center text-zinc-400 transition-all"
                             >
-                                <FolderIcon className="mr-3" />
+                                <FolderIcon className="mr-3"/>
                                 <span className="truncate">
                                     {formData["validationZip"].name
                                     if formData["validationZip"]

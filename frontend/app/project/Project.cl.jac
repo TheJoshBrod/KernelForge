@@ -862,13 +862,13 @@ def:pub Project {
 
     return
         <div className="app-shell">
-            <GameOfLifeBackground />
+            <GameOfLifeBackground/>
             <div className="app-backdrop"></div>
             <div className="app-layout app-content-layer">
                 <aside className="sidebar">
                     <div className="sidebar-header">
                         <div className="brand">
-                            <CGinSLogo className="mascot mascot--logo" />
+                            <CGinSLogo className="mascot mascot--logo"/>
                             <div className="brand-meta">
                                 <span>
                                     Project
@@ -1180,18 +1180,18 @@ def:pub Project {
                     <div className="page-header">
                         <div>
                             <h1 className="page-title">
-                                Project: {name}
+                                Project:{name}
                             </h1>
                             <div className="badge-row">
                                 <span className="badge">
-                                    Ops: {ops.length}
+                                    Ops:{ops.length}
                                 </span>
                                 <span className="badge">
-                                    Benchmarks: {benchResults.length}
+                                    Benchmarks:{benchResults.length}
                                 </span>
                             </div>
                         </div>
-                        <CGinSLogo className="mascot mascot--cta" />
+                        <CGinSLogo className="mascot mascot--cta"/>
                     </div>
                     <div className="panel-grid">
                         <div className="panel">

@@ -44,14 +44,14 @@ def:pub Modal(props: any) {
                         onClick={onClose}
                         className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors"
                     >
-                        <XIcon className="w-5 h-5" />
+                        <XIcon className="w-5 h-5"/>
                     </button>
                 </div>
                 <div className="flex-1 overflow-y-auto custom-scrollbar">
                     {children}
                 </div>
             </div>
-            <div className="absolute inset-0 -z-10" onClick={onClose} />
+            <div className="absolute inset-0 -z-10" onClick={onClose}/>
         </div>,
         document.body
     );

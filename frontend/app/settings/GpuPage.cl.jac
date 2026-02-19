@@ -112,7 +112,7 @@ def:pub GpuPage {
     if loading {
         return
             <div className="app-shell app-shell--center settings-shell">
-                <GameOfLifeBackground />
+                <GameOfLifeBackground/>
                 <div className="app-backdrop"></div>
                 <div className="app-content-layer">
                     <p>
@@ -124,7 +124,7 @@ def:pub GpuPage {
 
     return
         <main className="app-shell app-shell--center settings-shell">
-            <GameOfLifeBackground />
+            <GameOfLifeBackground/>
             <div className="app-backdrop"></div>
             <div className="settings-card panel app-content-layer">
                 <div className="settings-header">
@@ -135,11 +135,10 @@ def:pub GpuPage {
                         Select your active GPU
                     </p>
                 </div>
-
                 <div className="space-y-4">
                     <div className="space-y-2">
                         <div className="text-sm font-semibold text-zinc-300">
-                            Available GPUs {(
+                            Available GPUs{(
                                 "(local + connected SSH)" if gpus.length > 0 else ""
                             )}
                         </div>
@@ -172,21 +171,21 @@ def:pub GpuPage {
                             </div>
                             <div className="text-xs text-zinc-400 space-y-1">
                                 <div>
-                                    Memory: {gpus[selected_idx]["memory"]
+                                    Memory:{gpus[selected_idx]["memory"]
                                     if selected_idx != -1
                                     and selected_idx < gpus.length
                                     and "memory" in gpus[selected_idx]
                                     else "N/A"}
                                 </div>
                                 <div>
-                                    Compute: {gpus[selected_idx]["compute_capability"]
+                                    Compute:{gpus[selected_idx]["compute_capability"]
                                     if selected_idx != -1
                                     and selected_idx < gpus.length
                                     and "compute_capability" in gpus[selected_idx]
                                     else "N/A"}
                                 </div>
                                 <div>
-                                    SMs: {gpus[selected_idx]["sm_count"]
+                                    SMs:{gpus[selected_idx]["sm_count"]
                                     if selected_idx != -1
                                     and selected_idx < gpus.length
                                     and "sm_count" in gpus[selected_idx]

@@ -112,7 +112,7 @@ def:pub SshPage {
     if loading {
         return
             <div className="app-shell app-shell--center settings-shell">
-                <GameOfLifeBackground />
+                <GameOfLifeBackground/>
                 <div className="app-backdrop"></div>
                 <div className="app-content-layer">
                     <p>
@@ -124,7 +124,7 @@ def:pub SshPage {
 
     return
         <main className="app-shell app-shell--center settings-shell">
-            <GameOfLifeBackground />
+            <GameOfLifeBackground/>
             <div className="app-backdrop"></div>
             <div className="settings-card panel app-content-layer !max-w-7xl w-full">
                 <div className="settings-header">
@@ -135,7 +135,6 @@ def:pub SshPage {
                         Manage remote connections
                     </p>
                 </div>
-
                 <SSHSettings
                     config={config}
                     handleSaveSshConnection={handleSaveSshConnection}

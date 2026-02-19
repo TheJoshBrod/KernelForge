@@ -1,7 +1,13 @@
 """Optimize Modal Component"""
 
 import from react { useState, useEffect }
-import from .....components.ui.Icons { ZapIcon, BrainIcon, ActivityIcon, TimerIcon, ChevronDownIcon }
+import from .....components.ui.Icons {
+    ZapIcon,
+    BrainIcon,
+    ActivityIcon,
+    TimerIcon,
+    ChevronDownIcon
+}
 import from .....components.ui.SearchableSelect { SearchableSelect }
 import from .....components.ui.Modal { Modal }
 import from .....context.ConfigContext { useConfig }
@@ -42,7 +48,9 @@ def:pub OptimizeModal(props: any) -> Any {
             {"label": "Google", "value": "google"}
         ];
     }
-    default_provider = provider_options[0]["value"] if provider_options.length > 0 else "openai";
+    default_provider = provider_options[0]["value"]
+    if provider_options.length > 0
+    else "openai";
 
     llm_provider_state = useState(default_provider);
     llmProvider = llm_provider_state[0];
@@ -64,14 +72,14 @@ def:pub OptimizeModal(props: any) -> Any {
     models_state = useState([]);
     models = models_state[0];
     setModels = models_state[1];
-    
+
     loading_models_state = useState(False);
     loadingModels = loading_models_state[0];
     setLoadingModels = loading_models_state[1];
 
     # Fetch models on open
-    useEffect(lambda -> None {
-        if isOpen {
+    useEffect(
+        lambda -> None { if isOpen {
             async def fetchModels -> None {
                 console.log("Fetching models...");
                 setLoadingModels(True);
@@ -96,8 +104,9 @@ def:pub OptimizeModal(props: any) -> Any {
                 }
             }
             fetchModels();
-        }
-    }, [isOpen]);
+        }},
+        [isOpen]
+    );
 
     provider_option_nodes = [];
     for p in provider_options {
@@ -110,7 +119,9 @@ def:pub OptimizeModal(props: any) -> Any {
 
     async def handleOptimize -> None {
         if not hasTree {
-            alert("No optimization tree yet for this operator. Generate a new root first.");
+            alert(
+                "No optimization tree yet for this operator. Generate a new root first."
+            );
             return;
         }
         if not projectName or not opName {
@@ -140,11 +151,7 @@ def:pub OptimizeModal(props: any) -> Any {
                 payload["llm_provider"] = llmProvider;
             }
 
-            resp = await __jacSpawn(
-                "StartOptimizeAdvanced",
-                "",
-                payload
-            );
+            resp = await __jacSpawn("StartOptimizeAdvanced", "", payload);
             data = resp.reports[0] if resp and resp.reports else {};
             if data and "success" in data and not data["success"] {
                 err = data["error"]
@@ -177,53 +184,66 @@ def:pub OptimizeModal(props: any) -> Any {
             <div className="p-6 space-y-6">
                 <div className="space-y-4">
                     <div className="space-y-2">
-                        <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
-                            <BrainIcon className="w-4 h-4 text-purple-400" />
+                        <label
+                            className="text-sm font-medium text-zinc-300 flex items-center gap-2"
+                        >
+                            <BrainIcon className="w-4 h-4 text-purple-400"/>
                             LLM Model
                         </label>
                         <div className="relative">
                             <SearchableSelect
                                 value={llmModel}
                                 onChange={setLlmModel}
-                                options={models.map(lambda m: dict -> dict {
-                                    return {"value": m["id"], "label": m["label"] + " (" + m["provider"] + ")"};
-                                })}
+                                options={models.map(
+                                    lambda m: dict  -> dict { return {
+                                        "value": m["id"],
+                                        "label": m["label"] + " (" + m["provider"] + ")"
+                                    }; }
+                                )}
                                 placeholder="Select a model..."
                                 disabled={loadingModels}
                             />
                         </div>
-                        {
-                            <p className="text-[10px] text-zinc-500">Loading models...</p>
-                            if loadingModels 
-                            else
-                            <p className="text-[10px] text-zinc-500">Select model from {" " + models.length} available</p>
-                        }
+                        {<p className="text-[10px] text-zinc-500">
+                            Loading models...
+                        </p>
+                        if loadingModels
+                        else <p className="text-[10px] text-zinc-500">
+                            Select model from{" " + models.length} available
+                        </p>}
                     </div>
-
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                            <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
-                                <ActivityIcon className="w-4 h-4 text-blue-400" />
+                            <label
+                                className="text-sm font-medium text-zinc-300 flex items-center gap-2"
+                            >
+                                <ActivityIcon className="w-4 h-4 text-blue-400"/>
                                 Iterations
                             </label>
                             <input
                                 type="number"
                                 value={iterations}
-                                onChange={lambda e: any -> None { setIterations(e.target.value);}}
+                                onChange={lambda e: any  -> None { setIterations(
+                                    e.target.value
+                                );}}
                                 min="1"
                                 max="50"
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
                             />
                         </div>
                         <div className="space-y-2">
-                            <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
-                                <TimerIcon className="w-4 h-4 text-amber-400" />
+                            <label
+                                className="text-sm font-medium text-zinc-300 flex items-center gap-2"
+                            >
+                                <TimerIcon className="w-4 h-4 text-amber-400"/>
                                 Patience
                             </label>
                             <input
                                 type="number"
                                 value={patience}
-                                onChange={lambda e: any -> None { setPatience(e.target.value);}}
+                                onChange={lambda e: any  -> None { setPatience(
+                                    e.target.value
+                                );}}
                                 min="1"
                                 max="10"
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
@@ -231,7 +251,6 @@ def:pub OptimizeModal(props: any) -> Any {
                         </div>
                     </div>
                 </div>
-
                 <div className="pt-6 flex justify-end gap-3 border-t border-zinc-800">
                     <button
                         onClick={onClose}
@@ -248,7 +267,9 @@ def:pub OptimizeModal(props: any) -> Any {
                         )}
                     >
                         {"Starting..." if isWorking else "Start Optimization"}
-                        <ZapIcon className={"w-4 h-4 " + ("opacity-0" if isWorking else "")} />
+                        <ZapIcon
+                            className={"w-4 h-4 " + ("opacity-0" if isWorking else "")}
+                        />
                     </button>
                 </div>
             </div>

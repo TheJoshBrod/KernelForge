@@ -52,16 +52,11 @@ def _count_char(text: Any, target: str) -> int {
 }
 
 def _make_inline_decoration(
-    monaco: Any,
-    line_no: int,
-    start_col: int,
-    end_col: int,
-    class_name: str
+    monaco: Any, line_no: int, start_col: int, end_col: int, class_name: str
 ) -> dict {
     return {
         "range": Reflect.construct(
-            monaco.Range,
-            [line_no, start_col, line_no, end_col]
+            monaco.Range, [line_no, start_col, line_no, end_col]
         ),
         "options": {"inlineClassName": class_name}
     };
@@ -84,14 +79,17 @@ def _build_editor_decorations(monaco: Any, source: Any) -> list {
         i = 0;
         while i < line.length {
             ch = line[i];
-            if ch == "(" or ch == ")" or ch == "[" or ch == "]" or ch == "{" or ch == "}" {
-                decorations.push(_make_inline_decoration(
-                    monaco,
-                    line_no,
-                    i + 1,
-                    i + 2,
-                    "kf-monaco-inline-punct"
-                ));
+            if ch == "("
+            or ch == ")"
+            or ch == "["
+            or ch == "]"
+            or ch == "{"
+            or ch == "}" {
+                decorations.push(
+                    _make_inline_decoration(
+                        monaco, line_no, i + 1, i + 2, "kf-monaco-inline-punct"
+                    )
+                );
             }
             i = i + 1;
         }
@@ -103,13 +101,15 @@ def _build_editor_decorations(monaco: Any, source: Any) -> list {
         }
 
         if left < line.length and line[left] == "@" {
-            decorations.push(_make_inline_decoration(
-                monaco,
-                line_no,
-                left + 1,
-                left + 2,
-                "kf-monaco-inline-decorator-symbol"
-            ));
+            decorations.push(
+                _make_inline_decoration(
+                    monaco,
+                    line_no,
+                    left + 1,
+                    left + 2,
+                    "kf-monaco-inline-decorator-symbol"
+                )
+            );
             j = left + 1;
             while j < line.length {
                 cj = line[j];
@@ -120,13 +120,15 @@ def _build_editor_decorations(monaco: Any, source: Any) -> list {
                 break;
             }
             if j > left + 1 {
-                decorations.push(_make_inline_decoration(
-                    monaco,
-                    line_no,
-                    left + 2,
-                    j + 1,
-                    "kf-monaco-inline-decorator-name"
-                ));
+                decorations.push(
+                    _make_inline_decoration(
+                        monaco,
+                        line_no,
+                        left + 2,
+                        j + 1,
+                        "kf-monaco-inline-decorator-name"
+                    )
+                );
             }
         }
 
@@ -144,13 +146,15 @@ def _build_editor_decorations(monaco: Any, source: Any) -> list {
                     k = k + 1;
                 }
                 if k > fn_start {
-                    decorations.push(_make_inline_decoration(
-                        monaco,
-                        line_no,
-                        fn_start + 1,
-                        k + 1,
-                        "kf-monaco-inline-function-name"
-                    ));
+                    decorations.push(
+                        _make_inline_decoration(
+                            monaco,
+                            line_no,
+                            fn_start + 1,
+                            k + 1,
+                            "kf-monaco-inline-function-name"
+                        )
+                    );
                 }
             }
         }
@@ -168,19 +172,23 @@ def _build_editor_decorations(monaco: Any, source: Any) -> list {
                     k = k + 1;
                 }
                 if k > class_start {
-                    decorations.push(_make_inline_decoration(
-                        monaco,
-                        line_no,
-                        class_start + 1,
-                        k + 1,
-                        "kf-monaco-inline-class-name"
-                    ));
+                    decorations.push(
+                        _make_inline_decoration(
+                            monaco,
+                            line_no,
+                            class_start + 1,
+                            k + 1,
+                            "kf-monaco-inline-class-name"
+                        )
+                    );
                 }
             }
         }
 
         # Import statements (including multiline import blocks).
-        is_import_line = in_import_block or trim.startsWith("import ") or trim.startsWith("from ");
+        is_import_line = in_import_block
+        or trim.startsWith("import ")
+        or trim.startsWith("from ");
         if is_import_line {
             word_start = -1;
             w_i = 0;
@@ -196,24 +204,22 @@ def _build_editor_decorations(monaco: Any, source: Any) -> list {
                         token_class = "";
                         if word == "import" or word == "from" or word == "as" {
                             token_class = "kf-monaco-inline-import-keyword";
-                        } elif word[0].toUpperCase() == word[0] and word[0].toLowerCase() != word[0] {
+                        } elif word[0].toUpperCase() == word[0]
+                        and word[0].toLowerCase() != word[0] {
                             token_class = "kf-monaco-inline-type-name";
                         } else {
                             token_class = "kf-monaco-inline-module-name";
                         }
-                        decorations.push(_make_inline_decoration(
-                            monaco,
-                            line_no,
-                            word_start + 1,
-                            w_i + 1,
-                            token_class
-                        ));
+                        decorations.push(
+                            _make_inline_decoration(
+                                monaco, line_no, word_start + 1, w_i + 1, token_class
+                            )
+                        );
                         word_start = -1;
                     }
                 }
                 w_i = w_i + 1;
             }
-
             depth_delta = _count_char(line, "(") - _count_char(line, ")");
             if not in_import_block and depth_delta > 0 {
                 in_import_block = True;
@@ -306,7 +312,7 @@ def _load_monaco(on_ready: Any, on_error: Any) -> None {
         window.require(
             ["vs/editor/editor.main"],
             lambda -> None { on_ready.call(None, window.monaco);},
-            lambda err: Any -> None { on_error.call(
+            lambda err: Any  -> None { on_error.call(
                 None, err.toString() if err else "Failed to load Monaco editor"
             );}
         );
@@ -329,7 +335,9 @@ def _load_monaco(on_ready: Any, on_error: Any) -> None {
         script.src = "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js";
         script.async = True;
         script.onload = lambda -> None { resolve.call(None, True);};
-        script.onerror = lambda -> None { reject.call(None, "Failed to load Monaco loader");};
+        script.onerror = lambda -> None { reject.call(
+            None, "Failed to load Monaco loader"
+        );};
         document.head.appendChild(script);
     }
 
@@ -371,124 +379,97 @@ def:pub ForgePythonEditor(props: Any) -> Any {
         source = editor_ref.current.getValue();
         next_decorations = _build_editor_decorations(monaco_ref.current, source);
         current_decorations = (
-            decorations_ref.current
-            if decorations_ref.current
-            else []
+            decorations_ref.current if decorations_ref.current else []
         );
         decorations_ref.current = editor_ref.current.deltaDecorations(
-            current_decorations,
-            next_decorations
+            current_decorations, next_decorations
         );
     }
 
     useEffect(
-        lambda -> None {
-            latest_value_ref.current = value if value else "";
-        },
-        [value]
+        lambda -> None { latest_value_ref.current = value if value else "";}, [value]
     );
 
     useEffect(
-        lambda -> Any {
-            disposed = {"value": False};
+        lambda -> Any { disposed = {"value": False};def on_ready(monaco: Any) -> None {
+            if disposed["value"] {
+                return;
+            }
+            monaco_ref.current = monaco;
+            _configure_forge_theme(monaco);
 
-            def on_ready(monaco: Any) -> None {
-                if disposed["value"] {
-                    return;
-                }
-                monaco_ref.current = monaco;
-                _configure_forge_theme(monaco);
-
-                host = container_ref.current;
-                if not host {
-                    setLoadError.call(None, "Editor container unavailable");
-                    return;
-                }
-
-                editor = monaco.editor.create(
-                    host,
-                    {
-                        "value": latest_value_ref.current if latest_value_ref.current else "",
-                        "language": "python",
-                        "theme": "kernal-forge",
-                        "automaticLayout": True,
-                        "minimap": {"enabled": False},
-                        "fontFamily": "JetBrains Mono, Source Code Pro, Menlo, Monaco, Consolas, monospace",
-                        "fontSize": 14,
-                        "lineHeight": 24,
-                        "renderWhitespace": "selection",
-                        "scrollBeyondLastLine": False,
-                        "wordWrap": "off",
-                        "tabSize": 4,
-                        "insertSpaces": True,
-                        "readOnly": readOnly,
-                        "padding": {"top": 18, "bottom": 18},
-                        "smoothScrolling": True
-                    }
-                );
-
-                editor_ref.current = editor;
-                setLoadError.call(None, "");
-                setIsReady.call(None, True);
-                applyDecorations();
-
-                editor.onDidChangeModelContent(
-                    lambda -> None {
-                        applyDecorations();
-                        if syncing_ref.current {
-                            return;
-                        }
-                        if onChange {
-                            onChange(editor.getValue());
-                        }
-                    }
-                );
+            host = container_ref.current;
+            if not host {
+                setLoadError.call(None, "Editor container unavailable");
+                return;
             }
 
-            def on_error(err: Any) -> None {
-                if disposed["value"] {
+            editor = monaco.editor.create(
+                host,
+                {
+                    "value": latest_value_ref.current
+                    if latest_value_ref.current
+                    else "",
+                    "language": "python",
+                    "theme": "kernal-forge",
+                    "automaticLayout": True,
+                    "minimap": {"enabled": False},
+                    "fontFamily": "JetBrains Mono, Source Code Pro, Menlo, Monaco, Consolas, monospace",
+                    "fontSize": 14,
+                    "lineHeight": 24,
+                    "renderWhitespace": "selection",
+                    "scrollBeyondLastLine": False,
+                    "wordWrap": "off",
+                    "tabSize": 4,
+                    "insertSpaces": True,
+                    "readOnly": readOnly,
+                    "padding": {"top": 18, "bottom": 18},
+                    "smoothScrolling": True
+                }
+            );
+
+            editor_ref.current = editor;
+            setLoadError.call(None, "");
+            setIsReady.call(None, True);
+            applyDecorations();
+
+            editor.onDidChangeModelContent(
+                lambda -> None { applyDecorations();if syncing_ref.current {
                     return;
-                }
-                setLoadError.call(None, str(err) if err else "Unable to initialize IDE editor");
+                }if onChange {
+                    onChange(editor.getValue());
+                }}
+            );
+        } def on_error(err: Any) -> None {
+            if disposed["value"] {
+                return;
             }
-
-            _load_monaco(on_ready, on_error);
-
-            return lambda -> None {
-                disposed["value"] = True;
-                if editor_ref.current {
-                    editor_ref.current.dispose();
-                    editor_ref.current = None;
-                }
-                decorations_ref.current = [];
-            };
-        },
+            setLoadError.call(
+                None, str(err) if err else "Unable to initialize IDE editor"
+            );
+        } _load_monaco(on_ready, on_error);return lambda -> None { disposed["value"] = True;if editor_ref.current {
+            editor_ref.current.dispose();
+            editor_ref.current = None;
+        }decorations_ref.current = [];}; },
         []
     );
 
     useEffect(
-        lambda -> None {
-            if editor_ref.current {
-                editor_ref.current.updateOptions({"readOnly": readOnly});
-            }
-        },
+        lambda -> None { if editor_ref.current {
+            editor_ref.current.updateOptions({"readOnly": readOnly});
+        }},
         [readOnly]
     );
 
     useEffect(
-        lambda -> None {
-            if not editor_ref.current {
-                return;
-            }
-            incoming = value if value else "";
-            current_value = editor_ref.current.getValue();
-            if current_value != incoming {
-                syncing_ref.current = True;
-                editor_ref.current.setValue(incoming);
-                syncing_ref.current = False;
-                applyDecorations();
-            }
-        },
+        lambda -> None { if not editor_ref.current {
+            return;
+        }incoming = value if value else "";current_value = editor_ref.current.getValue();if current_value != incoming {
+            syncing_ref.current = True;
+            editor_ref.current.setValue(incoming);
+            syncing_ref.current = False;
+            applyDecorations();
+        }},
         [value]
     );
 
@@ -496,11 +477,9 @@ def:pub ForgePythonEditor(props: Any) -> Any {
     if not isReady {
         fallback_overlay = <textarea
             value={value if value else ""}
-            onChange={lambda e: Any -> None {
-                if onChange {
-                    onChange(e.target.value);
-                }
-            }}
+            onChange={lambda e: Any  -> None { if onChange {
+                onChange(e.target.value);
+            }}}
             spellCheck={False}
             placeholder={placeholder}
             className="kf-monaco-fallback"
@@ -510,12 +489,15 @@ def:pub ForgePythonEditor(props: Any) -> Any {
 
     error_label = None;
     if loadError {
-        error_label = <div className="kf-monaco-error">{loadError}</div>;
+        error_label = <div className="kf-monaco-error">
+            {loadError}
+        </div>;
     }
 
-    return <div className="kf-monaco-shell">
-        <div ref={container_ref} className="kf-monaco-host"></div>
-        {fallback_overlay}
-        {error_label}
-    </div>;
+    return
+        <div className="kf-monaco-shell">
+            <div ref={container_ref} className="kf-monaco-host"></div>
+            {fallback_overlay}
+            {error_label}
+        </div>;
 }

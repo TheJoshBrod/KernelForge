@@ -7,8 +7,6 @@ import from ...components.ui.GlowButton { GlowButton }
 import from ...components.ui.Icons { CGinSLogo, SettingsIcon, ArrowRightIcon }
 import from ...components.SplashScreen { SplashScreen }
 
-
-
 def:pub Home -> Any {
     navigate = useNavigate();
     has projects: list = [],
@@ -20,11 +18,11 @@ def:pub Home -> Any {
         start: float = Date.now();
         try {
             resp = await __jacSpawn("GetProjects", "", {});
-            
+
             data = resp.reports[0]
             if resp and resp.reports and resp.reports.length > 0
             else None;
-            
+
             if data and data["projects"] {
                 projects = data["projects"];
             } else {
@@ -52,7 +50,8 @@ def:pub Home -> Any {
     filteredProjects = [];
     for p in projects {
         try {
-            if searchQuery == "" or p["name"].toLowerCase().includes(searchQuery.toLowerCase()) {
+            if searchQuery == ""
+            or p["name"].toLowerCase().includes(searchQuery.toLowerCase()) {
                 filteredProjects.append(p);
             }
         } except Exception as e {
@@ -70,27 +69,37 @@ def:pub Home -> Any {
         );
     } elif filteredProjects.length == 0 {
         projectList.append(
-             <div className="text-zinc-500 text-center py-4 font-mono uppercase tracking-widest text-xs">
-                { "NO PROJECTS FOUND" if projects.length == 0 else "NO MATCHING PROJECTS" }
+            <div
+                className="text-zinc-500 text-center py-4 font-mono uppercase tracking-widest text-xs"
+            >
+                {"NO PROJECTS FOUND"
+                if projects.length == 0
+                else "NO MATCHING PROJECTS"}
             </div>
         );
     } else {
         for innerProj in filteredProjects {
             if innerProj {
                 projName = innerProj["name"];
-                clickHandler = lambda ignore: any -> None { navigate("/project/" + projName); };
-                
+                clickHandler = lambda ignore: any  -> None { navigate(
+                    "/project/" + projName
+                );};
                 projectList.append(
                     <button
                         key={projName}
                         onClick={clickHandler}
                         className="w-full text-left p-4 mb-2 bg-[var(--surface)] border-l-2 border-transparent hover:border-[var(--accent)] hover:bg-[var(--surface-0)] transition-all group flex items-center justify-between gap-4 clip-anvil"
                     >
-                        <span className="font-medium text-[var(--text-light)] group-hover:text-white text-lg truncate min-w-0 flex-1 font-sans">
+                        <span
+                            className="font-medium text-[var(--text-light)] group-hover:text-white text-lg truncate min-w-0 flex-1 font-sans"
+                        >
                             {projName}
                         </span>
-                        <span className="text-[var(--text-muted)] group-hover:text-[var(--accent)] text-sm shrink-0 flex items-center gap-1 transition-transform group-hover:translate-x-1 font-mono uppercase tracking-wider text-xs">
-                            Load <ArrowRightIcon className="w-3 h-3" />
+                        <span
+                            className="text-[var(--text-muted)] group-hover:text-[var(--accent)] text-sm shrink-0 flex items-center gap-1 transition-transform group-hover:translate-x-1 font-mono uppercase tracking-wider text-xs"
+                        >
+                            Load
+                            <ArrowRightIcon className="w-3 h-3"/>
                         </span>
                     </button>
                 );
@@ -98,65 +107,77 @@ def:pub Home -> Any {
         }
     }
 
-
     return
-        <main className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex items-center justify-center font-sans text-white">
-            <SplashScreen exiting={splashDone} />
-            
+        <main
+            className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex items-center justify-center font-sans text-white"
+        >
+            <SplashScreen exiting={splashDone}/>
             <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
             <div className="noise-overlay opacity-30"></div>
-            <EmberBackground className="absolute inset-0 z-0" />
-            
-            <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/50 z-10 pointer-events-none"></div>
-
+            <EmberBackground className="absolute inset-0 z-0"/>
+            <div
+                className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/50 z-10 pointer-events-none"
+            ></div>
             <div className="absolute top-6 right-6 z-50">
                 <button
-                    onClick={lambda -> None { navigate("/settings", {"state": {"return_to": "/"}}); }}
+                    onClick={lambda -> None { navigate(
+                        "/settings", {"state": {"return_to": "/"}}
+                    );}}
                     className="p-2 rounded-full hover:bg-white/10 text-white/70 hover:text-[var(--accent)] transition-all duration-200"
                     title="Settings"
                 >
-                    <SettingsIcon className="w-6 h-6" />
+                    <SettingsIcon className="w-6 h-6"/>
                 </button>
             </div>
-
-            <div className="relative z-10 w-full max-w-4xl h-[80vh] bg-[var(--bg-panel)]/90 backdrop-blur-md border border-[var(--border)] rounded-sm shadow-2xl flex flex-col animation-fade-in-up clip-hex">
-                
-                <div className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden">
-                    <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-[var(--accent)] to-transparent opacity-50"></div>
-                    
+            <div
+                className="relative z-10 w-full max-w-4xl h-[80vh] bg-[var(--bg-panel)]/90 backdrop-blur-md border border-[var(--border)] rounded-sm shadow-2xl flex flex-col animation-fade-in-up clip-hex"
+            >
+                <div
+                    className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden"
+                >
+                    <div
+                        className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-[var(--accent)] to-transparent opacity-50"
+                    ></div>
                     <div className="flex items-center gap-4">
-                        <div className="p-2 bg-gradient-to-br from-[var(--bg-darker)] to-[var(--bg-panel)] border border-[var(--border)] rounded shadow-lg">
-                            <CGinSLogo className="w-8 h-8 text-[var(--accent)]" />
+                        <div
+                            className="p-2 bg-gradient-to-br from-[var(--bg-darker)] to-[var(--bg-panel)] border border-[var(--border)] rounded shadow-lg"
+                        >
+                            <CGinSLogo className="w-8 h-8 text-[var(--accent)]"/>
                         </div>
                         <div>
-                             <h1 className="text-2xl font-bold text-white tracking-wide uppercase industrial-font-display">
+                            <h1
+                                className="text-2xl font-bold text-white tracking-wide uppercase industrial-font-display"
+                            >
                                 Select Project
                             </h1>
-                            <p className="text-xs text-[var(--accent)] font-mono uppercase tracking-widest">
+                            <p
+                                className="text-xs text-[var(--accent)] font-mono uppercase tracking-widest"
+                            >
                                 Kernel Forge // v1.0
                             </p>
                         </div>
                     </div>
-                    
                     <div className="relative">
                         <input
                             type="text"
                             placeholder="SEARCH PROJECTS..."
                             value={searchQuery}
-                            onChange={lambda e: any -> None { searchQuery = e.target.value; }}
+                            onChange={lambda e: any  -> None { searchQuery = e.target.value;}}
                             className="w-full bg-[var(--bg-darker)] border border-[var(--border)] rounded-sm px-4 py-2 text-sm text-[var(--text-light)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/20 transition-all font-mono uppercase"
                         />
                     </div>
                 </div>
-
-                <div className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0 charcoal-scrollbar bg-[var(--bg-darker)]/30">
+                <div
+                    className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0 charcoal-scrollbar bg-[var(--bg-darker)]/30"
+                >
                     {projectList}
                 </div>
-
-                <div className="p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0">
+                <div
+                    className="p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0"
+                >
                     <GlowButton
                         label="+ INITIATE NEW PROJECT"
-                        onClick={lambda -> None { navigate("/new-project"); }}
+                        onClick={lambda -> None { navigate("/new-project");}}
                         className="w-full py-3 text-base justify-center font-bold tracking-widest clip-anvil"
                     />
                 </div>

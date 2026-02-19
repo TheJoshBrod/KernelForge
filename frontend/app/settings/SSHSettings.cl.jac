@@ -273,7 +273,7 @@ def:pub SSHSettings(
                         else "N/A"}
                     </div>
                     <div className="col-span-1 flex justify-center">
-                        <div className={f"w-2.5 h-2.5 rounded-full {status_cls}"} />
+                        <div className={f"w-2.5 h-2.5 rounded-full {status_cls}"}/>
                     </div>
                     <div className="col-span-2 flex justify-end gap-2">
                         <button
@@ -292,7 +292,7 @@ def:pub SSHSettings(
                             className="p-1.5 rounded text-zinc-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
                             title="Delete Connection"
                         >
-                            <TrashIcon />
+                            <TrashIcon/>
                         </button>
                     </div>
                 </div>

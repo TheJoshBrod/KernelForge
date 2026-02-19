@@ -16,7 +16,6 @@ glob _hw_cache: dict = {};
 glob _sys_info_cache: dict = {};
 glob _sys_info_ts: float = 0.0;
 
-
 def _normalize_provider(provider: str) -> str {
     value = provider.lower().strip() if provider else "";
     if value == "gemini" or value == "google-genai" {
@@ -37,7 +36,9 @@ def _extract_api_keys(cfg: dict) -> dict {
         }
     }
     llm = cfg["llm_info"] if cfg and "llm_info" in cfg else {};
-    legacy_provider = _normalize_provider(llm["provider"] if llm and "provider" in llm else "");
+    legacy_provider = _normalize_provider(
+        llm["provider"] if llm and "provider" in llm else ""
+    );
     legacy_key = str(llm["apikey"]).strip() if llm and "apikey" in llm else "";
     if legacy_provider in out and legacy_key and not out[legacy_provider] {
         out[legacy_provider] = legacy_key;
@@ -118,7 +119,7 @@ walker:pub GetSystemInfo {
             # Check cache (1 minute TTL)
             now_ts = datetime.now().timestamp();
             if _sys_info_cache and (now_ts - _sys_info_ts) < 60 {
-                report _sys_info_cache ;
+                report _sys_info_cache;
                 disengage;
             }
 
@@ -279,26 +280,38 @@ print(json.dumps(get_gpu_info()))
 
             source = "local";
             if self.host and self.user {
-                source = "mixed" if (local_profile and "gpus" in local_profile and local_profile["gpus"]) else "remote";
+                source = "mixed"
+                if (
+                    local_profile and "gpus" in local_profile and local_profile["gpus"]
+                )
+                else "remote";
             }
 
             result_payload = {
                 "available": True if all_gpus else False,
                 "gpus": all_gpus,
                 "source": source,
-                "cuda_available": local_profile["cuda_available"] if local_profile and "cuda_available" in local_profile else False,
-                "mps_available": local_profile["mps_available"] if local_profile and "mps_available" in local_profile else False,
-                "xpu_available": local_profile["xpu_available"] if local_profile and "xpu_available" in local_profile else False,
-                "preferred_target": local_profile["preferred_target"] if local_profile and "preferred_target" in local_profile else "cpu"
+                "cuda_available": local_profile["cuda_available"]
+                if local_profile and "cuda_available" in local_profile
+                else False,
+                "mps_available": local_profile["mps_available"]
+                if local_profile and "mps_available" in local_profile
+                else False,
+                "xpu_available": local_profile["xpu_available"]
+                if local_profile and "xpu_available" in local_profile
+                else False,
+                "preferred_target": local_profile["preferred_target"]
+                if local_profile and "preferred_target" in local_profile
+                else "cpu"
             };
-            
+
             # Update cache
             _sys_info_cache = result_payload;
             _sys_info_ts = datetime.now().timestamp();
 
-            report result_payload ;
+            report result_payload;
         } except Exception as e {
-            report {"available": False, "error": str(e)} ;
+            report {"available": False, "error": str(e)};
         }
     }
 }
@@ -434,14 +447,14 @@ print(json.dumps(get_gpu_info()))
                     "gpus": remote_gpus,
                     "message": f"Connected to {self.host} successfully.",
                     "timestamp": datetime.now().isoformat()
-                } ;
+                };
             } else {
                 err = stderr.read().decode().strip();
-                report {"success": False, "error": f"Remote script failed: {err}"} ;
+                report {"success": False, "error": f"Remote script failed: {err}"};
             }
             client.close();
         } except Exception as e {
-            report {"success": False, "error": f"Connection failed: {str(e)}"} ;
+            report {"success": False, "error": f"Connection failed: {str(e)}"};
         }
     }
 }
@@ -463,7 +476,9 @@ walker:pub TestLLMConnection {
         }
         keys = _extract_api_keys(cfg if cfg else config_store);
         llm = cfg["llm_info"] if cfg and "llm_info" in cfg else {};
-        provider = _normalize_provider(llm["provider"] if llm and "provider" in llm else "");
+        provider = _normalize_provider(
+            llm["provider"] if llm and "provider" in llm else ""
+        );
         if not provider {
             for p in ["openai", "anthropic", "google"] {
                 if keys[p] {
@@ -473,9 +488,11 @@ walker:pub TestLLMConnection {
             }
         }
         provider_value = str(provider) if provider else "";
-        apikey = str(keys[provider_value]) if provider_value in keys and keys[provider_value] else "";
+        apikey = str(keys[provider_value])
+        if provider_value in keys and keys[provider_value]
+        else "";
         result = _run_api_key_test(provider_value, apikey);
-        report result ;
+        report result;
     }
 }
 
@@ -499,9 +516,15 @@ walker:pub TestApiKey {
         keys = _extract_api_keys(cfg if cfg else config_store);
         provider_norm = _normalize_provider(self.provider);
         provider_value = str(provider_norm) if provider_norm else "";
-        key_value = str(self.api_key) if self.api_key else (str(keys[provider_value]) if provider_value in keys and keys[provider_value] else "");
+        key_value = str(self.api_key)
+        if self.api_key
+        else (
+            str(keys[provider_value])
+            if provider_value in keys and keys[provider_value]
+            else ""
+        );
         result = _run_api_key_test(provider_value, key_value);
-        report result ;
+        report result;
     }
 }
 
@@ -522,7 +545,7 @@ walker:pub TestAllApiKeys {
         }
         keys = _extract_api_keys(cfg if cfg else config_store);
         result = _run_all_api_key_tests(keys);
-        report result ;
+        report result;
     }
 }
 
@@ -530,7 +553,7 @@ walker:pub DetectHardware {
     can detect with entry {
         global _hw_cache;
         if _hw_cache {
-            report _hw_cache ;
+            report _hw_cache;
         } else {
             try {
                 code = "import json; from src.optimizer.profiling import get_frontend_payload; print(json.dumps(get_frontend_payload(mode='fast')))";
@@ -540,9 +563,17 @@ walker:pub DetectHardware {
                 text = out.decode("utf-8").strip();
                 if text {
                     _hw_cache = loads(text);
-                    report _hw_cache ;
+                    report _hw_cache;
                 } else {
-                    report {"available": False, "gpus": [], "source": "local", "cuda_available": False, "mps_available": False, "xpu_available": False, "preferred_target": "cpu"} ;
+                    report {
+                        "available": False,
+                        "gpus": [],
+                        "source": "local",
+                        "cuda_available": False,
+                        "mps_available": False,
+                        "xpu_available": False,
+                        "preferred_target": "cpu"
+                    };
                 }
             } except Exception as e {
                 report {
@@ -554,7 +585,7 @@ walker:pub DetectHardware {
                     "xpu_available": False,
                     "preferred_target": "cpu",
                     "error": str(e)
-                } ;
+                };
             }
         }
     }

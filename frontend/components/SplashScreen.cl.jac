@@ -11,7 +11,7 @@ def:pub SplashScreen(exiting: bool) -> Any {
 
     return
         <div className={splashClass}>
-            <GameOfLifeBackground className="app-life-canvas--splash" />
+            <GameOfLifeBackground className="app-life-canvas--splash"/>
             <div className="app-backdrop app-backdrop--splash"></div>
             <div className="splash-content">
                 <h1 className="splash-title">
@@ -21,7 +21,7 @@ def:pub SplashScreen(exiting: bool) -> Any {
                     Agentic PyTorch Model Optimizer
                 </p>
                 <div className="splash-mascot">
-                    <CGinSLogo className="mascot mascot--hero splash-mascot-img" />
+                    <CGinSLogo className="mascot mascot--hero splash-mascot-img"/>
                 </div>
                 <div className="splash-loading">
                     Loading resources...

@@ -37,7 +37,7 @@ def:pub Profiling {
                 className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-lg mb-4"
             >
                 <div className="flex gap-3 mb-2 items-center">
-                    <ActivityIcon className="text-indigo-400 w-4 h-4" />
+                    <ActivityIcon className="text-indigo-400 w-4 h-4"/>
                     <span className="font-medium text-indigo-300 text-sm">
                         {insight["title"]}
                     </span>
@@ -64,13 +64,13 @@ def:pub Profiling {
                     <button
                         className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded text-sm transition-colors text-zinc-300"
                     >
-                        <UploadIcon className="w-4 h-4" />
+                        <UploadIcon className="w-4 h-4"/>
                         Import Trace
                     </button>
                     <button
                         className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded text-sm font-medium transition-colors text-white"
                     >
-                        <ActivityIcon className="w-4 h-4" />
+                        <ActivityIcon className="w-4 h-4"/>
                         Capture Run
                     </button>
                 </div>

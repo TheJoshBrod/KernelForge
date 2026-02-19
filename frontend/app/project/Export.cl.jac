@@ -114,7 +114,7 @@ def:pub Export {
                 </div>
                 <div className="pt-4 border-t border-zinc-800">
                     <GlowButton onClick={handleDownloadExport} className="w-full">
-                        <UploadIcon className="w-4 h-4" />
+                        <UploadIcon className="w-4 h-4"/>
                         Download Artifact
                     </GlowButton>
                     <p className="text-xs text-zinc-500 text-center mt-3">
@@ -128,7 +128,7 @@ def:pub Export {
                 <h3
                     className="text-sm font-semibold text-zinc-400 mb-4 flex items-center gap-2"
                 >
-                    <CodeIcon className="w-4 h-4" />
+                    <CodeIcon className="w-4 h-4"/>
                     Package Structure
                 </h3>
                 <div

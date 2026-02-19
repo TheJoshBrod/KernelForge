@@ -50,7 +50,7 @@ def:pub SettingsPage {
     if loading {
         return
             <div className="app-shell app-shell--center settings-shell">
-                <GameOfLifeBackground />
+                <GameOfLifeBackground/>
                 <div className="app-backdrop"></div>
                 <div className="app-content-layer">
                     <p>
@@ -61,11 +61,16 @@ def:pub SettingsPage {
     }
 
     return
-        <main className="relative h-screen w-screen overflow-hidden bg-black flex items-center justify-center font-sans text-white">
-            <GameOfLifeBackground className="absolute inset-0 z-0" />
-            <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/50 z-10 pointer-events-none"></div>
-            
-            <div className="relative z-20 w-full max-w-4xl h-[80vh] bg-zinc-900/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl flex flex-col p-8 overflow-y-auto custom-scrollbar">
+        <main
+            className="relative h-screen w-screen overflow-hidden bg-black flex items-center justify-center font-sans text-white"
+        >
+            <GameOfLifeBackground className="absolute inset-0 z-0"/>
+            <div
+                className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/50 z-10 pointer-events-none"
+            ></div>
+            <div
+                className="relative z-20 w-full max-w-4xl h-[80vh] bg-zinc-900/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl flex flex-col p-8 overflow-y-auto custom-scrollbar"
+            >
                 <div className="settings-header">
                     <h1 className="settings-title">
                         Settings
@@ -74,7 +79,7 @@ def:pub SettingsPage {
                         Configure your application
                     </p>
                 </div>
-                <SettingsMenu />
+                <SettingsMenu/>
                 <div className="settings-actions-block">
                     <div className="settings-actions">
                         <button

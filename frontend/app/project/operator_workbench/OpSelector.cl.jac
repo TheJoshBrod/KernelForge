@@ -68,7 +68,7 @@ def:pub OpSelector {
                     {format_op(op["name"])}
                 </span>
                 <span className="text-xs text-zinc-600 bg-zinc-950 px-2 py-1 rounded">
-                    {op["count"]} {" calls"}
+                    {op["count"]}{" calls"}
                 </span>
             </div>
         );

@@ -138,27 +138,22 @@ def:pub Dashboard {
                 charts_req = __jacSpawn(
                     "GetDashboardCharts", "", {"projectName": name}
                 );
-                status_req = __jacSpawn(
-                    "GetProjectStatus", "", {"projectName": name}
-                );
+                status_req = __jacSpawn("GetProjectStatus", "", {"projectName": name});
                 hw_req = __jacSpawn("DetectHardware", "", {});
                 mcts_req = __jacSpawn(
                     "GetProjectMctsSummary", "", {"projectName": name}
                 );
-
                 # Await all responses
                 ops_resp = await ops_req;
                 charts_resp = await charts_req;
                 status_resp = await status_req;
                 hw_resp = await hw_req;
                 mcts_resp = await mcts_req;
-
                 # Process Ops
                 ops_data = ops_resp.reports[0]
                 if ops_resp and ops_resp.reports
                 else None;
                 ops = ops_data["ops"] if ops_data and "ops" in ops_data else [];
-
                 # Process Charts
                 charts_data = charts_resp.reports[0]
                 if charts_resp and charts_resp.reports
@@ -171,17 +166,14 @@ def:pub Dashboard {
                         setSpeedData(charts_data["speed_comparison"]);
                     }
                 }
-
                 # Process Status
                 status_data = status_resp.reports[0]
                 if status_resp and status_resp.reports
                 else {};
                 status = status_data or {};
-
                 # Process Hardware
                 hw_data = hw_resp.reports[0] if hw_resp and hw_resp.reports else {};
                 hardwareInfo = hw_data or {};
-
                 # Process MCTS
                 mcts_data = mcts_resp.reports[0]
                 if mcts_resp and mcts_resp.reports
@@ -340,7 +332,7 @@ def:pub Dashboard {
         >
             <div className="flex justify-between items-start mb-2">
                 <div className="p-2 bg-indigo-500/10 rounded-lg">
-                    <ShieldCheckIcon className="text-indigo-400 w-5 h-5" />
+                    <ShieldCheckIcon className="text-indigo-400 w-5 h-5"/>
                 </div>
                 <span className="text-xs text-zinc-500 bg-zinc-800 px-2 py-1 rounded">
                     MCTS
@@ -364,7 +356,7 @@ def:pub Dashboard {
             <div>
                 <div className="flex justify-between items-start mb-2">
                     <div className="p-2 bg-emerald-500/10 rounded-lg">
-                        <CpuIcon className="text-emerald-400 w-5 h-5" />
+                        <CpuIcon className="text-emerald-400 w-5 h-5"/>
                     </div>
                 </div>
                 <div
@@ -375,13 +367,13 @@ def:pub Dashboard {
                 </div>
                 {<div className="text-xs text-zinc-400 space-y-1 mb-4">
                     <div>
-                        Memory: {gpu_mem}
+                        Memory:{gpu_mem}
                     </div>
                     <div>
-                        Compute: {gpu_compute}
+                        Compute:{gpu_compute}
                     </div>
                     <div>
-                        SMs: {gpu_sms}
+                        SMs:{gpu_sms}
                     </div>
                 </div>
                 if gpu_mem or gpu_compute or gpu_sms
@@ -427,9 +419,9 @@ def:pub Dashboard {
         # Step Icon
         step_icon = <div className="w-2 h-2 rounded-full bg-zinc-600"></div>;
         if is_completed {
-            step_icon = <CheckIcon className="w-4 h-4 text-emerald-950" />;
+            step_icon = <CheckIcon className="w-4 h-4 text-emerald-950"/>;
         } elif is_failed {
-            step_icon = <AlertCircleIcon className="w-4 h-4 text-red-950" />;
+            step_icon = <AlertCircleIcon className="w-4 h-4 text-red-950"/>;
         } elif is_running {
             step_icon = <div
                 className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"
@@ -590,7 +582,7 @@ def:pub Dashboard {
                     Project Dashboard
                 </h2>
                 <p className="text-zinc-400">
-                    Overview of {name}
+                    Overview of{name}
                 </p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -678,7 +670,7 @@ def:pub Dashboard {
                                             label
                                         ); }}
                                     />
-                                    <Legend />
+                                    <Legend/>
                                     <Bar
                                         dataKey="optimized"
                                         name="Optimized"

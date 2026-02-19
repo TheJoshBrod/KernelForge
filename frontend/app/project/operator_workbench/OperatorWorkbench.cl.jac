@@ -22,9 +22,9 @@ def:pub OperatorWorkbench {
 
     if not opName {
         return
-            <OpSelector projectName={projectName} />;
+            <OpSelector projectName={projectName}/>;
     }
 
     return
-        <OperatorWorkbenchView projectName={projectName} opName={opName} />;
+        <OperatorWorkbenchView projectName={projectName} opName={opName}/>;
 }

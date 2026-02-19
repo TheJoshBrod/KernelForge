@@ -1,7 +1,14 @@
 """Generate Modal Component"""
 
 import from react { useState, useEffect }
-import from .....components.ui.Icons { PlusIcon, SettingsIcon, CpuIcon, BrainIcon, ActivityIcon, ChevronDownIcon }
+import from .....components.ui.Icons {
+    PlusIcon,
+    SettingsIcon,
+    CpuIcon,
+    BrainIcon,
+    ActivityIcon,
+    ChevronDownIcon
+}
 import from .....components.ui.SearchableSelect { SearchableSelect }
 import from .....components.ui.Modal { Modal }
 import from .....context.ConfigContext { useConfig }
@@ -41,7 +48,9 @@ def:pub GenerateModal(props: any) -> Any {
             {"label": "Google", "value": "google"}
         ];
     }
-    default_provider = provider_options[0]["value"] if provider_options.length > 0 else "openai";
+    default_provider = provider_options[0]["value"]
+    if provider_options.length > 0
+    else "openai";
 
     llm_provider_state = useState(default_provider);
     llmProvider = llm_provider_state[0];
@@ -67,14 +76,14 @@ def:pub GenerateModal(props: any) -> Any {
     models_state = useState([]);
     models = models_state[0];
     setModels = models_state[1];
-    
+
     loading_models_state = useState(False);
     loadingModels = loading_models_state[0];
     setLoadingModels = loading_models_state[1];
 
     # Fetch models on open
-    useEffect(lambda -> None {
-        if isOpen {
+    useEffect(
+        lambda -> None { if isOpen {
             async def fetchModels -> None {
                 console.log("Fetching models...");
                 setLoadingModels(True);
@@ -99,32 +108,32 @@ def:pub GenerateModal(props: any) -> Any {
                 }
             }
             fetchModels();
-        }
-    }, [isOpen]);
+        }},
+        [isOpen]
+    );
 
     # Determine available devices
     hwInfo = config_ctx.hwInfo if "hwInfo" in config_ctx else {};
     available_devices = [{"label": "Triton", "value": "triton"}];
-    
+
     if hwInfo and "cuda_available" in hwInfo and hwInfo["cuda_available"] {
         available_devices.splice(0, 0, {"label": "CUDA", "value": "cuda"});
     } elif hwInfo and "mps_available" in hwInfo and hwInfo["mps_available"] {
         available_devices.splice(0, 0, {"label": "MPS", "value": "mps"});
     }
-    
+
     # Update default target device if current selection is invalid
-    useEffect(lambda -> None {
-        current_valid = False;
-        for dev in available_devices {
+    useEffect(
+        lambda -> None { current_valid = False;for dev in available_devices {
             if dev["value"] == targetDevice {
                 current_valid = True;
                 break;
             }
-        }
-        if not current_valid and available_devices.length > 0 {
+        }if not current_valid and available_devices.length > 0 {
             setTargetDevice(available_devices[0]["value"]);
-        }
-    }, [hwInfo, targetDevice]);
+        }},
+        [hwInfo, targetDevice]
+    );
 
     provider_option_nodes = [];
     for p in provider_options {
@@ -165,7 +174,7 @@ def:pub GenerateModal(props: any) -> Any {
                     "extra_validation_cases": 0
                 }
             };
-            
+
             if llmModel {
                 payload["llm_model"] = llmModel;
             }
@@ -173,11 +182,7 @@ def:pub GenerateModal(props: any) -> Any {
                 payload["llm_provider"] = llmProvider;
             }
 
-            resp = await __jacSpawn(
-                "StartGenerateAdvanced",
-                "",
-                payload
-            );
+            resp = await __jacSpawn("StartGenerateAdvanced", "", payload);
             data = resp.reports[0] if resp and resp.reports else {};
             if data and "success" in data and not data["success"] {
                 err = data["error"]
@@ -210,68 +215,86 @@ def:pub GenerateModal(props: any) -> Any {
             <div className="p-6 space-y-6">
                 <div className="space-y-4">
                     <div className="space-y-2">
-                        <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
-                            <BrainIcon className="w-4 h-4 text-purple-400" />
+                        <label
+                            className="text-sm font-medium text-zinc-300 flex items-center gap-2"
+                        >
+                            <BrainIcon className="w-4 h-4 text-purple-400"/>
                             LLM Model
                         </label>
                         <div className="relative">
                             <SearchableSelect
                                 value={llmModel}
                                 onChange={setLlmModel}
-                                options={models.map(lambda m: dict -> dict {
-                                    return {"value": m["id"], "label": m["label"] + " (" + m["provider"] + ")"};
-                                })}
+                                options={models.map(
+                                    lambda m: dict  -> dict { return {
+                                        "value": m["id"],
+                                        "label": m["label"] + " (" + m["provider"] + ")"
+                                    }; }
+                                )}
                                 placeholder="Select a model..."
                                 disabled={loadingModels}
                             />
                         </div>
-                        {
-                            <p className="text-[10px] text-zinc-500">Loading models...</p>
-                            if loadingModels 
-                            else
-                            <p className="text-[10px] text-zinc-500">Select model from {" " + models.length} available</p>
-                        }
+                        {<p className="text-[10px] text-zinc-500">
+                            Loading models...
+                        </p>
+                        if loadingModels
+                        else <p className="text-[10px] text-zinc-500">
+                            Select model from{" " + models.length} available
+                        </p>}
                     </div>
-
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                            <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
-                                <ActivityIcon className="w-4 h-4 text-blue-400" />
+                            <label
+                                className="text-sm font-medium text-zinc-300 flex items-center gap-2"
+                            >
+                                <ActivityIcon className="w-4 h-4 text-blue-400"/>
                                 Max Attempts
                             </label>
                             <input
                                 type="number"
                                 value={maxAttempts}
-                                onChange={lambda e: any -> None { setMaxAttempts(e.target.value);}}
+                                onChange={lambda e: any  -> None { setMaxAttempts(
+                                    e.target.value
+                                );}}
                                 min="1"
                                 max="50"
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
                             />
                         </div>
                         <div className="space-y-2">
-                            <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
-                                <SettingsIcon className="w-4 h-4 text-amber-400" />
+                            <label
+                                className="text-sm font-medium text-zinc-300 flex items-center gap-2"
+                            >
+                                <SettingsIcon className="w-4 h-4 text-amber-400"/>
                                 Target Device
                             </label>
                             <select
                                 value={targetDevice}
-                                onChange={lambda e: any -> None { setTargetDevice(e.target.value);}}
+                                onChange={lambda e: any  -> None { setTargetDevice(
+                                    e.target.value
+                                );}}
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
                             >
                                 {available_device_nodes}
                             </select>
                         </div>
                     </div>
-
                     <div className="space-y-2 pt-2">
-                        <label className="flex items-center gap-2 cursor-pointer group">
+                        <label
+                            className="flex items-center gap-2 cursor-pointer group"
+                        >
                             <input
                                 type="checkbox"
                                 checked={useTemplate}
-                                onChange={lambda e: any -> None { setUseTemplate(e.target.checked);}}
+                                onChange={lambda e: any  -> None { setUseTemplate(
+                                    e.target.checked
+                                );}}
                                 className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-indigo-600 focus:ring-indigo-500/50"
                             />
-                            <span className="text-sm text-zinc-300 group-hover:text-white transition-colors">
+                            <span
+                                className="text-sm text-zinc-300 group-hover:text-white transition-colors"
+                            >
                                 Use Baseline as Template
                             </span>
                         </label>
@@ -280,7 +303,6 @@ def:pub GenerateModal(props: any) -> Any {
                         </p>
                     </div>
                 </div>
-
                 <div className="pt-6 flex justify-end gap-3 border-t border-zinc-800">
                     <button
                         onClick={onClose}
@@ -297,7 +319,9 @@ def:pub GenerateModal(props: any) -> Any {
                         )}
                     >
                         {"Starting..." if isWorking else "Start Generation"}
-                        <PlusIcon className={"w-4 h-4 " + ("opacity-0" if isWorking else "")} />
+                        <PlusIcon
+                            className={"w-4 h-4 " + ("opacity-0" if isWorking else "")}
+                        />
                     </button>
                 </div>
             </div>

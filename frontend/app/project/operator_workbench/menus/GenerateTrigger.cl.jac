@@ -16,7 +16,7 @@ def:pub GenerateTrigger(props: any) {
             className="w-full p-3 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white flex items-center gap-3 transition-colors border-t border-zinc-800"
             onClick={handleClick}
         >
-            <PlusIcon className="w-4 h-4 text-emerald-400" />
+            <PlusIcon className="w-4 h-4 text-emerald-400"/>
             <div>
                 <div className="font-semibold">
                     Generate New Root

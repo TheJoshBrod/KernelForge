@@ -43,7 +43,7 @@ def:pub ProjectLayout {
                     else "text-zinc-400 hover:text-white hover:bg-zinc-900"
                 )}
             >
-                <Icon className="w-[18px] h-[18px]" />
+                <Icon className="w-[18px] h-[18px]"/>
                 <span className="text-sm font-medium">
                     {item["name"]}
                 </span>
@@ -82,7 +82,7 @@ def:pub ProjectLayout {
                         state={{"return_to": location.pathname}}
                         className="flex items-center gap-3 px-4 py-3 text-zinc-400 hover:text-white w-full rounded-lg hover:bg-zinc-900 transition-all"
                     >
-                        <SettingsIcon className="w-[18px] h-[18px]" />
+                        <SettingsIcon className="w-[18px] h-[18px]"/>
                         <span className="text-sm">
                             Settings
                         </span>
@@ -91,7 +91,7 @@ def:pub ProjectLayout {
                         to="/"
                         className="flex items-center gap-3 px-4 py-3 text-zinc-400 hover:text-white w-full rounded-lg hover:bg-zinc-900 transition-all"
                     >
-                        <ArrowRightIcon className="w-[18px] h-[18px]" />
+                        <ArrowRightIcon className="w-[18px] h-[18px]"/>
                         <span className="text-sm">
                             Back to Projects
                         </span>
@@ -99,7 +99,7 @@ def:pub ProjectLayout {
                 </div>
             </div>
             <div className="flex-1 overflow-auto bg-zinc-900">
-                <Outlet />
+                <Outlet/>
             </div>
         </div>;
 }

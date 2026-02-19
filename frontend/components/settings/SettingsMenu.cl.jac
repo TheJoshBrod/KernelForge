@@ -41,10 +41,10 @@ def:pub SettingsMenu -> Any {
                     <span
                         className="font-semibold text-zinc-200 flex items-center gap-2"
                     >
-                        <Icon className="w-4 h-4 text-emerald-400" />
+                        <Icon className="w-4 h-4 text-emerald-400"/>
                         {item["title"]}
                     </span>
-                    <ArrowRightIcon className="w-4 h-4 text-zinc-500" />
+                    <ArrowRightIcon className="w-4 h-4 text-zinc-500"/>
                 </div>
                 <div className="text-xs text-zinc-500 mt-1">
                     {item["desc"]}

@@ -25,11 +25,16 @@ def:pub OptimizeTrigger(props: any) {
             onClick={handleClick}
             disabled={not hasTree}
         >
-            <ZapIcon className={"w-4 h-4 " + ("text-zinc-600" if not hasTree
-            else "text-amber-400")} />
+            <ZapIcon
+                className={"w-4 h-4 " + (
+                    "text-zinc-600" if not hasTree else "text-amber-400"
+                )}
+            />
             <div>
                 <div className="font-semibold">
-                    {"Generate a root first" if not hasTree else "Optimize Existing Tree"}
+                    {"Generate a root first"
+                    if not hasTree
+                    else "Optimize Existing Tree"}
                 </div>
                 <div className="text-[10px] text-zinc-500">
                     {"No kernels to optimize yet"

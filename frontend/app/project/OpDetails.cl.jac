@@ -172,7 +172,7 @@ def:pub OpDetails {
     if loading {
         return
             <div className="app-shell">
-                <GameOfLifeBackground />
+                <GameOfLifeBackground/>
                 <div className="app-backdrop"></div>
                 <div className="app-layout app-content-layer">
                     <aside className="sidebar">
@@ -206,7 +206,7 @@ def:pub OpDetails {
     if errorMsg {
         return
             <div className="app-shell">
-                <GameOfLifeBackground />
+                <GameOfLifeBackground/>
                 <div className="app-backdrop"></div>
                 <div className="app-layout app-content-layer">
                     <main className="content">
@@ -237,13 +237,13 @@ def:pub OpDetails {
 
     return
         <div className="app-shell">
-            <GameOfLifeBackground />
+            <GameOfLifeBackground/>
             <div className="app-backdrop"></div>
             <div className="app-layout app-content-layer">
                 <aside className="sidebar">
                     <div className="sidebar-header">
                         <div className="brand">
-                            <CGinSLogo className="mascot mascot--logo" />
+                            <CGinSLogo className="mascot mascot--logo"/>
                             <div className="brand-meta">
                                 <span>
                                     Op Details
@@ -276,7 +276,7 @@ def:pub OpDetails {
                                 Profile summary
                             </span>
                             <span className="table-muted">
-                                Calls: {profile["count"]
+                                Calls:{profile["count"]
                                 if profile and "count" in profile
                                 else 0}
                             </span>
@@ -352,14 +352,14 @@ def:pub OpDetails {
                             </h1>
                             <div className="badge-row">
                                 <span className="badge">
-                                    Project: {projectName}
+                                    Project:{projectName}
                                 </span>
                                 <span className="badge">
-                                    Files: {files_label}
+                                    Files:{files_label}
                                 </span>
                             </div>
                         </div>
-                        <CGinSLogo className="mascot mascot--cta" />
+                        <CGinSLogo className="mascot mascot--cta"/>
                     </div>
                     <div className="panel">
                         <div className="panel-header">

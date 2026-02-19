@@ -416,11 +416,11 @@ def:pub OperatorWorkbenchView {
                         <span
                             className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2"
                         >
-                            <CodeIcon className="w-4 h-4" />
+                            <CodeIcon className="w-4 h-4"/>
                             Kernel Code
                         </span>
                         <span className="text-xs font-mono text-indigo-400">
-                            Node {selectedNodeId or "?"}
+                            Node{selectedNodeId or "?"}
                         </span>
                     </div>
                     <div className="flex-1 overflow-auto bg-[#0d0d0d] p-4">
@@ -440,7 +440,7 @@ def:pub OperatorWorkbenchView {
                         <span
                             className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2"
                         >
-                            <ActivityIcon className="w-4 h-4" />
+                            <ActivityIcon className="w-4 h-4"/>
                             Iteration Log
                         </span>
                     </div>
@@ -490,7 +490,7 @@ def:pub OperatorWorkbenchView {
                         nodesDraggable={False}
                         proOptions={{"hideAttribution": True}}
                     >
-                        <Background color="#27272a" gap={20} />
+                        <Background color="#27272a" gap={20}/>
                     </ReactFlow>
                     if viewMode == "graph" and hasTree
                     else <div
@@ -513,7 +513,7 @@ def:pub OperatorWorkbenchView {
                             No kernels found.
                         </div>
                         if sortedNodes.length == 0
-                        else <span />}
+                        else <span/>}
                     </div>}
                 </div>
                 <div className="flex-1 p-6 overflow-y-auto">
@@ -523,7 +523,7 @@ def:pub OperatorWorkbenchView {
                         <h3
                             className="text-lg font-bold text-white flex items-center gap-2"
                         >
-                            <ShieldCheckIcon className="w-5 h-5 text-emerald-500" />
+                            <ShieldCheckIcon className="w-5 h-5 text-emerald-500"/>
                             Node Details
                         </h3>
                         <span className="font-mono text-zinc-400 text-xs">
