@@ -1,6 +1,6 @@
 """Splash Screen Component"""
 
-import from .backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from .backdrops.EmberBackground { EmberBackground }
 import from .ui.Icons { CGinSLogo }
 
 def:pub SplashScreen(exiting: bool) -> Any {
@@ -11,20 +11,27 @@ def:pub SplashScreen(exiting: bool) -> Any {
 
     return
         <div className={splashClass}>
-            <GameOfLifeBackground className="app-life-canvas--splash"/>
-            <div className="app-backdrop app-backdrop--splash"></div>
+            <div className="absolute inset-0 z-0 industrial-grid-bg opacity-40"></div>
+            <div className="noise-overlay opacity-40"></div>
+            <EmberBackground className="absolute inset-0 z-0"/>
+            <div
+                className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/50 z-10 pointer-events-none"
+            ></div>
             <div className="splash-content">
-                <h1 className="splash-title">
-                    CGinS
-                </h1>
-                <p className="splash-subtitle">
-                    Agentic PyTorch Model Optimizer
-                </p>
-                <div className="splash-mascot">
-                    <CGinSLogo className="mascot mascot--hero splash-mascot-img"/>
+                <div className="splash-mascot bg-[var(--bg-panel)]/50 backdrop-blur-sm border border-[var(--border)] rounded-sm p-8 shadow-[0_0_30px_rgba(225,112,85,0.2)]">
+                    <CGinSLogo className="w-32 h-32 text-[var(--accent)] splash-mascot-img"/>
                 </div>
-                <div className="splash-loading">
-                    Loading resources...
+                <div className="flex flex-col items-center mt-6">
+                    <h1 className="text-6xl font-bold text-white tracking-widest uppercase industrial-font-display mb-2 drop-shadow-[0_0_15px_rgba(225,112,85,0.5)]">
+                        KERNEL FORGE
+                    </h1>
+                    <p className="text-sm font-mono text-[var(--accent)] tracking-[0.3em] uppercase">
+                        Autonomous CUDA Optimization
+                    </p>
+                </div>
+                <div className="splash-loading mt-12 flex items-center gap-3">
+                    <div className="w-2 h-2 bg-[var(--accent)] rounded-full animate-ping"></div>
+                    <span className="font-mono text-zinc-400 tracking-widest">IGNITING FORGE...</span>
                 </div>
             </div>
         </div>;
