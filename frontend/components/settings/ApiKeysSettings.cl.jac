@@ -104,18 +104,7 @@ def:pub ApiKeysSettings(props: any) -> Any {
                 </div>
             </div>
 
-            <div className="settings-actions-block">
-                <div className="settings-actions">
-                    <button
-                        type="button"
-                        className="app-button app-button--primary app-button--wide"
-                        onClick={handleSave}
-                        disabled={saving}
-                    >
-                        {("Saving..." if saving else "Save")}
-                    </button>
-                </div>
-            </div>
+
         </div>
     );
 }

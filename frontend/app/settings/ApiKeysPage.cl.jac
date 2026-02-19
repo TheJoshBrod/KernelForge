@@ -157,6 +157,13 @@ def:pub ApiKeysPage(props: any) -> Any {
                         >
                             Back
                         </button>
+                        <button
+                            onClick={handleSave}
+                            disabled={saving}
+                            className="app-button app-button--ghost app-button--wide"
+                        >
+                            {("Saving..." if saving else "Save")}
+                        </button>
                     </div>
                 </div>
             </div>
