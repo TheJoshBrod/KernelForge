@@ -20,9 +20,9 @@ def:pub EmberBackground(className: str = "") -> Any {
                 "y": height + (
                     Math.random() * 100 if reset else Math.random() * height
                 ),
-                "size": Math.random() * 2 + 1,
-                "speed": Math.random() * 1.5 + 0.5,
-                "opacity": Math.random() * 0.5 + 0.2,
+                "size": Math.random() * 3 + 2,
+                "speed": Math.random() * 2 + 1,
+                "opacity": Math.random() * 0.5 + 0.7,
                 "drift": Math.random() * 0.5 - 0.25
             };
         } def resize() -> None {
@@ -58,8 +58,8 @@ def:pub EmberBackground(className: str = "") -> Any {
                 ctx.fill();
 
                 # Optional glow
-                ctx.shadowBlur = 10;
-                ctx.shadowColor = "rgba(214, 48, 49, 0.5)";  # Ember Red
+                ctx.shadowBlur = 25;
+                ctx.shadowColor = "rgba(253, 203, 110, 1.0)";  # Molten Gold
             }
             ctx.shadowBlur = 0;
 
