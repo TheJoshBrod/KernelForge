@@ -196,7 +196,15 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
     """
 
     # 1. Determine Architecture Family & Specific Advice
-    cc = float(gpu_info.get('compute_capability', 0.0))
+    cc_raw = str(gpu_info.get('compute_capability', "0.0"))
+    try:
+        cc = float(cc_raw)
+    except (TypeError, ValueError):
+        cc_digits = "".join(ch for ch in cc_raw if ch.isdigit() or ch == ".")
+        try:
+            cc = float(cc_digits) if cc_digits else 0.0
+        except (TypeError, ValueError):
+            cc = 0.0
     arch_name = "Unknown"
     specific_tips = ""
 

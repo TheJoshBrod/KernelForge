@@ -137,16 +137,16 @@ def _find_optimized_dir(project_name: str) -> str {
 
 def _detect_hardware -> dict {
     try {
-        code = "import json, torch; info={'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count() if torch.cuda.is_available() else 0, 'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else '', 'cuda_version': torch.version.cuda or '', 'mps_available': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available(), 'mps_built': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_built()}; print(json.dumps(info))";
+        code = "import json; from src.optimizer.profiling import get_frontend_payload; print(json.dumps(get_frontend_payload(mode='fast')))";
         out = subprocess.check_output([sys.executable, "-c", code], cwd=repo_root);
         text = out.decode("utf-8").strip();
         if text {
             return loads(text);
         }
     } except Exception as e {
-        return {"cuda_available": False, "mps_available": False, "error": str(e)};
+        return {"available": False, "gpus": [], "source": "local", "cuda_available": False, "mps_available": False, "xpu_available": False, "preferred_target": "cpu", "error": str(e)};
     }
-    return {"cuda_available": False, "mps_available": False};
+    return {"available": False, "gpus": [], "source": "local", "cuda_available": False, "mps_available": False, "xpu_available": False, "preferred_target": "cpu"};
 }
 
 def _export_project_zip(project_name: str, ops: list = None) -> dict {
@@ -342,7 +342,9 @@ walker:pub CreateProject {
 
             hw = _detect_hardware();
             target_device = "cpu";
-            if hw and "mps_available" in hw and hw["mps_available"] {
+            if hw and "preferred_target" in hw and hw["preferred_target"] {
+                target_device = hw["preferred_target"];
+            } elif hw and "mps_available" in hw and hw["mps_available"] {
                 target_device = "mps";
             } elif hw and "cuda_available" in hw and hw["cuda_available"] {
                 target_device = "cuda";
@@ -617,12 +619,14 @@ walker:pub StartGenerateAdvanced {
             }
 
             target_device = target_device.lower();
-            if target_device == "gpu" or target_device == "cuda" {
+            if target_device == "gpu" or target_device == "cuda" or target_device == "rocm" or target_device == "amd" {
                 target_device = "cuda";
-            } elif target_device == "mps" {
+            } elif target_device == "mps" or target_device == "metal" or target_device == "apple" {
                 target_device = "mps";
+            } elif target_device == "xpu" or target_device == "intel" {
+                target_device = "cpu";
             } elif target_device != "cpu" {
-                target_device = "cuda";
+                target_device = "cpu";
             }
             os.environ["CGINS_TARGET_DEVICE"] = target_device;
             
@@ -840,6 +844,16 @@ walker:pub StartOptimizeAdvanced {
                 }
             } except Exception as e {
                 print(f"Failed to load target device: {e}");
+            }
+            target_device = target_device.lower();
+            if target_device == "gpu" or target_device == "cuda" or target_device == "rocm" or target_device == "amd" {
+                target_device = "cuda";
+            } elif target_device == "mps" or target_device == "metal" or target_device == "apple" {
+                target_device = "mps";
+            } elif target_device == "xpu" or target_device == "intel" {
+                target_device = "cpu";
+            } elif target_device != "cpu" {
+                target_device = "cpu";
             }
             os.environ["CGINS_TARGET_DEVICE"] = target_device;
 

@@ -23,6 +23,7 @@ except ImportError:
 
 from src.optimizer.config.settings import settings
 from src.optimizer.core.types import GPUSpecs
+from src.optimizer.profiling import get_device_specs as get_profiled_device_specs
 
 
 # ******************
@@ -30,28 +31,10 @@ from src.optimizer.core.types import GPUSpecs
 # ******************
 
 def get_gpu_specs(device_index: int = 0, ssh_config: dict = None) -> GPUSpecs:
-    """
-    Retrieves GPU specs. Cross-platform: delegates to CUDA backend on NVIDIA,
-    falls back to ROCm detection on AMD.
-    """
+    """Retrieve GPU specs via unified profiling; keep remote SSH path."""
     if ssh_config:
         return get_remote_gpu_specs(ssh_config)
-
-    if torch.cuda.is_available():
-        try:
-            # NVIDIA path: reuse CUDA backend's full pynvml/pycuda logic
-            from src.optimizer.backends.cuda.profiler import get_gpu_specs as cuda_get_specs
-            return cuda_get_specs(device_index)
-        except (ImportError, Exception) as e:
-            # pynvml/pycuda not installed — fallback to torch.cuda
-            print(f"Warning: CUDA profiler unavailable ({e}), using torch.cuda fallback")
-            return _get_torch_cuda_specs(device_index)
-
-    # Check for AMD ROCm (ROCm patches torch.cuda namespace)
-    if _is_rocm():
-        return _get_rocm_specs(device_index)
-
-    raise RuntimeError("No supported GPU found (need CUDA or ROCm for Triton)")
+    return get_profiled_device_specs(device_index=device_index, mode="fast")
 
 
 def _is_rocm() -> bool:
@@ -74,7 +57,7 @@ def _get_torch_cuda_specs(device_index: int = 0) -> GPUSpecs:
     return GPUSpecs(
         gpu_name=props.name,
         compute_capability=f"{cc_major}.{cc_minor}",
-        total_memory_gb=props.total_mem / (1024 ** 3),
+        total_memory_gb=getattr(props, "total_memory", getattr(props, "total_mem", 0)) / (1024 ** 3),
         num_sms=props.multi_processor_count,
         max_threads_per_block=props.max_threads_per_block if hasattr(props, 'max_threads_per_block') else 1024,
         warp_size=props.warp_size if hasattr(props, 'warp_size') else 32,
@@ -135,7 +118,7 @@ def _get_rocm_specs(device_index: int = 0) -> GPUSpecs:
     return GPUSpecs(
         gpu_name=props.name,
         compute_capability=arch_str if arch_str else "rocm",
-        total_memory_gb=props.total_mem / (1024 ** 3),
+        total_memory_gb=getattr(props, "total_memory", getattr(props, "total_mem", 0)) / (1024 ** 3),
         num_sms=props.multi_processor_count,
         max_threads_per_block=1024,  # ROCm standard
         warp_size=64,  # AMD wavefront size
