@@ -460,6 +460,8 @@ def _is_allowed_repo_path(rel_path: str, project_name: str) -> bool {
 walker:pub CreateProject {
     has projectName: str,
         code: str,
+        modelFileB64: str = "",
+        modelFileName: str = "model.py",
         weightsFileB64: str = "",
         weightsFileName: str = "",
         pthFiles: list = [],
@@ -483,10 +485,23 @@ walker:pub CreateProject {
             makedirs(project_path);
             _ensure_legacy_project_link(self.projectName, project_path);
 
-            if self.code {
+            model_written = False;
+            if self.code and self.code.strip() {
                 with open(path.join(project_path, "model.py"), "w") as f {
                     f.write(self.code);
                 }
+                model_written = True;
+            } elif self.modelFileB64 {
+                model_bytes = b64decode(self.modelFileB64);
+                with open(path.join(project_path, "model.py"), "wb") as f {
+                    f.write(model_bytes);
+                }
+                model_written = True;
+            }
+
+            if not model_written {
+                report {"error": "Model code or model file is required", "success": False} ;
+                disengage;
             }
 
             weight_artifacts = [];

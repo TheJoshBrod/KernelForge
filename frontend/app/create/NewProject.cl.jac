@@ -17,7 +17,7 @@ def fileToBase64(file: Any) -> Any {
         reader = Reflect.construct(FileReader, []);
         reader.readAsDataURL(file);
         reader.onload = lambda -> None { resolve(reader.result.split(",")[1]);};
-        reader.onerror = lambda -> None { return; };
+        reader.onerror = lambda -> None { reject("Failed to read file as base64"); };
     }
     return Reflect.construct(Promise, [executor]);
 }
@@ -27,7 +27,7 @@ def fileToText(file: Any) -> Any {
         reader = Reflect.construct(FileReader, []);
         reader.readAsText(file);
         reader.onload = lambda -> None { resolve(reader.result);};
-        reader.onerror = lambda -> None { return; };
+        reader.onerror = lambda -> None { reject("Failed to read file as text"); };
     }
     return Reflect.construct(Promise, [executor]);
 }
@@ -39,7 +39,6 @@ def:pub NewProject -> Any {
             "projectName": "",
             "modelFile": None,
             "weightsFile": None,
-            "pthFiles": [],
             "validationZip": None
         },
         isSubmitting: bool = False,
@@ -50,25 +49,48 @@ def:pub NewProject -> Any {
             "projectName": formData["projectName"],
             "modelFile": formData["modelFile"],
             "weightsFile": formData["weightsFile"],
-            "pthFiles": formData["pthFiles"],
             "validationZip": formData["validationZip"]
         };
         newFormData[field] = value;
         formData = newFormData;
     }
 
-    async def handleModelFile(file: Any) -> None {
+async def handleModelFile(file: Any) -> None {
         if not file {
             return;
         }
+        handleInputChange("modelFile", file);
         try {
             text = await fileToText(file);
-            code = text;
-            handleInputChange("modelFile", file);
+            if text and text.trim() {
+                code = text;
+            } else {
+                toast.error("Selected model file is empty");
+            }
         } except Exception as e {
             console.error(e);
-            toast.error("Failed to read model file");
+            toast.error("Could not preview model file. It will still be uploaded on create.");
         }
+    }
+
+    def previewModelFile(file: Any) -> None {
+        if not file {
+            return;
+        }
+        handleInputChange("modelFile", file);
+        reader = Reflect.construct(FileReader, []);
+        reader.onload = lambda -> None {
+            text_value = reader.result if reader.result else "";
+            if text_value and text_value.trim() {
+                code = text_value;
+            } else {
+                toast.error("Selected model file is empty");
+            }
+        };
+        reader.onerror = lambda -> None {
+            toast.error("Failed to read model file for preview");
+        };
+        reader.readAsText(file);
     }
 
     # Handle Escape key to navigate back
@@ -86,8 +108,8 @@ def:pub NewProject -> Any {
             toast.error("Project name is required");
             return;
         }
-        if not code.trim() {
-            toast.error("Model code is required");
+        if (not code or not code.trim()) and not formData["modelFile"] {
+            toast.error("Model code or model file is required");
             return;
         }
 
@@ -95,25 +117,31 @@ def:pub NewProject -> Any {
         submitStage = "Preparing project files";
 
         try {
+            model_code = code;
+            model_file_b64 = "";
+            if formData["modelFile"] {
+                submitStage = "Encoding model file";
+                model_file_b64 = await fileToBase64(formData["modelFile"]);
+                if not model_code or not model_code.trim() {
+                    try {
+                        model_code = await fileToText(formData["modelFile"]);
+                        code = model_code;
+                    } except Exception as e {
+                        console.error(e);
+                    }
+                }
+            }
+            if (not model_code or not model_code.trim()) and not model_file_b64 {
+                toast.error("Failed to load model code from file");
+                isSubmitting = False;
+                submitStage = "";
+                return;
+            }
+
             weights_b64 = "";
             if formData["weightsFile"] {
                 submitStage = "Encoding weights";
                 weights_b64 = await fileToBase64(formData["weightsFile"]);
-            }
-
-            pth_payload = [];
-            if formData["pthFiles"] and formData["pthFiles"].length > 0 {
-                submitStage = "Encoding .pth checkpoints";
-                for pth_file in formData["pthFiles"] {
-                    if not pth_file {
-                        continue;
-                    }
-                    pth_b64 = await fileToBase64(pth_file);
-                    pth_payload.push({
-                        "name": pth_file.name,
-                        "b64": pth_b64
-                    });
-                }
             }
 
             validation_b64 = "";
@@ -134,14 +162,19 @@ def:pub NewProject -> Any {
                 "",
                 {
                     "projectName": formData["projectName"].trim(),
-                    "code": code,
+                    "code": model_code,
+                    "modelFileB64": model_file_b64,
+                    "modelFileName": (
+                        formData["modelFile"].name
+                        if formData["modelFile"] and "name" in formData["modelFile"]
+                        else "model.py"
+                    ),
                     "weightsFileB64": weights_b64,
                     "weightsFileName": (
                         formData["weightsFile"].name
                         if formData["weightsFile"] and "name" in formData["weightsFile"]
                         else "weights.pt"
                     ),
-                    "pthFiles": pth_payload,
                     "validationSetPath": "",
                     "validationZipB64": validation_b64,
                     "validationZipName": validation_name
@@ -273,7 +306,7 @@ def:pub NewProject -> Any {
                             <input
                                 type="file"
                                 accept=".py,.txt"
-                                onChange={lambda e: any  -> None { handleModelFile(
+                                onChange={lambda e: any  -> None { previewModelFile(
                                     e.target.files[0]
                                 );}}
                                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
@@ -296,12 +329,12 @@ def:pub NewProject -> Any {
                         <label
                             className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
                         >
-                            Upload Weights (.pt)
+                            Upload Weights (.pt or .pth)
                         </label>
                         <div className="relative group">
                             <input
                                 type="file"
-                                accept=".pt"
+                                accept=".pt,.pth"
                                 onChange={lambda e: any  -> None { handleInputChange(
                                     "weightsFile", e.target.files[0]
                                 );}}
@@ -319,49 +352,7 @@ def:pub NewProject -> Any {
                                     else "Click to select or drag file"}
                                 </p>
                                 <p className="text-xs text-zinc-600 mt-1">
-                                    PyTorch weights only
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="space-y-2">
-                        <label
-                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
-                        >
-                            Additional Checkpoints (.pth)
-                        </label>
-                        <div className="relative group">
-                            <input
-                                type="file"
-                                accept=".pth"
-                                multiple={True}
-                                onChange={lambda e: any  -> None {
-                                    p_files = [];
-                                    if e and e.target and e.target.files {
-                                        i = 0;
-                                        while i < e.target.files.length {
-                                            p_files.push(e.target.files[i]);
-                                            i = i + 1;
-                                        }
-                                    }
-                                    handleInputChange("pthFiles", p_files);
-                                }}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                            />
-                            <div
-                                className="w-full h-20 bg-zinc-900/50 border-2 border-dashed border-zinc-800 group-hover:border-zinc-600 rounded-xl flex flex-col items-center justify-center transition-all"
-                            >
-                                <p className="text-sm text-zinc-400 font-medium">
-                                    {
-                                        (
-                                            formData["pthFiles"].length.toString() + " file(s) selected"
-                                        )
-                                        if formData["pthFiles"] and formData["pthFiles"].length > 0
-                                        else "Click to select .pth file(s)"
-                                    }
-                                </p>
-                                <p className="text-xs text-zinc-600 mt-1">
-                                    Stored under project artifacts/weights
+                                    PyTorch checkpoint file
                                 </p>
                             </div>
                         </div>
