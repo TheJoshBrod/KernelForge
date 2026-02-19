@@ -3,7 +3,7 @@
 import from react { useState, useEffect }
 import from "react-router-dom" { useNavigate }
 import from ...components.backdrops.EmberBackground { EmberBackground }
-
+import from ...components.ui.LoadingScreen { LoadingScreen }
 import from ...context.ConfigContext { useConfig }
 
 def:pub GpuPage -> Any {
@@ -110,17 +110,7 @@ def:pub GpuPage -> Any {
     }
 
     if loading {
-        return
-            <main className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex flex-col items-center justify-center font-sans text-white">
-                <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
-                <div className="noise-overlay opacity-30"></div>
-                <EmberBackground className="absolute inset-0 z-0"/>
-                <div className="relative z-20 flex flex-col items-center justify-center">
-                    <p className="font-mono text-zinc-500 tracking-widest uppercase">
-                        Loading...
-                    </p>
-                </div>
-            </main>;
+        return <LoadingScreen/>;
     }
 
     return

@@ -4,6 +4,7 @@ import from react { useEffect }
 import from "react-router-dom" { useNavigate, useLocation }
 import from ...components.backdrops.EmberBackground { EmberBackground }
 import from ...components.settings.SettingsMenu { SettingsMenu }
+import from ...components.ui.LoadingScreen { LoadingScreen }
 import from ...context.ConfigContext { useConfig }
 
 def:pub SettingsPage -> Any {
@@ -48,16 +49,7 @@ def:pub SettingsPage -> Any {
     }
 
     if loading {
-        return
-            <div className="app-shell app-shell--center settings-shell bg-[var(--bg-charcoal)]">
-                <EmberBackground/>
-                <div className="app-backdrop"></div>
-                <div className="app-content-layer">
-                    <p className="font-mono text-zinc-500 tracking-widest uppercase">
-                        Loading settings...
-                    </p>
-                </div>
-            </div>;
+        return <LoadingScreen/>;
     }
 
     return
