@@ -158,6 +158,62 @@ def:pub ChevronDownIcon(className: str = "") -> Any {
         </svg>;
 }
 
+def:pub ChevronLeftIcon(className: str = "") -> Any {
+    return
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <path d="m15 18-6-6 6-6"/>
+        </svg>;
+}
+
+def:pub ChevronRightIcon(className: str = "") -> Any {
+    return
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <path d="m9 18 6-6-6-6"/>
+        </svg>;
+}
+
+def:pub MenuIcon(className: str = "") -> Any {
+    return
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={className}
+        >
+            <line x1="4" x2="20" y1="12" y2="12"/>
+            <line x1="4" x2="20" y1="6" y2="6"/>
+            <line x1="4" x2="20" y1="18" y2="18"/>
+        </svg>;
+}
+
 def:pub CGinSLogo(className: str = "") -> Any {
     return
         <img src={cginsLogo} alt="CGinS Logo" className={className}/>;
