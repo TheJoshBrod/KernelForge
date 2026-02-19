@@ -39,7 +39,53 @@ def:pub EmberBackground(className: str = "") -> Any {
         } resize();window.addEventListener("resize", resize);def draw() -> None {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            # Update and Draw
+            time = Date.now() / 1000;
+            breathe = (Math.sin(time * Math.PI / 2) + 1) / 2;
+
+            # 1. Upward Glow
+            glowGrad = ctx.createRadialGradient(canvas.width/2, canvas.height, 0, canvas.width/2, canvas.height, canvas.height * 0.8);
+            glowGrad.addColorStop(0, f"rgba(214, 48, 49, {0.6 + 0.2 * breathe})");
+            glowGrad.addColorStop(0.5, f"rgba(199, 91, 57, {0.2 + 0.1 * breathe})");
+            glowGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
+            
+            ctx.fillStyle = glowGrad;
+            ctx.globalCompositeOperation = "source-over";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            # 2. Layered Flames (now slow-moving lava)
+            gradient = ctx.createLinearGradient(0, canvas.height, 0, canvas.height - 200 - 40 * breathe);
+            gradient.addColorStop(0, "rgba(214, 48, 49, 0.9)");      # Ember Red
+            gradient.addColorStop(0.5, "rgba(225, 112, 85, 0.6)"); # Copper/Orange
+            gradient.addColorStop(0.8, "rgba(214, 48, 49, 0.2)");  # Ember Red
+            gradient.addColorStop(1, "rgba(225, 112, 85, 0)");
+
+            ctx.globalCompositeOperation = "screen";
+            for i in [0, 1, 2, 3] {
+                ctx.beginPath();
+                ctx.moveTo(0, canvas.height);
+                
+                amp = 50 + 20 * i + 10 * breathe;
+                freq = 0.002 + 0.0005 * i;
+                speed = 0.3 + 0.1 * i;
+                
+                x = 0;
+                while x <= canvas.width + 20 {
+                    v = Math.sin((x * freq) + time * speed) + Math.sin((x * freq * 1.7) - time * speed * 0.8) * 0.5;
+                    y = canvas.height - ((v + 1.5) * amp) - (30 * i);
+                    ctx.lineTo(x, y);
+                    x += 20;
+                }
+                ctx.lineTo(canvas.width, canvas.height);
+                ctx.closePath();
+                
+                ctx.fillStyle = gradient;
+                ctx.fill();
+            }
+            
+            # Reset composite operation for sparks
+            ctx.globalCompositeOperation = "source-over";
+
+            # Update and Draw Sparks
             for p in particles {
                 p["y"] -= p["speed"];
                 p["x"] += Math.sin(p["y"] * 0.05) * 0.2 + p["drift"];

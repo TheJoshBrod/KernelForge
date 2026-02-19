@@ -116,7 +116,7 @@ def:pub Home -> Any {
             <div className="noise-overlay opacity-30"></div>
             <EmberBackground className="absolute inset-0 z-0"/>
             <div
-                className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/50 z-10 pointer-events-none"
+                className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/50 z-10 pointer-events-none"
             ></div>
             <div className="absolute top-6 right-6 z-50">
                 <button
