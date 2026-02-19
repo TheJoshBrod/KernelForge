@@ -118,17 +118,19 @@ def:pub Home -> Any {
             <div
                 className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/50 z-10 pointer-events-none"
             ></div>
-            <div className="absolute top-6 right-6 z-50">
-                <button
-                    onClick={lambda -> None { navigate(
-                        "/settings", {"state": {"return_to": "/"}}
-                    );}}
-                    className="p-2 rounded-full hover:bg-white/10 text-white/70 hover:text-[var(--accent)] transition-all duration-200"
-                    title="Settings"
-                >
-                    <SettingsIcon className="w-6 h-6"/>
-                </button>
-            </div>
+            {(
+                <div className="absolute top-6 right-6 z-50">
+                    <button
+                        onClick={lambda -> None { navigate(
+                            "/settings", {"state": {"return_to": "/"}}
+                        );}}
+                        className="p-2 rounded-full hover:bg-white/10 text-white/70 hover:text-[var(--accent)] transition-all duration-200"
+                        title="Settings"
+                    >
+                        <SettingsIcon className="w-6 h-6"/>
+                    </button>
+                </div>
+            ) if splashDone else None}
             <div className="relative z-20 flex flex-col items-center justify-center mb-8 animation-fade-in-up">
                 <div className="flex items-center gap-6 mb-2">
                     <img src="/KernelForge.svg" alt="Kernel Forge Logo" className="w-16 h-16" />
