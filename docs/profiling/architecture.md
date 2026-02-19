@@ -3,6 +3,7 @@
 ## Canonical data layout
 
 - Source logic: `src/optimizer/benchmarking/`
+- CLI entrypoints: `src/cli/`
 - Frontend orchestration: `frontend/walkers/project.jac`
 - Runtime artifacts: `kernels/projects/<project>/...`
 
@@ -14,10 +15,6 @@ Generated runtime outputs:
 - `kernels/projects/<project>/benchmarks/torch_baseline_cache.json`
 - `kernels/projects/<project>/state.json`
 
-Legacy read-only fallback is supported for:
-
-- `projects/<project>/...`
-
 ## Execution model
 
 The profile flow is one tracked job (`profile`) with staged progress:
@@ -26,7 +23,7 @@ The profile flow is one tracked job (`profile`) with staged progress:
 2. `Profiling operators`
 3. `Benchmarking operators`
 
-`run_job.py` tracks lifecycle (`running`, `completed`, `error`) and pipeline stage messages.
+`src.cli.run_job` tracks lifecycle (`running`, `completed`, `error`) and pipeline stage messages.
 
 ## Robustness rules
 

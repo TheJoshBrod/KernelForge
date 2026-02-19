@@ -176,7 +176,8 @@ def _build_codex_prompt(
     ]
     if project_dir:
         parts.append(
-            f"After edits, run: python scripts/verify_one_op.py --project {project_dir.name} --op {op_key}"
+            "After edits, run: "
+            f"python -m src.optimizer.pipeline kernels/projects/{project_dir.name}/io/individual_ops {project_dir.name} --op {op_key}"
         )
     if feedback:
         parts.append("Previous validation error:\n" + feedback)

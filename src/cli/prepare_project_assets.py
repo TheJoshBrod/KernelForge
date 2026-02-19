@@ -17,7 +17,7 @@ def main() -> int:
     parser.add_argument("--validation-name-path", default="")
     args = parser.parse_args()
 
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
     cmd = [
         sys.executable,
         "-m",
@@ -37,3 +37,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

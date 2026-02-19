@@ -8,6 +8,7 @@ import from zipfile { ZipFile }
 import sys;
 import subprocess;
 import os;
+import shutil;
 import sqlite3;
 import hashlib;
 
@@ -15,15 +16,8 @@ import from .globals { repo_root, config_path, config_store }
 
 # --- Helpers ---
 def _project_dir(name: str) -> str {
-    primary = path.join(_projects_base_dir(), name);
-    legacy = path.join(repo_root, "projects", name);
-    if path.exists(primary) {
-        return primary;
-    }
-    if path.exists(legacy) {
-        return legacy;
-    }
-    return primary;
+    _migrate_legacy_projects();
+    return path.join(_projects_base_dir(), name);
 }
 
 def _ensure_dir(dir_path: str) -> None {
@@ -43,36 +37,60 @@ def _projects_base_dir() -> str {
     return projects_dir;
 }
 
-def _legacy_projects_dir() -> str {
-    return path.join(repo_root, "projects");
+def _migrate_legacy_projects() -> None {
+    projects_dir = _projects_base_dir();
+    legacy_roots = [
+        path.join(repo_root, "kernels", "private", "projects"),
+        path.join(repo_root, "projects")
+    ];
+    for legacy_root in legacy_roots {
+        if not path.exists(legacy_root) {
+            continue;
+        }
+        for name in listdir(legacy_root) {
+            src_path = path.join(legacy_root, name);
+            dst_path = path.join(projects_dir, name);
+            if path.exists(dst_path) {
+                continue;
+            }
+            source = src_path;
+            try {
+                if path.islink(src_path) {
+                    source = path.realpath(src_path);
+                    if not path.exists(source) or not path.isdir(source) {
+                        continue;
+                    }
+                }
+                os.rename(source, dst_path);
+                if path.islink(src_path) and path.exists(src_path) {
+                    os.unlink(src_path);
+                }
+            } except Exception as e {
+                try {
+                    if path.exists(source) and path.isdir(source) {
+                        shutil.copytree(source, dst_path, dirs_exist_ok=True);
+                        if source == src_path and path.exists(src_path) {
+                            shutil.rmtree(src_path);
+                        }
+                    }
+                } except Exception as copy_err {
+                    print(f"Warning: failed to migrate project {name}: {copy_err}");
+                }
+            }
+        }
+        try {
+            if len(listdir(legacy_root)) == 0 {
+                os.rmdir(legacy_root);
+            }
+        } except Exception as e {
+            _ = str(e);
+        }
+    }
 }
 
 def _all_projects_dirs() -> list {
-    dirs = [];
-    primary = _projects_base_dir();
-    legacy = _legacy_projects_dir();
-    dirs.append(primary);
-    if legacy != primary and path.exists(legacy) {
-        dirs.append(legacy);
-    }
-    return dirs;
-}
-
-def _ensure_legacy_project_link(project_name: str, target_dir: str) -> None {
-    legacy_root = _legacy_projects_dir();
-    _ensure_dir(legacy_root);
-    legacy_path = path.join(legacy_root, project_name);
-    if path.abspath(legacy_path) == path.abspath(target_dir) {
-        return;
-    }
-    if path.exists(legacy_path) {
-        return;
-    }
-    try {
-        os.symlink(target_dir, legacy_path);
-    } except Exception as e {
-        print(f"Warning: unable to create legacy project link for {project_name}: {e}");
-    }
+    _migrate_legacy_projects();
+    return [_projects_base_dir()];
 }
 
 def _store_weight_artifact(project_path: str, file_name: Any, payload_b64: Any) -> dict {
@@ -249,7 +267,8 @@ def _reconcile_legacy_profile_state(
         if not recovery_started {
             cmd = [
                 sys.executable,
-                path.join(repo_root, "scripts", "profile_then_benchmark.py"),
+                "-m",
+                "src.cli.profile_then_benchmark",
                 "--project",
                 project_name
             ];
@@ -321,10 +340,10 @@ def _start_job(project_name: str, job_key: str, cmd: list, log_name: str) -> dic
     state_path = path.join(project_dir, "state.json");
     log_path = path.join(logs_dir, log_name);
 
-    runner = path.join(repo_root, "scripts", "run_job.py");
     full_cmd = [
         sys.executable,
-        runner,
+        "-m",
+        "src.cli.run_job",
         "--state-path",
         state_path,
         "--job-key",
@@ -349,10 +368,10 @@ def _start_job_container(
     state_path = path.join(project_dir, "state.json");
     log_path = path.join(logs_dir, log_name);
 
-    runner = path.join(repo_root, "scripts", "run_job.py");
     full_cmd = [
         sys.executable,
-        runner,
+        "-m",
+        "src.cli.run_job",
         "--state-path",
         state_path,
         "--job-key",
@@ -562,7 +581,6 @@ def _is_allowed_repo_path(rel_path: str, project_name: str) -> bool {
         return False;
     }
     allowed = [
-        path.join("projects", project_name),
         path.join("kernels", "projects", project_name),
         path.join("kernels", "optimized"),
         path.join("kernels", "generated")
@@ -591,19 +609,17 @@ walker:pub CreateProject {
 
     can create with entry {
         try {
+            _migrate_legacy_projects();
             projects_dir = _projects_base_dir();
             _ensure_dir(projects_dir);
 
             project_path = path.join(projects_dir, self.projectName);
-            legacy_path = path.join(_legacy_projects_dir(), self.projectName);
-
-            if path.exists(project_path) or path.exists(legacy_path) {
+            if path.exists(project_path) {
                 report {"error": "Project already exists", "success": False};
                 disengage;
             }
 
             makedirs(project_path);
-            _ensure_legacy_project_link(self.projectName, project_path);
 
             model_written = False;
             if self.code and self.code.strip() {
@@ -725,7 +741,8 @@ walker:pub CreateProject {
 
             profile_cmd = [
                 sys.executable,
-                path.join(repo_root, "scripts", "profile_then_benchmark.py"),
+                "-m",
+                "src.cli.profile_then_benchmark",
                 "--project",
                 self.projectName
             ];
@@ -902,7 +919,8 @@ walker:pub StartProfile {
     can run with entry {
         cmd = [
             sys.executable,
-            path.join(repo_root, "scripts", "profile_then_benchmark.py"),
+            "-m",
+            "src.cli.profile_then_benchmark",
             "--project",
             self.projectName
         ];
@@ -1120,7 +1138,9 @@ walker:pub StartGenerateAdvanced {
                 }
             );
 
-            ops_rel = path.join("projects", self.projectName, "ops_selected.json");
+            ops_rel = path.join(
+                "kernels", "projects", self.projectName, "ops_selected.json"
+            );
             ops_path = path.join(repo_root, ops_rel);
             try {
                 with open(ops_path, "w") as f {
@@ -1131,8 +1151,9 @@ walker:pub StartGenerateAdvanced {
             }
 
             cmd = [
-                "python3",
-                "scripts/codex_advanced_generate.py",
+                sys.executable,
+                "-m",
+                "src.cli.codex_advanced_generate",
                 "--project",
                 self.projectName,
                 "--ops-file",
@@ -1343,7 +1364,9 @@ walker:pub StartOptimizeAdvanced {
                 }
             );
 
-            ops_rel = path.join("projects", self.projectName, "ops_selected.json");
+            ops_rel = path.join(
+                "kernels", "projects", self.projectName, "ops_selected.json"
+            );
             ops_path = path.join(repo_root, ops_rel);
             try {
                 with open(ops_path, "w") as f {
@@ -1354,8 +1377,9 @@ walker:pub StartOptimizeAdvanced {
             }
 
             cmd = [
-                "python3",
-                "scripts/codex_advanced_generate.py",
+                sys.executable,
+                "-m",
+                "src.cli.codex_advanced_generate",
                 "--project",
                 self.projectName,
                 "--ops-file",
@@ -1432,7 +1456,8 @@ walker:pub StartBenchmark {
     can run with entry {
         cmd = [
             sys.executable,
-            path.join(repo_root, "scripts", "benchmark_project_ops.py"),
+            "-m",
+            "src.cli.benchmark_project_ops",
             "--project",
             self.projectName
         ];

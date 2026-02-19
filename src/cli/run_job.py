@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lightweight async job runner used by frontend walkers.
 
-This script executes a command, streams stdout/stderr to a log file,
+This module executes a command, streams stdout/stderr to a log file,
 and updates project state.json for job lifecycle tracking.
 """
 
@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from src.optimizer.benchmarking.state import (  # type: ignore
+    from src.optimizer.benchmarking.state import (
         read_json_file as _locked_read_json_file,
         update_job_state as _locked_update_job_state,
     )
@@ -238,3 +238,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
