@@ -2073,6 +2073,102 @@ video {
   color: rgba(223, 239, 255, 0.5);
 }
 
+.kf-monaco-shell {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 88% 0%, rgba(225, 112, 85, 0.22), transparent 38%),
+    radial-gradient(circle at 8% 100%, rgba(253, 203, 110, 0.2), transparent 40%),
+    radial-gradient(circle at 42% 12%, rgba(214, 48, 49, 0.1), transparent 32%),
+    #1d1f21;
+}
+
+.kf-monaco-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(253, 203, 110, 0.08), transparent 18%, transparent 82%, rgba(225, 112, 85, 0.08));
+  z-index: 3;
+}
+
+.kf-monaco-host {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.kf-monaco-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 1.25rem 1.5rem;
+  border: none;
+  outline: none;
+  resize: none;
+  background: rgba(18, 20, 23, 0.95);
+  color: var(--text-light);
+  font-family: "JetBrains Mono", "Source Code Pro", Menlo, Monaco, Consolas, monospace;
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
+.kf-monaco-fallback::placeholder {
+  color: rgba(224, 230, 237, 0.45);
+}
+
+.kf-monaco-error {
+  position: absolute;
+  bottom: 0.65rem;
+  right: 0.75rem;
+  z-index: 5;
+  background: rgba(214, 48, 49, 0.18);
+  border: 1px solid rgba(214, 48, 49, 0.45);
+  color: #ffd4c8;
+  border-radius: 8px;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+}
+
+.kf-monaco-inline-decorator-symbol {
+  color: var(--ember-red) !important;
+  font-weight: 800 !important;
+}
+
+.kf-monaco-inline-decorator-name {
+  color: #ff8a6d !important;
+  font-weight: 700 !important;
+}
+
+.kf-monaco-inline-function-name {
+  color: #ffb06b !important;
+  font-weight: 700 !important;
+}
+
+.kf-monaco-inline-class-name,
+.kf-monaco-inline-type-name {
+  color: var(--molten-gold) !important;
+  font-weight: 700 !important;
+}
+
+.kf-monaco-inline-import-keyword {
+  color: var(--molten-gold-dark) !important;
+  font-weight: 700 !important;
+}
+
+.kf-monaco-inline-module-name {
+  color: #ffbe8f !important;
+}
+
+.kf-monaco-inline-punct {
+  color: #eef2f7 !important;
+  font-weight: 600 !important;
+}
+
 @keyframes loadingSweep {
   0% {
     transform: translateX(-60%);

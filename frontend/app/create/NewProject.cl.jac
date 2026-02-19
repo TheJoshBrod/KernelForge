@@ -10,14 +10,20 @@ import from ...components.ui.Icons {
     FolderIcon,
     GhostIcon
 }
+import from ...components.editor.ForgePythonEditor { ForgePythonEditor }
 
 # Client-side helper for reading file as base64
+
 def fileToBase64(file: Any) -> Any {
     def executor(resolve: Any, reject: Any) -> None {
         reader = Reflect.construct(FileReader, []);
         reader.readAsDataURL(file);
-        reader.onload = lambda -> None { resolve(reader.result.split(",")[1]);};
-        reader.onerror = lambda -> None { reject("Failed to read file as base64"); };
+        reader.onload = lambda -> None { resolve.call(
+            None, reader.result.split(",")[1]
+        );};
+        reader.onerror = lambda -> None { reject.call(
+            None, "Failed to read file as base64"
+        ); };
     }
     return Reflect.construct(Promise, [executor]);
 }
@@ -26,8 +32,10 @@ def fileToText(file: Any) -> Any {
     def executor(resolve: Any, reject: Any) -> None {
         reader = Reflect.construct(FileReader, []);
         reader.readAsText(file);
-        reader.onload = lambda -> None { resolve(reader.result);};
-        reader.onerror = lambda -> None { reject("Failed to read file as text"); };
+        reader.onload = lambda -> None { resolve.call(None, reader.result);};
+        reader.onerror = lambda -> None { reject.call(
+            None, "Failed to read file as text"
+        ); };
     }
     return Reflect.construct(Promise, [executor]);
 }
@@ -55,24 +63,6 @@ def:pub NewProject -> Any {
         formData = newFormData;
     }
 
-async def handleModelFile(file: Any) -> None {
-        if not file {
-            return;
-        }
-        handleInputChange("modelFile", file);
-        try {
-            text = await fileToText(file);
-            if text and text.trim() {
-                code = text;
-            } else {
-                toast.error("Selected model file is empty");
-            }
-        } except Exception as e {
-            console.error(e);
-            toast.error("Could not preview model file. It will still be uploaded on create.");
-        }
-    }
-
     def previewModelFile(file: Any) -> None {
         if not file {
             return;
@@ -93,15 +83,21 @@ async def handleModelFile(file: Any) -> None {
         reader.readAsText(file);
     }
 
-    # Handle Escape key to navigate back
-    # Handle Escape key to navigate back
     def handleKeyDown(event: Any) -> None {
         if event.key == "Escape" {
             navigate("/");
         }
     }
 
-    useEffect(lambda -> None { window.addEventListener("keydown", handleKeyDown);}, []);
+    useEffect(
+        lambda -> Any {
+            window.addEventListener("keydown", handleKeyDown);
+            return lambda -> None { window.removeEventListener(
+                "keydown", handleKeyDown
+            );};
+        },
+        []
+    );
 
     async def handleCreate -> None {
         if not formData["projectName"].trim() {
@@ -152,10 +148,6 @@ async def handleModelFile(file: Any) -> None {
                 validation_name = formData["validationZip"].name;
             }
 
-            # Call the walker passed from parent
-            # Call the walker passed from parent
-            # Call the walker passed from parent
-            # Call the walker passed from parent
             submitStage = "Creating project";
             resp = await __jacSpawn(
                 "CreateProject",
@@ -258,14 +250,14 @@ async def handleModelFile(file: Any) -> None {
                         Model Code
                     </h2>
                 </div>
-                <div
-                    className="flex-1 overflow-auto bg-[#1d1f21] relative custom-scrollbar"
-                >
-                    <textarea
+                <div className="flex-1 relative">
+                    <ForgePythonEditor
                         value={code}
-                        onChange={lambda e: any  -> None { code = e.target.value;}}
+                        onChange={lambda next_code: Any -> None { code = str(
+                            next_code
+                        ) if next_code else "";}}
+                        readOnly={isSubmitting}
                         placeholder="# Paste your model code here or upload model.py"
-                        className="min-h-full w-full resize-none bg-[#1d1f21] text-zinc-100 font-mono text-sm p-6 focus:outline-none placeholder:text-zinc-500"
                     />
                 </div>
             </div>
