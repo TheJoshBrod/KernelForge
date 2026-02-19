@@ -2,7 +2,7 @@
 
 import from react { useEffect, useRef }
 import from "@jac-client/assets/mascot.mp4" { default as mascotVideo }
-import from "@jac-client/assets/new-mascot.png" { default as mascotImage }
+import from "@jac-client/assets/KernelForge.svg" { default as mascotImage }
 
 def:pub Mascot(
     variant: str = "hero",

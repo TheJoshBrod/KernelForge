@@ -1,6 +1,6 @@
 """UI Icons Component"""
 
-import from "@jac-client/assets/CGinS-logo.svg" { default as cginsLogo }
+import from "@jac-client/assets/KernelForge.svg" { default as cginsLogo }
 
 def:pub FolderIcon(className: str = "") -> Any {
     return
@@ -391,3 +391,5 @@ def:pub TimerIcon(className: str = "") -> Any {
             <circle cx="12" cy="14" r="8" />
         </svg>;
 }
+
+
