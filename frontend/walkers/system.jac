@@ -425,14 +425,51 @@ walker:pub TestLLMConnection {
                 cfg = config_store;
             }
         }
-        llm = cfg["llm_info"]
-        if cfg and "llm_info" in cfg
-        else config_store["llm_info"];
-        provider = llm["provider"] if llm and "provider" in llm else "";
-        model = llm["model"] if llm and "model" in llm else "";
-        apikey = llm["apikey"] if llm and "apikey" in llm else "";
-        result = _run_llm_test(provider, model, apikey);
-        report result ;
+        
+        api_keys = cfg["api_keys"] if cfg and "api_keys" in cfg else {};
+        results = [];
+        
+        # Define default test models for connectivity check
+        test_models = {
+            "openai": "gpt-4o-mini",
+            "anthropic": "claude-3-haiku-20240307",
+            "gemini": "gemini-1.5-flash"
+        };
+
+        has_keys = False;
+        for provider in ["openai", "anthropic", "gemini"] {
+            key = api_keys[provider] if provider in api_keys else "";
+            if key {
+                has_keys = True;
+                model = test_models[provider];
+                res = _run_llm_test(provider, model, key);
+                results.append(res);
+            }
+        }
+
+        if not has_keys {
+            report {"success": False, "error": "No API keys configured."};
+        } else {
+            # Aggregate results
+            all_success = True;
+            errors = [];
+            latencies = [];
+            for r in results {
+                if not r["success"] {
+                    all_success = False;
+                    errors.append(f"{r.get('provider', 'Unknown')}: {r.get('error', 'Failed')}");
+                } else {
+                    latencies.append(r.get("latency_ms", 0));
+                }
+            }
+            
+            if all_success {
+                avg_latency = sum(latencies) / len(latencies) if latencies else 0;
+                report {"success": True, "latency_ms": int(avg_latency), "message": "All keys valid."};
+            } else {
+                report {"success": False, "error": "; ".join(errors)};
+            }
+        }
     }
 }
 

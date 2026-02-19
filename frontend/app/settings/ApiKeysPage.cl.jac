@@ -20,13 +20,15 @@ def:pub ApiKeysPage {
         navigate("/settings");
     }
 
+    # Rename to handleApiKeyChange or keep generic? 
+    # Keeping generic signature but logic changes to api_keys
     def handleLlmInfoChange(field: str, value: str) -> None {
-        llm_info = config["llm_info"] if config and "llm_info" in config else {};
-        new_llm_info = {** llm_info};
-        new_llm_info[field] = value;
+        api_keys = config["api_keys"] if config and "api_keys" in config else {};
+        new_keys = {** api_keys};
+        new_keys[field] = value;
 
         new_config = {** config};
-        new_config["llm_info"] = new_llm_info;
+        new_config["api_keys"] = new_keys;
         setConfig(new_config);
     }
 

@@ -21,7 +21,8 @@ def:pub GenerateModal(props: any) {
     setIsWorking = is_working_state[1];
 
     # Config State
-    default_llm = config["llm_info"]["model"] if config and "llm_info" in config and "model" in config["llm_info"] else "";
+    # Config State
+    default_llm = "";
     
     llm_model_state = useState(default_llm);
     llmModel = llm_model_state[0];

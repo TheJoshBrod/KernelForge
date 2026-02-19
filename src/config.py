@@ -55,33 +55,66 @@ def apply_llm_config() -> bool:
     except Exception:
         return False
 
-    llm_info = data.get("llm_info")
-    if not isinstance(llm_info, dict):
+    api_keys = data.get("api_keys")
+    if not isinstance(api_keys, dict):
+        # Fallback to old llm_info if api_keys missing (migration compatibility)
+        llm_info = data.get("llm_info")
+        if isinstance(llm_info, dict):
+             provider = str(llm_info.get("provider", "")).strip().lower()
+             model = str(llm_info.get("model", "")).strip()
+             apikey = str(llm_info.get("apikey", "")).strip()
+             if provider == "openai": api_keys = {"openai": apikey}
+             elif provider == "anthropic": api_keys = {"anthropic": apikey}
+             elif provider == "gemini": api_keys = {"gemini": apikey}
+        
+    if not isinstance(api_keys, dict):
         return False
 
-    provider = str(llm_info.get("provider", "")).strip().lower()
-    model = str(llm_info.get("model", "")).strip()
-    apikey = str(llm_info.get("apikey", "")).strip()
+    # Determine active provider/model from env
+    provider = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    model = os.environ.get("LLM_MODEL", "").strip() or \
+            os.environ.get("OPENAI_MODEL", "").strip() or \
+            os.environ.get("ANTHROPIC_MODEL", "").strip() or \
+            os.environ.get("GEMINI_MODEL", "").strip() or \
+            os.environ.get("CGINS_MODEL", "").strip()
 
-    if provider:
-        os.environ["LLM_PROVIDER"] = provider
+    # Infer provider from model if missing
+    if not provider and model:
+        if model.startswith("gpt"):
+            provider = "openai"
+        elif model.startswith("claude"):
+            provider = "anthropic"
+        elif model.startswith("gemini"):
+            provider = "gemini"
 
+    # Set env vars based on provider
     if provider == "openai":
-        if apikey:
-            os.environ["OPENAI_API_KEY"] = apikey
-        if model:
-            os.environ["OPENAI_MODEL"] = model
+        key = api_keys.get("openai", "")
+        if key: os.environ["OPENAI_API_KEY"] = key
+        if model: os.environ["OPENAI_MODEL"] = model
     elif provider == "anthropic":
-        if apikey:
-            os.environ["ANTHROPIC_API_KEY"] = apikey
-        if model:
-            os.environ["ANTHROPIC_MODEL"] = model
+        key = api_keys.get("anthropic", "")
+        if key: os.environ["ANTHROPIC_API_KEY"] = key
+        if model: os.environ["ANTHROPIC_MODEL"] = model
     elif provider == "gemini":
-        if apikey:
-            os.environ["GOOGLE_API_KEY"] = apikey
-            os.environ["GEMINI_API_KEY"] = apikey
-        if model:
-            os.environ["GEMINI_MODEL"] = model
+        key = api_keys.get("gemini", "")
+        if key: 
+            os.environ["GOOGLE_API_KEY"] = key
+            os.environ["GEMINI_API_KEY"] = key
+        if model: os.environ["GEMINI_MODEL"] = model
+    
+    # If no provider set but keys exist, set defaults (fallback behavior)
+    if not provider:
+        if api_keys.get("openai"):
+             os.environ["OPENAI_API_KEY"] = api_keys.get("openai")
+        if api_keys.get("anthropic"):
+             os.environ["ANTHROPIC_API_KEY"] = api_keys.get("anthropic")
+        if api_keys.get("gemini"):
+             k = api_keys.get("gemini")
+             os.environ["GOOGLE_API_KEY"] = k
+             os.environ["GEMINI_API_KEY"] = k
+
+    return True
 
     return True
 

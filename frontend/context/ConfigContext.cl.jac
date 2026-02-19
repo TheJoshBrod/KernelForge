@@ -3,7 +3,7 @@
 import from react { createContext, useContext, useEffect, useState }
 
 glob DEFAULT_CONFIG: dict = {
-         "llm_info": {"model": "", "apikey": "", "provider": ""},
+         "api_keys": {"openai": "", "anthropic": "", "gemini": ""},
          "providers": [],
          "ssh_connections": [],
          "active_ssh_index": -1,
@@ -46,10 +46,10 @@ def:pub ConfigProvider(children: any) -> Any {
             # Process Config
             data = resp_config.reports[0] if resp_config and resp_config.reports and resp_config.reports.length > 0 else None;
             loaded = data if data else {};
-            loaded_llm = loaded["llm_info"] if loaded and "llm_info" in loaded else {};
-            merged_llm = {** DEFAULT_CONFIG["llm_info"], ** loaded_llm};
+            loaded_keys = loaded["api_keys"] if loaded and "api_keys" in loaded else {};
+            merged_keys = {** DEFAULT_CONFIG["api_keys"], ** loaded_keys};
             merged = {** DEFAULT_CONFIG, ** loaded};
-            merged["llm_info"] = merged_llm;
+            merged["api_keys"] = merged_keys;
 
             # Normalize SSH config
             conns = merged["ssh_connections"] if "ssh_connections" in merged else [];

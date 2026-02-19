@@ -23,42 +23,7 @@ def _ensure_dir(dir_path: str) -> None {
     }
 }
 
-def _apply_llm_env_from_config(cfg: dict) -> None {
-    if not cfg {
-        return;
-    }
-    llm = cfg["llm_info"] if cfg and "llm_info" in cfg else {};
-    provider = llm["provider"] if llm and "provider" in llm else "";
-    model = llm["model"] if llm and "model" in llm else "";
-    apikey = llm["apikey"] if llm and "apikey" in llm else "";
 
-    if provider {
-        os.environ["LLM_PROVIDER"] = provider;
-    }
-    if provider == "openai" {
-        if apikey {
-            os.environ["OPENAI_API_KEY"] = apikey;
-        }
-        if model {
-            os.environ["OPENAI_MODEL"] = model;
-        }
-    } elif provider == "anthropic" {
-        if apikey {
-            os.environ["ANTHROPIC_API_KEY"] = apikey;
-        }
-        if model {
-            os.environ["ANTHROPIC_MODEL"] = model;
-        }
-    } elif provider == "gemini" {
-        if apikey {
-            os.environ["GOOGLE_API_KEY"] = apikey;
-            os.environ["GEMINI_API_KEY"] = apikey;
-        }
-        if model {
-            os.environ["GEMINI_MODEL"] = model;
-        }
-    }
-}
 
 def _read_state(project_name: str) -> dict {
     state_path = path.join(_project_dir(project_name), "state.json");
@@ -641,9 +606,9 @@ walker:pub StartGenerateAdvanced {
                 cfg = config_store;
             }
             if self.llm_model {
-                cfg["llm_info"]["model"] = self.llm_model;
+                os.environ["LLM_MODEL"] = self.llm_model;
             }
-            _apply_llm_env_from_config(cfg);
+            # _apply_llm_env_from_config(cfg); removed - handled by src/config.py via api_keys
 
             # Extract generator config overrides
             target_device = "cuda";
