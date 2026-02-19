@@ -4,6 +4,7 @@ import from "react-router-dom" { useNavigate }
 import from react { useState }
 import from ...components.backdrops.EmberBackground { EmberBackground }
 import from ...components.settings.ApiKeysSettings { ApiKeysSettings }
+import from ...components.settings.ApiKeysTestResults { ApiKeysTestResults }
 
 import from ...context.ConfigContext { useConfig }
 
@@ -109,96 +110,38 @@ def:pub ApiKeysPage(props: any) -> Any {
                         handleSave={handleSave}
                         saving={saving}
                     />
-                    <div className="p-4 border-t border-[var(--border)] mt-4">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="text-sm font-medium text-[var(--text-light)] industrial-font-display uppercase tracking-wider">
-                                Connection Test
-                            </h3>
-                            <button
-                                onClick={handleTestAll}
-                                disabled={testing or saving}
-                                className={"app-button " + (
-                                    "opacity-50 cursor-not-allowed" if testing else ""
-                                )}
-                            >
-                                {"Testing..." if testing else "Test All Keys"}
-                            </button>
-                        </div>
-                    {<div
-                        className={"mt-4 p-3 rounded text-sm " + (
-                            "bg-green-900/20 border border-green-800 text-green-300"
-                            if testResults["success"]
-                            else "bg-red-900/20 border border-red-800 text-red-300"
-                        )}
-                    >
-                        <div className="flex items-center gap-2 mb-2">
-                            <span
-                                className={(
-                                    "text-green-500"
-                                    if testResults["success"]
-                                    else "text-red-500"
-                                )}
-                            >
-                                {"●" if testResults["success"] else "✖"}
-                            </span>
-                            <span className="font-medium">
-                                {"All Tests Passed"
-                                if testResults["success"]
-                                else "Tests Failed"}
-                            </span>
-                        </div>
-                        {<div className="space-y-1 pl-5">
-                            {Object.entries(testResults["results"]).map(
-                                lambda entry: any  -> any { key = entry[0];val = entry[
-                                    1
-                                ];return (
-                                    <div
-                                        key={key}
-                                        className="flex justify-between text-xs"
-                                    >
-                                        <span className="capitalize text-zinc-400">
-                                            {key}:
-                                        </span>
-                                        <span
-                                            className={(
-                                                "text-green-400"
-                                                if val["success"]
-                                                else "text-red-400"
-                                            )}
-                                        >
-                                            {val["latency_ms"] + "ms"
-                                            if val["success"]
-                                            else val["error"]}
-                                        </span>
-                                    </div>
-                                ); }
-                            )}
-                        </div>
-                        if "results" in testResults and testResults["results"]
-                        else <div className="pl-5 text-xs text-zinc-400">
-                            {testResults["error"] if "error" in testResults else ""}
-                        </div>}
-                    </div>
-                    if testResults
-                    else null}
-                </div>
                 </div>
                 
-                <div className="p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0 flex justify-end gap-4">
+                <div className="p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0 flex justify-between items-center gap-4">
                     <button
-                        onClick={handleReturn}
-                        className="app-button"
+                        onClick={handleTestAll}
+                        disabled={testing or saving}
+                        className={"app-button " + (
+                            "opacity-50 cursor-not-allowed" if testing else ""
+                        )}
                     >
-                        Back
+                        {"Testing..." if testing else "Test All Keys"}
                     </button>
-                    <button
-                        onClick={handleSave}
-                        disabled={saving}
-                        className="app-button"
-                    >
-                        {("Saving..." if saving else "Save")}
-                    </button>
+                    <div className="flex gap-4">
+                        <button
+                            onClick={handleReturn}
+                            className="app-button"
+                        >
+                            Back
+                        </button>
+                        <button
+                            onClick={handleSave}
+                            disabled={saving}
+                            className="app-button"
+                        >
+                            {("Saving..." if saving else "Save")}
+                        </button>
+                    </div>
                 </div>
             </div>
+            <ApiKeysTestResults
+                testResults={testResults}
+                onClose={lambda -> None { setTestResults(None); }}
+            />
         </main>;
 }
