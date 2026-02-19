@@ -1,6 +1,7 @@
 """Upload Menu Component"""
 
 import from react { useState, useRef, useEffect }
+import from "react-router-dom" { useParams }
 import from .....components.ui.Icons { UploadIcon, CodeIcon, SettingsIcon }
 import from .....components.ui.Modal { Modal }
 
@@ -12,6 +13,9 @@ def:pub UploadModal(props: any) -> Any {
     onSuccess = props.onSuccess;
     projectName = props.projectName;
     opName = props.opName;
+    params = useParams();
+    resolvedProjectName = projectName or params.projectName or "";
+    routeOpName = params.opName if params and "opName" in params else "";
 
     # Context
     config_ctx = useConfig();
@@ -29,6 +33,54 @@ def:pub UploadModal(props: any) -> Any {
     is_loading_state = useState(False);
     isLoading = is_loading_state[0];
     setIsLoading = is_loading_state[1];
+
+    selected_op_state = useState(opName or routeOpName or "");
+    selectedOp = selected_op_state[0];
+    setSelectedOp = selected_op_state[1];
+
+    ops_state = useState([]);
+    ops = ops_state[0];
+    setOps = ops_state[1];
+
+    loading_ops_state = useState(False);
+    loadingOps = loading_ops_state[0];
+    setLoadingOps = loading_ops_state[1];
+
+    def to_list(items: Any) -> list {
+        if not items {
+            return [];
+        }
+        try {
+            if Array.isArray(items) {
+                return items;
+            }
+        } except Exception {
+        # no-op
+        }
+        normalized = [];
+        try {
+            for item in items {
+                normalized.push(item);
+            }
+            return normalized;
+        } except Exception {
+        # no-op
+        }
+        try {
+            return Object.values(items);
+        } except Exception {
+            return [];
+        }
+    }
+
+    def list_len(items: Any) -> int {
+        return to_list(items).length;
+    }
+
+    opLocked = False;
+    if opName or routeOpName {
+        opLocked = True;
+    }
 
     # Determine available backends
     available_devices = [{"label": "Triton (Python)", "value": "Triton"}];
@@ -51,6 +103,41 @@ def:pub UploadModal(props: any) -> Any {
         [hwInfo, backend]
     );
 
+    useEffect(
+        lambda -> None { if isOpen {
+            if opName or routeOpName {
+                setSelectedOp(opName or routeOpName or "");
+            }
+        }},
+        [isOpen, opName, routeOpName]
+    );
+
+    useEffect(
+        lambda -> None { if isOpen and resolvedProjectName {
+            async def fetchOps -> None {
+                setLoadingOps(True);
+                try {
+                    resp = await __jacSpawn(
+                        "GetProjectOps", "", {"projectName": resolvedProjectName}
+                    );
+                    data = resp.reports[0] if resp and resp.reports else {};
+                    op_list = to_list(data["ops"] if data and "ops" in data else []);
+                    setOps(op_list);
+                    if (not selectedOp) and list_len(op_list) > 0 {
+                        setSelectedOp(op_list[0]["name"]);
+                    }
+                } except Exception as e {
+                    console.error("Error fetching operators:", e);
+                    setOps([]);
+                } finally {
+                    setLoadingOps(False);
+                }
+            }
+            fetchOps();
+        }},
+        [isOpen, resolvedProjectName]
+    );
+
     file_input_ref = useRef(None);
 
     # Handlers
@@ -71,8 +158,12 @@ def:pub UploadModal(props: any) -> Any {
             alert("Please enter some code or upload a file.");
             return;
         }
-        if not projectName or not opName {
-            alert("Missing project or operator.");
+        if not resolvedProjectName {
+            alert("Missing project.");
+            return;
+        }
+        if not selectedOp {
+            alert("Select an operator first.");
             return;
         }
 
@@ -83,8 +174,8 @@ def:pub UploadModal(props: any) -> Any {
                 "ImportKernel",
                 "",
                 {
-                    "projectName": projectName,
-                    "opName": opName,
+                    "projectName": resolvedProjectName,
+                    "opName": selectedOp,
                     "source": code,
                     "backend": backend
                 }
@@ -122,6 +213,46 @@ def:pub UploadModal(props: any) -> Any {
         <Modal isOpen={isOpen} onClose={onClose} title="Upload Custom Kernel">
             <div className="p-6 space-y-6">
                 <div className="space-y-4">
+                    <div className="space-y-2">
+                        <label
+                            className="text-sm font-medium text-zinc-300 flex items-center gap-2"
+                        >
+                            <SettingsIcon className="w-4 h-4 text-amber-400"/>
+                            Operator
+                        </label>
+                        {<div
+                            className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-200 font-mono"
+                        >
+                            {selectedOp or "(missing operator context)"}
+                        </div>
+                        if opLocked
+                        else <select
+                            value={selectedOp}
+                            onChange={lambda e: any  -> None { setSelectedOp(
+                                e.target.value
+                            );}}
+                            className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                            disabled={loadingOps}
+                        >
+                            {<option value="">
+                                {"Loading operators..."
+                                if loadingOps
+                                else "Select operator"}
+                            </option>
+                            if not selectedOp
+                            else <span/>}{ops.map(
+                                lambda item: dict  -> Any { return
+                                    <option key={item["name"]} value={item["name"]}>
+                                        {item["name"]}
+                                    </option>; }
+                            )}
+                        </select>}
+                        <p className="text-[10px] text-zinc-500">
+                            {resolvedProjectName
+                            if resolvedProjectName
+                            else "Project missing from route context."}
+                        </p>
+                    </div>
                     <div className="flex items-center justify-between">
                         <label
                             className="text-sm font-medium text-zinc-300 flex items-center gap-2"

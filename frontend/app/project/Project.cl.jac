@@ -288,7 +288,7 @@ def:pub Project {
             }
             advLog = "";
             await __jacSpawn(
-                "StartGenerateAdvanced",
+                "StartGenerate",
                 "",
                 {
                     "projectName": name,
@@ -321,7 +321,7 @@ def:pub Project {
                 }
             }
             await __jacSpawn(
-                "StartOptimizeAdvanced",
+                "StartOptimize",
                 "",
                 {
                     "projectName": name,

@@ -1,6 +1,7 @@
 """Optimize Modal Component"""
 
 import from react { useState, useEffect }
+import from "react-router-dom" { useParams }
 import from .....components.ui.Icons {
     ZapIcon,
     BrainIcon,
@@ -20,6 +21,9 @@ def:pub OptimizeModal(props: any) -> Any {
     projectName = props.projectName;
     opName = props.opName;
     hasTree = props.hasTree if props and "hasTree" in props else True;
+    params = useParams();
+    resolvedProjectName = projectName or params.projectName or "";
+    routeOpName = params.opName if params and "opName" in params else "";
 
     config_ctx = useConfig();
     config = config_ctx.config;
@@ -27,6 +31,23 @@ def:pub OptimizeModal(props: any) -> Any {
     is_working_state = useState(False);
     isWorking = is_working_state[0];
     setIsWorking = is_working_state[1];
+
+    selected_op_state = useState(opName or routeOpName or "");
+    selectedOp = selected_op_state[0];
+    setSelectedOp = selected_op_state[1];
+
+    ops_state = useState([]);
+    ops = ops_state[0];
+    setOps = ops_state[1];
+
+    loading_ops_state = useState(False);
+    loadingOps = loading_ops_state[0];
+    setLoadingOps = loading_ops_state[1];
+
+    opLocked = False;
+    if opName or routeOpName {
+        opLocked = True;
+    }
 
     # Config State
     default_llm = "";
@@ -77,6 +98,37 @@ def:pub OptimizeModal(props: any) -> Any {
     loadingModels = loading_models_state[0];
     setLoadingModels = loading_models_state[1];
 
+    def to_list(items: Any) -> list {
+        if not items {
+            return [];
+        }
+        try {
+            if Array.isArray(items) {
+                return items;
+            }
+        } except Exception {
+        # no-op
+        }
+        normalized = [];
+        try {
+            for item in items {
+                normalized.push(item);
+            }
+            return normalized;
+        } except Exception {
+        # no-op
+        }
+        try {
+            return Object.values(items);
+        } except Exception {
+            return [];
+        }
+    }
+
+    def list_len(items: Any) -> int {
+        return to_list(items).length;
+    }
+
     # Fetch models on open
     useEffect(
         lambda -> None { if isOpen {
@@ -88,11 +140,11 @@ def:pub OptimizeModal(props: any) -> Any {
                     data = resp.reports[0] if resp and resp.reports else {};
                     if data and "success" in data and data["success"] {
                         if "models" in data {
-                            list_models = data["models"];
+                            list_models = to_list(data["models"]);
                             console.log("Fetched models:", list_models);
                             setModels(list_models);
                             # Set default if none selected and list not empty
-                            if not llmModel and list_models.length > 0 {
+                            if not llmModel and list_len(list_models) > 0 {
                                 setLlmModel(list_models[0]["id"]);
                             }
                         }
@@ -108,6 +160,41 @@ def:pub OptimizeModal(props: any) -> Any {
         [isOpen]
     );
 
+    useEffect(
+        lambda -> None { if isOpen {
+            if opName or routeOpName {
+                setSelectedOp(opName or routeOpName or "");
+            }
+        }},
+        [isOpen, opName, routeOpName]
+    );
+
+    useEffect(
+        lambda -> None { if isOpen and resolvedProjectName {
+            async def fetchOps -> None {
+                setLoadingOps(True);
+                try {
+                    resp = await __jacSpawn(
+                        "GetProjectOps", "", {"projectName": resolvedProjectName}
+                    );
+                    data = resp.reports[0] if resp and resp.reports else {};
+                    op_list = to_list(data["ops"] if data and "ops" in data else []);
+                    setOps(op_list);
+                    if (not selectedOp) and list_len(op_list) > 0 {
+                        setSelectedOp(op_list[0]["name"]);
+                    }
+                } except Exception as e {
+                    console.error("Error fetching operators:", e);
+                    setOps([]);
+                } finally {
+                    setLoadingOps(False);
+                }
+            }
+            fetchOps();
+        }},
+        [isOpen, resolvedProjectName]
+    );
+
     provider_option_nodes = [];
     for p in provider_options {
         provider_option_nodes.push(
@@ -118,22 +205,26 @@ def:pub OptimizeModal(props: any) -> Any {
     }
 
     async def handleOptimize -> None {
-        if not hasTree {
+        if not hasTree and selectedOp == (opName or routeOpName or "") {
             alert(
                 "No optimization tree yet for this operator. Generate a new root first."
             );
             return;
         }
-        if not projectName or not opName {
-            alert("Missing project or operator.");
+        if not resolvedProjectName {
+            alert("Missing project.");
+            return;
+        }
+        if not selectedOp {
+            alert("Select an operator first.");
             return;
         }
 
         setIsWorking(True);
         try {
             payload = {
-                "projectName": projectName,
-                "ops": [opName],
+                "projectName": resolvedProjectName,
+                "ops": [selectedOp],
                 "iterations": int(iterations),
                 "patience": int(patience),
                 "minImproveMs": 0.0,
@@ -151,7 +242,7 @@ def:pub OptimizeModal(props: any) -> Any {
                 payload["llm_provider"] = llmProvider;
             }
 
-            resp = await __jacSpawn("StartOptimizeAdvanced", "", payload);
+            resp = await __jacSpawn("StartOptimize", "", payload);
             data = resp.reports[0] if resp and resp.reports else {};
             if data and "success" in data and not data["success"] {
                 err = data["error"]
@@ -187,6 +278,54 @@ def:pub OptimizeModal(props: any) -> Any {
                         <label
                             className="text-sm font-medium text-zinc-300 flex items-center gap-2"
                         >
+                            <ZapIcon className="w-4 h-4 text-amber-400"/>
+                            Operator
+                        </label>
+                        {<div
+                            className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-200 font-mono"
+                        >
+                            {selectedOp or "(missing operator context)"}
+                        </div>
+                        if opLocked
+                        else <div className="relative">
+                            <select
+                                value={selectedOp}
+                                onChange={lambda e: any  -> None { setSelectedOp(
+                                    e.target.value
+                                );}}
+                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 appearance-none"
+                                disabled={loadingOps}
+                            >
+                                {<option value="">
+                                    {"Loading operators..."
+                                    if loadingOps
+                                    else "Select operator"}
+                                </option>
+                                if not selectedOp
+                                else <span/>}{ops.map(
+                                    lambda item: dict  -> Any { return
+                                        <option
+                                            key={item["name"]}
+                                            value={item["name"]}
+                                        >
+                                            {item["name"]}
+                                        </option>; }
+                                )}
+                            </select>
+                            <ChevronDownIcon
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 w-4 h-4 pointer-events-none"
+                            />
+                        </div>}
+                        <p className="text-[10px] text-zinc-500">
+                            {resolvedProjectName
+                            if resolvedProjectName
+                            else "Project missing from route context."}
+                        </p>
+                    </div>
+                    <div className="space-y-2">
+                        <label
+                            className="text-sm font-medium text-zinc-300 flex items-center gap-2"
+                        >
                             <BrainIcon className="w-4 h-4 text-purple-400"/>
                             LLM Model
                         </label>
@@ -209,7 +348,7 @@ def:pub OptimizeModal(props: any) -> Any {
                         </p>
                         if loadingModels
                         else <p className="text-[10px] text-zinc-500">
-                            Select model from{" " + models.length} available
+                            Select model from{" " + str(list_len(models))} available
                         </p>}
                     </div>
                     <div className="grid grid-cols-2 gap-4">

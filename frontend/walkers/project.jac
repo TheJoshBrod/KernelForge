@@ -261,6 +261,10 @@ def _reconcile_legacy_profile_state(
 
     if path.exists(bench_path) {
         profile["status"] = "completed";
+        profile["control"] = "idle";
+        profile["active"] = False;
+        profile["phase"] = "done";
+        profile["progress_percent"] = 1.0;
         profile["message"] = "Recovered from legacy prepare flow";
         profile["recovery_started"] = False;
     } else {
@@ -268,17 +272,24 @@ def _reconcile_legacy_profile_state(
             cmd = [
                 sys.executable,
                 "-m",
-                "src.cli.profile_then_benchmark",
+                "src.optimizer.benchmarking.pipeline",
                 "--project",
                 project_name
             ];
             result = _start_job(project_name, "profile", cmd, "profile.log");
             if result and "success" in result and result["success"] {
                 profile["status"] = "running";
+                profile["control"] = "running";
+                profile["active"] = True;
+                profile["phase"] = "profiling";
+                profile["progress_percent"] = 0.35;
                 profile["message"] = "Recovering legacy profile pipeline";
                 profile["recovery_started"] = True;
             } else {
                 profile["status"] = "error";
+                profile["control"] = "idle";
+                profile["active"] = False;
+                profile["phase"] = "error";
                 profile["message"] = "Failed to recover legacy profile pipeline";
             }
         } else {
@@ -299,7 +310,32 @@ def _reconcile_legacy_profile_state(
             if profile["status"] == "queued" {
                 profile["status"] = "running";
             }
+            profile["control"] = "running";
+            profile["active"] = True;
+            profile["phase"] = "profiling";
             profile["message"] = err_msg;
+        }
+    }
+
+    profile_status = (
+        str(profile["status"]).strip().lower()
+        if "status" in profile and profile["status"]
+        else ""
+    );
+    if (
+        profile_status == "completed"
+        or profile_status == "success"
+        or profile_status == "cancelled"
+        or profile_status == "error"
+    ) {
+        profile["control"] = "idle";
+        profile["active"] = False;
+        if not ("phase" in profile) or not profile["phase"] {
+            profile["phase"] = (
+                "done"
+                if profile_status == "completed" or profile_status == "success"
+                else "error"
+            );
         }
     }
 
@@ -314,10 +350,134 @@ def _reconcile_legacy_profile_state(
     return state;
 }
 
+def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dict {
+    if not state {
+        return {};
+    }
+    changed = False;
+    for job_key in state {
+        job = state[job_key];
+        if not job or not ("status" in job) {
+            continue;
+        }
+        status_raw = str(job["status"]).strip().lower() if job["status"] else "";
+        control_raw = (
+            str(job["control"]).strip().lower()
+            if "control" in job and job["control"]
+            else ""
+        );
+        pid_val = job["pid"] if "pid" in job else None;
+        has_live_pid = _pid_is_alive(pid_val);
+
+        if (
+            status_raw == "running" or status_raw == "queued" or status_raw == "paused"
+        )
+        and has_live_pid {
+            if _refresh_running_job_state(project_name, job_key, job) {
+                changed = True;
+            }
+            continue;
+        }
+
+        if (
+            status_raw == "completed"
+            or status_raw == "success"
+            or status_raw == "error"
+            or status_raw == "cancelled"
+        )
+        and (control_raw == "running" or ("active" in job and job["active"])) {
+            job["control"] = "idle";
+            job["active"] = False;
+            if not ("phase" in job) or not job["phase"] {
+                job["phase"] = (
+                    "done"
+                    if status_raw == "completed" or status_raw == "success"
+                    else "error"
+                );
+            }
+            if (status_raw == "completed" or status_raw == "success")
+            and (not ("progress_percent" in job) or job["progress_percent"] is None) {
+                job["progress_percent"] = 1.0;
+            }
+            changed = True;
+            continue;
+        }
+
+        if (
+            status_raw == "running" or status_raw == "queued" or status_raw == "paused"
+        )
+        and not has_live_pid {
+            if job_key == "profile" and _has_profile_outputs(project_name) {
+                job["status"] = "completed";
+                job["control"] = "idle";
+                job["active"] = False;
+                job["phase"] = "done";
+                job["progress_percent"] = 1.0;
+                if not ("message" in job) or not job["message"] {
+                    job["message"] = "Profile and baseline benchmark already available.";
+                }
+            } elif (job_key == "generate" or job_key == "generate_adv")
+            and (
+                _has_generate_outputs(project_name)
+                or _has_benchmark_outputs(project_name)
+            ) {
+                job["status"] = "completed";
+                job["control"] = "idle";
+                job["active"] = False;
+                job["phase"] = "done";
+                job["progress_percent"] = 1.0;
+                if _has_benchmark_outputs(project_name) {
+                    job["message"] = "Kernel generation and benchmark completed.";
+                } elif not ("message" in job) or not job["message"] {
+                    job["message"] = "Kernel generation completed.";
+                }
+            } elif (job_key == "optimize" or job_key == "optimize_adv")
+            and _has_optimize_outputs(project_name) {
+                job["status"] = "completed";
+                job["control"] = "idle";
+                job["active"] = False;
+                job["phase"] = "done";
+                job["progress_percent"] = 1.0;
+                if not ("message" in job) or not job["message"] {
+                    job["message"] = "Kernel optimization completed.";
+                }
+            } elif job_key == "benchmark" and _has_benchmark_outputs(project_name) {
+                job["status"] = "completed";
+                job["control"] = "idle";
+                job["active"] = False;
+                job["phase"] = "done";
+                job["progress_percent"] = 1.0;
+                if not ("message" in job) or not job["message"] {
+                    job["message"] = "Benchmark completed.";
+                }
+            } else {
+                job["status"] = "error";
+                job["control"] = "idle";
+                job["active"] = False;
+                job["phase"] = "error";
+                job["message"] = "Recovered stale job state (process not running).";
+            }
+            changed = True;
+        }
+    }
+
+    if changed {
+        try {
+            with open(state_path, "w") as f {
+                dump(state, f, indent=2);
+            }
+        } except Exception as e {
+            print(f"Failed to write normalized state.json: {e}");
+        }
+    }
+    return state;
+}
+
 def _read_state(project_name: str) -> dict {
     state_path = path.join(_project_dir(project_name), "state.json");
     state = _read_state_raw(state_path);
-    return _reconcile_legacy_profile_state(project_name, state, state_path);
+    state = _reconcile_legacy_profile_state(project_name, state, state_path);
+    return _normalize_job_flags(project_name, state, state_path);
 }
 
 def _update_job_state(project_name: str, job_key: str, updates: dict) -> None {
@@ -333,29 +493,299 @@ def _update_job_state(project_name: str, job_key: str, updates: dict) -> None {
     }
 }
 
+def _pid_is_alive(pid_val: Any) -> bool {
+    if pid_val is None {
+        return False;
+    }
+    pid = 0;
+    try {
+        pid = int(pid_val);
+    } except Exception {
+        return False;
+    }
+    if pid <= 0 {
+        return False;
+    }
+    try {
+        os.kill(pid, 0);
+        return True;
+    } except Exception {
+        return False;
+    }
+}
+
+def _has_profile_outputs(project_name: str) -> bool {
+    project_dir = _project_dir(project_name);
+    bench_path = path.join(project_dir, "benchmarks", "op_benchmarks.json");
+    summary_path = path.join(project_dir, "io", "summary.json");
+    return path.exists(bench_path) and path.exists(summary_path);
+}
+
+def _has_generate_outputs(project_name: str) -> bool {
+    generated_root = path.join(
+        _project_dir(project_name), "kernels", "generated", "individual_op_kernels"
+    );
+    if not path.exists(generated_root) or not path.isdir(generated_root) {
+        return False;
+    }
+    for op_name in listdir(generated_root) {
+        op_dir = path.join(generated_root, op_name);
+        if not path.isdir(op_dir) {
+            continue;
+        }
+        if path.exists(path.join(op_dir, "success.cuda"))
+        or path.exists(path.join(op_dir, "success.triton"))
+        or path.exists(path.join(op_dir, "success.mps"))
+        or path.exists(path.join(op_dir, "success.cpu")) {
+            return True;
+        }
+    }
+    return False;
+}
+
+def _has_optimize_outputs(project_name: str) -> bool {
+    trees_dir = path.join(_project_dir(project_name), "trees");
+    if not path.exists(trees_dir) or not path.isdir(trees_dir) {
+        return False;
+    }
+    for op_name in listdir(trees_dir) {
+        db_path = path.join(trees_dir, op_name, "nodes.db");
+        if path.exists(db_path) {
+            return True;
+        }
+    }
+    return False;
+}
+
+def _has_benchmark_outputs(project_name: str) -> bool {
+    bench_path = path.join(
+        _project_dir(project_name), "benchmarks", "op_benchmarks.json"
+    );
+    return path.exists(bench_path);
+}
+
+def _read_log_excerpt(log_path: str, max_bytes: int = 131072) -> str {
+    if not log_path or not path.exists(log_path) {
+        return "";
+    }
+    try {
+        size = path.getsize(log_path);
+        with open(log_path, "rb") as f {
+            if size > max_bytes {
+                f.seek(size - max_bytes);
+            }
+            data = f.read();
+        }
+        return data.decode("utf-8", errors="ignore");
+    } except Exception {
+        return "";
+    }
+}
+
+def _refresh_running_job_state(project_name: str, job_key: str, job: dict) -> bool {
+    if not job {
+        return False;
+    }
+    log_path = str(job["log"]) if "log" in job and job["log"] else "";
+    log_text = _read_log_excerpt(log_path);
+    log_lower = log_text.lower() if log_text else "";
+
+    phase = "";
+    message = "";
+    progress = None;
+
+    if job_key == "profile" {
+        if "src.optimizer.benchmarking.benchmark_ops" in log_text {
+            phase = "benchmarking";
+            message = "Profiling complete. Running baseline benchmark.";
+            progress = 0.8;
+        } elif "profiling" in log_lower or "profile" in log_lower {
+            phase = "profiling";
+            message = "Profiling operators.";
+            progress = 0.45;
+        } elif "prepar" in log_lower {
+            phase = "preparing";
+            message = "Preparing profiling assets.";
+            progress = 0.15;
+        } else {
+            phase = "profiling";
+            message = "Profiling and baseline benchmarking in progress.";
+            progress = 0.2;
+        }
+    } elif job_key == "generate" or job_key == "generate_adv" {
+        if "src.optimizer.benchmarking.benchmark_ops" in log_text {
+            phase = "benchmarking";
+            message = "Generation complete. Benchmarking kernels.";
+            progress = 0.9;
+        } elif "src.optimizer.pipeline" in log_text {
+            phase = "optimizing";
+            message = "Generation complete. Optimizing kernels.";
+            progress = 0.65;
+        } elif "src.generator.main" in log_text {
+            phase = "generating";
+            message = "Generating kernels.";
+            progress = 0.35;
+        } else {
+            phase = "generating";
+            message = "Queued for kernel generation.";
+            progress = 0.1;
+        }
+    } elif job_key == "optimize" or job_key == "optimize_adv" {
+        if "src.optimizer.benchmarking.benchmark_ops" in log_text {
+            phase = "benchmarking";
+            message = "Optimization complete. Benchmarking kernels.";
+            progress = 0.9;
+        } elif "src.optimizer.pipeline" in log_text {
+            phase = "optimizing";
+            message = "Optimizing kernels.";
+            progress = 0.6;
+        } else {
+            phase = "optimizing";
+            message = "Queued for optimization.";
+            progress = 0.1;
+        }
+    } elif job_key == "benchmark" {
+        phase = "benchmarking";
+        message = "Benchmarking kernels.";
+        progress = 0.5;
+    } else {
+        return False;
+    }
+
+    changed = False;
+    if phase and ((not ("phase" in job)) or job["phase"] != phase) {
+        job["phase"] = phase;
+        changed = True;
+    }
+    if message and ((not ("message" in job)) or job["message"] != message) {
+        job["message"] = message;
+        changed = True;
+    }
+    if progress is not None {
+        current_progress = None;
+        if "progress_percent" in job and job["progress_percent"] is not None {
+            try {
+                current_progress = float(job["progress_percent"]);
+            } except Exception {
+                current_progress = None;
+            }
+        }
+        if current_progress is None or progress > current_progress {
+            job["progress_percent"] = progress;
+            changed = True;
+        }
+    }
+    if changed {
+        job["updated_at"] = datetime.now().isoformat();
+    }
+    return bool(changed);
+}
+
 def _start_job(project_name: str, job_key: str, cmd: list, log_name: str) -> dict {
+    state = _read_state(project_name);
+    current = state[job_key] if state and job_key in state else {};
+    current_status = (
+        str(current["status"]).strip().lower()
+        if current and "status" in current and current["status"]
+        else ""
+    );
+    current_pid = current["pid"] if current and "pid" in current else None;
+
+    if (
+        current_status == "running"
+        or current_status == "queued"
+        or current_status == "paused"
+    )
+    and _pid_is_alive(current_pid) {
+        return {
+            "success": True,
+            "skipped": True,
+            "reason": "in_progress",
+            "message": f"{job_key} job already in progress.",
+            "pid": current_pid
+        };
+    }
+
+    if job_key == "profile" and _has_profile_outputs(project_name) {
+        updates = {
+            "status": "completed",
+            "control": "idle",
+            "active": False,
+            "phase": "done",
+            "progress_percent": 1.0,
+            "message": "Profile and baseline benchmark already available."
+        };
+        if current and "run_id" in current and current["run_id"] {
+            updates["run_id"] = current["run_id"];
+        }
+        _update_job_state(project_name, "profile", updates);
+        return {
+            "success": True,
+            "skipped": True,
+            "reason": "already_profiled",
+            "message": "Profile and baseline benchmark already available."
+        };
+    }
+
     project_dir = _project_dir(project_name);
     logs_dir = path.join(project_dir, "logs");
     _ensure_dir(logs_dir);
-    state_path = path.join(project_dir, "state.json");
     log_path = path.join(logs_dir, log_name);
+    run_id = f"{job_key}:{int(datetime.now().timestamp() * 1000)}";
+    initial_phase = "running";
+    initial_message = "Job started";
+    initial_progress = 0.0;
+    if job_key == "profile" {
+        initial_phase = "profiling";
+        initial_message = "Profiling and baseline benchmarking started.";
+        initial_progress = 0.1;
+    } elif job_key == "generate" or job_key == "generate_adv" {
+        initial_phase = "generating";
+        initial_message = "Kernel generation started.";
+        initial_progress = 0.05;
+    } elif job_key == "optimize" or job_key == "optimize_adv" {
+        initial_phase = "optimizing";
+        initial_message = "Kernel optimization started.";
+        initial_progress = 0.05;
+    } elif job_key == "benchmark" {
+        initial_phase = "benchmarking";
+        initial_message = "Kernel benchmark started.";
+        initial_progress = 0.05;
+    }
 
-    full_cmd = [
-        sys.executable,
-        "-m",
-        "src.cli.run_job",
-        "--state-path",
-        state_path,
-        "--job-key",
+    _update_job_state(
+        project_name,
         job_key,
-        "--log-path",
-        log_path,
-        "--cwd",
-        repo_root,
-        "--"
-    ] + cmd;
+        {
+            "status": "running",
+            "control": "running",
+            "active": True,
+            "phase": initial_phase,
+            "message": initial_message,
+            "progress_percent": initial_progress,
+            "started_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "finished_at": None,
+            "log": log_path,
+            "command": cmd,
+            "run_id": run_id
+        }
+    );
 
-    proc = subprocess.Popen(full_cmd, cwd=repo_root);
+    with open(log_path, "a") as f {
+        f.write(f"[job] Started at {datetime.now().isoformat()}\n");
+        f.write(f"[job] Command: {cmd}\n");
+    }
+    log_file = open(log_path, "a");
+    proc = subprocess.Popen(
+        cmd,
+        cwd=repo_root,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        env=os.environ.copy()
+    );
+    log_file.close();
+    _update_job_state(project_name, job_key, {"pid": proc.pid});
     return {"success": True, "pid": proc.pid, "log": log_path};
 }
 
@@ -365,29 +795,13 @@ def _start_job_container(
     project_dir = _project_dir(project_name);
     logs_dir = path.join(project_dir, "logs");
     _ensure_dir(logs_dir);
-    state_path = path.join(project_dir, "state.json");
     log_path = path.join(logs_dir, log_name);
-
-    full_cmd = [
-        sys.executable,
-        "-m",
-        "src.cli.run_job",
-        "--state-path",
-        state_path,
-        "--job-key",
-        job_key,
-        "--log-path",
-        log_path,
-        "--cwd",
-        repo_root,
-        "--use-container",
-        "--container-image",
-        image,
-        "--"
-    ] + cmd;
-
-    proc = subprocess.Popen(full_cmd, cwd=repo_root);
-    return {"success": True, "pid": proc.pid, "log": log_path};
+    with open(log_path, "a") as f {
+        f.write(
+            "[job] Container mode requested" + (f" ({image})" if image else "") + " - executing in host runtime.\n"
+        );
+    }
+    return _start_job(project_name, job_key, cmd, log_name);
 }
 
 def _find_optimized_dir(project_name: str) -> str {
@@ -742,7 +1156,8 @@ walker:pub CreateProject {
             profile_cmd = [
                 sys.executable,
                 "-m",
-                "src.cli.profile_then_benchmark",
+                "src.optimizer.workflow",
+                "profile",
                 "--project",
                 self.projectName
             ];
@@ -920,7 +1335,8 @@ walker:pub StartProfile {
         cmd = [
             sys.executable,
             "-m",
-            "src.cli.profile_then_benchmark",
+            "src.optimizer.workflow",
+            "profile",
             "--project",
             self.projectName
         ];
@@ -930,522 +1346,142 @@ walker:pub StartProfile {
 }
 
 walker:pub StartGenerate {
-    has projectName: str;
+    has projectName: str,
+        ops: list = [],
+        optimize: bool = False,
+        benchmark: bool = False,
+        iterations: int = 0,
+        genAttempts: int = 8,
+        generator_config: dict = {};
 
     can run with entry {
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
         out_dir = path.join(_project_dir(self.projectName), "kernels", "generated");
         _ensure_dir(out_dir);
+        target_device = "cuda";
+        if self.generator_config and "target_device" in self.generator_config {
+            target_device = str(self.generator_config["target_device"]).lower();
+        }
+        if target_device == "gpu"
+        or target_device == "cuda"
+        or target_device == "rocm"
+        or target_device == "amd" {
+            target_device = "cuda";
+        } elif target_device == "mps"
+        or target_device == "metal"
+        or target_device == "apple" {
+            target_device = "mps";
+        } elif target_device == "xpu" or target_device == "intel" {
+            target_device = "cpu";
+        } elif target_device != "cpu" {
+            target_device = "cpu";
+        }
+        ops_list = [];
+        for o in self.ops {
+            if o {
+                ops_list.append(str(o));
+            }
+        }
+        if len(ops_list) == 0 and path.exists(io_dir) {
+            for op_name in listdir(io_dir) {
+                op_dir = path.join(io_dir, op_name);
+                if path.isdir(op_dir) {
+                    ops_list.append(str(op_name));
+                }
+            }
+        }
         cmd = [
             sys.executable,
             "-m",
-            "src.generator.main",
-            "--io-dir",
-            io_dir,
-            "--out-dir",
-            out_dir
+            "src.optimizer.workflow",
+            "generate",
+            "--project",
+            self.projectName,
+            "--ops",
+            ",".join(ops_list),
+            "--target-device",
+            target_device
         ];
-        result = _start_job(self.projectName, "generate", cmd, "generate.log");
+        if self.optimize {
+            cmd.append("--optimize");
+        }
+        if self.benchmark {
+            cmd.append("--benchmark");
+        }
+        if self.iterations > 0 {
+            cmd.append("--iterations");
+            cmd.append(str(self.iterations));
+        }
+        if self.genAttempts > 0 {
+            cmd.append("--gen-attempts");
+            cmd.append(str(self.genAttempts));
+        } elif self.generator_config and "max_attempts" in self.generator_config {
+            cmd.append("--gen-attempts");
+            cmd.append(str(self.generator_config["max_attempts"]));
+        }
+        result = _start_job(self.projectName, "generate_adv", cmd, "generate_adv.log");
         report result;
     }
 }
 
-walker:pub StartGenerateAdvanced {
-    has projectName: str,
-        ops: list = [],
-        optimize: bool = True,
-        benchmark: bool = True,
-        iterations: int = 0,
-        patience: int = 0,
-        genAttempts: int = 3,
-        minImproveMs: float = 0.0,
-        minSpeedupPct: float = 5.0,
-        image: str = "cgins-codex:latest",
-        llm_provider: str = "",
-        llm_model: str = "",
-        generator_config: dict = {},
-        optimizer_config: dict = {};
-
-    can run with entry {
-        try {
-            cfg = {};
-            try {
-                with open(config_path, "r") as f {
-                    cfg = load(f);
-                }
-            } except Exception as e {
-                print(f"Error loading config: {e}");
-                cfg = config_store;
-            }
-
-            project_cfg_path = path.join(_project_dir(self.projectName), "config.json");
-            project_cfg = {};
-            try {
-                if path.exists(project_cfg_path) {
-                    with open(project_cfg_path, "r") as f {
-                        project_cfg = load(f);
-                    }
-                }
-            } except Exception as e {
-                print(f"Failed to load project config: {e}");
-                project_cfg = {};
-            }
-
-            llm_cfg = project_cfg["llm"]
-            if project_cfg and "llm" in project_cfg
-            else {};
-            if self.llm_provider {
-                llm_cfg["provider"] = str(self.llm_provider).strip().lower();
-            }
-            if self.llm_model {
-                llm_cfg["model"] = str(self.llm_model).strip();
-            }
-            if llm_cfg {
-                project_cfg["llm"] = llm_cfg;
-            }
-            os.environ["CGINS_PROJECT_CONFIG_PATH"] = project_cfg_path;
-            _apply_llm_env_from_config(
-                cfg,
-                project_cfg,
-                self.llm_provider if self.llm_provider else "",
-                self.llm_model if self.llm_model else ""
-            );
-
-            # Extract generator config overrides
-            target_device = "cuda";
-            if self.generator_config and "target_device" in self.generator_config {
-                target_device = self.generator_config["target_device"];
-            }
-
-            target_device = target_device.lower();
-            if target_device == "gpu"
-            or target_device == "cuda"
-            or target_device == "rocm"
-            or target_device == "amd" {
-                target_device = "cuda";
-            } elif target_device == "mps"
-            or target_device == "metal"
-            or target_device == "apple" {
-                target_device = "mps";
-            } elif target_device == "xpu" or target_device == "intel" {
-                target_device = "cpu";
-            } elif target_device != "cpu" {
-                target_device = "cpu";
-            }
-            os.environ["CGINS_TARGET_DEVICE"] = target_device;
-
-            # Persist project config overrides if needed
-            try {
-                # Update generator config
-                gen_cfg = project_cfg["generator"]
-                if project_cfg and "generator" in project_cfg
-                else {};
-                gen_cfg["target_device"] = target_device;
-
-                if self.generator_config {
-                    # Apply other generator overrides
-                    if "max_attempts" in self.generator_config {
-                        gen_cfg["max_attempts"] = self.generator_config["max_attempts"];
-                    }
-                    if "use_baseline_kernels" in self.generator_config {
-                        gen_cfg["use_baseline_kernels"] = self.generator_config[
-                            "use_baseline_kernels"
-                        ];
-                    }
-                    if "use_baseline_as_template" in self.generator_config {
-                        gen_cfg["use_baseline_as_template"] = self.generator_config[
-                            "use_baseline_as_template"
-                        ];
-                    }
-                    if "extra_validation_cases" in self.generator_config {
-                        gen_cfg["extra_validation_cases"] = self.generator_config[
-                            "extra_validation_cases"
-                        ];
-                    }
-                }
-                project_cfg["generator"] = gen_cfg;
-
-                with open(project_cfg_path, "w") as f {
-                    dump(project_cfg, f, indent=2);
-                }
-            } except Exception as e {
-                print(f"Failed to persist config overrides: {e}");
-            }
-
-            ops_list = [];
-            ops_total = 0;
-            for o in self.ops {
-                if o {
-                    ops_list.append(str(o));
-                    ops_total = ops_total + 1;
-                }
-            }
-            if ops_total == 0 {
-                _update_job_state(
-                    self.projectName,
-                    "generate_adv",
-                    {"status": "error", "message": "No ops selected or discovered."}
-                );
-                report {"success": False, "error": "No ops selected or discovered."};
-                disengage;
-            }
-            io_root = path.join(_project_dir(self.projectName), "io", "individual_ops");
-            missing_inputs = [];
-            missing_total = 0;
-            for op_name in ops_list {
-                op_dir = path.join(io_root, str(op_name));
-                has_entry = False;
-                if path.exists(op_dir) {
-                    for fname in listdir(op_dir) {
-                        if fname.endswith(".pt") {
-                            has_entry = True;
-                            break;
-                        }
-                    }
-                }
-                if not has_entry {
-                    missing_inputs.append(op_name);
-                    missing_total = missing_total + 1;
-                }
-            }
-            if missing_total > 0 {
-                error_msg = (
-                    f"Missing input entries for {missing_total} ops. " + "Run Profile first."
-                );
-                _update_job_state(
-                    self.projectName,
-                    "generate_adv",
-                    {"status": "error", "message": error_msg}
-                );
-                report {"success": False, "error": error_msg};
-                disengage;
-            }
-
-            now_ts = datetime.now().timestamp();
-            _update_job_state(
-                self.projectName,
-                "generate_adv",
-                {
-                    "status": "running",
-                    "started_at": now_ts,
-                    "message": f"Queued advanced generation ({target_device})",
-                    "progress": {
-                        "current": 0,
-                        "total": ops_total,
-                        "percent": 0.0,
-                        "updated_at": now_ts
-                    }
-                }
-            );
-
-            ops_rel = path.join(
-                "kernels", "projects", self.projectName, "ops_selected.json"
-            );
-            ops_path = path.join(repo_root, ops_rel);
-            try {
-                with open(ops_path, "w") as f {
-                    dump(ops_list, f, indent=2);
-                }
-            } except Exception as e {
-                print(f"Failed to write ops list: {e}");
-            }
-
-            cmd = [
-                sys.executable,
-                "-m",
-                "src.cli.codex_advanced_generate",
-                "--project",
-                self.projectName,
-                "--ops-file",
-                ops_rel
-            ];
-            if self.optimize {
-                cmd.append("--optimize");
-            }
-            if self.benchmark {
-                cmd.append("--benchmark");
-            }
-            if self.iterations > 0 {
-                cmd.append("--opt-iterations");
-                cmd.append(str(self.iterations));
-            }
-            if self.patience > 0 {
-                cmd.append("--opt-patience");
-                cmd.append(str(self.patience));
-            }
-            if self.genAttempts > 0 {
-                cmd.append("--generate-attempts");
-                cmd.append(str(self.genAttempts));
-            }
-            if self.generator_config and "max_attempts" in self.generator_config {
-                cmd.append("--generate-attempts");
-                cmd.append(str(self.generator_config["max_attempts"]));
-            }
-
-            if self.llm_model {
-                cmd.append("--codex-model");
-                cmd.append(self.llm_model);
-            }
-            cmd.append("--opt-min-improve-ms");
-            cmd.append(str(self.minImproveMs));
-            cmd.append("--opt-min-speedup-pct");
-            cmd.append(str(self.minSpeedupPct));
-            result = _start_job_container(
-                self.projectName, "generate_adv", cmd, "generate_adv.log", self.image
-            );
-            report result;
-        } except Exception as e {
-            print(f"StartGenerateAdvanced failed: {e}");
-            _update_job_state(
-                self.projectName,
-                "generate_adv",
-                {"status": "error", "message": f"StartGenerateAdvanced failed: {e}"}
-            );
-            report {"success": False, "error": "StartGenerateAdvanced failed."};
-        }
-    }
-}
-
-walker:pub StartOptimizeAdvanced {
+walker:pub StartOptimize {
     has projectName: str,
         ops: list = [],
         iterations: int = 3,
-        patience: int = 2,
-        minImproveMs: float = 0.0,
-        minSpeedupPct: float = 5.0,
-        image: str = "cgins-codex:latest",
-        llm_provider: str = "",
-        llm_model: str = "",
-        optimizer_config: dict = {};
-
-    can run with entry {
-        try {
-            cfg = {};
-            try {
-                with open(config_path, "r") as f {
-                    cfg = load(f);
-                }
-            } except Exception as e {
-                print(f"Error loading config: {e}");
-                cfg = config_store;
-            }
-            project_cfg_path = path.join(_project_dir(self.projectName), "config.json");
-            project_cfg = {};
-            try {
-                if path.exists(project_cfg_path) {
-                    with open(project_cfg_path, "r") as f {
-                        project_cfg = load(f);
-                    }
-                }
-            } except Exception as e {
-                print(f"Failed to load project config: {e}");
-                project_cfg = {};
-            }
-
-            llm_cfg = project_cfg["llm"]
-            if project_cfg and "llm" in project_cfg
-            else {};
-            llm_changed = False;
-            if self.llm_provider {
-                llm_cfg["provider"] = str(self.llm_provider).strip().lower();
-                llm_changed = True;
-            }
-            if self.llm_model {
-                llm_cfg["model"] = str(self.llm_model).strip();
-                llm_changed = True;
-            }
-            if llm_cfg {
-                project_cfg["llm"] = llm_cfg;
-            }
-            if llm_changed {
-                try {
-                    with open(project_cfg_path, "w") as f {
-                        dump(project_cfg, f, indent=2);
-                    }
-                } except Exception as e {
-                    print(f"Failed to persist project LLM config: {e}");
-                }
-            }
-            os.environ["CGINS_PROJECT_CONFIG_PATH"] = project_cfg_path;
-            _apply_llm_env_from_config(
-                cfg,
-                project_cfg,
-                self.llm_provider if self.llm_provider else "",
-                self.llm_model if self.llm_model else ""
-            );
-
-            # Load target device from project config
-            target_device = "cuda";
-            if project_cfg
-            and "generator" in project_cfg
-            and "target_device" in project_cfg["generator"] {
-                target_device = project_cfg["generator"]["target_device"];
-            }
-            target_device = target_device.lower();
-            if target_device == "gpu"
-            or target_device == "cuda"
-            or target_device == "rocm"
-            or target_device == "amd" {
-                target_device = "cuda";
-            } elif target_device == "mps"
-            or target_device == "metal"
-            or target_device == "apple" {
-                target_device = "mps";
-            } elif target_device == "xpu" or target_device == "intel" {
-                target_device = "cpu";
-            } elif target_device != "cpu" {
-                target_device = "cpu";
-            }
-            os.environ["CGINS_TARGET_DEVICE"] = target_device;
-
-            ops_list = [];
-            ops_total = 0;
-            for o in self.ops {
-                if o {
-                    ops_list.append(str(o));
-                    ops_total = ops_total + 1;
-                }
-            }
-            if ops_total == 0 {
-                _update_job_state(
-                    self.projectName,
-                    "optimize_adv",
-                    {"status": "error", "message": "No ops selected or discovered."}
-                );
-                report {"success": False, "error": "No ops selected or discovered."};
-                disengage;
-            }
-            io_root = path.join(_project_dir(self.projectName), "io", "individual_ops");
-            missing_inputs = [];
-            missing_total = 0;
-            for op_name in ops_list {
-                op_dir = path.join(io_root, str(op_name));
-                has_entry = False;
-                if path.exists(op_dir) {
-                    for fname in listdir(op_dir) {
-                        if fname.endswith(".pt") {
-                            has_entry = True;
-                            break;
-                        }
-                    }
-                }
-                if not has_entry {
-                    missing_inputs.append(op_name);
-                    missing_total = missing_total + 1;
-                }
-            }
-            if missing_total > 0 {
-                error_msg = (
-                    f"Missing input entries for {missing_total} ops. " + "Run Profile first."
-                );
-                _update_job_state(
-                    self.projectName,
-                    "optimize_adv",
-                    {"status": "error", "message": error_msg}
-                );
-                report {"success": False, "error": error_msg};
-                disengage;
-            }
-
-            now_ts = datetime.now().timestamp();
-            _update_job_state(
-                self.projectName,
-                "optimize_adv",
-                {
-                    "status": "running",
-                    "started_at": now_ts,
-                    "message": f"Queued advanced optimization ({target_device})",
-                    "progress": {
-                        "current": 0,
-                        "total": ops_total,
-                        "percent": 0.0,
-                        "updated_at": now_ts
-                    }
-                }
-            );
-
-            ops_rel = path.join(
-                "kernels", "projects", self.projectName, "ops_selected.json"
-            );
-            ops_path = path.join(repo_root, ops_rel);
-            try {
-                with open(ops_path, "w") as f {
-                    dump(ops_list, f, indent=2);
-                }
-            } except Exception as e {
-                print(f"Failed to write ops list: {e}");
-            }
-
-            cmd = [
-                sys.executable,
-                "-m",
-                "src.cli.codex_advanced_generate",
-                "--project",
-                self.projectName,
-                "--ops-file",
-                ops_rel,
-                "--optimize-only",
-                "--optimize"
-            ];
-            if self.iterations > 0 {
-                cmd.append("--opt-iterations");
-                cmd.append(str(self.iterations));
-            }
-            if self.patience > 0 {
-                cmd.append("--opt-patience");
-                cmd.append(str(self.patience));
-            }
-
-            if self.llm_model {
-                cmd.append("--codex-model");
-                cmd.append(self.llm_model);
-            }
-            cmd.append("--opt-min-improve-ms");
-            cmd.append(str(self.minImproveMs));
-            cmd.append("--opt-min-speedup-pct");
-            cmd.append(str(self.minSpeedupPct));
-            result = _start_job_container(
-                self.projectName, "optimize_adv", cmd, "optimize_adv.log", self.image
-            );
-            report result;
-        } except Exception as e {
-            print(f"StartOptimizeAdvanced failed: {e}");
-            _update_job_state(
-                self.projectName,
-                "optimize_adv",
-                {"status": "error", "message": f"StartOptimizeAdvanced failed: {e}"}
-            );
-            report {"success": False, "error": "StartOptimizeAdvanced failed."};
-        }
-    }
-}
-
-walker:pub StartOptimize {
-    has projectName: str;
+        benchmark: bool = False;
 
     can run with entry {
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
-        kernel_dir = path.join(
-            _project_dir(self.projectName),
-            "kernels",
-            "generated",
-            "individual_op_kernels"
-        );
-        if not path.exists(kernel_dir) {
-            kernel_dir = path.join(
-                repo_root, "kernels", "generated", "individual_op_kernels"
-            );
+        ops_list = [];
+        for o in self.ops {
+            if o {
+                ops_list.append(str(o));
+            }
+        }
+        if len(ops_list) == 0 and path.exists(io_dir) {
+            for op_name in listdir(io_dir) {
+                op_dir = path.join(io_dir, op_name);
+                if path.isdir(op_dir) {
+                    ops_list.append(str(op_name));
+                }
+            }
+        }
+        target_device = "cuda";
+        cfg_path = path.join(_project_dir(self.projectName), "config.json");
+        if path.exists(cfg_path) {
+            try {
+                with open(cfg_path, "r") as f {
+                    project_cfg = load(f);
+                }
+                if project_cfg
+                and "generator" in project_cfg
+                and "target_device" in project_cfg["generator"] {
+                    target_device = str(project_cfg["generator"]["target_device"]).lower();
+                }
+            } except Exception as e {
+                print(f"Failed reading config target_device: {e}");
+            }
         }
         cmd = [
             sys.executable,
             "-m",
-            "src.optimizer.optimize_ops",
-            io_dir,
+            "src.optimizer.workflow",
+            "optimize",
+            "--project",
             self.projectName,
-            "--kernel-dir",
-            kernel_dir
+            "--ops",
+            ",".join(ops_list),
+            "--target-device",
+            target_device
         ];
-        result = _start_job(self.projectName, "optimize", cmd, "optimize.log");
+        if self.iterations > 0 {
+            cmd.append("--iterations");
+            cmd.append(str(self.iterations));
+        }
+        if self.benchmark {
+            cmd.append("--benchmark");
+        }
+        result = _start_job(self.projectName, "optimize_adv", cmd, "optimize_adv.log");
         report result;
     }
 }
@@ -1457,7 +1493,7 @@ walker:pub StartBenchmark {
         cmd = [
             sys.executable,
             "-m",
-            "src.cli.benchmark_project_ops",
+            "src.optimizer.benchmarking.benchmark_ops",
             "--project",
             self.projectName
         ];

@@ -28,7 +28,18 @@ def main() -> int:
     state_path = project_dir / "state.json"
 
     try:
-        update_job_state(state_path, "profile", {"status": "running", "message": "Preparing assets"})
+        update_job_state(
+            state_path,
+            "profile",
+            {
+                "status": "running",
+                "control": "running",
+                "active": True,
+                "phase": "preparing",
+                "progress_percent": 0.05,
+                "message": "Preparing assets",
+            },
+        )
         prepare_uploaded_assets(
             project_dir,
             weights_b64_path=args.weights_b64_path,
@@ -36,7 +47,18 @@ def main() -> int:
             validation_name_path=args.validation_name_path,
         )
 
-        update_job_state(state_path, "profile", {"status": "running", "message": "Profiling operators"})
+        update_job_state(
+            state_path,
+            "profile",
+            {
+                "status": "running",
+                "control": "running",
+                "active": True,
+                "phase": "profiling",
+                "progress_percent": 0.35,
+                "message": "Profiling operators",
+            },
+        )
         profile_cmd = [
             sys.executable,
             "-m",
@@ -49,12 +71,30 @@ def main() -> int:
             update_job_state(
                 state_path,
                 "profile",
-                {"status": "error", "message": f"Profiling failed with exit code {profile_rc}"},
+                {
+                    "status": "error",
+                    "control": "idle",
+                    "active": False,
+                    "phase": "error",
+                    "progress_percent": 1.0,
+                    "message": f"Profiling failed with exit code {profile_rc}",
+                },
             )
             print(f"[benchmarking.pipeline] Profiling failed ({profile_rc}).")
             return profile_rc
 
-        update_job_state(state_path, "profile", {"status": "running", "message": "Benchmarking operators"})
+        update_job_state(
+            state_path,
+            "profile",
+            {
+                "status": "running",
+                "control": "running",
+                "active": True,
+                "phase": "benchmarking",
+                "progress_percent": 0.75,
+                "message": "Benchmarking operators",
+            },
+        )
         bench_cmd = [
             sys.executable,
             "-m",
@@ -67,13 +107,42 @@ def main() -> int:
             update_job_state(
                 state_path,
                 "profile",
-                {"status": "error", "message": f"Benchmark failed with exit code {bench_rc}"},
+                {
+                    "status": "error",
+                    "control": "idle",
+                    "active": False,
+                    "phase": "error",
+                    "progress_percent": 1.0,
+                    "message": f"Benchmark failed with exit code {bench_rc}",
+                },
             )
             print(f"[benchmarking.pipeline] Benchmark failed ({bench_rc}).")
             return bench_rc
-        update_job_state(state_path, "profile", {"status": "running", "message": "Finalizing results"})
+        update_job_state(
+            state_path,
+            "profile",
+            {
+                "status": "running",
+                "control": "running",
+                "active": True,
+                "phase": "finalizing",
+                "progress_percent": 0.95,
+                "message": "Finalizing results",
+            },
+        )
     except Exception as e:
-        update_job_state(state_path, "profile", {"status": "error", "message": f"Pipeline error: {e}"})
+        update_job_state(
+            state_path,
+            "profile",
+            {
+                "status": "error",
+                "control": "idle",
+                "active": False,
+                "phase": "error",
+                "progress_percent": 1.0,
+                "message": f"Pipeline error: {e}",
+            },
+        )
         print(f"[benchmarking.pipeline] Pipeline error: {e}")
         return 1
 

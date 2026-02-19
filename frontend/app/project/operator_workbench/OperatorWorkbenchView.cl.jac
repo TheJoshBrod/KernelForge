@@ -23,7 +23,7 @@ import from ....components.ui.Icons {
 }
 import from .NewKernel { NewKernel }
 
-def:pub OperatorWorkbenchView {
+def:pub OperatorWorkbenchView -> Any {
     has projectName: str,
         opName: str;
 
@@ -316,7 +316,7 @@ def:pub OperatorWorkbenchView {
                     onClick={lambda -> None { setSelectedNodeId(f"{n['id']}");}}
                 >
                     <div className="text-zinc-500 font-mono text-xs w-8 text-right">
-                        {"#" + idx}
+                        {"#" + str(idx)}
                     </div>
                     <div
                         className={"font-mono text-sm font-bold " + (

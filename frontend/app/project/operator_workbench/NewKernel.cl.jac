@@ -9,7 +9,7 @@ import from .menus.GenerateTrigger { GenerateTrigger }
 import from .menus.OptimizeModal { OptimizeModal }
 import from .menus.OptimizeTrigger { OptimizeTrigger }
 
-def:pub NewKernel {
+def:pub NewKernel -> Any {
     has projectName: str,
         opName: str,
         hasTree: bool = False;
@@ -33,9 +33,14 @@ def:pub NewKernel {
 
     menu_ref = useRef(None);
 
+    missingProject = False;
+    if not projectName {
+        missingProject = True;
+    }
+
     # Close menu on outside click
     useEffect(
-        lambda -> None { def handle_click_outside(event: any) {
+        lambda -> Any { def handle_click_outside(event: any) {
             if menu_ref.current and not menu_ref.current.contains(event.target) {
                 setIsOpen(False);
             }
@@ -48,25 +53,58 @@ def:pub NewKernel {
     on_complete = lambda data: anyNone  -> None { setIsOpen(False);};
 
     # Trigger Handlers
-    handle_upload_click = lambda -> None { setUploadModalOpen(True);setIsOpen(False);};
-    handle_generate_click = lambda -> None { setGenerateModalOpen(True);setIsOpen(
-        False
-    );};
-    handle_optimize_click = lambda -> None { setOptimizeModalOpen(True);setIsOpen(
-        False
-    );};
+    def handle_upload_click -> None {
+        if missingProject {
+            setIsOpen(False);
+            return;
+        }
+        setUploadModalOpen(True);
+        setIsOpen(False);
+    }
+
+    def handle_generate_click -> None {
+        if missingProject {
+            setIsOpen(False);
+            return;
+        }
+        setGenerateModalOpen(True);
+        setIsOpen(False);
+    }
+
+    def handle_optimize_click -> None {
+        if missingProject {
+            setIsOpen(False);
+            return;
+        }
+        setOptimizeModalOpen(True);
+        setIsOpen(False);
+    }
+
+    def toggle_menu -> None {
+        if missingProject {
+            return;
+        }
+        setIsOpen(not isOpen);
+    }
 
     return
         <div className="relative" ref={menu_ref}>
             <button
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg transition-all shadow-lg hover:shadow-indigo-500/20 flex items-center justify-center gap-2"
-                onClick={lambda -> None { setIsOpen(not isOpen);}}
+                className={"w-full text-white font-bold py-3 px-4 rounded-lg transition-all shadow-lg flex items-center justify-center gap-2 " + (
+                    "bg-zinc-700 cursor-not-allowed opacity-70"
+                    if missingProject
+                    else "bg-indigo-600 hover:bg-indigo-500 hover:shadow-indigo-500/20"
+                )}
+                onClick={toggle_menu}
+                disabled={missingProject}
             >
                 <CpuIcon className="w-5 h-5"/>
                 Create New Kernel Node
             </button>
             <div className="text-center mt-2 text-[10px] text-zinc-500">
-                Create a new starting point for optimization.
+                {"Project context missing. Reopen from project route."
+                if missingProject
+                else "Create a new starting point for optimization."}
             </div>
             {<div
                 className="absolute bottom-full left-0 w-full mb-2 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-20 flex flex-col"

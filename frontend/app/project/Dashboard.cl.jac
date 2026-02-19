@@ -27,7 +27,7 @@ import from recharts {
 }
 import from ...context.ConfigContext { useConfig }
 
-def:pub Dashboard {
+def:pub Dashboard -> Any {
     navigate = useNavigate();
     params = useParams();
     name = params.projectName;
@@ -87,6 +87,26 @@ def:pub Dashboard {
     speedData = speedData_state[0];
     setSpeedData = speedData_state[1];
 
+    forge_mode_state = useState("auto");
+    forgeMode = forge_mode_state[0];
+    setForgeMode = forge_mode_state[1];
+
+    focus_policy_state = useState("hottest");
+    focusPolicy = focus_policy_state[0];
+    setFocusPolicy = focus_policy_state[1];
+
+    forge_busy_state = useState(False);
+    forgeBusy = forge_busy_state[0];
+    setForgeBusy = forge_busy_state[1];
+
+    forge_error_state = useState("");
+    forgeError = forge_error_state[0];
+    setForgeError = forge_error_state[1];
+
+    forge_notice_state = useState("");
+    forgeNotice = forge_notice_state[0];
+    setForgeNotice = forge_notice_state[1];
+
     hasOptimized = False;
     for row in speedData {
         if row and "optimized" in row and row["optimized"] is not None {
@@ -113,6 +133,51 @@ def:pub Dashboard {
         return full;
     }
 
+    def format_tick_op(value: any) -> str {
+        return format_op_short(str(value));
+    }
+
+    def format_tick_ms(value: any) -> str {
+        return f"{value}ms";
+    }
+
+    def to_list(items: Any) -> list {
+        normalized = [];
+        if not items {
+            return normalized;
+        }
+        try {
+            if Array.isArray(items) {
+                return items;
+            }
+        } except Exception {
+        # no-op
+        }
+        try {
+            for item in items {
+                normalized.push(item);
+            }
+            if normalized.length > 0 {
+                return normalized;
+            }
+        } except Exception {
+        # no-op
+        }
+        try {
+            vals = Object.values(items);
+            if vals and vals.length >= 0 {
+                return vals;
+            }
+        } except Exception {
+        # no-op
+        }
+        return normalized;
+    }
+
+    def list_len(items: Any) -> int {
+        return to_list(items).length;
+    }
+
     def normalize_job_status(raw: str) -> str {
         status_text = (raw or "").toLowerCase();
         if status_text == "success" or status_text == "completed" {
@@ -127,6 +192,245 @@ def:pub Dashboard {
             return "running";
         }
         return status_text if status_text else "idle";
+    }
+
+    def is_job_active(job_data: dict) -> bool {
+        if not job_data {
+            return False;
+        }
+        if "active" in job_data {
+            return bool(job_data["active"]);
+        }
+        raw = (job_data["status"] or "").toLowerCase()
+        if "status" in job_data and job_data["status"]
+        else "";
+        return raw == "running" or raw == "queued" or raw == "paused";
+    }
+
+    def get_profile_poll_ms -> int {
+        profile_job = status["profile"] if status and "profile" in status else {};
+        gen_job = status["generate_adv"] if status and "generate_adv" in status else {};
+        opt_job = status["optimize_adv"] if status and "optimize_adv" in status else {};
+        bench_job = status["benchmark"] if status and "benchmark" in status else {};
+        if forgeBusy
+        or is_job_active(profile_job)
+        or is_job_active(gen_job)
+        or is_job_active(opt_job)
+        or is_job_active(bench_job) {
+            return 1500;
+        }
+        return 15000;
+    }
+
+    def pick_focus_op(policy: str = "hottest") -> str {
+        op_rows = to_list(ops);
+        if list_len(op_rows) == 0 {
+            return "";
+        }
+        if policy == "first" {
+            first = op_rows[0];
+            return str(first["name"])
+            if first and "name" in first and first["name"]
+            else "";
+        }
+
+        best_name = "";
+        best_score = -1.0;
+        for op in op_rows {
+            if not op or not ("name" in op) or not op["name"] {
+                continue;
+            }
+            score = 0.0;
+            if "total_time_ms" in op and op["total_time_ms"] is not None {
+                try {
+                    score = float(op["total_time_ms"]);
+                } except Exception {
+                    score = 0.0;
+                }
+            } elif "count" in op and op["count"] is not None {
+                try {
+                    score = float(op["count"]);
+                } except Exception {
+                    score = 0.0;
+                }
+            }
+            if score >= best_score {
+                best_score = score;
+                best_name = str(op["name"]);
+            }
+        }
+
+        if best_name {
+            return best_name;
+        }
+
+        fallback = op_rows[0];
+        return str(fallback["name"])
+        if fallback and "name" in fallback and fallback["name"]
+        else "";
+    }
+
+    def pick_focus_from_ops(op_list: list, policy: str = "hottest") -> str {
+        op_rows = to_list(op_list);
+        if list_len(op_rows) == 0 {
+            return "";
+        }
+        if policy == "first" {
+            first = op_rows[0];
+            return str(first["name"])
+            if first and "name" in first and first["name"]
+            else "";
+        }
+        best_name = "";
+        best_count = -1;
+        for op in op_rows {
+            if not op or not ("name" in op) or not op["name"] {
+                continue;
+            }
+            cnt = 0;
+            if "count" in op and op["count"] is not None {
+                try {
+                    cnt = int(op["count"]);
+                } except Exception {
+                    cnt = 0;
+                }
+            }
+            if cnt >= best_count {
+                best_count = cnt;
+                best_name = str(op["name"]);
+            }
+        }
+        if best_name {
+            return best_name;
+        }
+        fallback = op_rows[0];
+        return str(fallback["name"])
+        if fallback and "name" in fallback and fallback["name"]
+        else "";
+    }
+
+    def openWorkbench(opName: str = "") -> None {
+        if not name {
+            return;
+        }
+        if opName {
+            navigate(f"/project/{name}/operator-workbench/{opName}");
+            return;
+        }
+        navigate(f"/project/{name}/operator-workbench");
+    }
+
+    async def startForge -> None {
+        if not name {
+            return;
+        }
+        setForgeError("");
+        setForgeNotice("");
+        setForgeBusy(True);
+        try {
+            resp = await __jacSpawn("StartProfile", "", {"projectName": name});
+            data = resp.reports[0] if resp and resp.reports else {};
+            if not data {
+                setForgeError("Failed to queue profile job.");
+            } elif "success" in data and not data["success"] {
+                msg = data["error"] if "error" in data and data["error"] else "";
+                setForgeError(msg if msg else "Failed to queue profile job.");
+            } elif "skipped" in data and data["skipped"] {
+                reason = data["reason"] if "reason" in data else "";
+                if reason == "already_profiled" {
+                    if forgeMode == "auto" {
+                        ops_resp = await __jacSpawn(
+                            "GetProjectOps", "", {"projectName": name}
+                        );
+                        ops_data = ops_resp.reports[0]
+                        if ops_resp and ops_resp.reports
+                        else {};
+                        ops_list = to_list(
+                            ops_data["ops"] if ops_data and "ops" in ops_data else []
+                        );
+                        focusOp = pick_focus_from_ops(ops_list, focusPolicy);
+                        if not focusOp {
+                            focusOp = pick_focus_op(focusPolicy);
+                        }
+                        if not focusOp {
+                            setForgeNotice(
+                                "Profile ready, but no operators were found to forge."
+                            );
+                        } else {
+                            preferredTarget = "cuda";
+                            if (
+                                hardwareInfo
+                                and "preferred_target" in hardwareInfo
+                                and hardwareInfo["preferred_target"]
+                            ) {
+                                preferredTarget = hardwareInfo["preferred_target"];
+                            }
+                            gen_payload = {
+                                "projectName": name,
+                                "ops": [focusOp],
+                                "optimize": True,
+                                "benchmark": True,
+                                "iterations": 5,
+                                "patience": 2,
+                                "genAttempts": 8,
+                                "minImproveMs": 0.0,
+                                "minSpeedupPct": 0.0,
+                                "generator_config": {
+                                    "target_device": preferredTarget,
+                                    "use_baseline_kernels": True,
+                                    "use_baseline_as_template": True,
+                                    "extra_validation_cases": 0
+                                }
+                            };
+                            gen_resp = await __jacSpawn(
+                                "StartGenerate", "", gen_payload
+                            );
+                            gen_data = gen_resp.reports[0]
+                            if gen_resp and gen_resp.reports
+                            else {};
+                            if gen_data
+                            and "success" in gen_data
+                            and gen_data["success"] {
+                                setForgeNotice(
+                                    f"Kernel forge queued for {focusOp}: generate + optimize."
+                                );
+                            } else {
+                                err = gen_data["error"]
+                                if gen_data
+                                and "error" in gen_data
+                                and gen_data["error"]
+                                else "Failed to queue kernel generation.";
+                                setForgeError(err);
+                            }
+                        }
+                    } else {
+                        setForgeNotice(
+                            "Profile + baseline already ready. Open Workbench to generate kernels."
+                        );
+                    }
+                } elif reason == "in_progress" {
+                    setForgeNotice("Forge is already running.");
+                } else {
+                    msg = data["message"]
+                    if "message" in data and data["message"]
+                    else "Forge action skipped.";
+                    setForgeNotice(msg);
+                }
+                await refreshData();
+            } else {
+                setForgeNotice(
+                    "Forge queued: profiling and baseline benchmark started."
+                );
+                await refreshData();
+                setTimeout(lambda -> None { refreshData();}, 1200);
+                setTimeout(lambda -> None { refreshData();}, 3200);
+            }
+        } except Exception as e {
+            setForgeError(str(e));
+            console.error("Failed to start forging pipeline:", e);
+        } finally {
+            setForgeBusy(False);
+        }
     }
 
     async def refreshData -> None {
@@ -153,17 +457,19 @@ def:pub Dashboard {
                 ops_data = ops_resp.reports[0]
                 if ops_resp and ops_resp.reports
                 else None;
-                ops = ops_data["ops"] if ops_data and "ops" in ops_data else [];
+                ops = to_list(ops_data["ops"])
+                if ops_data and "ops" in ops_data
+                else [];
                 # Process Charts
                 charts_data = charts_resp.reports[0]
                 if charts_resp and charts_resp.reports
                 else {};
                 if charts_data {
                     if "operator_usage" in charts_data {
-                        ops = charts_data["operator_usage"];
+                        ops = to_list(charts_data["operator_usage"]);
                     }
                     if "speed_comparison" in charts_data {
-                        setSpeedData(charts_data["speed_comparison"]);
+                        setSpeedData(to_list(charts_data["speed_comparison"]));
                     }
                 }
                 # Process Status
@@ -189,9 +495,9 @@ def:pub Dashboard {
 
     useEffect(lambda -> None { refreshData();}, [name]);
 
-    # Auto-refresh status every 5 seconds
+    # Auto-refresh status (faster while active, slower while idle)
     useEffect(
-        lambda -> None { timer = setInterval(
+        lambda -> Any { poll_ms = get_profile_poll_ms();timer = setInterval(
             lambda -> None { __jacSpawn("GetProjectStatus", "", {"projectName": name}).then(
                 lambda resp: any  -> None { data = resp.reports[0]
                 if resp and resp.reports
@@ -202,10 +508,10 @@ def:pub Dashboard {
                     if c_resp and c_resp.reports
                     else {};if c_data {
                         if "operator_usage" in c_data {
-                            ops = c_data["operator_usage"];
+                            ops = to_list(c_data["operator_usage"]);
                         }
                         if "speed_comparison" in c_data {
-                            setSpeedData(c_data["speed_comparison"]);
+                            setSpeedData(to_list(c_data["speed_comparison"]));
                         }
                     }}
                 ).catch(
@@ -218,9 +524,9 @@ def:pub Dashboard {
                 # console.error("Failed to poll project status:", e);
                 }
             );},
-            5000
+            poll_ms
         );return lambda -> None { clearInterval(timer);}; },
-        [name]
+        [name, forgeBusy, status]
     );
 
     async def fetchSystemInfo -> None {
@@ -232,7 +538,7 @@ def:pub Dashboard {
             if config and "ssh_connections" in config
             else [];
             ssh_conn = None;
-            if active_idx != -1 and active_idx < ssh_connections.length {
+            if active_idx != -1 and active_idx < list_len(ssh_connections) {
                 ssh_conn = ssh_connections[active_idx];
             }
 
@@ -259,11 +565,55 @@ def:pub Dashboard {
 
     useEffect(lambda -> None { fetchSystemInfo();}, [config]);
 
+    useEffect(
+        lambda -> None { if benchLogOpen and name {
+            refreshBenchLog();
+        }},
+        [benchLogOpen, name]
+    );
+
+    async def refreshBenchLog -> None {
+        if not name {
+            return;
+        }
+        benchLogLoading = True;
+        benchLogCopied = False;
+        try {
+            rel_path = f"kernels/projects/{name}/logs/benchmark.log";
+            resp = await __jacSpawn(
+                "ReadRepoFile", "", {"projectName": name, "relPath": rel_path}
+            );
+            data = resp.reports[0] if resp and resp.reports else {};
+            if data and "success" in data and data["success"] {
+                benchLog = data["content"] if "content" in data else "";
+            } else {
+                benchLog = data["error"] if data and "error" in data else "No log yet.";
+            }
+        } except Exception as e {
+            benchLog = f"Failed to load benchmark log: {e}";
+        } finally {
+            benchLogLoading = False;
+        }
+    }
+
+    def copyBenchLog -> None {
+        if not benchLog {
+            return;
+        }
+        navigator.clipboard.writeText(benchLog).then(
+            lambda -> None { benchLogCopied = True;setTimeout(
+                lambda -> None { benchLogCopied = False;}, 1500
+            );}
+        ).catch(
+            lambda e: any  -> None { console.error("Failed to copy benchmark log:", e);}
+        );
+    }
+
     # Helper for hardware status
     hardwareStatus = "Scanning...";
     activeBackend = "CPU";
     gpu_name = "";
-    gpus = systemInfo["gpus"] if systemInfo and "gpus" in systemInfo else [];
+    gpus = to_list(systemInfo["gpus"] if systemInfo and "gpus" in systemInfo else []);
     selected_idx = config["selected_gpu_index"]
     if config and "selected_gpu_index" in config
     else -1;
@@ -277,9 +627,9 @@ def:pub Dashboard {
     auto_gpu = False;
     if config and "selected_gpu_info" in config and config["selected_gpu_info"] {
         display_gpu = config["selected_gpu_info"];
-    } elif selected_idx != -1 and selected_idx < gpus.length {
+    } elif selected_idx != -1 and selected_idx < list_len(gpus) {
         display_gpu = gpus[selected_idx];
-    } elif gpus.length > 0 {
+    } elif list_len(gpus) > 0 {
         display_gpu = gpus[0];
         auto_gpu = True;
     }
@@ -392,31 +742,163 @@ def:pub Dashboard {
         </div>
     );
 
-    # Pipeline Steps Timeline
+    # Pipeline job state
+    profile_job = status["profile"] if status and "profile" in status else {};
+    profile_raw = (profile_job["status"] or "").toLowerCase()
+    if profile_job and "status" in profile_job
+    else "";
+    profile_phase = (profile_job["phase"] or "").toLowerCase()
+    if profile_job and "phase" in profile_job
+    else "";
+    profile_message = profile_job["message"]
+    if profile_job and "message" in profile_job and profile_job["message"]
+    else "";
+    profile_active = is_job_active(profile_job);
+    profile_progress_pct = parseInt(f"{profile_job['progress_percent'] * 100}")
+    if profile_job and "progress_percent" in profile_job
+    else 0;
+    if profile_progress_pct < 0 {
+        profile_progress_pct = 0;
+    }
+    if profile_progress_pct > 100 {
+        profile_progress_pct = 100;
+    }
+    profile_norm = normalize_job_status(profile_raw);
+
+    bench_job = status["benchmark"] if status and "benchmark" in status else {};
+    bench_raw = (bench_job["status"] or "").toLowerCase()
+    if bench_job and "status" in bench_job
+    else "";
+    bench_message = bench_job["message"]
+    if bench_job and "message" in bench_job and bench_job["message"]
+    else "";
+    bench_norm = normalize_job_status(bench_raw);
+    bench_active = is_job_active(bench_job);
+
+    bench_progress = bench_job["progress"]
+    if bench_job and "progress" in bench_job
+    else {};
+    bench_current = parseInt(f"{bench_progress['current']}")
+    if bench_progress and "current" in bench_progress
+    else 0;
+    bench_total = parseInt(f"{bench_progress['total']}")
+    if bench_progress and "total" in bench_progress
+    else 0;
+    bench_progress_text = (
+        f" ({bench_current}/{bench_total})" if bench_total and bench_total > 0 else ""
+    );
+    bench_pct = bench_progress["percent"] * 100
+    if bench_progress and "percent" in bench_progress
+    else 0;
+    bar_pct = bench_pct;
+    if bar_pct > 100 {
+        bar_pct = 100;
+    }
+    if bar_pct < 4 {
+        bar_pct = 4;
+    }
+    bench_bar_width = f"{bar_pct}%";
+
+    gen_job = status["generate_adv"] if status and "generate_adv" in status else {};
+    gen_raw = (gen_job["status"] or "").toLowerCase()
+    if gen_job and "status" in gen_job
+    else "";
+    gen_active = is_job_active(gen_job);
+    gen_message = gen_job["message"]
+    if gen_job and "message" in gen_job and gen_job["message"]
+    else "";
+    gen_phase = (gen_job["phase"] or "").toLowerCase()
+    if gen_job and "phase" in gen_job
+    else "";
+    gen_norm = normalize_job_status(gen_raw);
+    gen_cmd = to_list(gen_job["command"] if gen_job and "command" in gen_job else []);
+    gen_has_optimize = False;
+    gen_has_benchmark = False;
+    for part in gen_cmd {
+        token = str(part);
+        if token == "--optimize" {
+            gen_has_optimize = True;
+        } elif token == "--benchmark" {
+            gen_has_benchmark = True;
+        }
+    }
+
+    opt_job = status["optimize_adv"] if status and "optimize_adv" in status else {};
+    opt_raw = (opt_job["status"] or "").toLowerCase()
+    if opt_job and "status" in opt_job
+    else "";
+    opt_active = is_job_active(opt_job);
+    opt_message = opt_job["message"]
+    if opt_job and "message" in opt_job and opt_job["message"]
+    else "";
+    opt_norm = normalize_job_status(opt_raw);
+
+    active_poll = forgeBusy
+    or profile_active
+    or gen_active
+    or opt_active
+    or bench_active;
+    poll_label = "1.5s (active)" if active_poll else "15s (idle)";
+
+    generation_step_status = gen_norm;
+    if generation_step_status == "running" and gen_phase == "benchmarking" {
+        generation_step_status = "completed";
+    }
+
+    optimization_step_status = opt_norm;
+    if optimization_step_status == "idle" {
+        if gen_phase == "optimizing" and gen_norm == "running" {
+            optimization_step_status = "running";
+        } elif gen_has_optimize
+        and (
+            (gen_phase == "benchmarking" and gen_norm == "running")
+            or gen_norm == "completed"
+        ) {
+            optimization_step_status = "completed";
+        } elif gen_has_optimize and gen_norm == "failed" {
+            optimization_step_status = "failed";
+        }
+    }
+
+    benchmark_step_status = bench_norm;
+    if benchmark_step_status == "idle" and gen_has_benchmark {
+        if gen_phase == "benchmarking" and gen_norm == "running" {
+            benchmark_step_status = "running";
+        } elif gen_norm == "completed" {
+            benchmark_step_status = "completed";
+        } elif gen_norm == "failed" and gen_phase == "benchmarking" {
+            benchmark_step_status = "failed";
+        }
+    }
+
     jobs = [
-        {"key": "prepare", "label": "Analysis"},
-        {"key": "generate", "label": "Generation"},
-        {"key": "optimize", "label": "Optimization"},
-        {"key": "benchmark", "label": "Benchmark"}
+        {"key": "profile", "label": "Analysis", "status": profile_norm},
+        {
+            "key": "generate_adv",
+            "label": "Generation",
+            "status": generation_step_status
+        },
+        {
+            "key": "optimize_adv",
+            "label": "Optimization",
+            "status": optimization_step_status
+        },
+        {"key": "benchmark", "label": "Benchmark", "status": benchmark_step_status}
     ];
     step_items = [];
     step_idx = 0;
 
     while step_idx < jobs.length {
         job = jobs[step_idx];
-        job_data = status[job["key"]] if status and job["key"] in status else {};
-        raw_job_status = job_data["status"]
-        if job_data and "status" in job_data
+        job_status = str(job["status"]).toLowerCase()
+        if job and "status" in job and job["status"]
         else "idle";
-        job_status = normalize_job_status(raw_job_status);
 
-        # Determine step visual state
         is_completed = job_status == "completed";
         is_running = job_status == "running";
         is_failed = job_status == "failed";
         is_active = is_running or is_completed;
 
-        # Step Icon
         step_icon = <div className="w-2 h-2 rounded-full bg-zinc-600"></div>;
         if is_completed {
             step_icon = <CheckIcon className="w-4 h-4 text-emerald-950"/>;
@@ -428,7 +910,6 @@ def:pub Dashboard {
             ></div>;
         }
 
-        # Step Circle Style
         circle_style = "bg-zinc-800 border-zinc-700 text-zinc-500";
         if is_completed {
             circle_style = "bg-emerald-400 border-emerald-400 text-emerald-950";
@@ -436,27 +917,6 @@ def:pub Dashboard {
             circle_style = "bg-red-400 border-red-400 text-red-950";
         } elif is_running {
             circle_style = "bg-indigo-500/20 border-indigo-500 text-indigo-400 ring-4 ring-indigo-500/10";
-        }
-
-        # Connector Line
-        connector = <span></span>;
-        if step_idx < jobs.length - 1 {
-            line_color = "bg-zinc-800";
-            if is_completed {
-                # Check if next step is at least active to color the line
-                next_job = jobs[step_idx + 1];
-                next_data = status[next_job["key"]]
-                if status and next_job["key"] in status
-                else {};
-                next_raw_status = next_data["status"]
-                if next_data and "status" in next_data
-                else "idle";
-                next_status = normalize_job_status(next_raw_status);
-                if next_status != "idle" {
-                    line_color = "bg-emerald-500/50";
-                }
-            }
-            connector = <div className={"flex-1 h-0.5 mx-2 " + line_color}></div>;
         }
 
         step_items.push(
@@ -514,53 +974,141 @@ def:pub Dashboard {
         step_idx += 1;
     }
 
-    prepare_job = status["prepare"] if status and "prepare" in status else {};
-    prepare_raw = (prepare_job["status"] or "").toLowerCase()
-    if prepare_job and "status" in prepare_job
-    else "";
+    forgeFocusOp = pick_focus_op(focusPolicy);
+    current_phase = "idle";
+    current_message = "Waiting to start forge.";
+    current_progress_pct = 0;
+    current_started_at = "";
+    current_updated_at = "";
 
-    profile_job = status["profile"] if status and "profile" in status else {};
-    profile_raw = (profile_job["status"] or "").toLowerCase()
-    if profile_job and "status" in profile_job
-    else "";
-
-    bench_job = status["benchmark"] if status and "benchmark" in status else {};
-    bench_raw = (bench_job["status"] or "").toLowerCase()
-    if bench_job and "status" in bench_job
-    else "";
-    bench_message = bench_job["message"]
-    if bench_job and "message" in bench_job and bench_job["message"]
-    else "";
-
-    bench_progress = bench_job["progress"]
-    if bench_job and "progress" in bench_job
-    else {};
-    bench_current = parseInt(f"{bench_progress['current']}")
-    if bench_progress and "current" in bench_progress
-    else 0;
-    bench_total = parseInt(f"{bench_progress['total']}")
-    if bench_progress and "total" in bench_progress
-    else 0;
-    bench_progress_text = (
-        f" ({bench_current}/{bench_total})" if bench_total and bench_total > 0 else ""
-    );
-    bench_pct = bench_progress["percent"] * 100
-    if bench_progress and "percent" in bench_progress
-    else 0;
-    bar_pct = bench_pct;
-    if bar_pct > 100 {
-        bar_pct = 100;
+    if loading {
+        current_phase = "loading";
+        current_message = "Syncing forge state from backend...";
+    } elif forgeBusy {
+        current_phase = "queued";
+        current_message = "Queuing forge pipeline.";
+    } elif gen_active {
+        current_phase = gen_phase if gen_phase else "generating";
+        current_message = gen_message if gen_message else "Generating kernels.";
+        current_progress_pct = parseInt(f"{gen_job['progress_percent'] * 100}")
+        if gen_job and "progress_percent" in gen_job
+        else 0;
+        current_started_at = gen_job["started_at"]
+        if gen_job and "started_at" in gen_job and gen_job["started_at"]
+        else "";
+        current_updated_at = gen_job["updated_at"]
+        if gen_job and "updated_at" in gen_job and gen_job["updated_at"]
+        else "";
+    } elif opt_active {
+        current_phase = "optimizing";
+        current_message = opt_message if opt_message else "Optimizing kernels.";
+        current_progress_pct = parseInt(f"{opt_job['progress_percent'] * 100}")
+        if opt_job and "progress_percent" in opt_job
+        else 0;
+        current_started_at = opt_job["started_at"]
+        if opt_job and "started_at" in opt_job and opt_job["started_at"]
+        else "";
+        current_updated_at = opt_job["updated_at"]
+        if opt_job and "updated_at" in opt_job and opt_job["updated_at"]
+        else "";
+    } elif bench_active {
+        current_phase = "benchmarking";
+        current_message = bench_message if bench_message else "Benchmarking kernels.";
+        current_progress_pct = parseInt(f"{bench_job['progress_percent'] * 100}")
+        if bench_job and "progress_percent" in bench_job
+        else 0;
+        current_started_at = bench_job["started_at"]
+        if bench_job and "started_at" in bench_job and bench_job["started_at"]
+        else "";
+        current_updated_at = bench_job["updated_at"]
+        if bench_job and "updated_at" in bench_job and bench_job["updated_at"]
+        else "";
+    } elif profile_active {
+        current_phase = profile_phase if profile_phase else "profiling";
+        current_message = (
+            profile_message
+            if profile_message
+            else "Profiling and baseline benchmarking in progress."
+        );
+        current_progress_pct = profile_progress_pct;
+        current_started_at = profile_job["started_at"]
+        if profile_job and "started_at" in profile_job and profile_job["started_at"]
+        else "";
+        current_updated_at = profile_job["updated_at"]
+        if profile_job and "updated_at" in profile_job and profile_job["updated_at"]
+        else "";
+    } elif benchmark_step_status == "completed" {
+        current_phase = "completed";
+        current_message = "Kernel generation and benchmark completed.";
+    } elif profile_norm == "failed"
+    or generation_step_status == "failed"
+    or optimization_step_status == "failed"
+    or benchmark_step_status == "failed" {
+        current_phase = "failed";
+        current_message = "Forge run failed. See logs for details.";
+    } elif profile_norm == "completed" {
+        current_phase = "ready";
+        current_message = "Profile ready. Start kernel generation from dashboard or workbench.";
     }
-    if bar_pct < 4 {
-        bar_pct = 4;
+
+    if current_progress_pct < 0 {
+        current_progress_pct = 0;
     }
-    bench_bar_width = f"{bar_pct}%";
+    if current_progress_pct > 100 {
+        current_progress_pct = 100;
+    }
+    current_progress_bar = current_progress_pct;
+    if active_poll and current_progress_bar < 4 {
+        current_progress_bar = 4;
+    }
+
+    forge_status = "Idle";
+    if current_phase == "queued" {
+        forge_status = "Heating up the forge";
+    } elif current_phase == "loading" {
+        forge_status = "Syncing state";
+    } elif current_phase == "preparing" {
+        forge_status = "Preparing assets";
+    } elif current_phase == "profiling" {
+        forge_status = "Profiling operators";
+    } elif current_phase == "generating" {
+        forge_status = "Generating kernels";
+    } elif current_phase == "optimizing" {
+        forge_status = "Optimizing kernels";
+    } elif current_phase == "benchmarking" {
+        forge_status = "Benchmarking kernels";
+    } elif current_phase == "completed" {
+        forge_status = "Forge completed";
+    } elif current_phase == "failed" {
+        forge_status = "Forge run failed";
+    } elif current_phase == "ready" {
+        forge_status = "Ready for operator generation";
+    }
+
+    forge_detail = current_message if current_message else "";
+    if not forge_detail and forgeNotice {
+        forge_detail = forgeNotice;
+    }
+    if not forge_detail {
+        forge_detail = "Idle";
+    }
+
+    current_state_meta = "";
+    if current_started_at and current_updated_at {
+        current_state_meta = f"Started: {current_started_at}  |  Updated: {current_updated_at}";
+    } elif current_started_at {
+        current_state_meta = f"Started: {current_started_at}";
+    }
 
     charts_empty_message = "No benchmark results yet. Run Benchmark to see PyTorch timings.";
-    if prepare_raw == "queued" or prepare_raw == "running" {
-        charts_empty_message = "Preparing assets...";
-    } elif profile_raw == "queued" or profile_raw == "running" {
+    if profile_active {
         charts_empty_message = "Profiling model...";
+    } elif gen_active and gen_phase == "benchmarking" {
+        charts_empty_message = "Benchmarking generated kernels...";
+    } elif gen_active {
+        charts_empty_message = "Generating kernels...";
+    } elif opt_active {
+        charts_empty_message = "Optimizing kernels...";
     } elif bench_raw == "queued" {
         charts_empty_message = "Benchmark queued...";
     } elif bench_raw == "running" {
@@ -585,6 +1133,154 @@ def:pub Dashboard {
                     Overview of{name}
                 </p>
             </div>
+            <div
+                className="relative rounded-xl border border-orange-500/30 bg-gradient-to-r from-[#2e1808] via-[#24130a] to-[#171111] p-5 overflow-hidden"
+            >
+                <div
+                    className="absolute -top-16 -right-10 w-56 h-56 rounded-full bg-orange-500/15 blur-3xl"
+                ></div>
+                <div
+                    className="absolute -bottom-20 left-10 w-56 h-56 rounded-full bg-red-500/10 blur-3xl"
+                ></div>
+                <div className="relative grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <div className="space-y-3">
+                        <h3 className="text-sm font-semibold text-orange-200">
+                            Kernel Forge Control
+                        </h3>
+                        <p className="text-xs text-zinc-300 leading-relaxed">
+                            Start profiling and baseline benchmarking, then route into operator-level optimization.
+                        </p>
+                        <div className="flex items-center gap-2">
+                            <GlowButton
+                                label={(
+                                    "Heating forge..."
+                                    if forgeBusy
+                                    else "Start Forging Kernels"
+                                )}
+                                onClick={lambda -> None { startForge();}}
+                                disabled={forgeBusy
+                                or not name
+                                or profile_active
+                                or gen_active
+                                or opt_active}
+                            />
+                            <button
+                                className="px-3 py-2 rounded-lg border border-orange-400/40 bg-orange-500/10 text-orange-200 text-xs font-semibold hover:bg-orange-500/20 transition-colors inline-flex items-center gap-1"
+                                onClick={lambda -> None { openWorkbench(forgeFocusOp);}}
+                            >
+                                Open Workbench
+                                <ArrowRightIcon className="w-3 h-3"/>
+                            </button>
+                        </div>
+                        {<div className="text-xs text-red-300">
+                            {forgeError}
+                        </div>
+                        if forgeError
+                        else <div className="text-xs text-emerald-300">
+                            {forgeNotice}
+                        </div>
+                        if forgeNotice
+                        else <span></span>}
+                    </div>
+                    <div className="space-y-3">
+                        <div
+                            className="text-xs uppercase tracking-wider font-bold text-zinc-400"
+                        >
+                            Run Mode
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                className={"px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors " + (
+                                    "border-amber-400 bg-amber-500/20 text-amber-100"
+                                    if forgeMode == "auto"
+                                    else "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800"
+                                )}
+                                onClick={lambda -> None { setForgeMode("auto");}}
+                            >
+                                Automatic
+                            </button>
+                            <button
+                                className={"px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors " + (
+                                    "border-amber-400 bg-amber-500/20 text-amber-100"
+                                    if forgeMode == "manual"
+                                    else "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800"
+                                )}
+                                onClick={lambda -> None { setForgeMode("manual");}}
+                            >
+                                Manual
+                            </button>
+                        </div>
+                        <div
+                            className="text-xs uppercase tracking-wider font-bold text-zinc-400"
+                        >
+                            Focus Operator
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                className={"px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors " + (
+                                    "border-orange-400 bg-orange-500/20 text-orange-100"
+                                    if focusPolicy == "hottest"
+                                    else "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800"
+                                )}
+                                onClick={lambda -> None { setFocusPolicy("hottest");}}
+                            >
+                                Hottest op
+                            </button>
+                            <button
+                                className={"px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors " + (
+                                    "border-orange-400 bg-orange-500/20 text-orange-100"
+                                    if focusPolicy == "first"
+                                    else "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800"
+                                )}
+                                onClick={lambda -> None { setFocusPolicy("first");}}
+                            >
+                                First op
+                            </button>
+                        </div>
+                    </div>
+                    <div className="space-y-3">
+                        <div
+                            className="text-xs uppercase tracking-wider font-bold text-zinc-400"
+                        >
+                            Current State
+                        </div>
+                        <div
+                            className="px-3 py-2 rounded-md border border-zinc-700 bg-zinc-950/80 text-sm text-zinc-100"
+                        >
+                            {forge_status}
+                        </div>
+                        <div
+                            className={"px-3 py-2 rounded-md border text-xs font-semibold " + (
+                                "border-orange-500/50 bg-orange-500/10 text-orange-200"
+                                if active_poll
+                                else "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                                if current_phase == "completed"
+                                else "border-zinc-700 bg-zinc-900/70 text-zinc-300"
+                            )}
+                        >
+                            {forge_detail}
+                        </div>
+                        {<div
+                            className="w-full h-1.5 rounded-full bg-zinc-800 overflow-hidden border border-zinc-700"
+                        >
+                            <div
+                                className="h-full bg-gradient-to-r from-orange-400 via-amber-300 to-yellow-300 transition-all duration-500"
+                                style={{"width": f"{current_progress_bar}%"}}
+                            ></div>
+                        </div>
+                        if active_poll
+                        else <span></span>}
+                        {<div className="text-[10px] text-zinc-500 leading-relaxed">
+                            {current_state_meta}
+                        </div>
+                        if current_state_meta
+                        else <span></span>}
+                        <div className="text-xs text-zinc-400">
+                            Full generate/optimize settings live in Operator Workbench modals. Dashboard stays open after profiling unless you open Workbench manually.
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {status_cards}
                 <div
@@ -595,7 +1291,7 @@ def:pub Dashboard {
                             Pipeline Status
                         </h3>
                         <div className="text-xs text-zinc-500">
-                            Auto-refresh: 5s
+                            Auto-refresh:{poll_label}
                         </div>
                     </div>
                     <div className="flex items-center justify-between px-4 py-6">
@@ -613,9 +1309,17 @@ def:pub Dashboard {
                         <h3 className="font-semibold text-zinc-200">
                             Speed Comparison (ms)
                         </h3>
-                        <span className="text-xs text-zinc-500">
-                            Lower is better
-                        </span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-zinc-500">
+                                Lower is better
+                            </span>
+                            <button
+                                onClick={lambda -> None { benchLogOpen = True;}}
+                                className="text-[11px] px-2 py-1 rounded border border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 transition-colors"
+                            >
+                                benchmark.log
+                            </button>
+                        </div>
                     </div>
                     <div
                         className="p-4 flex-1 flex items-center justify-center min-h-[220px]"
@@ -647,16 +1351,14 @@ def:pub Dashboard {
                                         fontSize={12}
                                         tickLine={False}
                                         axisLine={False}
-                                        tickFormatter={lambda value: str  -> str { return format_op_short(
-                                            value
-                                        ); }}
+                                        tickFormatter={format_tick_op}
                                     />
                                     <YAxis
                                         stroke="#71717a"
                                         fontSize={12}
                                         tickLine={False}
                                         axisLine={False}
-                                        tickFormatter={lambda value: str  -> str { return f"{value}ms"; }}
+                                        tickFormatter={format_tick_ms}
                                     />
                                     <Tooltip
                                         cursor={{"fill": '#27272a'}}
@@ -666,9 +1368,7 @@ def:pub Dashboard {
                                             "borderRadius": '8px',
                                             "color": '#f4f4f5'
                                         }}
-                                        labelFormatter={lambda label: str  -> str { return format_op_short(
-                                            label
-                                        ); }}
+                                        labelFormatter={format_tick_op}
                                     />
                                     <Legend/>
                                     <Bar
@@ -686,7 +1386,7 @@ def:pub Dashboard {
                                     />
                                 </BarChart>
                             </ResponsiveContainer>
-                            if speedData.length > 0
+                            if list_len(speedData) > 0
                             else <div className="text-zinc-500 text-sm italic">
                                 {charts_empty_message}
                             </div>}
@@ -733,7 +1433,7 @@ def:pub Dashboard {
                                         }}
                                         itemStyle={{"color": '#e6f2ff'}}
                                         labelStyle={{"color": '#9fb1c7'}}
-                                        formatter={lambda value: str  -> str { return f"{value}ms"; }}
+                                        formatter={format_tick_ms}
                                     />
                                     <Legend
                                         layout="vertical"

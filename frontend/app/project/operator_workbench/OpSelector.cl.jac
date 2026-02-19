@@ -3,7 +3,7 @@
 import from react { useState, useEffect }
 import from "react-router-dom" { useNavigate, useParams }
 
-def:pub OpSelector {
+def:pub OpSelector -> Any {
     has projectName: str;
 
     navigate = useNavigate();
@@ -29,6 +29,37 @@ def:pub OpSelector {
         return raw_text;
     }
 
+    def to_list(items: Any) -> list {
+        if not items {
+            return [];
+        }
+        try {
+            if Array.isArray(items) {
+                return items;
+            }
+        } except Exception {
+        # no-op
+        }
+        normalized = [];
+        try {
+            for item in items {
+                normalized.push(item);
+            }
+            return normalized;
+        } except Exception {
+        # no-op
+        }
+        try {
+            return Object.values(items);
+        } except Exception {
+            return [];
+        }
+    }
+
+    def list_len(items: Any) -> int {
+        return to_list(items).length;
+    }
+
     async def fetchOps -> None {
         if not resolvedProjectName {
             console.error("No project name found in OpSelector");
@@ -41,10 +72,13 @@ def:pub OpSelector {
                 "GetProjectOps", "", {"projectName": resolvedProjectName}
             );
             ops_data = ops_resp.reports[0] if ops_resp and ops_resp.reports else None;
-            op_list = ops_data["ops"] if ops_data and "ops" in ops_data else [];
+            op_list = to_list(
+                ops_data["ops"] if ops_data and "ops" in ops_data else []
+            );
             setOps(op_list);
         } except Exception as e {
             console.error("Failed to fetch ops:", e);
+            setOps([]);
         } finally {
             setLoadingOps(False);
         }
@@ -100,7 +134,7 @@ def:pub OpSelector {
                 >
                     No operators found.
                 </div>
-                if ops.length == 0
+                if list_len(ops) == 0
                 else <span></span>}
             </div>
         </div>;

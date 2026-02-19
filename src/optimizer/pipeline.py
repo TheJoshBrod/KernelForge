@@ -22,21 +22,42 @@ from src.optimizer.backends.metal import MetalBackend
 from src.optimizer.backends.triton import TritonBackend
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _projects_base_dir() -> Path:
+    base = _repo_root() / "kernels" / "projects"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _generated_kernels_root(optional_proj_name: str | None = None) -> Path:
+    if optional_proj_name:
+        per_project = (
+            _projects_base_dir()
+            / optional_proj_name
+            / "kernels"
+            / "generated"
+            / "individual_op_kernels"
+        )
+        if per_project.exists():
+            return per_project
+    return _repo_root() / "kernels" / "generated" / "individual_op_kernels"
+
+
 def get_project_dir(gpu_name: str, optional_name: str = None, backend_name: str = "cuda"):
     letters = string.ascii_letters + string.digits
     proj_name = ''.join(random.choices(letters, k=10))
+    clean_gpu_name = gpu_name.replace(" ", "_").replace(":", "").replace("-", "_")
     if optional_name:
-        proj_name = optional_name
-    
-    # Sanitize GPU name
-    clean_gpu_name = gpu_name.replace(
-        " ", "_").replace(":", "").replace("-", "_")
-
-    full_name = f"{clean_gpu_name}_{proj_name}-{backend_name}/trees"
+        full_name = f"{optional_name}/trees"
+    else:
+        full_name = f"{clean_gpu_name}_{proj_name}-{backend_name}/trees"
 
     print(f"Beginning optimizing on project {full_name}...")
 
-    proj_dir = Path(f"projects/{full_name}")
+    proj_dir = _projects_base_dir() / full_name
     try:
         proj_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
@@ -293,7 +314,8 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
     proj_dir = get_project_dir(gpu_specs.gpu_name, optional_proj_name, backend_name=bk_name)
 
     # Directory containing initial wave of correct, but unoptimized kernels
-    op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
+    generated_root = _generated_kernels_root(optional_proj_name)
+    op_dirs = list(generated_root.glob("*"))
 
     # Profile each kernel in op_dirs and save results as a *.json node in their respective directories
     for op_dir in op_dirs:
@@ -730,7 +752,7 @@ Examples:
         paths = {
             "proj_dir": op_dir_path,
             "io_dir": io_dir,
-            "op_dir": Path("kernels/generated/individual_op_kernels") / op_name,
+            "op_dir": _generated_kernels_root(optional_proj_name) / op_name,
         }
         
         print(f"Creating new root for {op_name}...")
@@ -779,7 +801,7 @@ Examples:
         paths = {
             "proj_dir": op_dir_path,
             "io_dir": io_dir,
-            "op_dir": Path("kernels/generated/individual_op_kernels") / op_name,
+            "op_dir": _generated_kernels_root(optional_proj_name) / op_name,
         }
 
         mcts._NODE_CACHE.clear()
