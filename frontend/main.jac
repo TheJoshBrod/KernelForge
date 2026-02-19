@@ -10,8 +10,7 @@ import from walkers.system {
     DetectHardware
 }
 import from walkers.llm {
-    GetOpenLLMModels,
-    TestLLMConnection
+    GetOpenLLMModels
 }
 import from walkers.project {
     CreateProject,
