@@ -5,7 +5,8 @@ import from walkers.system {
     GetSystemInfo,
     CheckSshConnection,
     TestLLMConnection,
-    DetectHardware
+    DetectHardware,
+    GetOpenLLMModels
 }
 import from walkers.project {
     CreateProject,

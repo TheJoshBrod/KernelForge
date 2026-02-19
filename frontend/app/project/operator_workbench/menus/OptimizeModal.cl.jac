@@ -1,7 +1,8 @@
 """Optimize Modal Component"""
 
-import from react { useState }
-import from .....components.ui.Icons { ZapIcon, BrainIcon, ActivityIcon, TimerIcon }
+import from react { useState, useEffect }
+import from .....components.ui.Icons { ZapIcon, BrainIcon, ActivityIcon, TimerIcon, ChevronDownIcon }
+import from .....components.ui.SearchableSelect { SearchableSelect }
 import from .....components.ui.Modal { Modal }
 import from .....context.ConfigContext { useConfig }
 
@@ -35,7 +36,46 @@ def:pub OptimizeModal(props: any) {
 
     patience_state = useState(2);
     patience = patience_state[0];
+    patience_state = useState(2);
+    patience = patience_state[0];
     setPatience = patience_state[1];
+
+    # Model List State
+    models_state = useState([]);
+    models = models_state[0];
+    setModels = models_state[1];
+    
+    loading_models_state = useState(False);
+    loadingModels = loading_models_state[0];
+    setLoadingModels = loading_models_state[1];
+
+    # Fetch models on open
+    useEffect(lambda -> None {
+        if isOpen {
+            async def fetchModels -> None {
+                setLoadingModels(True);
+                try {
+                    resp = await __jacSpawn("GetOpenLLMModels", "", {"cfg": config});
+                    data = resp.reports[0] if resp and resp.reports else {};
+                    if data and "success" in data and data["success"] {
+                        if "models" in data {
+                            list_models = data["models"];
+                            setModels(list_models);
+                            # Set default if none selected and list not empty
+                            if not llmModel and list_models.length > 0 {
+                                setLlmModel(list_models[0]["id"]);
+                            }
+                        }
+                    }
+                } except Exception as e {
+                    console.error("Error fetching models:", e);
+                } finally {
+                    setLoadingModels(False);
+                }
+            }
+            fetchModels();
+        }
+    }, [isOpen]);
 
     async def handleOptimize -> None {
         if not hasTree {
@@ -107,14 +147,23 @@ def:pub OptimizeModal(props: any) {
                             <BrainIcon className="w-4 h-4 text-purple-400" />
                             LLM Model
                         </label>
-                        <input
-                            type="text"
-                            value={llmModel}
-                            onChange={lambda e: any -> None { setLlmModel(e.target.value);}}
-                            placeholder="e.g. claude-3-5-sonnet-20240620"
-                            className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                        />
-                        <p className="text-[10px] text-zinc-500">Override default model from config</p>
+                        <div className="relative">
+                            <SearchableSelect
+                                value={llmModel}
+                                onChange={setLlmModel}
+                                options={models.map(lambda m: dict -> dict {
+                                    return {"value": m["id"], "label": m["label"] + " (" + m["provider"] + ")"};
+                                })}
+                                placeholder="Select a model..."
+                                disabled={loadingModels}
+                            />
+                        </div>
+                        {
+                            <p className="text-[10px] text-zinc-500">Loading models...</p>
+                            if loadingModels 
+                            else
+                            <p className="text-[10px] text-zinc-500">Select model from {" " + models.length} available</p>
+                        }
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">

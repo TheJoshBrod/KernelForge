@@ -469,6 +469,56 @@ walker:pub TestLLMConnection {
     }
 }
 
+walker:pub GetOpenLLMModels {
+    has cfg: dict = {};
+
+    can run with entry {
+        cfg = self.cfg;
+        if not cfg {
+            try {
+                with open(config_path, "r") as f {
+                    cfg = load(f);
+                }
+            } except Exception as e {
+                print(f"Error loading config: {e}");
+                cfg = config_store;
+            }
+        }
+        
+        api_keys = cfg["api_keys"] if cfg and "api_keys" in cfg else {};
+        
+        script = path.join(repo_root, "scripts", "fetch_models.py");
+        cmd = [sys.executable, script];
+        
+
+        if "openai" in api_keys and api_keys["openai"] {
+            cmd.extend(["--openai_key", api_keys["openai"]]);
+        }
+        if "anthropic" in api_keys and api_keys["anthropic"] {
+            cmd.extend(["--anthropic_key", api_keys["anthropic"]]);
+        }
+        if "gemini" in api_keys and api_keys["gemini"] {
+            cmd.extend(["--gemini_key", api_keys["gemini"]]);
+        }
+            
+        try {
+            # 10s timeout, fetching models should be fast
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=15);
+            if res.returncode == 0 and res.stdout {
+                try {
+                    models = loads(res.stdout);
+                    report {"success": True, "models": models};
+                } except Exception as e {
+                    report {"success": False, "error": f"Failed to parse models: {e}", "raw": res.stdout};
+                }
+            } else {
+                report {"success": False, "error": "Failed to fetch models", "stderr": res.stderr};
+            }
+        } except Exception as e {
+            report {"success": False, "error": str(e)};
+        }
+    }
+}
 walker:pub DetectHardware {
     can detect with entry {
         global _hw_cache;
