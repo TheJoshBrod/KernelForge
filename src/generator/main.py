@@ -315,8 +315,8 @@ def validate_with_retries(
         llm_model = os.environ.get("OPENAI_MODEL", "gpt-5")
     elif llm_provider == "anthropic":
         llm_model = os.environ.get("ANTHROPIC_MODEL", "claude-4-6-sonnet")
-    elif llm_provider == "gemini":
-        llm_model = os.environ.get("GEMINI_MODEL", "gemini-3-pro")
+    elif llm_provider == "google" or llm_provider == "gemini":
+        llm_model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
     
     attempts_total = codex_max_attempts if use_codex_generate else max_attempts + 1
 

@@ -642,7 +642,7 @@ Examples:
     
     if project_config_path:
         print(f"Loading project config from: {project_config_path}")
-        os.environ["CGINS_CONFIG_PATH"] = str(project_config_path)
+        os.environ["CGINS_PROJECT_CONFIG_PATH"] = str(project_config_path)
     
     # Initialize LLM config from environment/file
     ensure_llm_config()
@@ -655,7 +655,7 @@ Examples:
         model_name = os.environ.get("OPENAI_MODEL", "")
     elif provider == "anthropic":
         model_name = os.environ.get("ANTHROPIC_MODEL", "")
-    elif provider == "gemini":
+    elif provider == "google" or provider == "gemini":
         model_name = os.environ.get("GEMINI_MODEL", "")
     
     if model_name:

@@ -6,7 +6,7 @@ import from .....components.ui.SearchableSelect { SearchableSelect }
 import from .....components.ui.Modal { Modal }
 import from .....context.ConfigContext { useConfig }
 
-def:pub GenerateModal(props: any) {
+def:pub GenerateModal(props: any) -> Any {
     isOpen = props.isOpen;
     onClose = props.onClose;
     onComplete = props.onComplete;
@@ -23,7 +23,30 @@ def:pub GenerateModal(props: any) {
 
     # Config State
     default_llm = "";
-    
+    api_keys = config["api_keys"] if config and "api_keys" in config else {};
+    provider_options = [];
+    if api_keys and "openai" in api_keys and api_keys["openai"] {
+        provider_options.push({"label": "OpenAI", "value": "openai"});
+    }
+    if api_keys and "anthropic" in api_keys and api_keys["anthropic"] {
+        provider_options.push({"label": "Anthropic", "value": "anthropic"});
+    }
+    if api_keys and "google" in api_keys and api_keys["google"] {
+        provider_options.push({"label": "Google", "value": "google"});
+    }
+    if provider_options.length == 0 {
+        provider_options = [
+            {"label": "OpenAI", "value": "openai"},
+            {"label": "Anthropic", "value": "anthropic"},
+            {"label": "Google", "value": "google"}
+        ];
+    }
+    default_provider = provider_options[0]["value"] if provider_options.length > 0 else "openai";
+
+    llm_provider_state = useState(default_provider);
+    llmProvider = llm_provider_state[0];
+    setLlmProvider = llm_provider_state[1];
+
     llm_model_state = useState(default_llm);
     llmModel = llm_model_state[0];
     setLlmModel = llm_model_state[1];
@@ -103,6 +126,24 @@ def:pub GenerateModal(props: any) {
         }
     }, [hwInfo, targetDevice]);
 
+    provider_option_nodes = [];
+    for p in provider_options {
+        provider_option_nodes.push(
+            <option key={p["value"]} value={p["value"]}>
+                {p["label"]}
+            </option>
+        );
+    }
+
+    available_device_nodes = [];
+    for d in available_devices {
+        available_device_nodes.push(
+            <option key={d["value"]} value={d["value"]}>
+                {d["label"]}
+            </option>
+        );
+    }
+
     async def handleGenerate -> None {
         if not projectName or not opName {
             alert("Missing project or operator.");
@@ -127,6 +168,9 @@ def:pub GenerateModal(props: any) {
             
             if llmModel {
                 payload["llm_model"] = llmModel;
+            }
+            if llmProvider {
+                payload["llm_provider"] = llmProvider;
             }
 
             resp = await __jacSpawn(
@@ -214,9 +258,7 @@ def:pub GenerateModal(props: any) {
                                 onChange={lambda e: any -> None { setTargetDevice(e.target.value);}}
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
                             >
-                                {available_devices.map(lambda d: dict -> Any {
-                                    return <option key={d["value"]} value={d["value"]}>{d["label"]}</option>;
-                                })}
+                                {available_device_nodes}
                             </select>
                         </div>
                     </div>

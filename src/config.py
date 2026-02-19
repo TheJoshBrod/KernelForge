@@ -2,6 +2,8 @@ import json
 import os
 from pathlib import Path
 
+from src.llm.runtime_config import resolve_runtime_env
+
 
 def _find_config_path() -> Path | None:
     override = os.environ.get("CGINS_CONFIG_PATH")
@@ -42,80 +44,37 @@ def load_project_config(project_dir: Path | None) -> dict:
 
 def apply_llm_config() -> bool:
     config_path = _find_config_path()
-    if not config_path:
-        return False
-    
-    # config_path is the file path, so we pass its parent or handle it
-    # _find_config_path returns the FILE path.
-    # load_project_config expects a DIR (or we adjust it).
-    # Let's just manually load here to avoid circular logic or path confusion, 
-    # OR make load_project_config smarter.
+    global_cfg: dict = {}
     try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
+        if config_path and config_path.exists():
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                global_cfg = data
     except Exception:
+        global_cfg = {}
+
+    project_cfg: dict = {}
+    project_cfg_override = os.environ.get("CGINS_PROJECT_CONFIG_PATH")
+    if project_cfg_override:
+        try:
+            project_path = Path(project_cfg_override)
+            if project_path.exists():
+                loaded = json.loads(project_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    project_cfg = loaded
+        except Exception:
+            project_cfg = {}
+
+    env_map = resolve_runtime_env(
+        global_config=global_cfg,
+        project_config=project_cfg,
+    )
+    if not env_map:
         return False
 
-    api_keys = data.get("api_keys")
-    if not isinstance(api_keys, dict):
-        # Fallback to old llm_info if api_keys missing (migration compatibility)
-        llm_info = data.get("llm_info")
-        if isinstance(llm_info, dict):
-             provider = str(llm_info.get("provider", "")).strip().lower()
-             model = str(llm_info.get("model", "")).strip()
-             apikey = str(llm_info.get("apikey", "")).strip()
-             if provider == "openai": api_keys = {"openai": apikey}
-             elif provider == "anthropic": api_keys = {"anthropic": apikey}
-             elif provider == "gemini": api_keys = {"gemini": apikey}
-        
-    if not isinstance(api_keys, dict):
-        return False
-
-    # Determine active provider/model from env
-    provider = os.environ.get("LLM_PROVIDER", "").strip().lower()
-    model = os.environ.get("LLM_MODEL", "").strip() or \
-            os.environ.get("OPENAI_MODEL", "").strip() or \
-            os.environ.get("ANTHROPIC_MODEL", "").strip() or \
-            os.environ.get("GEMINI_MODEL", "").strip() or \
-            os.environ.get("CGINS_MODEL", "").strip()
-
-    # Infer provider from model if missing
-    if not provider and model:
-        if model.startswith("gpt"):
-            provider = "openai"
-        elif model.startswith("claude"):
-            provider = "anthropic"
-        elif model.startswith("gemini"):
-            provider = "gemini"
-
-    # Set env vars based on provider
-    if provider == "openai":
-        key = api_keys.get("openai", "")
-        if key: os.environ["OPENAI_API_KEY"] = key
-        if model: os.environ["OPENAI_MODEL"] = model
-    elif provider == "anthropic":
-        key = api_keys.get("anthropic", "")
-        if key: os.environ["ANTHROPIC_API_KEY"] = key
-        if model: os.environ["ANTHROPIC_MODEL"] = model
-    elif provider == "gemini":
-        key = api_keys.get("gemini", "")
-        if key: 
-            os.environ["GOOGLE_API_KEY"] = key
-            os.environ["GEMINI_API_KEY"] = key
-        if model: os.environ["GEMINI_MODEL"] = model
-    
-    # If no provider set but keys exist, set defaults (fallback behavior)
-    if not provider:
-        if api_keys.get("openai"):
-             os.environ["OPENAI_API_KEY"] = api_keys.get("openai")
-        if api_keys.get("anthropic"):
-             os.environ["ANTHROPIC_API_KEY"] = api_keys.get("anthropic")
-        if api_keys.get("gemini"):
-             k = api_keys.get("gemini")
-             os.environ["GOOGLE_API_KEY"] = k
-             os.environ["GEMINI_API_KEY"] = k
-
-    return True
-
+    for key, value in env_map.items():
+        if value is not None:
+            os.environ[str(key)] = str(value)
     return True
 
 
@@ -124,6 +83,9 @@ def ensure_llm_config() -> str:
     apply_llm_config()
 
     provider = str(os.environ.get("LLM_PROVIDER", "")).strip().lower()
+    if provider == "gemini":
+        provider = "google"
+        os.environ["LLM_PROVIDER"] = "google"
     if provider:
         return provider
 
@@ -131,11 +93,11 @@ def ensure_llm_config() -> str:
     if os.environ.get("OPENAI_API_KEY"):
         os.environ["LLM_PROVIDER"] = "openai"
         return "openai"
-    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
-        os.environ["LLM_PROVIDER"] = "gemini"
-        return "gemini"
     if os.environ.get("ANTHROPIC_API_KEY"):
         os.environ["LLM_PROVIDER"] = "anthropic"
         return "anthropic"
+    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+        os.environ["LLM_PROVIDER"] = "google"
+        return "google"
 
     return ""

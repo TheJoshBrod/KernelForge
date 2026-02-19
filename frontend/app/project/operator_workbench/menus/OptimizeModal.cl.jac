@@ -6,7 +6,7 @@ import from .....components.ui.SearchableSelect { SearchableSelect }
 import from .....components.ui.Modal { Modal }
 import from .....context.ConfigContext { useConfig }
 
-def:pub OptimizeModal(props: any) {
+def:pub OptimizeModal(props: any) -> Any {
     isOpen = props.isOpen;
     onClose = props.onClose;
     onComplete = props.onComplete;
@@ -23,8 +23,30 @@ def:pub OptimizeModal(props: any) {
     setIsWorking = is_working_state[1];
 
     # Config State
-    # Config State
     default_llm = "";
+    api_keys = config["api_keys"] if config and "api_keys" in config else {};
+    provider_options = [];
+    if api_keys and "openai" in api_keys and api_keys["openai"] {
+        provider_options.push({"label": "OpenAI", "value": "openai"});
+    }
+    if api_keys and "anthropic" in api_keys and api_keys["anthropic"] {
+        provider_options.push({"label": "Anthropic", "value": "anthropic"});
+    }
+    if api_keys and "google" in api_keys and api_keys["google"] {
+        provider_options.push({"label": "Google", "value": "google"});
+    }
+    if provider_options.length == 0 {
+        provider_options = [
+            {"label": "OpenAI", "value": "openai"},
+            {"label": "Anthropic", "value": "anthropic"},
+            {"label": "Google", "value": "google"}
+        ];
+    }
+    default_provider = provider_options[0]["value"] if provider_options.length > 0 else "openai";
+
+    llm_provider_state = useState(default_provider);
+    llmProvider = llm_provider_state[0];
+    setLlmProvider = llm_provider_state[1];
 
     llm_model_state = useState(default_llm);
     llmModel = llm_model_state[0];
@@ -40,42 +62,14 @@ def:pub OptimizeModal(props: any) {
     patience = patience_state[0];
     setPatience = patience_state[1];
 
-    # Model List State
-    models_state = useState([]);
-    models = models_state[0];
-    setModels = models_state[1];
-    
-    loading_models_state = useState(False);
-    loadingModels = loading_models_state[0];
-    setLoadingModels = loading_models_state[1];
-
-    # Fetch models on open
-    useEffect(lambda -> None {
-        if isOpen {
-            async def fetchModels -> None {
-                setLoadingModels(True);
-                try {
-                    resp = await __jacSpawn("GetOpenLLMModels", "", {"cfg": config});
-                    data = resp.reports[0] if resp and resp.reports else {};
-                    if data and "success" in data and data["success"] {
-                        if "models" in data {
-                            list_models = data["models"];
-                            setModels(list_models);
-                            # Set default if none selected and list not empty
-                            if not llmModel and list_models.length > 0 {
-                                setLlmModel(list_models[0]["id"]);
-                            }
-                        }
-                    }
-                } except Exception as e {
-                    console.error("Error fetching models:", e);
-                } finally {
-                    setLoadingModels(False);
-                }
-            }
-            fetchModels();
-        }
-    }, [isOpen]);
+    provider_option_nodes = [];
+    for p in provider_options {
+        provider_option_nodes.push(
+            <option key={p["value"]} value={p["value"]}>
+                {p["label"]}
+            </option>
+        );
+    }
 
     async def handleOptimize -> None {
         if not hasTree {
@@ -104,6 +98,9 @@ def:pub OptimizeModal(props: any) {
 
             if llmModel {
                 payload["llm_model"] = llmModel;
+            }
+            if llmProvider {
+                payload["llm_provider"] = llmProvider;
             }
 
             resp = await __jacSpawn(
@@ -143,27 +140,35 @@ def:pub OptimizeModal(props: any) {
             <div className="p-6 space-y-6">
                 <div className="space-y-4">
                     <div className="space-y-2">
-                        <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
-                            <BrainIcon className="w-4 h-4 text-purple-400" />
-                            LLM Model
-                        </label>
-                        <div className="relative">
-                            <SearchableSelect
-                                value={llmModel}
-                                onChange={setLlmModel}
-                                options={models.map(lambda m: dict -> dict {
-                                    return {"value": m["id"], "label": m["label"] + " (" + m["provider"] + ")"};
-                                })}
-                                placeholder="Select a model..."
-                                disabled={loadingModels}
-                            />
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
+                                    <BrainIcon className="w-4 h-4 text-purple-400" />
+                                    LLM Provider
+                                </label>
+                                <select
+                                    value={llmProvider}
+                                    onChange={lambda e: any -> None { setLlmProvider(e.target.value);}}
+                                    className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                >
+                                    {provider_option_nodes}
+                                </select>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
+                                    <BrainIcon className="w-4 h-4 text-purple-400" />
+                                    LLM Model
+                                </label>
+                                <input
+                                    type="text"
+                                    value={llmModel}
+                                    onChange={lambda e: any -> None { setLlmModel(e.target.value);}}
+                                    placeholder="e.g. claude-3-5-sonnet-latest"
+                                    className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                />
+                            </div>
                         </div>
-                        {
-                            <p className="text-[10px] text-zinc-500">Loading models...</p>
-                            if loadingModels 
-                            else
-                            <p className="text-[10px] text-zinc-500">Select model from {" " + models.length} available</p>
-                        }
+                        <p className="text-[10px] text-zinc-500">Saved on project config and used for this run</p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">

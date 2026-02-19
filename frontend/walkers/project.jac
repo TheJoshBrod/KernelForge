@@ -1,6 +1,6 @@
 """Project management walkers."""
 
-import from json { load, loads, dump }
+import from json { load, loads, dump, dumps }
 import from os { path, makedirs, listdir }
 import from base64 { b64decode, b64encode }
 import from datetime { datetime }
@@ -9,12 +9,21 @@ import sys;
 import subprocess;
 import os;
 import sqlite3;
+import hashlib;
 
 import from .globals { repo_root, config_path, config_store }
 
 # --- Helpers ---
 def _project_dir(name: str) -> str {
-    return path.join(repo_root, "projects", name);
+    primary = path.join(_projects_base_dir(), name);
+    legacy = path.join(repo_root, "projects", name);
+    if path.exists(primary) {
+        return primary;
+    }
+    if path.exists(legacy) {
+        return legacy;
+    }
+    return primary;
 }
 
 def _ensure_dir(dir_path: str) -> None {
@@ -23,7 +32,156 @@ def _ensure_dir(dir_path: str) -> None {
     }
 }
 
+def _projects_base_dir() -> str {
+    data_dir = (
+        os.environ["CGINS_DATA_DIR"]
+        if "CGINS_DATA_DIR" in os.environ and os.environ["CGINS_DATA_DIR"]
+        else path.join(repo_root, "kernels", "private")
+    );
+    projects_dir = path.join(data_dir, "projects");
+    _ensure_dir(projects_dir);
+    return projects_dir;
+}
 
+def _legacy_projects_dir() -> str {
+    return path.join(repo_root, "projects");
+}
+
+def _all_projects_dirs() -> list {
+    dirs = [];
+    primary = _projects_base_dir();
+    legacy = _legacy_projects_dir();
+    dirs.append(primary);
+    if legacy != primary and path.exists(legacy) {
+        dirs.append(legacy);
+    }
+    return dirs;
+}
+
+def _ensure_legacy_project_link(project_name: str, target_dir: str) -> None {
+    legacy_root = _legacy_projects_dir();
+    _ensure_dir(legacy_root);
+    legacy_path = path.join(legacy_root, project_name);
+    if path.abspath(legacy_path) == path.abspath(target_dir) {
+        return;
+    }
+    if path.exists(legacy_path) {
+        return;
+    }
+    try {
+        os.symlink(target_dir, legacy_path);
+    } except Exception as e {
+        print(f"Warning: unable to create legacy project link for {project_name}: {e}");
+    }
+}
+
+def _store_weight_artifact(project_path: str, file_name: Any, payload_b64: Any) -> dict {
+    if not payload_b64 {
+        return {};
+    }
+    source_name = str(file_name) if file_name else "weights.pth";
+    if not (source_name.endswith(".pth") or source_name.endswith(".pt")) {
+        source_name = source_name + ".pth";
+    }
+    data = b64decode(str(payload_b64));
+    digest = hashlib.sha256(data).hexdigest();
+    ext = ".pth" if source_name.endswith(".pth") else ".pt";
+
+    artifacts_root = path.join(project_path, "artifacts");
+    weights_root = path.join(artifacts_root, "weights");
+    _ensure_dir(artifacts_root);
+    _ensure_dir(weights_root);
+
+    stored_name = digest + ext;
+    stored_path = path.join(weights_root, stored_name);
+    if not path.exists(stored_path) {
+        with open(stored_path, "wb") as f {
+            f.write(data);
+        }
+    }
+
+    return {
+        "id": digest[0:16],
+        "name": source_name,
+        "sha256": digest,
+        "size_bytes": len(data),
+        "relpath": path.relpath(stored_path, project_path),
+        "source": "upload"
+    };
+}
+
+def _merge_weight_artifacts(entries: list) -> list {
+    dedup = {};
+    out = [];
+    for item in entries {
+        if not item or "sha256" not in item {
+            continue;
+        }
+        key = item["sha256"];
+        if key in dedup {
+            continue;
+        }
+        dedup[key] = True;
+        out.append(item);
+    }
+    return out;
+}
+
+def _apply_llm_env_from_config(
+    cfg: dict,
+    project_cfg: dict = {},
+    override_provider: str = "",
+    override_model: str = ""
+) -> dict {
+    if not cfg {
+        return {};
+    }
+    try {
+        code = """
+import json
+import sys
+from src.llm.runtime_config import resolve_runtime_env
+
+global_cfg = json.loads(sys.argv[1])
+project_cfg = json.loads(sys.argv[2])
+override_provider = sys.argv[3]
+override_model = sys.argv[4]
+
+env_map = resolve_runtime_env(
+    global_config=global_cfg,
+    project_config=project_cfg,
+    override_provider=override_provider,
+    override_model=override_model,
+)
+print(json.dumps(env_map))
+""";
+        out = subprocess.check_output(
+            [
+                sys.executable,
+                "-c",
+                code,
+                dumps(cfg),
+                dumps(project_cfg if project_cfg else {}),
+                override_provider if override_provider else "",
+                override_model if override_model else ""
+            ],
+            cwd=repo_root,
+            timeout=8
+        );
+        text = out.decode("utf-8").strip();
+        env_map = loads(text) if text else {};
+        for key in env_map {
+            value = env_map[key];
+            if value is not None {
+                os.environ[str(key)] = str(value);
+            }
+        }
+        return env_map;
+    } except Exception as e {
+        print(f"Failed to apply LLM env: {e}");
+        return {};
+    }
+}
 
 def _read_state(project_name: str) -> dict {
     state_path = path.join(_project_dir(project_name), "state.json");
@@ -285,6 +443,7 @@ def _is_allowed_repo_path(rel_path: str, project_name: str) -> bool {
     }
     allowed = [
         path.join("projects", project_name),
+        path.join("kernels", "private", "projects", project_name),
         path.join("kernels", "optimized"),
         path.join("kernels", "generated")
     ];
@@ -301,39 +460,83 @@ def _is_allowed_repo_path(rel_path: str, project_name: str) -> bool {
 walker:pub CreateProject {
     has projectName: str,
         code: str,
+        modelFileB64: str = "",
+        modelFileName: str = "model.py",
         weightsFileB64: str = "",
+        weightsFileName: str = "",
+        pthFiles: list = [],
         validationSetPath: str = "",
         validationZipB64: str = "",
         validationZipName: str = "";
 
     can create with entry {
         try {
-            projects_dir = path.join(repo_root, "projects");
-            if not path.exists(projects_dir) {
-                makedirs(projects_dir);
-            }
+            projects_dir = _projects_base_dir();
+            _ensure_dir(projects_dir);
 
             project_path = path.join(projects_dir, self.projectName);
+            legacy_path = path.join(_legacy_projects_dir(), self.projectName);
 
-            if path.exists(project_path) {
+            if path.exists(project_path) or path.exists(legacy_path) {
                 report {"error": "Project already exists", "success": False} ;
                 disengage;
             }
 
             makedirs(project_path);
+            _ensure_legacy_project_link(self.projectName, project_path);
 
-            if self.code {
+            model_written = False;
+            if self.code and self.code.strip() {
                 with open(path.join(project_path, "model.py"), "w") as f {
                     f.write(self.code);
                 }
+                model_written = True;
+            } elif self.modelFileB64 {
+                model_bytes = b64decode(self.modelFileB64);
+                with open(path.join(project_path, "model.py"), "wb") as f {
+                    f.write(model_bytes);
+                }
+                model_written = True;
             }
 
+            if not model_written {
+                report {"error": "Model code or model file is required", "success": False} ;
+                disengage;
+            }
+
+            weight_artifacts = [];
             if self.weightsFileB64 {
                 weights_data = b64decode(self.weightsFileB64);
                 with open(path.join(project_path, "weights.pt"), "wb") as f {
                     f.write(weights_data);
                 }
+                legacy_meta = _store_weight_artifact(
+                    project_path,
+                    (self.weightsFileName if self.weightsFileName else "weights.pt"),
+                    self.weightsFileB64
+                );
+                if legacy_meta {
+                    weight_artifacts.append(legacy_meta);
+                }
             }
+
+            if self.pthFiles {
+                for item in self.pthFiles {
+                    if not item {
+                        continue;
+                    }
+                    p_name = str(item["name"]) if "name" in item and item["name"] else "checkpoint.pth";
+                    p_b64 = str(item["b64"]) if "b64" in item and item["b64"] else "";
+                    if not p_b64 {
+                        continue;
+                    }
+                    p_meta = _store_weight_artifact(project_path, p_name, p_b64);
+                    if p_meta {
+                        weight_artifacts.append(p_meta);
+                    }
+                }
+            }
+            weight_artifacts = _merge_weight_artifacts(weight_artifacts);
 
             validation_dir = self.validationSetPath;
             if self.validationZipB64 {
@@ -363,7 +566,10 @@ walker:pub CreateProject {
                     "extra_validation_cases": 1,
                     "target_device": target_device
                 },
-                "profile": {"allow_ops": [], "skip_ops": [], "skip_prefixes": []}
+                "profile": {"allow_ops": [], "skip_ops": [], "skip_prefixes": []},
+                "artifacts": {
+                    "weights": weight_artifacts
+                }
             };
             with open(path.join(project_path, "config.json"), "w") as f {
                 dump(config, f, indent=2);
@@ -433,6 +639,7 @@ walker:pub CreateProject {
             report {
                 "success": True,
                 "name": self.projectName,
+                "weights_count": weight_artifacts.length,
                 "profile": profile_result,
                 "prepare": prepare_result
             } ;
@@ -446,17 +653,21 @@ walker:pub CreateProject {
 walker:pub GetProjects {
     can return_projects with entry {
         try {
-            projects_dir = path.join(repo_root, "projects");
-            if not path.exists(projects_dir) {
-                report {"projects": []} ;
-                disengage;
-            }
-
             projects = [];
-            for name in listdir(projects_dir) {
-                full_path = path.join(projects_dir, name);
-                if path.isdir(full_path) {
-                    projects.append({"name": name});
+            seen = {};
+            for projects_dir in _all_projects_dirs() {
+                if not path.exists(projects_dir) {
+                    continue;
+                }
+                for name in listdir(projects_dir) {
+                    if name in seen {
+                        continue;
+                    }
+                    full_path = path.join(projects_dir, name);
+                    if path.isdir(full_path) {
+                        seen[name] = True;
+                        projects.append({"name": name});
+                    }
                 }
             }
             report {"projects": projects} ;
@@ -473,7 +684,7 @@ walker:pub GetProjectOps {
     can return_ops with entry {
         try {
             base_dir = path.join(
-                repo_root, "projects", self.projectName, "io", "individual_ops"
+                _project_dir(self.projectName), "io", "individual_ops"
             );
             if not path.exists(base_dir) {
                 report {"ops": []} ;
@@ -592,6 +803,7 @@ walker:pub StartGenerateAdvanced {
         minImproveMs: float = 0.0,
         minSpeedupPct: float = 5.0,
         image: str = "cgins-codex:latest",
+        llm_provider: str = "",
         llm_model: str = "",
         generator_config: dict = {},
         optimizer_config: dict = {};
@@ -607,10 +819,37 @@ walker:pub StartGenerateAdvanced {
                 print(f"Error loading config: {e}");
                 cfg = config_store;
             }
-            if self.llm_model {
-                os.environ["LLM_MODEL"] = self.llm_model;
+
+            project_cfg_path = path.join(_project_dir(self.projectName), "config.json");
+            project_cfg = {};
+            try {
+                if path.exists(project_cfg_path) {
+                    with open(project_cfg_path, "r") as f {
+                        project_cfg = load(f);
+                    }
+                }
+            } except Exception as e {
+                print(f"Failed to load project config: {e}");
+                project_cfg = {};
             }
-            # _apply_llm_env_from_config(cfg); removed - handled by src/config.py via api_keys
+
+            llm_cfg = project_cfg["llm"] if project_cfg and "llm" in project_cfg else {};
+            if self.llm_provider {
+                llm_cfg["provider"] = str(self.llm_provider).strip().lower();
+            }
+            if self.llm_model {
+                llm_cfg["model"] = str(self.llm_model).strip();
+            }
+            if llm_cfg {
+                project_cfg["llm"] = llm_cfg;
+            }
+            os.environ["CGINS_PROJECT_CONFIG_PATH"] = project_cfg_path;
+            _apply_llm_env_from_config(
+                cfg,
+                project_cfg,
+                self.llm_provider if self.llm_provider else "",
+                self.llm_model if self.llm_model else ""
+            );
 
             # Extract generator config overrides
             target_device = "cuda";
@@ -632,16 +871,6 @@ walker:pub StartGenerateAdvanced {
             
             # Persist project config overrides if needed
             try {
-                project_cfg_path = path.join(
-                    _project_dir(self.projectName), "config.json"
-                );
-                project_cfg = {};
-                if path.exists(project_cfg_path) {
-                    with open(project_cfg_path, "r") as f {
-                        project_cfg = load(f);
-                    }
-                }
-                
                 # Update generator config
                 gen_cfg = project_cfg["generator"] if project_cfg and "generator" in project_cfg else {};
                 gen_cfg["target_device"] = target_device;
@@ -809,6 +1038,7 @@ walker:pub StartOptimizeAdvanced {
         minImproveMs: float = 0.0,
         minSpeedupPct: float = 5.0,
         image: str = "cgins-codex:latest",
+        llm_provider: str = "",
         llm_model: str = "",
         optimizer_config: dict = {};
 
@@ -823,27 +1053,55 @@ walker:pub StartOptimizeAdvanced {
                 print(f"Error loading config: {e}");
                 cfg = config_store;
             }
-            if self.llm_model {
-                cfg["llm_info"]["model"] = self.llm_model;
-            }
-            _apply_llm_env_from_config(cfg);
-
-            # Load target device from project config
-            target_device = "cuda";
+            project_cfg_path = path.join(
+                _project_dir(self.projectName), "config.json"
+            );
+            project_cfg = {};
             try {
-                project_cfg_path = path.join(
-                    _project_dir(self.projectName), "config.json"
-                );
                 if path.exists(project_cfg_path) {
-                     with open(project_cfg_path, "r") as f {
+                    with open(project_cfg_path, "r") as f {
                         project_cfg = load(f);
-                        if project_cfg and "generator" in project_cfg and "target_device" in project_cfg["generator"] {
-                            target_device = project_cfg["generator"]["target_device"];
-                        }
                     }
                 }
             } except Exception as e {
-                print(f"Failed to load target device: {e}");
+                print(f"Failed to load project config: {e}");
+                project_cfg = {};
+            }
+
+            llm_cfg = project_cfg["llm"] if project_cfg and "llm" in project_cfg else {};
+            llm_changed = False;
+            if self.llm_provider {
+                llm_cfg["provider"] = str(self.llm_provider).strip().lower();
+                llm_changed = True;
+            }
+            if self.llm_model {
+                llm_cfg["model"] = str(self.llm_model).strip();
+                llm_changed = True;
+            }
+            if llm_cfg {
+                project_cfg["llm"] = llm_cfg;
+            }
+            if llm_changed {
+                try {
+                    with open(project_cfg_path, "w") as f {
+                        dump(project_cfg, f, indent=2);
+                    }
+                } except Exception as e {
+                    print(f"Failed to persist project LLM config: {e}");
+                }
+            }
+            os.environ["CGINS_PROJECT_CONFIG_PATH"] = project_cfg_path;
+            _apply_llm_env_from_config(
+                cfg,
+                project_cfg,
+                self.llm_provider if self.llm_provider else "",
+                self.llm_model if self.llm_model else ""
+            );
+
+            # Load target device from project config
+            target_device = "cuda";
+            if project_cfg and "generator" in project_cfg and "target_device" in project_cfg["generator"] {
+                target_device = project_cfg["generator"]["target_device"];
             }
             target_device = target_device.lower();
             if target_device == "gpu" or target_device == "cuda" or target_device == "rocm" or target_device == "amd" {
