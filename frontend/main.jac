@@ -4,9 +4,12 @@ import from walkers.config { GetConfig, SaveConfig }
 import from walkers.system {
     GetSystemInfo,
     CheckSshConnection,
-    TestLLMConnection,
-    DetectHardware,
-    GetOpenLLMModels
+    CheckSshConnection,
+    DetectHardware
+}
+import from walkers.llm {
+    GetOpenLLMModels,
+    TestLLMConnection
 }
 import from walkers.project {
     CreateProject,

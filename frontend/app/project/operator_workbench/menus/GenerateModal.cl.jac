@@ -53,6 +53,7 @@ def:pub GenerateModal(props: any) {
     useEffect(lambda -> None {
         if isOpen {
             async def fetchModels -> None {
+                console.log("Fetching models...");
                 setLoadingModels(True);
                 try {
                     resp = await __jacSpawn("GetOpenLLMModels", "", {"cfg": config});
@@ -60,6 +61,7 @@ def:pub GenerateModal(props: any) {
                     if data and "success" in data and data["success"] {
                         if "models" in data {
                             list_models = data["models"];
+                            console.log("Fetched models:", list_models);
                             setModels(list_models);
                             # Set default if none selected and list not empty
                             if not llmModel and list_models.length > 0 {
@@ -183,7 +185,7 @@ def:pub GenerateModal(props: any) {
                             <p className="text-[10px] text-zinc-500">Loading models...</p>
                             if loadingModels 
                             else
-                            <p className="text-[10px] text-zinc-500">Select model from {models.length} available</p>
+                            <p className="text-[10px] text-zinc-500">Select model from {" " + models.length} available</p>
                         }
                     </div>
 
