@@ -1,70 +1,113 @@
 """API Keys Settings Component"""
 
 import from react { useState }
-import from ...components.ui.Icons { EyeIcon, EyeOffIcon }
 
 def:pub ApiKeysSettings(props: any) -> Any {
     config = props.config;
-    handleLlmInfoChange = props.handleLlmInfoChange;
+    handleApiKeyChange = props.handleApiKeyChange;
     handleSave = props.handleSave;
     saving = props.saving;
 
     api_keys = config["api_keys"] if config and "api_keys" in config else {};
     openai_key = api_keys["openai"] if api_keys and "openai" in api_keys else "";
     anthropic_key = api_keys["anthropic"] if api_keys and "anthropic" in api_keys else "";
-    gemini_key = api_keys["gemini"] if api_keys and "gemini" in api_keys else "";
+    google_key = api_keys["google"] if api_keys and "google" in api_keys else "";
 
-    # Visibility states
-    vis_state = useState({
-        "openai": False,
-        "anthropic": False,
-        "gemini": False
-    });
-    visibility = vis_state[0];
-    setVisibility = vis_state[1];
-
-    def toggleVisibility(provider: str) -> None {
-        new_vis = {** visibility};
-        new_vis[provider] = not new_vis[provider];
-        setVisibility(new_vis);
-    }
-
-    test_state = useState({"status": "idle", "message": ""});
+    test_state = useState(
+        {
+            "openai": {"status": "idle", "message": ""},
+            "anthropic": {"status": "idle", "message": ""},
+            "google": {"status": "idle", "message": ""},
+            "all": {"status": "idle", "message": ""}
+        }
+    );
     testStatus = test_state[0];
     setTestStatus = test_state[1];
 
-    async def handleTest -> None {
-        setTestStatus({"status": "pending", "message": "Testing connection..."});
+    def _tone(status_key: str) -> str {
+        if not testStatus or status_key not in testStatus {
+            return "tone-muted";
+        }
+        entry = testStatus[status_key];
+        if entry and "status" in entry and entry["status"] == "success" {
+            return "tone-success";
+        }
+        if entry and "status" in entry and entry["status"] == "error" {
+            return "tone-error";
+        }
+        return "tone-muted";
+    }
+
+    def _set_provider_status(provider: str, status: str, message: str) -> None {
+        next_status = {** testStatus};
+        next_status[provider] = {"status": status, "message": message};
+        setTestStatus(next_status);
+    }
+
+    async def runTest(provider: str, key: str) -> None {
+        _set_provider_status(provider, "pending", "Testing...");
         try {
-            # Test all keys or specific one? For now, let's just test connectivity
-            # We'll need to update the backend walker to handle this.
-            # For now, sending the config as is.
-            resp = await __jacSpawn("TestLLMConnection", "", {"cfg": config});
+            resp = await __jacSpawn(
+                "TestApiKey",
+                "",
+                {"provider": provider, "api_key": key, "cfg": config}
+            );
             data = resp.reports[0] if resp and resp.reports else {};
             success = data["success"] if data and "success" in data else False;
             if success {
-                latency = data["latency_ms"] if "latency_ms" in data else None;
+                latency = data["latency_ms"] if data and "latency_ms" in data else None;
                 msg = "Connection OK";
                 if latency is not None {
                     msg = msg + f" ({latency}ms)";
                 }
-                setTestStatus({"status": "success", "message": msg});
+                _set_provider_status(provider, "success", msg);
             } else {
                 err = data["error"]
                 if data and "error" in data
                 else "Connection failed";
-                setTestStatus({"status": "error", "message": err});
+                _set_provider_status(provider, "error", err);
             }
         } except Exception as e {
-            setTestStatus({"status": "error", "message": str(e)});
+            _set_provider_status(provider, "error", str(e));
         }
     }
 
-    tone = "tone-muted";
-    if testStatus["status"] == "success" {
-        tone = "tone-success";
-    } elif testStatus["status"] == "error" {
-        tone = "tone-error";
+    async def runAllTests -> None {
+        next_status = {** testStatus};
+        next_status["all"] = {"status": "pending", "message": "Testing all keys..."};
+        setTestStatus(next_status);
+        try {
+            resp = await __jacSpawn("TestAllApiKeys", "", {"cfg": config});
+            data = resp.reports[0] if resp and resp.reports else {};
+            results = data["results"] if data and "results" in data else {};
+            out = {** testStatus};
+            providers = ["openai", "anthropic", "google"];
+            for provider in providers {
+                result = results[provider] if results and provider in results else {};
+                ok = result["success"] if result and "success" in result else False;
+                if ok {
+                    latency = result["latency_ms"] if "latency_ms" in result else None;
+                    msg = "Connection OK";
+                    if latency is not None {
+                        msg = msg + f" ({latency}ms)";
+                    }
+                    out[provider] = {"status": "success", "message": msg};
+                } else {
+                    err = result["error"] if result and "error" in result else "Connection failed";
+                    out[provider] = {"status": "error", "message": err};
+                }
+            }
+            all_ok = data["success"] if data and "success" in data else False;
+            out["all"] = {
+                "status": ("success" if all_ok else "error"),
+                "message": ("All keys valid" if all_ok else "Some key tests failed")
+            };
+            setTestStatus(out);
+        } except Exception as e {
+            out = {** testStatus};
+            out["all"] = {"status": "error", "message": str(e)};
+            setTestStatus(out);
+        }
     }
 
     return (
@@ -73,104 +116,101 @@ def:pub ApiKeysSettings(props: any) -> Any {
                 <label className="input-label">
                     OpenAI API Key
                 </label>
-                <div className="relative">
-                    <input
-                        className="input input--mono pr-10"
-                        type={"text" if visibility["openai"] else "password"}
-                        value={openai_key}
-                        placeholder="sk-..."
-                        onChange={lambda e: any  -> None { handleLlmInfoChange(
-                            "openai", e.target.value
-                        );}}
-                        spellCheck={False}
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                    />
+                <input
+                    className="input input--mono"
+                    type="password"
+                    value={openai_key}
+                    placeholder="sk-..."
+                    onChange={lambda e: any  -> None { handleApiKeyChange("openai", e.target.value);}}
+                    spellCheck={False}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                />
+                <div className="settings-actions">
                     <button
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                        onClick={lambda -> None { toggleVisibility("openai"); }}
+                        type="button"
+                        className="app-button app-button--secondary app-button--wide"
+                        onClick={lambda -> None { runTest("openai", openai_key);}}
+                        disabled={testStatus["openai"]["status"] == "pending"}
                     >
-                        {
-                            <EyeOffIcon className="w-4 h-4" />
-                            if visibility["openai"]
-                            else
-                            <EyeIcon className="w-4 h-4" />
-                        }
+                        {("Testing..." if testStatus["openai"]["status"] == "pending" else "Test OpenAI")}
                     </button>
                 </div>
+                <div className={"settings-test " + _tone("openai")}>
+                    {testStatus["openai"]["message"] if testStatus and "openai" in testStatus else ""}
+                </div>
             </div>
+
             <div className="form-field">
                 <label className="input-label">
                     Anthropic API Key
                 </label>
-                <div className="relative">
-                    <input
-                        className="input input--mono pr-10"
-                        type={"text" if visibility["anthropic"] else "password"}
-                        value={anthropic_key}
-                        placeholder="sk-ant-..."
-                        onChange={lambda e: any  -> None { handleLlmInfoChange(
-                            "anthropic", e.target.value
-                        );}}
-                        spellCheck={False}
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                    />
+                <input
+                    className="input input--mono"
+                    type="password"
+                    value={anthropic_key}
+                    placeholder="sk-ant-..."
+                    onChange={lambda e: any  -> None { handleApiKeyChange("anthropic", e.target.value);}}
+                    spellCheck={False}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                />
+                <div className="settings-actions">
                     <button
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                        onClick={lambda -> None { toggleVisibility("anthropic"); }}
+                        type="button"
+                        className="app-button app-button--secondary app-button--wide"
+                        onClick={lambda -> None { runTest("anthropic", anthropic_key);}}
+                        disabled={testStatus["anthropic"]["status"] == "pending"}
                     >
-                        {
-                            <EyeOffIcon className="w-4 h-4" />
-                            if visibility["anthropic"]
-                            else
-                            <EyeIcon className="w-4 h-4" />
-                        }
+                        {("Testing..." if testStatus["anthropic"]["status"] == "pending" else "Test Anthropic")}
                     </button>
                 </div>
+                <div className={"settings-test " + _tone("anthropic")}>
+                    {testStatus["anthropic"]["message"] if testStatus and "anthropic" in testStatus else ""}
+                </div>
             </div>
+
             <div className="form-field">
                 <label className="input-label">
-                    Gemini API Key
+                    Google API Key
                 </label>
-                <div className="relative">
-                    <input
-                        className="input input--mono pr-10"
-                        type={"text" if visibility["gemini"] else "password"}
-                        value={gemini_key}
-                        placeholder="AIza..."
-                        onChange={lambda e: any  -> None { handleLlmInfoChange(
-                            "gemini", e.target.value
-                        );}}
-                        spellCheck={False}
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                    />
+                <input
+                    className="input input--mono"
+                    type="password"
+                    value={google_key}
+                    placeholder="AIza..."
+                    onChange={lambda e: any  -> None { handleApiKeyChange("google", e.target.value);}}
+                    spellCheck={False}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                />
+                <div className="settings-actions">
                     <button
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                        onClick={lambda -> None { toggleVisibility("gemini"); }}
+                        type="button"
+                        className="app-button app-button--secondary app-button--wide"
+                        onClick={lambda -> None { runTest("google", google_key);}}
+                        disabled={testStatus["google"]["status"] == "pending"}
                     >
-                        {
-                            <EyeOffIcon className="w-4 h-4" />
-                            if visibility["gemini"]
-                            else
-                            <EyeIcon className="w-4 h-4" />
-                        }
+                        {("Testing..." if testStatus["google"]["status"] == "pending" else "Test Google")}
                     </button>
                 </div>
+                <div className={"settings-test " + _tone("google")}>
+                    {testStatus["google"]["message"] if testStatus and "google" in testStatus else ""}
+                </div>
             </div>
+
             <div className="settings-actions-block">
                 <div className="settings-actions">
                     <button
                         type="button"
                         className="app-button app-button--secondary app-button--wide"
-                        onClick={handleTest}
-                        disabled={testStatus["status"] == "pending"}
+                        onClick={runAllTests}
+                        disabled={testStatus["all"]["status"] == "pending"}
                     >
                         {(
                             "Testing..."
-                            if testStatus["status"] == "pending"
-                            else "Test"
+                            if testStatus["all"]["status"] == "pending"
+                            else "Test All Keys"
                         )}
                     </button>
                     <button
@@ -182,8 +222,8 @@ def:pub ApiKeysSettings(props: any) -> Any {
                         {("Saving..." if saving else "Save")}
                     </button>
                 </div>
-                <div className={"settings-test " + tone}>
-                    {testStatus["message"] if "message" in testStatus else ""}
+                <div className={"settings-test " + _tone("all")}>
+                    {testStatus["all"]["message"] if testStatus and "all" in testStatus else ""}
                 </div>
             </div>
         </div>

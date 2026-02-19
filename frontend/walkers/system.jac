@@ -65,6 +65,94 @@ def _run_llm_test(provider: str, model: str, apikey: str) -> dict {
     }
 }
 
+def _normalize_provider(provider: str) -> str {
+    value = provider.lower().strip() if provider else "";
+    if value == "gemini" or value == "google-genai" {
+        return "google";
+    }
+    return value;
+}
+
+def _extract_api_keys(cfg: dict) -> dict {
+    out = {"openai": "", "anthropic": "", "google": ""};
+    if not cfg {
+        return out;
+    }
+    raw_keys = cfg["api_keys"] if cfg and "api_keys" in cfg else {};
+    for provider in out {
+        if raw_keys and provider in raw_keys and raw_keys[provider] {
+            out[provider] = str(raw_keys[provider]).strip();
+        }
+    }
+    llm = cfg["llm_info"] if cfg and "llm_info" in cfg else {};
+    legacy_provider = _normalize_provider(llm["provider"] if llm and "provider" in llm else "");
+    legacy_key = str(llm["apikey"]).strip() if llm and "apikey" in llm else "";
+    if legacy_provider in out and legacy_key and not out[legacy_provider] {
+        out[legacy_provider] = legacy_key;
+    }
+    return out;
+}
+
+def _default_model_for_provider(provider: str) -> str {
+    if provider == "openai" {
+        return "gpt-4o-mini";
+    } elif provider == "anthropic" {
+        return "claude-3-5-haiku-latest";
+    } elif provider == "google" {
+        return "gemini-2.0-flash";
+    }
+    return "";
+}
+
+def _run_api_key_test(provider: str, apikey: str) -> dict {
+    provider_norm = _normalize_provider(provider);
+    try {
+        code = (
+            "import json, sys;"
+            "from src.llm.key_test import test_api_key;"
+            "print(json.dumps(test_api_key(sys.argv[1], sys.argv[2], timeout_seconds=4.0)))"
+        );
+        out = subprocess.check_output(
+            [sys.executable, "-c", code, provider_norm, apikey if apikey else ""],
+            cwd=repo_root,
+            timeout=10
+        );
+        text = out.decode("utf-8").strip();
+        if text {
+            return loads(text);
+        }
+        return {"success": False, "error": "No output from key test"};
+    } except Exception as e {
+        return {"success": False, "error": str(e)};
+    }
+}
+
+def _run_all_api_key_tests(keys: dict) -> dict {
+    openai_key = keys["openai"] if keys and "openai" in keys else "";
+    anthropic_key = keys["anthropic"] if keys and "anthropic" in keys else "";
+    google_key = keys["google"] if keys and "google" in keys else "";
+    try {
+        code = (
+            "import json, sys;"
+            "from src.llm.key_test import test_all_api_keys;"
+            "keys = {'openai': sys.argv[1], 'anthropic': sys.argv[2], 'google': sys.argv[3]};"
+            "print(json.dumps(test_all_api_keys(keys, timeout_seconds=4.0)))"
+        );
+        out = subprocess.check_output(
+            [sys.executable, "-c", code, openai_key, anthropic_key, google_key],
+            cwd=repo_root,
+            timeout=12
+        );
+        text = out.decode("utf-8").strip();
+        if text {
+            return loads(text);
+        }
+        return {"success": False, "results": {}, "error": "No output from key tests"};
+    } except Exception as e {
+        return {"success": False, "results": {}, "error": str(e)};
+    }
+}
+
 walker:pub GetSystemInfo {
     has host: str = "";
     has user: str = "";
@@ -421,51 +509,68 @@ walker:pub TestLLMConnection {
                 cfg = config_store;
             }
         }
-        
-        api_keys = cfg["api_keys"] if cfg and "api_keys" in cfg else {};
-        results = [];
-        
-        # Define default test models for connectivity check
-        test_models = {
-            "openai": "gpt-4o-mini",
-            "anthropic": "claude-3-haiku-20240307",
-            "gemini": "gemini-1.5-flash"
-        };
-
-        has_keys = False;
-        for provider in ["openai", "anthropic", "gemini"] {
-            key = api_keys[provider] if provider in api_keys else "";
-            if key {
-                has_keys = True;
-                model = test_models[provider];
-                res = _run_llm_test(provider, model, key);
-                results.append(res);
-            }
-        }
-
-        if not has_keys {
-            report {"success": False, "error": "No API keys configured."};
-        } else {
-            # Aggregate results
-            all_success = True;
-            errors = [];
-            latencies = [];
-            for r in results {
-                if not r["success"] {
-                    all_success = False;
-                    errors.append(f"{r.get('provider', 'Unknown')}: {r.get('error', 'Failed')}");
-                } else {
-                    latencies.append(r.get("latency_ms", 0));
+        keys = _extract_api_keys(cfg if cfg else config_store);
+        llm = cfg["llm_info"] if cfg and "llm_info" in cfg else {};
+        provider = _normalize_provider(llm["provider"] if llm and "provider" in llm else "");
+        if not provider {
+            for p in ["openai", "anthropic", "google"] {
+                if keys[p] {
+                    provider = p;
+                    break;
                 }
             }
-            
-            if all_success {
-                avg_latency = sum(latencies) / len(latencies) if latencies else 0;
-                report {"success": True, "latency_ms": int(avg_latency), "message": "All keys valid."};
-            } else {
-                report {"success": False, "error": "; ".join(errors)};
+        }
+        provider_value = str(provider) if provider else "";
+        apikey = str(keys[provider_value]) if provider_value in keys and keys[provider_value] else "";
+        result = _run_api_key_test(provider_value, apikey);
+        report result ;
+    }
+}
+
+walker:pub TestApiKey {
+    has provider: str = "",
+        api_key: str = "",
+        cfg: dict = {};
+
+    can run with entry {
+        cfg = self.cfg;
+        if not cfg {
+            try {
+                with open(config_path, "r") as f {
+                    cfg = load(f);
+                }
+            } except Exception as e {
+                print(f"Error loading config: {e}");
+                cfg = config_store;
             }
         }
+        keys = _extract_api_keys(cfg if cfg else config_store);
+        provider_norm = _normalize_provider(self.provider);
+        provider_value = str(provider_norm) if provider_norm else "";
+        key_value = str(self.api_key) if self.api_key else (str(keys[provider_value]) if provider_value in keys and keys[provider_value] else "");
+        result = _run_api_key_test(provider_value, key_value);
+        report result ;
+    }
+}
+
+walker:pub TestAllApiKeys {
+    has cfg: dict = {};
+
+    can run with entry {
+        cfg = self.cfg;
+        if not cfg {
+            try {
+                with open(config_path, "r") as f {
+                    cfg = load(f);
+                }
+            } except Exception as e {
+                print(f"Error loading config: {e}");
+                cfg = config_store;
+            }
+        }
+        keys = _extract_api_keys(cfg if cfg else config_store);
+        result = _run_all_api_key_tests(keys);
+        report result ;
     }
 }
 

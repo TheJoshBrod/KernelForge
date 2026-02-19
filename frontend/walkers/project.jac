@@ -1,6 +1,6 @@
 """Project management walkers."""
 
-import from json { load, loads, dump }
+import from json { load, loads, dump, dumps }
 import from os { path, makedirs, listdir }
 import from base64 { b64decode, b64encode }
 import from datetime { datetime }
@@ -23,7 +23,61 @@ def _ensure_dir(dir_path: str) -> None {
     }
 }
 
+def _apply_llm_env_from_config(
+    cfg: dict,
+    project_cfg: dict = {},
+    override_provider: str = "",
+    override_model: str = ""
+) -> dict {
+    if not cfg {
+        return {};
+    }
+    try {
+        code = """
+import json
+import sys
+from src.llm.runtime_config import resolve_runtime_env
 
+global_cfg = json.loads(sys.argv[1])
+project_cfg = json.loads(sys.argv[2])
+override_provider = sys.argv[3]
+override_model = sys.argv[4]
+
+env_map = resolve_runtime_env(
+    global_config=global_cfg,
+    project_config=project_cfg,
+    override_provider=override_provider,
+    override_model=override_model,
+)
+print(json.dumps(env_map))
+""";
+        out = subprocess.check_output(
+            [
+                sys.executable,
+                "-c",
+                code,
+                dumps(cfg),
+                dumps(project_cfg if project_cfg else {}),
+                override_provider if override_provider else "",
+                override_model if override_model else ""
+            ],
+            cwd=repo_root,
+            timeout=8
+        );
+        text = out.decode("utf-8").strip();
+        env_map = loads(text) if text else {};
+        for key in env_map {
+            value = env_map[key];
+            if value is not None {
+                os.environ[str(key)] = str(value);
+            }
+        }
+        return env_map;
+    } except Exception as e {
+        print(f"Failed to apply LLM env: {e}");
+        return {};
+    }
+}
 
 def _read_state(project_name: str) -> dict {
     state_path = path.join(_project_dir(project_name), "state.json");
@@ -592,6 +646,7 @@ walker:pub StartGenerateAdvanced {
         minImproveMs: float = 0.0,
         minSpeedupPct: float = 5.0,
         image: str = "cgins-codex:latest",
+        llm_provider: str = "",
         llm_model: str = "",
         generator_config: dict = {},
         optimizer_config: dict = {};
@@ -607,10 +662,37 @@ walker:pub StartGenerateAdvanced {
                 print(f"Error loading config: {e}");
                 cfg = config_store;
             }
-            if self.llm_model {
-                os.environ["LLM_MODEL"] = self.llm_model;
+
+            project_cfg_path = path.join(_project_dir(self.projectName), "config.json");
+            project_cfg = {};
+            try {
+                if path.exists(project_cfg_path) {
+                    with open(project_cfg_path, "r") as f {
+                        project_cfg = load(f);
+                    }
+                }
+            } except Exception as e {
+                print(f"Failed to load project config: {e}");
+                project_cfg = {};
             }
-            # _apply_llm_env_from_config(cfg); removed - handled by src/config.py via api_keys
+
+            llm_cfg = project_cfg["llm"] if project_cfg and "llm" in project_cfg else {};
+            if self.llm_provider {
+                llm_cfg["provider"] = str(self.llm_provider).strip().lower();
+            }
+            if self.llm_model {
+                llm_cfg["model"] = str(self.llm_model).strip();
+            }
+            if llm_cfg {
+                project_cfg["llm"] = llm_cfg;
+            }
+            os.environ["CGINS_PROJECT_CONFIG_PATH"] = project_cfg_path;
+            _apply_llm_env_from_config(
+                cfg,
+                project_cfg,
+                self.llm_provider if self.llm_provider else "",
+                self.llm_model if self.llm_model else ""
+            );
 
             # Extract generator config overrides
             target_device = "cuda";
@@ -632,16 +714,6 @@ walker:pub StartGenerateAdvanced {
             
             # Persist project config overrides if needed
             try {
-                project_cfg_path = path.join(
-                    _project_dir(self.projectName), "config.json"
-                );
-                project_cfg = {};
-                if path.exists(project_cfg_path) {
-                    with open(project_cfg_path, "r") as f {
-                        project_cfg = load(f);
-                    }
-                }
-                
                 # Update generator config
                 gen_cfg = project_cfg["generator"] if project_cfg and "generator" in project_cfg else {};
                 gen_cfg["target_device"] = target_device;
@@ -809,6 +881,7 @@ walker:pub StartOptimizeAdvanced {
         minImproveMs: float = 0.0,
         minSpeedupPct: float = 5.0,
         image: str = "cgins-codex:latest",
+        llm_provider: str = "",
         llm_model: str = "",
         optimizer_config: dict = {};
 
@@ -823,27 +896,55 @@ walker:pub StartOptimizeAdvanced {
                 print(f"Error loading config: {e}");
                 cfg = config_store;
             }
-            if self.llm_model {
-                cfg["llm_info"]["model"] = self.llm_model;
-            }
-            _apply_llm_env_from_config(cfg);
-
-            # Load target device from project config
-            target_device = "cuda";
+            project_cfg_path = path.join(
+                _project_dir(self.projectName), "config.json"
+            );
+            project_cfg = {};
             try {
-                project_cfg_path = path.join(
-                    _project_dir(self.projectName), "config.json"
-                );
                 if path.exists(project_cfg_path) {
-                     with open(project_cfg_path, "r") as f {
+                    with open(project_cfg_path, "r") as f {
                         project_cfg = load(f);
-                        if project_cfg and "generator" in project_cfg and "target_device" in project_cfg["generator"] {
-                            target_device = project_cfg["generator"]["target_device"];
-                        }
                     }
                 }
             } except Exception as e {
-                print(f"Failed to load target device: {e}");
+                print(f"Failed to load project config: {e}");
+                project_cfg = {};
+            }
+
+            llm_cfg = project_cfg["llm"] if project_cfg and "llm" in project_cfg else {};
+            llm_changed = False;
+            if self.llm_provider {
+                llm_cfg["provider"] = str(self.llm_provider).strip().lower();
+                llm_changed = True;
+            }
+            if self.llm_model {
+                llm_cfg["model"] = str(self.llm_model).strip();
+                llm_changed = True;
+            }
+            if llm_cfg {
+                project_cfg["llm"] = llm_cfg;
+            }
+            if llm_changed {
+                try {
+                    with open(project_cfg_path, "w") as f {
+                        dump(project_cfg, f, indent=2);
+                    }
+                } except Exception as e {
+                    print(f"Failed to persist project LLM config: {e}");
+                }
+            }
+            os.environ["CGINS_PROJECT_CONFIG_PATH"] = project_cfg_path;
+            _apply_llm_env_from_config(
+                cfg,
+                project_cfg,
+                self.llm_provider if self.llm_provider else "",
+                self.llm_model if self.llm_model else ""
+            );
+
+            # Load target device from project config
+            target_device = "cuda";
+            if project_cfg and "generator" in project_cfg and "target_device" in project_cfg["generator"] {
+                target_device = project_cfg["generator"]["target_device"];
             }
             target_device = target_device.lower();
             if target_device == "gpu" or target_device == "cuda" or target_device == "rocm" or target_device == "amd" {

@@ -3,7 +3,7 @@
 import from react { createContext, useContext, useEffect, useState }
 
 glob DEFAULT_CONFIG: dict = {
-         "api_keys": {"openai": "", "anthropic": "", "gemini": ""},
+         "api_keys": {"openai": "", "anthropic": "", "google": ""},
          "providers": [],
          "ssh_connections": [],
          "active_ssh_index": -1,
@@ -48,8 +48,31 @@ def:pub ConfigProvider(children: any) -> Any {
             loaded = data if data else {};
             loaded_keys = loaded["api_keys"] if loaded and "api_keys" in loaded else {};
             merged_keys = {** DEFAULT_CONFIG["api_keys"], ** loaded_keys};
-            merged = {** DEFAULT_CONFIG, ** loaded};
-            merged["api_keys"] = merged_keys;
+            legacy_llm = loaded["llm_info"] if loaded and "llm_info" in loaded else {};
+            legacy_provider = (
+                legacy_llm["provider"].lower().strip()
+                if legacy_llm and "provider" in legacy_llm and legacy_llm["provider"]
+                else ""
+            );
+            if legacy_provider == "gemini" {
+                legacy_provider = "google";
+            }
+            legacy_key = (
+                legacy_llm["apikey"]
+                if legacy_llm and "apikey" in legacy_llm and legacy_llm["apikey"]
+                else ""
+            );
+            if legacy_provider in merged_keys and legacy_key and not merged_keys[legacy_provider] {
+                merged_keys[legacy_provider] = legacy_key;
+            }
+            merged = {
+                "api_keys": merged_keys,
+                "providers": loaded["providers"] if loaded and "providers" in loaded else DEFAULT_CONFIG["providers"],
+                "ssh_connections": loaded["ssh_connections"] if loaded and "ssh_connections" in loaded else DEFAULT_CONFIG["ssh_connections"],
+                "active_ssh_index": loaded["active_ssh_index"] if loaded and "active_ssh_index" in loaded else DEFAULT_CONFIG["active_ssh_index"],
+                "selected_gpu_index": loaded["selected_gpu_index"] if loaded and "selected_gpu_index" in loaded else DEFAULT_CONFIG["selected_gpu_index"],
+                "selected_gpu_info": loaded["selected_gpu_info"] if loaded and "selected_gpu_info" in loaded else DEFAULT_CONFIG["selected_gpu_info"]
+            };
 
             # Normalize SSH config
             conns = merged["ssh_connections"] if "ssh_connections" in merged else [];

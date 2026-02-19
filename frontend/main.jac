@@ -4,6 +4,8 @@ import from walkers.config { GetConfig, SaveConfig }
 import from walkers.system {
     GetSystemInfo,
     CheckSshConnection,
+    TestApiKey,
+    TestAllApiKeys,
     TestLLMConnection,
     DetectHardware
 }

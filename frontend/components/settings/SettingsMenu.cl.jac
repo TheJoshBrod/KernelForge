@@ -10,7 +10,7 @@ def:pub SettingsMenu -> Any {
         {
             "href": "/settings/api-keys",
             "title": "API Keys",
-            "desc": "Configure LLM provider, model, and key.",
+            "desc": "Store OpenAI, Anthropic, and Google keys.",
             "Icon": ShieldCheckIcon
         },
         {

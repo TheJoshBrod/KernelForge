@@ -3,7 +3,7 @@
 import from os { path }
 
 glob config_store: dict = {
-         "api_keys": {"openai": "", "anthropic": "", "gemini": ""},
+         "api_keys": {"openai": "", "anthropic": "", "google": ""},
          "providers": [],
          "ssh_connections": [],
          "active_ssh_index": -1,

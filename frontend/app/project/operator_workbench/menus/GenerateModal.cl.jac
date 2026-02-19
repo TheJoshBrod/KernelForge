@@ -5,7 +5,7 @@ import from .....components.ui.Icons { PlusIcon, SettingsIcon, CpuIcon, BrainIco
 import from .....components.ui.Modal { Modal }
 import from .....context.ConfigContext { useConfig }
 
-def:pub GenerateModal(props: any) {
+def:pub GenerateModal(props: any) -> Any {
     isOpen = props.isOpen;
     onClose = props.onClose;
     onComplete = props.onComplete;
@@ -21,9 +21,31 @@ def:pub GenerateModal(props: any) {
     setIsWorking = is_working_state[1];
 
     # Config State
-    # Config State
     default_llm = "";
-    
+    api_keys = config["api_keys"] if config and "api_keys" in config else {};
+    provider_options = [];
+    if api_keys and "openai" in api_keys and api_keys["openai"] {
+        provider_options.push({"label": "OpenAI", "value": "openai"});
+    }
+    if api_keys and "anthropic" in api_keys and api_keys["anthropic"] {
+        provider_options.push({"label": "Anthropic", "value": "anthropic"});
+    }
+    if api_keys and "google" in api_keys and api_keys["google"] {
+        provider_options.push({"label": "Google", "value": "google"});
+    }
+    if provider_options.length == 0 {
+        provider_options = [
+            {"label": "OpenAI", "value": "openai"},
+            {"label": "Anthropic", "value": "anthropic"},
+            {"label": "Google", "value": "google"}
+        ];
+    }
+    default_provider = provider_options[0]["value"] if provider_options.length > 0 else "openai";
+
+    llm_provider_state = useState(default_provider);
+    llmProvider = llm_provider_state[0];
+    setLlmProvider = llm_provider_state[1];
+
     llm_model_state = useState(default_llm);
     llmModel = llm_model_state[0];
     setLlmModel = llm_model_state[1];
@@ -64,6 +86,24 @@ def:pub GenerateModal(props: any) {
         }
     }, [hwInfo, targetDevice]);
 
+    provider_option_nodes = [];
+    for p in provider_options {
+        provider_option_nodes.push(
+            <option key={p["value"]} value={p["value"]}>
+                {p["label"]}
+            </option>
+        );
+    }
+
+    available_device_nodes = [];
+    for d in available_devices {
+        available_device_nodes.push(
+            <option key={d["value"]} value={d["value"]}>
+                {d["label"]}
+            </option>
+        );
+    }
+
     async def handleGenerate -> None {
         if not projectName or not opName {
             alert("Missing project or operator.");
@@ -88,6 +128,9 @@ def:pub GenerateModal(props: any) {
             
             if llmModel {
                 payload["llm_model"] = llmModel;
+            }
+            if llmProvider {
+                payload["llm_provider"] = llmProvider;
             }
 
             resp = await __jacSpawn(
@@ -127,18 +170,35 @@ def:pub GenerateModal(props: any) {
             <div className="p-6 space-y-6">
                 <div className="space-y-4">
                     <div className="space-y-2">
-                        <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
-                            <BrainIcon className="w-4 h-4 text-purple-400" />
-                            LLM Model
-                        </label>
-                        <input
-                            type="text"
-                            value={llmModel}
-                            onChange={lambda e: any -> None { setLlmModel(e.target.value);}}
-                            placeholder="e.g. claude-3-5-sonnet-20240620"
-                            className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                        />
-                        <p className="text-[10px] text-zinc-500">Override default model from config</p>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
+                                    <BrainIcon className="w-4 h-4 text-purple-400" />
+                                    LLM Provider
+                                </label>
+                                <select
+                                    value={llmProvider}
+                                    onChange={lambda e: any -> None { setLlmProvider(e.target.value);}}
+                                    className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                >
+                                    {provider_option_nodes}
+                                </select>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
+                                    <BrainIcon className="w-4 h-4 text-purple-400" />
+                                    LLM Model
+                                </label>
+                                <input
+                                    type="text"
+                                    value={llmModel}
+                                    onChange={lambda e: any -> None { setLlmModel(e.target.value);}}
+                                    placeholder="e.g. claude-3-5-sonnet-latest"
+                                    className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                                />
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-zinc-500">Saved on project config and used for this run</p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
@@ -166,9 +226,7 @@ def:pub GenerateModal(props: any) {
                                 onChange={lambda e: any -> None { setTargetDevice(e.target.value);}}
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
                             >
-                                {available_devices.map(lambda d: dict -> Any {
-                                    return <option key={d["value"]} value={d["value"]}>{d["label"]}</option>;
-                                })}
+                                {available_device_nodes}
                             </select>
                         </div>
                     </div>
