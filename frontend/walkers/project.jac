@@ -36,7 +36,7 @@ def _projects_base_dir() -> str {
     data_dir = (
         os.environ["CGINS_DATA_DIR"]
         if "CGINS_DATA_DIR" in os.environ and os.environ["CGINS_DATA_DIR"]
-        else path.join(repo_root, "kernels", "private")
+        else path.join(repo_root, "kernels")
     );
     projects_dir = path.join(data_dir, "projects");
     _ensure_dir(projects_dir);
@@ -183,8 +183,7 @@ print(json.dumps(env_map))
     }
 }
 
-def _read_state(project_name: str) -> dict {
-    state_path = path.join(_project_dir(project_name), "state.json");
+def _read_state_raw(state_path: str) -> dict {
     if not path.exists(state_path) {
         return {};
     }
@@ -198,9 +197,113 @@ def _read_state(project_name: str) -> dict {
     }
 }
 
+def _reconcile_legacy_profile_state(
+    project_name: str, state: dict, state_path: str
+) -> dict {
+    if not state or not ("profile" in state) or not ("prepare" in state) {
+        return state;
+    }
+
+    profile = state["profile"];
+    prepare = state["prepare"];
+    if not profile or not prepare {
+        return state;
+    }
+
+    profile_status = (
+        str(profile["status"]).strip().lower()
+        if "status" in profile and profile["status"]
+        else ""
+    );
+    prepare_status = (
+        str(prepare["status"]).strip().lower()
+        if "status" in prepare and prepare["status"]
+        else ""
+    );
+    profile_message = (
+        str(profile["message"]).strip().lower()
+        if "message" in profile and profile["message"]
+        else ""
+    );
+
+    if not (
+        profile_status == "queued"
+        and prepare_status == "completed"
+        and profile_message == "preparing assets"
+    ) {
+        return state;
+    }
+
+    project_dir = _project_dir(project_name);
+    bench_path = path.join(project_dir, "benchmarks", "op_benchmarks.json");
+    prepare_log_path = path.join(project_dir, "logs", "prepare.log");
+    recovery_started = (
+        bool(profile["recovery_started"]) if "recovery_started" in profile else False
+    );
+
+    if path.exists(bench_path) {
+        profile["status"] = "completed";
+        profile["message"] = "Recovered from legacy prepare flow";
+        profile["recovery_started"] = False;
+    } else {
+        if not recovery_started {
+            cmd = [
+                sys.executable,
+                path.join(repo_root, "scripts", "profile_then_benchmark.py"),
+                "--project",
+                project_name
+            ];
+            result = _start_job(project_name, "profile", cmd, "profile.log");
+            if result and "success" in result and result["success"] {
+                profile["status"] = "running";
+                profile["message"] = "Recovering legacy profile pipeline";
+                profile["recovery_started"] = True;
+            } else {
+                profile["status"] = "error";
+                profile["message"] = "Failed to recover legacy profile pipeline";
+            }
+        } else {
+            err_msg = "Legacy profile recovery in progress. Check profile.log.";
+            if path.exists(prepare_log_path) {
+                log_text = "";
+                try {
+                    with open(prepare_log_path, "r") as f {
+                        log_text = f.read();
+                    }
+                } except Exception as e {
+                    log_text = "";
+                }
+                if "Profiling failed" in log_text or "Traceback" in log_text {
+                    err_msg = "Profiling failed in legacy prepare flow. Check prepare.log.";
+                }
+            }
+            if profile["status"] == "queued" {
+                profile["status"] = "running";
+            }
+            profile["message"] = err_msg;
+        }
+    }
+
+    state["profile"] = profile;
+    try {
+        with open(state_path, "w") as f {
+            dump(state, f, indent=2);
+        }
+    } except Exception as e {
+        print(f"Failed to write reconciled state.json: {e}");
+    }
+    return state;
+}
+
+def _read_state(project_name: str) -> dict {
+    state_path = path.join(_project_dir(project_name), "state.json");
+    state = _read_state_raw(state_path);
+    return _reconcile_legacy_profile_state(project_name, state, state_path);
+}
+
 def _update_job_state(project_name: str, job_key: str, updates: dict) -> None {
     state_path = path.join(_project_dir(project_name), "state.json");
-    state = _read_state(project_name);
+    state = _read_state_raw(state_path);
     job_state = state[job_key] if job_key in state else {};
     for k in updates {
         job_state[k] = updates[k];
@@ -302,9 +405,26 @@ def _detect_hardware -> dict {
             return loads(text);
         }
     } except Exception as e {
-        return {"available": False, "gpus": [], "source": "local", "cuda_available": False, "mps_available": False, "xpu_available": False, "preferred_target": "cpu", "error": str(e)};
+        return {
+            "available": False,
+            "gpus": [],
+            "source": "local",
+            "cuda_available": False,
+            "mps_available": False,
+            "xpu_available": False,
+            "preferred_target": "cpu",
+            "error": str(e)
+        };
     }
-    return {"available": False, "gpus": [], "source": "local", "cuda_available": False, "mps_available": False, "xpu_available": False, "preferred_target": "cpu"};
+    return {
+        "available": False,
+        "gpus": [],
+        "source": "local",
+        "cuda_available": False,
+        "mps_available": False,
+        "xpu_available": False,
+        "preferred_target": "cpu"
+    };
 }
 
 def _export_project_zip(project_name: str, ops: list = None) -> dict {
@@ -443,7 +563,7 @@ def _is_allowed_repo_path(rel_path: str, project_name: str) -> bool {
     }
     allowed = [
         path.join("projects", project_name),
-        path.join("kernels", "private", "projects", project_name),
+        path.join("kernels", "projects", project_name),
         path.join("kernels", "optimized"),
         path.join("kernels", "generated")
     ];
@@ -478,7 +598,7 @@ walker:pub CreateProject {
             legacy_path = path.join(_legacy_projects_dir(), self.projectName);
 
             if path.exists(project_path) or path.exists(legacy_path) {
-                report {"error": "Project already exists", "success": False} ;
+                report {"error": "Project already exists", "success": False};
                 disengage;
             }
 
@@ -500,7 +620,10 @@ walker:pub CreateProject {
             }
 
             if not model_written {
-                report {"error": "Model code or model file is required", "success": False} ;
+                report {
+                    "error": "Model code or model file is required",
+                    "success": False
+                };
                 disengage;
             }
 
@@ -525,7 +648,9 @@ walker:pub CreateProject {
                     if not item {
                         continue;
                     }
-                    p_name = str(item["name"]) if "name" in item and item["name"] else "checkpoint.pth";
+                    p_name = str(item["name"])
+                    if "name" in item and item["name"]
+                    else "checkpoint.pth";
                     p_b64 = str(item["b64"]) if "b64" in item and item["b64"] else "";
                     if not p_b64 {
                         continue;
@@ -567,17 +692,14 @@ walker:pub CreateProject {
                     "target_device": target_device
                 },
                 "profile": {"allow_ops": [], "skip_ops": [], "skip_prefixes": []},
-                "artifacts": {
-                    "weights": weight_artifacts
-                }
+                "artifacts": {"weights": weight_artifacts}
             };
             with open(path.join(project_path, "config.json"), "w") as f {
                 dump(config, f, indent=2);
             }
 
-            prepare_result = None;
-            profile_result = None;
-            has_assets = False;
+            prepare_result = {};
+            profile_result = {};
             uploads_dir = path.join(project_path, ".uploads");
             _ensure_dir(uploads_dir);
 
@@ -589,7 +711,6 @@ walker:pub CreateProject {
                 with open(weights_b64_path, "w") as f {
                     f.write(self.weightsFileB64);
                 }
-                has_assets = True;
             }
             if self.validationZipB64 {
                 validation_b64_path = path.join(uploads_dir, "validation.b64");
@@ -600,41 +721,29 @@ walker:pub CreateProject {
                 with open(validation_name_path, "w") as f {
                     f.write(self.validationZipName);
                 }
-                has_assets = True;
             }
 
-            if has_assets {
-                _update_job_state(
-                    self.projectName,
-                    "profile",
-                    {"status": "queued", "message": "Preparing assets"}
-                );
-                prepare_cmd = [
-                    sys.executable,
-                    path.join(repo_root, "scripts", "prepare_project_assets.py"),
-                    "--project",
-                    self.projectName,
-                    "--weights-b64-path",
-                    weights_b64_path,
-                    "--validation-b64-path",
-                    validation_b64_path,
-                    "--validation-name-path",
-                    validation_name_path
-                ];
-                prepare_result = _start_job(
-                    self.projectName, "prepare", prepare_cmd, "prepare.log"
-                );
-            } else {
-                profile_cmd = [
-                    sys.executable,
-                    path.join(repo_root, "scripts", "profile_then_benchmark.py"),
-                    "--project",
-                    self.projectName
-                ];
-                profile_result = _start_job(
-                    self.projectName, "profile", profile_cmd, "profile.log"
-                );
+            profile_cmd = [
+                sys.executable,
+                path.join(repo_root, "scripts", "profile_then_benchmark.py"),
+                "--project",
+                self.projectName
+            ];
+            if weights_b64_path {
+                profile_cmd.append("--weights-b64-path");
+                profile_cmd.append(weights_b64_path);
             }
+            if validation_b64_path {
+                profile_cmd.append("--validation-b64-path");
+                profile_cmd.append(validation_b64_path);
+            }
+            if validation_name_path {
+                profile_cmd.append("--validation-name-path");
+                profile_cmd.append(validation_name_path);
+            }
+            profile_result = _start_job(
+                self.projectName, "profile", profile_cmd, "profile.log"
+            );
 
             report {
                 "success": True,
@@ -642,10 +751,10 @@ walker:pub CreateProject {
                 "weights_count": len(weight_artifacts),
                 "profile": profile_result,
                 "prepare": prepare_result
-            } ;
+            };
         } except Exception as e {
             print(f"Error creating project: {e}");
-            report {"error": "Failed to create project", "success": False} ;
+            report {"error": "Failed to create project", "success": False};
         }
     }
 }
@@ -670,10 +779,10 @@ walker:pub GetProjects {
                     }
                 }
             }
-            report {"projects": projects} ;
+            report {"projects": projects};
         } except Exception as e {
             print(f"Error listing projects: {e}");
-            report {"projects": []} ;
+            report {"projects": []};
         }
     }
 }
@@ -686,35 +795,66 @@ walker:pub GetProjectOps {
             base_dir = path.join(
                 _project_dir(self.projectName), "io", "individual_ops"
             );
-            if not path.exists(base_dir) {
-                report {"ops": []} ;
-                disengage;
-            }
+            ops_map = {};
 
-            ops = [];
-            for name in listdir(base_dir) {
-                full_path = path.join(base_dir, name);
-                if path.isdir(full_path) {
-                    count = 0;
-                    # Quick count: list only entry files
-                    try {
-                        entries = [
-                            f
-                            for f in listdir(full_path)
-                            if f.startswith("entry_") and f.endswith(".pt")
-                        ];
-                        count = len(entries);
-                    } except Exception {
+            if path.exists(base_dir) {
+                for name in listdir(base_dir) {
+                    full_path = path.join(base_dir, name);
+                    if path.isdir(full_path) {
                         count = 0;
+                        # Quick count: list only entry files
+                        try {
+                            entries = [
+                                f
+                                for f in listdir(full_path)
+                                if f.startswith("entry_") and f.endswith(".pt")
+                            ];
+                            count = len(entries);
+                        } except Exception {
+                            count = 0;
+                        }
+                        ops_map[name] = count;
                     }
-                    ops.append({"name": name, "count": count});
                 }
             }
 
-            report {"ops": ops} ;
+            if len(ops_map) == 0 {
+                summary_path = path.join(
+                    _project_dir(self.projectName), "io", "summary.json"
+                );
+                if path.exists(summary_path) {
+                    try {
+                        with open(summary_path, "r") as f {
+                            summary = load(f);
+                        }
+                        op_counts = summary["op_counts"]
+                        if summary and "op_counts" in summary
+                        else {};
+                        for full_name in op_counts {
+                            op_name = full_name.replace(".", "_").replace("/", "_");
+                            c = op_counts[full_name];
+                            try {
+                                c = int(c);
+                            } except Exception {
+                                c = 0;
+                            }
+                            ops_map[op_name] = c;
+                        }
+                    } except Exception as e {
+                        print(f"Error reading summary for ops: {e}");
+                    }
+                }
+            }
+
+            ops = [];
+            for name in ops_map {
+                ops.append({"name": name, "count": ops_map[name]});
+            }
+
+            report {"ops": ops};
         } except Exception as e {
             print(f"Error listing ops: {e}");
-            report {"ops": []} ;
+            report {"ops": []};
         }
     }
 }
@@ -724,7 +864,7 @@ walker:pub GetProjectStatus {
 
     can return_status with entry {
         state = _read_state(self.projectName);
-        report state ;
+        report state;
     }
 }
 
@@ -744,14 +884,14 @@ walker:pub SetJobControl {
             } elif action == "cancel" {
                 updates = {"control": "cancelled", "status": "cancelled"};
             } else {
-                report {"success": False, "error": "Unknown action"} ;
+                report {"success": False, "error": "Unknown action"};
                 disengage;
             }
             _update_job_state(self.projectName, self.jobKey, updates);
-            report {"success": True} ;
+            report {"success": True};
         } except Exception as e {
             print(f"Error setting job control: {e}");
-            report {"success": False, "error": "Failed to update job state"} ;
+            report {"success": False, "error": "Failed to update job state"};
         }
     }
 }
@@ -767,7 +907,7 @@ walker:pub StartProfile {
             self.projectName
         ];
         result = _start_job(self.projectName, "profile", cmd, "profile.log");
-        report result ;
+        report result;
     }
 }
 
@@ -788,7 +928,7 @@ walker:pub StartGenerate {
             out_dir
         ];
         result = _start_job(self.projectName, "generate", cmd, "generate.log");
-        report result ;
+        report result;
     }
 }
 
@@ -833,7 +973,9 @@ walker:pub StartGenerateAdvanced {
                 project_cfg = {};
             }
 
-            llm_cfg = project_cfg["llm"] if project_cfg and "llm" in project_cfg else {};
+            llm_cfg = project_cfg["llm"]
+            if project_cfg and "llm" in project_cfg
+            else {};
             if self.llm_provider {
                 llm_cfg["provider"] = str(self.llm_provider).strip().lower();
             }
@@ -858,9 +1000,14 @@ walker:pub StartGenerateAdvanced {
             }
 
             target_device = target_device.lower();
-            if target_device == "gpu" or target_device == "cuda" or target_device == "rocm" or target_device == "amd" {
+            if target_device == "gpu"
+            or target_device == "cuda"
+            or target_device == "rocm"
+            or target_device == "amd" {
                 target_device = "cuda";
-            } elif target_device == "mps" or target_device == "metal" or target_device == "apple" {
+            } elif target_device == "mps"
+            or target_device == "metal"
+            or target_device == "apple" {
                 target_device = "mps";
             } elif target_device == "xpu" or target_device == "intel" {
                 target_device = "cpu";
@@ -868,27 +1015,35 @@ walker:pub StartGenerateAdvanced {
                 target_device = "cpu";
             }
             os.environ["CGINS_TARGET_DEVICE"] = target_device;
-            
+
             # Persist project config overrides if needed
             try {
                 # Update generator config
-                gen_cfg = project_cfg["generator"] if project_cfg and "generator" in project_cfg else {};
+                gen_cfg = project_cfg["generator"]
+                if project_cfg and "generator" in project_cfg
+                else {};
                 gen_cfg["target_device"] = target_device;
-                
+
                 if self.generator_config {
-                     # Apply other generator overrides
-                     if "max_attempts" in self.generator_config {
-                         gen_cfg["max_attempts"] = self.generator_config["max_attempts"];
-                     }
-                     if "use_baseline_kernels" in self.generator_config {
-                         gen_cfg["use_baseline_kernels"] = self.generator_config["use_baseline_kernels"];
-                     }
-                     if "use_baseline_as_template" in self.generator_config {
-                         gen_cfg["use_baseline_as_template"] = self.generator_config["use_baseline_as_template"];
-                     }
-                     if "extra_validation_cases" in self.generator_config {
-                         gen_cfg["extra_validation_cases"] = self.generator_config["extra_validation_cases"];
-                     }
+                    # Apply other generator overrides
+                    if "max_attempts" in self.generator_config {
+                        gen_cfg["max_attempts"] = self.generator_config["max_attempts"];
+                    }
+                    if "use_baseline_kernels" in self.generator_config {
+                        gen_cfg["use_baseline_kernels"] = self.generator_config[
+                            "use_baseline_kernels"
+                        ];
+                    }
+                    if "use_baseline_as_template" in self.generator_config {
+                        gen_cfg["use_baseline_as_template"] = self.generator_config[
+                            "use_baseline_as_template"
+                        ];
+                    }
+                    if "extra_validation_cases" in self.generator_config {
+                        gen_cfg["extra_validation_cases"] = self.generator_config[
+                            "extra_validation_cases"
+                        ];
+                    }
                 }
                 project_cfg["generator"] = gen_cfg;
 
@@ -913,7 +1068,7 @@ walker:pub StartGenerateAdvanced {
                     "generate_adv",
                     {"status": "error", "message": "No ops selected or discovered."}
                 );
-                report {"success": False, "error": "No ops selected or discovered."} ;
+                report {"success": False, "error": "No ops selected or discovered."};
                 disengage;
             }
             io_root = path.join(_project_dir(self.projectName), "io", "individual_ops");
@@ -944,7 +1099,7 @@ walker:pub StartGenerateAdvanced {
                     "generate_adv",
                     {"status": "error", "message": error_msg}
                 );
-                report {"success": False, "error": error_msg} ;
+                report {"success": False, "error": error_msg};
                 disengage;
             }
 
@@ -1005,7 +1160,7 @@ walker:pub StartGenerateAdvanced {
                 cmd.append("--generate-attempts");
                 cmd.append(str(self.generator_config["max_attempts"]));
             }
-            
+
             if self.llm_model {
                 cmd.append("--codex-model");
                 cmd.append(self.llm_model);
@@ -1017,7 +1172,7 @@ walker:pub StartGenerateAdvanced {
             result = _start_job_container(
                 self.projectName, "generate_adv", cmd, "generate_adv.log", self.image
             );
-            report result ;
+            report result;
         } except Exception as e {
             print(f"StartGenerateAdvanced failed: {e}");
             _update_job_state(
@@ -1025,7 +1180,7 @@ walker:pub StartGenerateAdvanced {
                 "generate_adv",
                 {"status": "error", "message": f"StartGenerateAdvanced failed: {e}"}
             );
-            report {"success": False, "error": "StartGenerateAdvanced failed."} ;
+            report {"success": False, "error": "StartGenerateAdvanced failed."};
         }
     }
 }
@@ -1053,9 +1208,7 @@ walker:pub StartOptimizeAdvanced {
                 print(f"Error loading config: {e}");
                 cfg = config_store;
             }
-            project_cfg_path = path.join(
-                _project_dir(self.projectName), "config.json"
-            );
+            project_cfg_path = path.join(_project_dir(self.projectName), "config.json");
             project_cfg = {};
             try {
                 if path.exists(project_cfg_path) {
@@ -1068,7 +1221,9 @@ walker:pub StartOptimizeAdvanced {
                 project_cfg = {};
             }
 
-            llm_cfg = project_cfg["llm"] if project_cfg and "llm" in project_cfg else {};
+            llm_cfg = project_cfg["llm"]
+            if project_cfg and "llm" in project_cfg
+            else {};
             llm_changed = False;
             if self.llm_provider {
                 llm_cfg["provider"] = str(self.llm_provider).strip().lower();
@@ -1100,13 +1255,20 @@ walker:pub StartOptimizeAdvanced {
 
             # Load target device from project config
             target_device = "cuda";
-            if project_cfg and "generator" in project_cfg and "target_device" in project_cfg["generator"] {
+            if project_cfg
+            and "generator" in project_cfg
+            and "target_device" in project_cfg["generator"] {
                 target_device = project_cfg["generator"]["target_device"];
             }
             target_device = target_device.lower();
-            if target_device == "gpu" or target_device == "cuda" or target_device == "rocm" or target_device == "amd" {
+            if target_device == "gpu"
+            or target_device == "cuda"
+            or target_device == "rocm"
+            or target_device == "amd" {
                 target_device = "cuda";
-            } elif target_device == "mps" or target_device == "metal" or target_device == "apple" {
+            } elif target_device == "mps"
+            or target_device == "metal"
+            or target_device == "apple" {
                 target_device = "mps";
             } elif target_device == "xpu" or target_device == "intel" {
                 target_device = "cpu";
@@ -1129,7 +1291,7 @@ walker:pub StartOptimizeAdvanced {
                     "optimize_adv",
                     {"status": "error", "message": "No ops selected or discovered."}
                 );
-                report {"success": False, "error": "No ops selected or discovered."} ;
+                report {"success": False, "error": "No ops selected or discovered."};
                 disengage;
             }
             io_root = path.join(_project_dir(self.projectName), "io", "individual_ops");
@@ -1160,7 +1322,7 @@ walker:pub StartOptimizeAdvanced {
                     "optimize_adv",
                     {"status": "error", "message": error_msg}
                 );
-                report {"success": False, "error": error_msg} ;
+                report {"success": False, "error": error_msg};
                 disengage;
             }
 
@@ -1209,7 +1371,7 @@ walker:pub StartOptimizeAdvanced {
                 cmd.append("--opt-patience");
                 cmd.append(str(self.patience));
             }
-            
+
             if self.llm_model {
                 cmd.append("--codex-model");
                 cmd.append(self.llm_model);
@@ -1221,7 +1383,7 @@ walker:pub StartOptimizeAdvanced {
             result = _start_job_container(
                 self.projectName, "optimize_adv", cmd, "optimize_adv.log", self.image
             );
-            report result ;
+            report result;
         } except Exception as e {
             print(f"StartOptimizeAdvanced failed: {e}");
             _update_job_state(
@@ -1229,7 +1391,7 @@ walker:pub StartOptimizeAdvanced {
                 "optimize_adv",
                 {"status": "error", "message": f"StartOptimizeAdvanced failed: {e}"}
             );
-            report {"success": False, "error": "StartOptimizeAdvanced failed."} ;
+            report {"success": False, "error": "StartOptimizeAdvanced failed."};
         }
     }
 }
@@ -1260,7 +1422,7 @@ walker:pub StartOptimize {
             kernel_dir
         ];
         result = _start_job(self.projectName, "optimize", cmd, "optimize.log");
-        report result ;
+        report result;
     }
 }
 
@@ -1275,7 +1437,7 @@ walker:pub StartBenchmark {
             self.projectName
         ];
         result = _start_job(self.projectName, "benchmark", cmd, "benchmark.log");
-        report result ;
+        report result;
     }
 }
 
@@ -1285,7 +1447,7 @@ walker:pub ExportProject {
 
     can run with entry {
         result = _export_project_zip(self.projectName, self.ops);
-        report result ;
+        report result;
     }
 }
 
@@ -1351,7 +1513,7 @@ walker:pub GetOpDetails {
                 "kernels": opt_kernels,
                 "logs": opt_logs
             }
-        } ;
+        };
     }
 }
 
@@ -1362,13 +1524,13 @@ walker:pub ReadRepoFile {
     can run with entry {
         try {
             if not _is_allowed_repo_path(self.relPath, self.projectName) {
-                report {"success": False, "error": "Path not allowed"} ;
+                report {"success": False, "error": "Path not allowed"};
                 disengage;
             }
             safe_rel = path.normpath(self.relPath);
             full_path = path.join(repo_root, safe_rel);
             if not path.exists(full_path) {
-                report {"success": False, "error": "File not found"} ;
+                report {"success": False, "error": "File not found"};
                 disengage;
             }
             with open(full_path, "r", encoding="utf-8", errors="ignore") as f {
@@ -1378,10 +1540,10 @@ walker:pub ReadRepoFile {
                 "success": True,
                 "content": content,
                 "name": path.basename(full_path)
-            } ;
+            };
         } except Exception as e {
             print(f"Error reading file: {e}");
-            report {"success": False, "error": "Failed to read file"} ;
+            report {"success": False, "error": "Failed to read file"};
         }
     }
 }
@@ -1394,7 +1556,7 @@ walker:pub DownloadExport {
         if self.ops and len(self.ops) > 0 {
             export_result = _export_project_zip(self.projectName, self.ops);
             if not export_result["success"] {
-                report export_result ;
+                report export_result;
                 disengage;
             }
             export_path = export_result["path"];
@@ -1407,7 +1569,7 @@ walker:pub DownloadExport {
             if not path.exists(export_path) {
                 export_result = _export_project_zip(self.projectName, []);
                 if not export_result["success"] {
-                    report export_result ;
+                    report export_result;
                     disengage;
                 }
                 export_path = export_result["path"];
@@ -1417,7 +1579,7 @@ walker:pub DownloadExport {
             data = f.read();
         }
         b64 = b64encode(data).decode("utf-8");
-        report {"success": True, "name": path.basename(export_path), "data": b64} ;
+        report {"success": True, "name": path.basename(export_path), "data": b64};
     }
 }
 
@@ -1429,7 +1591,7 @@ walker:pub GetProjectBenchmarks {
             _project_dir(self.projectName), "benchmarks", "op_benchmarks.json"
         );
         if not path.exists(bench_path) {
-            report {"results": [], "winners": []} ;
+            report {"results": [], "winners": []};
             disengage;
         }
         try {
@@ -1443,10 +1605,10 @@ walker:pub GetProjectBenchmarks {
                     winners.append(r["op"]);
                 }
             }
-            report {"results": results, "winners": winners} ;
+            report {"results": results, "winners": winners};
         } except Exception as e {
             print(f"Error reading benchmarks: {e}");
-            report {"results": [], "winners": []} ;
+            report {"results": [], "winners": []};
         }
     }
 }
@@ -1465,7 +1627,7 @@ walker:pub GetMctsTree {
                 "nodes": [],
                 "edges": [],
                 "message": "No optimization tree yet for this operator."
-            } ;
+            };
             disengage;
         }
 
@@ -1505,9 +1667,9 @@ walker:pub GetMctsTree {
             }
 
             conn.close();
-            report {"success": True, "nodes": mcts_nodes, "edges": edges} ;
+            report {"success": True, "nodes": mcts_nodes, "edges": edges};
         } except Exception as e {
-            report {"success": False, "error": str(e)} ;
+            report {"success": False, "error": str(e)};
         }
     }
 }
@@ -1515,7 +1677,7 @@ walker:pub GetMctsTree {
 walker:pub ImportKernel {
     can run with entry {
         print("upload!");
-        report {"success": True, "message": "upload!"} ;
+        report {"success": True, "message": "upload!"};
     }
 }
 
@@ -1559,7 +1721,7 @@ walker:pub GetProjectMctsSummary {
             }
         }
 
-        report {"success": True, "total_nodes": total_nodes, "ops": op_summaries} ;
+        report {"success": True, "total_nodes": total_nodes, "ops": op_summaries};
     }
 }
 
@@ -1570,6 +1732,8 @@ walker:pub GetDashboardCharts {
         project_dir = _project_dir(self.projectName);
 
         bench_results = [];
+        bench_file_status = "";
+        bench_errors = [];
         bench_path = path.join(project_dir, "benchmarks", "op_benchmarks.json");
         if path.exists(bench_path) {
             try {
@@ -1579,13 +1743,26 @@ walker:pub GetDashboardCharts {
                 bench_results = bench_data["results"]
                 if bench_data and "results" in bench_data
                 else [];
+                bench_file_status = (
+                    str(bench_data["status"])
+                    if bench_data and "status" in bench_data and bench_data["status"]
+                    else ""
+                );
+                bench_errors = (
+                    bench_data["errors"]
+                    if bench_data and "errors" in bench_data and bench_data["errors"]
+                    else []
+                );
             } except Exception as e {
                 print(f"Error reading op_benchmarks.json: {e}");
                 bench_results = [];
+                bench_file_status = "error";
+                bench_errors = [str(e)];
             }
         }
 
         op_counts = {};
+        op_profile_ms = {};
         summary_path = path.join(project_dir, "io", "summary.json");
         if path.exists(summary_path) {
             try {
@@ -1595,9 +1772,13 @@ walker:pub GetDashboardCharts {
                 op_counts = summary_data["op_counts"]
                 if summary_data and "op_counts" in summary_data
                 else {};
+                op_profile_ms = summary_data["op_profile_ms"]
+                if summary_data and "op_profile_ms" in summary_data
+                else {};
             } except Exception as e {
                 print(f"Error reading io/summary.json: {e}");
                 op_counts = {};
+                op_profile_ms = {};
             }
         }
 
@@ -1608,6 +1789,16 @@ walker:pub GetDashboardCharts {
             try {
                 op_dir_name = full_name.replace(".", "_").replace("/", "_");
                 count_by_op[op_dir_name] = op_counts[full_name];
+            } except Exception {
+                continue;
+            }
+        }
+        profile_ms_by_op = {};
+        for full_name in op_profile_ms {
+            try {
+                op_dir_name = full_name.replace(".", "_").replace("/", "_");
+                ms_val = float(op_profile_ms[full_name]);
+                profile_ms_by_op[op_dir_name] = ms_val;
             } except Exception {
                 continue;
             }
@@ -1656,15 +1847,55 @@ walker:pub GetDashboardCharts {
             }
             speed_comparison.append(row);
         }
+        for op_name in profile_ms_by_op {
+            if op_name in bench_by_op {
+                continue;
+            }
+            ms_val = profile_ms_by_op[op_name];
+            if ms_val and ms_val > 0.0 {
+                speed_comparison.append({"name": op_name, "pytorch": ms_val});
+            }
+        }
 
         operator_usage = [];
+        all_ops = [];
+        seen_ops = {};
         for op_name in bench_by_op {
-            b = bench_by_op[op_name];
+            if not (op_name in seen_ops) {
+                all_ops.append(op_name);
+                seen_ops[op_name] = True;
+            }
+        }
+        for op_name in count_by_op {
+            if not (op_name in seen_ops) {
+                all_ops.append(op_name);
+                seen_ops[op_name] = True;
+            }
+        }
+        for op_name in profile_ms_by_op {
+            if not (op_name in seen_ops) {
+                all_ops.append(op_name);
+                seen_ops[op_name] = True;
+            }
+        }
+
+        for op_name in all_ops {
             pytorch_ms = 0.0;
-            if b and "pytorch_ms" in b and b["pytorch_ms"] is not None {
-                try {
-                    pytorch_ms = float(b["pytorch_ms"]);
-                } except Exception {
+            b = {};
+            if op_name in bench_by_op {
+                b = bench_by_op[op_name];
+            }
+            if op_name in bench_by_op {
+                if b and "pytorch_ms" in b and b["pytorch_ms"] is not None {
+                    try {
+                        pytorch_ms = float(b["pytorch_ms"]);
+                    } except Exception {
+                        pytorch_ms = 0.0;
+                    }
+                }
+            } elif op_name in profile_ms_by_op {
+                pytorch_ms = profile_ms_by_op[op_name];
+                if pytorch_ms < 0.0 {
                     pytorch_ms = 0.0;
                 }
             }
@@ -1687,6 +1918,42 @@ walker:pub GetDashboardCharts {
             }
         }
 
-        report {"operator_usage": operator_usage, "speed_comparison": speed_comparison} ;
+        state = _read_state(self.projectName);
+        profile_status = "";
+        profile_message = "";
+        if state and "profile" in state and state["profile"] {
+            p = state["profile"];
+            profile_status = str(p["status"]) if "status" in p and p["status"] else "";
+            profile_message = str(p["message"])
+            if "message" in p and p["message"]
+            else "";
+        }
+
+        chart_status = "ready";
+        if len(speed_comparison) == 0 and len(operator_usage) == 0 {
+            p_status = profile_status.lower() if profile_status else "";
+            if bench_file_status == "partial" {
+                chart_status = "partial";
+            } elif bench_file_status and bench_file_status != "ready" {
+                chart_status = bench_file_status;
+            } elif p_status == "running"
+            or p_status == "queued"
+            or p_status == "paused" {
+                chart_status = "pending";
+            } elif p_status == "error" {
+                chart_status = "error";
+            } else {
+                chart_status = "empty";
+            }
+        }
+
+        report {
+            "operator_usage": operator_usage,
+            "speed_comparison": speed_comparison,
+            "status": chart_status,
+            "profile_status": profile_status,
+            "profile_message": profile_message,
+            "errors": bench_errors
+        };
     }
 }
