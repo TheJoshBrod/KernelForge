@@ -2,7 +2,7 @@
 
 import from react { useState }
 import from "react-router-dom" { useNavigate }
-import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from ...components.backdrops.EmberBackground { EmberBackground }
 
 import from .SSHSettings { SSHSettings }
 import from ...context.ConfigContext { useConfig }
@@ -111,30 +111,46 @@ def:pub SshPage -> Any {
 
     if loading {
         return
-            <div className="app-shell app-shell--center settings-shell">
-                <GameOfLifeBackground/>
-                <div className="app-backdrop"></div>
-                <div className="app-content-layer">
-                    <p>
+            <main className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex flex-col items-center justify-center font-sans text-white">
+                <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
+                <div className="noise-overlay opacity-30"></div>
+                <EmberBackground className="absolute inset-0 z-0"/>
+                <div className="relative z-20 flex flex-col items-center justify-center">
+                    <p className="font-mono text-zinc-500 tracking-widest uppercase">
                         Loading...
                     </p>
                 </div>
-            </div>;
+            </main>;
     }
 
     return
-        <main className="app-shell app-shell--center settings-shell">
-            <GameOfLifeBackground/>
-            <div className="app-backdrop"></div>
-            <div className="settings-card panel app-content-layer !max-w-7xl w-full">
-                <div className="settings-header">
-                    <h1 className="settings-title">
+        <main className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex flex-col items-center justify-center font-sans text-white">
+            <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
+            <div className="noise-overlay opacity-30"></div>
+            <EmberBackground className="absolute inset-0 z-0"/>
+            <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/50 z-10 pointer-events-none"></div>
+
+            <div className="relative z-20 flex flex-col items-center justify-center mb-4 animation-fade-in-up">
+                <div className="flex items-center gap-4 mb-2">
+                    <img src="/KernelForge.svg" alt="Kernel Forge Logo" className="w-12 h-12" />
+                    <h1 className="text-3xl font-bold text-white tracking-wider uppercase industrial-font-display" style={{"textShadow": "0 0 20px rgba(225, 112, 85, 0.4)"}}>
+                        Kernel Forge
+                    </h1>
+                </div>
+            </div>
+
+            <div className="relative z-10 w-full max-w-4xl h-[70vh] bg-[var(--bg-panel)]/90 backdrop-blur-md border border-[var(--border)] rounded-sm shadow-2xl flex flex-col animation-fade-in-up delay-1 clip-hex">
+                <div className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 right-0 heat-divider"></div>
+                    <h1 className="text-2xl font-bold text-white tracking-wide uppercase industrial-font-display">
                         SSH Settings
                     </h1>
-                    <p className="settings-subtitle">
+                    <p className="text-xs text-[var(--accent)] font-mono uppercase tracking-widest">
                         Manage remote connections
                     </p>
                 </div>
+                
+                <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0 charcoal-scrollbar bg-[var(--bg-darker)]/30">
                 <SSHSettings
                     config={config}
                     handleSaveSshConnection={handleSaveSshConnection}
@@ -144,15 +160,15 @@ def:pub SshPage -> Any {
                     saving={saving}
                     checkSshConnectionWalker={checkSshConnectionWalker}
                 />
-                <div className="settings-actions-block">
-                    <div className="settings-actions">
-                        <button
-                            onClick={handleReturn}
-                            className="app-button app-button--ghost app-button--wide"
-                        >
-                            Back
-                        </button>
-                    </div>
+                </div>
+                
+                <div className="p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0 flex justify-end gap-4">
+                    <button
+                        onClick={handleReturn}
+                        className="app-button"
+                    >
+                        Back
+                    </button>
                 </div>
             </div>
         </main>;

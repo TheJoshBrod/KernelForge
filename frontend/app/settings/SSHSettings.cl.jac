@@ -126,15 +126,15 @@ def:pub SSHSettings(
     if view == "add" {
         return
             <div className="space-y-4">
-                <h2 className="text-xl font-bold">
+                <h2 className="text-xl font-bold text-[var(--text-light)] industrial-font-display uppercase tracking-wider">
                     Add New Connection
                 </h2>
                 <div
-                    className="space-y-3 p-4 bg-zinc-900/50 rounded-lg border border-zinc-800"
+                    className="space-y-3 p-4 bg-[var(--bg-darker)]/30 rounded-sm border border-[var(--border)]"
                 >
                     <div className="space-y-1">
                         <label
-                            className="text-xs font-semibold text-zinc-400 uppercase"
+                            className="text-xs font-mono text-[var(--text-muted)] uppercase tracking-widest"
                         >
                             Host IP
                         </label>
@@ -144,7 +144,7 @@ def:pub SSHSettings(
                             onChange={lambda e: any  -> any { handleChange(
                                 "host", e.target.value
                             );}}
-                            className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded px-3 text-zinc-200"
+                            className="w-full h-10 bg-[var(--bg-darkest)] border border-[var(--border)] rounded-sm px-3 text-[var(--text-light)] focus:border-[var(--accent)] outline-none font-mono text-sm shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)]"
                             placeholder="192.168.1.100"
                         />
                     </div>
@@ -160,13 +160,13 @@ def:pub SSHSettings(
                             onChange={lambda e: any  -> any { handleChange(
                                 "user", e.target.value
                             );}}
-                            className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded px-3 text-zinc-200"
+                            className="w-full h-10 bg-[var(--bg-darkest)] border border-[var(--border)] rounded-sm px-3 text-[var(--text-light)] focus:border-[var(--accent)] outline-none font-mono text-sm shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)]"
                             placeholder="user"
                         />
                     </div>
                     <div className="space-y-1">
                         <label
-                            className="text-xs font-semibold text-zinc-400 uppercase"
+                            className="text-xs font-mono text-[var(--text-muted)] uppercase tracking-widest"
                         >
                             Key Path
                         </label>
@@ -176,22 +176,22 @@ def:pub SSHSettings(
                             onChange={lambda e: any  -> any { handleChange(
                                 "key_path", e.target.value
                             );}}
-                            className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded px-3 text-zinc-200"
+                            className="w-full h-10 bg-[var(--bg-darkest)] border border-[var(--border)] rounded-sm px-3 text-[var(--text-light)] focus:border-[var(--accent)] outline-none font-mono text-sm shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)]"
                             placeholder="~/.ssh/id_rsa"
                         />
                     </div>
                 </div>
-                <div className="flex gap-3">
+                <div className="flex gap-4">
                     <button
                         onClick={onSave}
                         disabled={saving}
-                        className="flex-1 h-10 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="app-button flex-1"
                     >
                         {"Saving..." if saving else "Save"}
                     </button>
                     <button
                         onClick={lambda -> None { setView("list");}}
-                        className="flex-1 h-10 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg transition-all border border-zinc-700"
+                        className="app-button app-button--secondary flex-1"
                     >
                         Cancel
                     </button>
@@ -253,21 +253,21 @@ def:pub SSHSettings(
             [
                 <div
                     key={current_idx}
-                    className="grid grid-cols-12 gap-2 items-center text-sm py-2 border-b border-zinc-800/50 last:border-0 hover:bg-zinc-900/40 rounded transition-colors px-2"
+                    className="grid grid-cols-12 gap-2 items-center text-sm py-2 border-b border-[var(--border)] last:border-0 hover:bg-[var(--surface-0)] transition-colors px-2"
                 >
                     <div
-                        className="col-span-2 min-w-0 truncate text-zinc-300"
+                        className="col-span-2 min-w-0 truncate text-[var(--text-light)] font-mono text-xs"
                         title={conn["user"]}
                     >
                         {conn["user"]}
                     </div>
                     <div
-                        className="col-span-4 min-w-0 truncate text-zinc-300 font-mono"
+                        className="col-span-4 min-w-0 truncate text-[var(--accent)] font-mono text-xs"
                         title={conn["host"]}
                     >
                         {conn["host"]}
                     </div>
-                    <div className="col-span-2 text-zinc-500 text-xs text-center">
+                    <div className="col-span-2 text-[var(--text-muted)] font-mono text-xs text-center uppercase tracking-wider">
                         {timeAgo(conn["last_connected"])
                         if "last_connected" in conn
                         else "N/A"}
@@ -279,7 +279,7 @@ def:pub SSHSettings(
                         <button
                             onClick={lambda -> None { handleConnectToggle(current_idx);}}
                             disabled={is_pending}
-                            className={f"flex-1 px-3 py-1.5 rounded text-xs font-bold transition-all border {btn_cls}"}
+                            className={f"flex-1 px-3 py-1.5 rounded-sm text-[10px] uppercase font-bold tracking-widest transition-all border {btn_cls} clip-anvil"}
                         >
                             {btn_text}
                         </button>
@@ -304,53 +304,56 @@ def:pub SSHSettings(
     return
         <div className="space-y-4">
             <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold">
+                <h2 className="text-xl font-bold text-[var(--text-light)] industrial-font-display uppercase tracking-wider">
                     SSH Connections
                 </h2>
             </div>
             <div
-                className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-800 min-h-[300px]"
+                className="bg-[var(--bg-darker)]/30 rounded-sm p-4 border border-[var(--border)] min-h-[300px]"
             >
                 <div
-                    className="grid grid-cols-12 gap-2 font-medium border-b border-zinc-800 pb-2 mb-2 text-zinc-400 uppercase text-xs tracking-wider px-2"
+                    className="grid grid-cols-12 gap-2 font-bold border-b border-[var(--border)] pb-2 mb-2 text-[var(--text-muted)] font-mono uppercase text-[10px] tracking-widest px-2"
                 >
                     <div className="col-span-2 min-w-0">
-                        user
+                        User
                     </div>
                     <div className="col-span-4 min-w-0">
-                        host
-                    </div>
-                    <div className="col-span-2">
-                        last connected
-                    </div>
-                    <div className="col-span-1 text-center">
-                        status
+                        Host IP
                     </div>
                     <div className="col-span-2 text-center">
-                        toggle
+                        Last Active
                     </div>
                     <div className="col-span-1 text-center">
-                        Remove
+                        Status
+                    </div>
+                    <div className="col-span-2 text-center">
+                        Action
+                    </div>
+                    <div className="col-span-1 text-center">
+                        Drop
                     </div>
                 </div>
                 <div className="space-y-2">
-                    {conn_list}{<div
-                        className="text-zinc-500 text-center py-12 flex flex-col items-center gap-2"
-                    >
-                        <span className="italic">
-                            No connections saved
-                        </span>
-                    </div>
+                    {conn_list}
+                    {(
+                        <div
+                            className="text-[var(--text-muted)] font-mono tracking-widest text-center py-12 flex flex-col items-center gap-2 uppercase text-xs"
+                        >
+                            <span className="italic opacity-50">
+                                Empty Manifest
+                            </span>
+                        </div>
+                    )
                     if ssh_connections.length == 0
-                    else null}
+                    else None}
                 </div>
             </div>
-            <div className="flex gap-3">
+            <div className="flex gap-4">
                 <button
                     onClick={lambda -> None { setView("add");}}
-                    className="flex-1 h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20"
+                    className="app-button w-full justify-center"
                 >
-                    Add New SSH
+                    + NEW SSH LINK
                 </button>
             </div>
         </div>;

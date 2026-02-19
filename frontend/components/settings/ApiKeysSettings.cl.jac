@@ -30,14 +30,14 @@ def:pub ApiKeysSettings(props: any) -> Any {
     setShowGoogle = show_google_state[1];
 
     return (
-        <div className="form-stack">
-            <div className="form-field">
-                <label className="input-label">
+        <div className="space-y-6">
+            <div className="space-y-2">
+                <label className="text-xs font-mono text-[var(--accent)] uppercase tracking-widest block">
                     OpenAI API Key
                 </label>
                 <div className="relative">
                     <input
-                        className="input input--mono !pr-14"
+                        className="w-full bg-[var(--bg-darkest)] border border-[var(--border)] rounded-sm px-4 py-3 text-sm text-[var(--text-light)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/20 transition-all font-mono shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] !pr-14"
                         type={("text" if showOpenAI else "password")}
                         value={openai_key}
                         placeholder="sk-..."
@@ -50,22 +50,22 @@ def:pub ApiKeysSettings(props: any) -> Any {
                     />
                     <button
                         type="button"
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors p-1"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors p-1"
                         onClick={lambda -> None { setShowOpenAI(not showOpenAI);}}
                     >
-                        {<EyeOffIcon className="w-4 h-4"/>
+                        {<EyeOffIcon className="w-5 h-5"/>
                         if showOpenAI
-                        else <EyeIcon className="w-4 h-4"/>}
+                        else <EyeIcon className="w-5 h-5"/>}
                     </button>
                 </div>
             </div>
-            <div className="form-field">
-                <label className="input-label">
+            <div className="space-y-2">
+                <label className="text-xs font-mono text-[var(--accent)] uppercase tracking-widest block">
                     Anthropic API Key
                 </label>
                 <div className="relative">
                     <input
-                        className="input input--mono !pr-14"
+                        className="w-full bg-[var(--bg-darkest)] border border-[var(--border)] rounded-sm px-4 py-3 text-sm text-[var(--text-light)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/20 transition-all font-mono shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] !pr-14"
                         type={("text" if showAnthropic else "password")}
                         value={anthropic_key}
                         placeholder="sk-ant-..."
@@ -78,22 +78,22 @@ def:pub ApiKeysSettings(props: any) -> Any {
                     />
                     <button
                         type="button"
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors p-1"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors p-1"
                         onClick={lambda -> None { setShowAnthropic(not showAnthropic);}}
                     >
-                        {<EyeOffIcon className="w-4 h-4"/>
+                        {<EyeOffIcon className="w-5 h-5"/>
                         if showAnthropic
-                        else <EyeIcon className="w-4 h-4"/>}
+                        else <EyeIcon className="w-5 h-5"/>}
                     </button>
                 </div>
             </div>
-            <div className="form-field">
-                <label className="input-label">
+            <div className="space-y-2">
+                <label className="text-xs font-mono text-[var(--accent)] uppercase tracking-widest block">
                     Google API Key
                 </label>
                 <div className="relative">
                     <input
-                        className="input input--mono !pr-14"
+                        className="w-full bg-[var(--bg-darkest)] border border-[var(--border)] rounded-sm px-4 py-3 text-sm text-[var(--text-light)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/20 transition-all font-mono shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] !pr-14"
                         type={("text" if showGoogle else "password")}
                         value={google_key}
                         placeholder="AIza..."
@@ -106,12 +106,12 @@ def:pub ApiKeysSettings(props: any) -> Any {
                     />
                     <button
                         type="button"
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors p-1"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors p-1"
                         onClick={lambda -> None { setShowGoogle(not showGoogle);}}
                     >
-                        {<EyeOffIcon className="w-4 h-4"/>
+                        {<EyeOffIcon className="w-5 h-5"/>
                         if showGoogle
-                        else <EyeIcon className="w-4 h-4"/>}
+                        else <EyeIcon className="w-5 h-5"/>}
                     </button>
                 </div>
             </div>

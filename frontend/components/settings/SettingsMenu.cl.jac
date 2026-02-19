@@ -34,19 +34,22 @@ def:pub SettingsMenu -> Any {
             <button
                 key={item["href"]}
                 type="button"
-                className="launcher-link w-full"
+                className="w-full text-left p-4 mb-2 bg-[var(--surface)] border-l-2 border-transparent hover:border-[var(--accent)] hover:bg-[var(--surface-0)] transition-all group flex flex-col gap-2 clip-anvil"
                 onClick={lambda -> None { navigate(item['href']);}}
             >
-                <div className="launcher-meta-row">
+                <div className="flex items-center justify-between w-full">
                     <span
-                        className="font-semibold text-zinc-200 flex items-center gap-2"
+                        className="font-medium text-[var(--text-light)] group-hover:text-white text-lg flex items-center gap-3 font-sans uppercase tracking-wide"
                     >
-                        <Icon className="w-4 h-4 text-emerald-400"/>
+                        <Icon className="w-5 h-5 text-[var(--accent)]"/>
                         {item["title"]}
                     </span>
-                    <ArrowRightIcon className="w-4 h-4 text-zinc-500"/>
+                    <span className="text-[var(--text-muted)] group-hover:text-[var(--accent)] text-sm shrink-0 flex items-center gap-1 transition-transform group-hover:translate-x-1 font-mono uppercase tracking-wider text-xs">
+                        Configure
+                        <ArrowRightIcon className="w-3 h-3"/>
+                    </span>
                 </div>
-                <div className="text-xs text-zinc-500 mt-1">
+                <div className="text-xs text-[var(--text-muted)] group-hover:text-[var(--text-light)] font-mono tracking-widest uppercase ml-8 mt-1">
                     {item["desc"]}
                 </div>
             </button>
