@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark optimized kernels (best-effort wrapper)."""
+"""Benchmark project operators and emit dashboard benchmark artifacts."""
 
 from __future__ import annotations
 
@@ -11,23 +11,20 @@ from pathlib import Path
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--project", default="")
+    parser.add_argument("--project", required=True)
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
-    cmd = [sys.executable, "-m", "src.optimizer.benchmark_pytorch"]
-    print(f"[benchmark_project_ops] Running benchmark module for project={args.project or 'N/A'}")
-    rc = subprocess.run(cmd, cwd=str(repo_root)).returncode
-
-    if rc != 0:
-        print(
-            "[benchmark_project_ops] Benchmark module returned a non-zero status; "
-            "treating as best-effort and continuing."
-        )
-        return 0
-    return 0
+    cmd = [
+        sys.executable,
+        "-m",
+        "src.optimizer.benchmarking.benchmark_ops",
+        "--project",
+        args.project,
+    ]
+    print(f"[benchmark_project_ops] Running benchmark module for project={args.project}")
+    return subprocess.run(cmd, cwd=str(repo_root)).returncode
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

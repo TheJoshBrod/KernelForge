@@ -552,16 +552,16 @@ def main():
         epilog="""
 Examples:
   # Normal optimization run
-  python3 -m src.optimizer.pipeline benchmarks/profiler/individual_ops project_name
+  python3 -m src.optimizer.pipeline kernels/projects/<project>/io/individual_ops project_name
   
   # Create a new independent root for a specific operator
-  python3 -m src.optimizer.pipeline benchmarks/profiler/individual_ops project_name --new-root torch_nn_functional_embedding
+  python3 -m src.optimizer.pipeline kernels/projects/<project>/io/individual_ops project_name --new-root torch_nn_functional_embedding
 
   # Run using remote SSH configuration
-  python3 -m src.optimizer.pipeline benchmarks/profiler/individual_ops project_name --remote config.json
+  python3 -m src.optimizer.pipeline kernels/projects/<project>/io/individual_ops project_name --remote config.json
   
   # Use a different backend
-  python3 -m src.optimizer.pipeline benchmarks/profiler/individual_ops project_name --backend metal
+  python3 -m src.optimizer.pipeline kernels/projects/<project>/io/individual_ops project_name --backend metal
 """
     )
 

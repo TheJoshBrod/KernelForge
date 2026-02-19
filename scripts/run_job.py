@@ -18,12 +18,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from src.optimizer.benchmarking.state import (  # type: ignore
+        read_json_file as _locked_read_json_file,
+        update_job_state as _locked_update_job_state,
+    )
+except Exception:
+    _locked_read_json_file = None
+    _locked_update_job_state = None
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def _read_state(state_path: Path) -> dict[str, Any]:
+    if _locked_read_json_file is not None:
+        data = _locked_read_json_file(state_path, {})
+        return data if isinstance(data, dict) else {}
     if not state_path.exists():
         return {}
     try:
@@ -43,6 +55,8 @@ def _write_state(state_path: Path, state: dict[str, Any]) -> None:
 
 
 def _update_state(state_path: Path, job_key: str, updates: dict[str, Any]) -> dict[str, Any]:
+    if _locked_update_job_state is not None:
+        return _locked_update_job_state(state_path, job_key, updates)
     state = _read_state(state_path)
     job_state = dict(state.get(job_key, {}))
     job_state.update(updates)
@@ -224,4 +238,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
