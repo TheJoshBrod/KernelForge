@@ -6,6 +6,7 @@ from typing import Tuple, Optional, List, Dict, Any
 
 from src.optimizer.core.backend import Backend
 from src.optimizer.core.types import GPUSpecs
+from src.optimizer.profiling import get_device_specs as get_profiled_device_specs
 
 class MetalBackend(Backend):
     """
@@ -17,9 +18,8 @@ class MetalBackend(Backend):
         return ".metal"
 
     def get_device_specs(self, device_index: int = 0, ssh_config: dict = None) -> GPUSpecs:
-        # Placeholder for Metal specs detection
-        # This would use pyobjc or similar to query Metal device info
-        raise NotImplementedError("Metal backend not yet implemented")
+        del ssh_config
+        return get_profiled_device_specs(device_index=device_index, mode="fast")
 
     def get_sys_prompt(self) -> str:
         return "System Prompt for Metal Backend (Not Implemented)"

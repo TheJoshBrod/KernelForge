@@ -83,39 +83,26 @@ walker:pub GetSystemInfo {
             }
 
             all_gpus = [];
+            local_profile = {"available": False, "gpus": [], "source": "local"};
 
             try {
-                import torch;
-
-                if torch.cuda.is_available() {
-                    count = torch.cuda.device_count();
-                    for i in range(count) {
-                        device_name = torch.cuda.get_device_name(i);
-                        props = torch.cuda.get_device_properties(i);
-                        total_memory = props.total_memory / (1024 ** 3);
-
-                        arch_name = "Unknown";
-                        if props.major == 7 {
-                            arch_name = "Volta/Turing";
-                        } elif props.major == 8 {
-                            arch_name = "Ampere";
-                        } elif props.major == 9 {
-                            arch_name = "Hopper";
-                        }
-
-                        all_gpus.append(
-                            {
-                                "name": device_name,
-                                "connection": "local",
-                                "memory": f"{total_memory:.1f} GB",
-                                "compute_capability": f"v{props.major}.{props.minor} {arch_name}",
-                                "sm_count": props.multi_processor_count
-                            }
-                        );
-                    }
+                code = "import json; from src.optimizer.profiling import get_frontend_payload; print(json.dumps(get_frontend_payload(mode='deep')))";
+                out = subprocess.check_output(
+                    [sys.executable, "-c", code], cwd=repo_root, timeout=8
+                );
+                text = out.decode("utf-8").strip();
+                if text {
+                    local_profile = loads(text);
                 }
             } except Exception as e {
                 print(f"Local GPU check failed: {e}");
+            }
+
+            if local_profile and "gpus" in local_profile {
+                for l_gpu in local_profile["gpus"] {
+                    l_gpu["connection"] = "local";
+                    all_gpus.append(l_gpu);
+                }
             }
 
             if self.host and self.user {
@@ -250,10 +237,19 @@ print(json.dumps(get_gpu_info()))
                 }
             }
 
+            source = "local";
+            if self.host and self.user {
+                source = "mixed" if (local_profile and "gpus" in local_profile and local_profile["gpus"]) else "remote";
+            }
+
             result_payload = {
                 "available": True if all_gpus else False,
                 "gpus": all_gpus,
-                "source": "mixed"
+                "source": source,
+                "cuda_available": local_profile["cuda_available"] if local_profile and "cuda_available" in local_profile else False,
+                "mps_available": local_profile["mps_available"] if local_profile and "mps_available" in local_profile else False,
+                "xpu_available": local_profile["xpu_available"] if local_profile and "xpu_available" in local_profile else False,
+                "preferred_target": local_profile["preferred_target"] if local_profile and "preferred_target" in local_profile else "cpu"
             };
             
             # Update cache
@@ -443,7 +439,7 @@ walker:pub DetectHardware {
             report _hw_cache ;
         } else {
             try {
-                code = "import json, torch; info={'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count() if torch.cuda.is_available() else 0, 'device_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else '', 'cuda_version': torch.version.cuda or '', 'mps_available': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available(), 'mps_built': getattr(torch.backends, 'mps', None) and torch.backends.mps.is_built()}; print(json.dumps(info))";
+                code = "import json; from src.optimizer.profiling import get_frontend_payload; print(json.dumps(get_frontend_payload(mode='fast')))";
                 out = subprocess.check_output(
                     [sys.executable, "-c", code], cwd=repo_root, timeout=5
                 );
@@ -452,12 +448,17 @@ walker:pub DetectHardware {
                     _hw_cache = loads(text);
                     report _hw_cache ;
                 } else {
-                    report {"cuda_available": False, "mps_available": False} ;
+                    report {"available": False, "gpus": [], "source": "local", "cuda_available": False, "mps_available": False, "xpu_available": False, "preferred_target": "cpu"} ;
                 }
             } except Exception as e {
                 report {
+                    "available": False,
+                    "gpus": [],
+                    "source": "local",
                     "cuda_available": False,
                     "mps_available": False,
+                    "xpu_available": False,
+                    "preferred_target": "cpu",
                     "error": str(e)
                 } ;
             }

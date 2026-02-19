@@ -29,7 +29,7 @@ def:pub ConfigProvider(children: any) -> Any {
     loading = loading_state[0];
     setLoading = loading_state[1];
 
-    hw_info_state = useState({"cuda_available": False, "mps_available": False});
+    hw_info_state = useState({"available": False, "gpus": [], "source": "local", "cuda_available": False, "mps_available": False, "xpu_available": False, "preferred_target": "cpu"});
     hwInfo = hw_info_state[0];
     setHwInfo = hw_info_state[1];
 
