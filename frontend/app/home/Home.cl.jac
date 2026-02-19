@@ -109,7 +109,7 @@ def:pub Home -> Any {
 
     return
         <main
-            className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex items-center justify-center font-sans text-white"
+            className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex flex-col items-center justify-center font-sans text-white"
         >
             <SplashScreen exiting={splashDone}/>
             <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
@@ -129,8 +129,18 @@ def:pub Home -> Any {
                     <SettingsIcon className="w-6 h-6"/>
                 </button>
             </div>
+            <div className="relative z-20 flex flex-col items-center justify-center mb-8 animation-fade-in-up">
+                <div className="flex items-center gap-6 mb-2">
+                    <img src="/KernelForge.svg" alt="Kernel Forge Logo" className="w-16 h-16" />
+                    <div className="flex flex-col">
+                        <h1 className="text-5xl font-bold text-white tracking-wider uppercase industrial-font-display" style={{"textShadow": "0 0 20px rgba(225, 112, 85, 0.4)"}}>
+                            Kernel Forge
+                        </h1>
+                    </div>
+                </div>
+            </div>
             <div
-                className="relative z-10 w-full max-w-4xl h-[80vh] bg-[var(--bg-panel)]/90 backdrop-blur-md border border-[var(--border)] rounded-sm shadow-2xl flex flex-col animation-fade-in-up clip-hex"
+                className="relative z-10 w-full max-w-4xl h-[70vh] bg-[var(--bg-panel)]/90 backdrop-blur-md border border-[var(--border)] rounded-sm shadow-2xl flex flex-col animation-fade-in-up delay-1 clip-hex"
             >
                 <div
                     className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden"
@@ -138,25 +148,6 @@ def:pub Home -> Any {
                     <div
                         className="absolute top-0 left-0 right-0 heat-divider"
                     ></div>
-                    <div className="flex items-center gap-4">
-                        <div
-                            className="p-2 bg-gradient-to-br from-[var(--bg-darker)] to-[var(--bg-panel)] border border-[var(--border)] rounded shadow-lg"
-                        >
-                            <CGinSLogo className="w-8 h-8 text-[var(--accent)]"/>
-                        </div>
-                        <div>
-                            <h1
-                                className="text-2xl font-bold text-white tracking-wide uppercase industrial-font-display"
-                            >
-                                Select Project
-                            </h1>
-                            <p
-                                className="text-xs text-[var(--accent)] font-mono uppercase tracking-widest"
-                            >
-                                Kernel Forge // v1.0
-                            </p>
-                        </div>
-                    </div>
                     <div className="relative">
                         <input
                             type="text"
