@@ -639,7 +639,7 @@ walker:pub CreateProject {
             report {
                 "success": True,
                 "name": self.projectName,
-                "weights_count": weight_artifacts.length,
+                "weights_count": len(weight_artifacts),
                 "profile": profile_result,
                 "prepare": prepare_result
             } ;
@@ -1391,7 +1391,7 @@ walker:pub DownloadExport {
         ops: list = [];
 
     can run with entry {
-        if self.ops and self.ops.length > 0 {
+        if self.ops and len(self.ops) > 0 {
             export_result = _export_project_zip(self.projectName, self.ops);
             if not export_result["success"] {
                 report export_result ;

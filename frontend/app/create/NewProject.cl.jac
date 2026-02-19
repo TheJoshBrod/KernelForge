@@ -7,10 +7,10 @@ import from ...components.ui.Icons {
     SettingsIcon,
     BackIcon,
     UploadIcon,
-    FolderIcon,
-    GhostIcon
+    FolderIcon
 }
 import from ...components.editor.ForgePythonEditor { ForgePythonEditor }
+import from "@jac-client/assets/KernelForge.svg" { default as loadingLogo }
 
 # Client-side helper for reading file as base64
 
@@ -50,7 +50,17 @@ def:pub NewProject -> Any {
             "validationZip": None
         },
         isSubmitting: bool = False,
-        submitStage: str = "";
+        submitStage: str = "",
+        stageIndex: int = 0,
+        stageCycle: list = [
+            "Heating up the coals",
+            "Stoking the bellows",
+            "Preparing the forge",
+            "Tempering model steel",
+            "Shaping kernels on the anvil",
+            "Quenching fresh optimizations",
+            "Cleaning the workspace"
+        ];
 
     def handleInputChange(field: str, value: Any) -> None {
         newFormData = {
@@ -97,6 +107,25 @@ def:pub NewProject -> Any {
             );};
         },
         []
+    );
+
+    useEffect(
+        lambda -> Any {
+            if not isSubmitting {
+                stageIndex = 0;
+                return;
+            }
+
+            stageIndex = Math.floor(Date.now() / 1300) % stageCycle.length;
+            timer = setInterval(
+                lambda -> None {
+                    stageIndex = Math.floor(Date.now() / 1300) % stageCycle.length;
+                },
+                650
+            );
+            return lambda -> None { clearInterval(timer);};
+        },
+        [isSubmitting]
     );
 
     async def handleCreate -> None {
@@ -179,7 +208,7 @@ def:pub NewProject -> Any {
             if result and result["success"] {
                 submitStage = "Finalizing";
                 toast.success("Project created successfully");
-                navigate("/project/" + result["name"]);
+                navigate("/project/" + result["name"], {"replace": True});
             } else {
                 error_msg = result["error"] if result else "Failed to create project";
                 toast.error(error_msg);
@@ -198,18 +227,22 @@ def:pub NewProject -> Any {
     if isSubmitting {
         loadingOverlay = <div className="project-loading">
             <div className="project-loading-card">
-                <GhostIcon className="project-loading-ghost" />
+                <img
+                    src={loadingLogo}
+                    alt="Kernal Forge Logo"
+                    className="project-loading-logo"
+                />
                 <div className="project-loading-title">
                     Creating Project
                 </div>
                 <div className="project-loading-stage">
-                    {submitStage or "Working on it..."}
+                    {stageCycle[stageIndex]}
                 </div>
                 <div className="project-loading-bar">
                     <span className="project-loading-bar-fill"></span>
                 </div>
                 <div className="project-loading-foot">
-                    Large weights or validation zips may take a moment.
+                    Status: {submitStage or "Working on it..."} | Large weights or validation zips may take a moment.
                 </div>
             </div>
         </div>;

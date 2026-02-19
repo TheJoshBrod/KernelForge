@@ -276,7 +276,7 @@ def _configure_forge_theme(monaco: Any) -> None {
                 "editorGutter.background": panel,
                 "editorWhitespace.foreground": "ffffff22",
                 "editorIndentGuide.background1": "ffffff1a",
-                "editorIndentGuide.activeBackground1": ember_red
+                "editorIndentGuide.activeBackground1": accent_orange
             }
         }
     );
