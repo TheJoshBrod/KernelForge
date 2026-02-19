@@ -9,18 +9,122 @@ import sys;
 import subprocess;
 import os;
 import sqlite3;
+import hashlib;
 
 import from .globals { repo_root, config_path, config_store }
 
 # --- Helpers ---
 def _project_dir(name: str) -> str {
-    return path.join(repo_root, "projects", name);
+    primary = path.join(_projects_base_dir(), name);
+    legacy = path.join(repo_root, "projects", name);
+    if path.exists(primary) {
+        return primary;
+    }
+    if path.exists(legacy) {
+        return legacy;
+    }
+    return primary;
 }
 
 def _ensure_dir(dir_path: str) -> None {
     if not path.exists(dir_path) {
         makedirs(dir_path);
     }
+}
+
+def _projects_base_dir() -> str {
+    data_dir = (
+        os.environ["CGINS_DATA_DIR"]
+        if "CGINS_DATA_DIR" in os.environ and os.environ["CGINS_DATA_DIR"]
+        else path.join(repo_root, "kernels", "private")
+    );
+    projects_dir = path.join(data_dir, "projects");
+    _ensure_dir(projects_dir);
+    return projects_dir;
+}
+
+def _legacy_projects_dir() -> str {
+    return path.join(repo_root, "projects");
+}
+
+def _all_projects_dirs() -> list {
+    dirs = [];
+    primary = _projects_base_dir();
+    legacy = _legacy_projects_dir();
+    dirs.append(primary);
+    if legacy != primary and path.exists(legacy) {
+        dirs.append(legacy);
+    }
+    return dirs;
+}
+
+def _ensure_legacy_project_link(project_name: str, target_dir: str) -> None {
+    legacy_root = _legacy_projects_dir();
+    _ensure_dir(legacy_root);
+    legacy_path = path.join(legacy_root, project_name);
+    if path.abspath(legacy_path) == path.abspath(target_dir) {
+        return;
+    }
+    if path.exists(legacy_path) {
+        return;
+    }
+    try {
+        os.symlink(target_dir, legacy_path);
+    } except Exception as e {
+        print(f"Warning: unable to create legacy project link for {project_name}: {e}");
+    }
+}
+
+def _store_weight_artifact(project_path: str, file_name: Any, payload_b64: Any) -> dict {
+    if not payload_b64 {
+        return {};
+    }
+    source_name = str(file_name) if file_name else "weights.pth";
+    if not (source_name.endswith(".pth") or source_name.endswith(".pt")) {
+        source_name = source_name + ".pth";
+    }
+    data = b64decode(str(payload_b64));
+    digest = hashlib.sha256(data).hexdigest();
+    ext = ".pth" if source_name.endswith(".pth") else ".pt";
+
+    artifacts_root = path.join(project_path, "artifacts");
+    weights_root = path.join(artifacts_root, "weights");
+    _ensure_dir(artifacts_root);
+    _ensure_dir(weights_root);
+
+    stored_name = digest + ext;
+    stored_path = path.join(weights_root, stored_name);
+    if not path.exists(stored_path) {
+        with open(stored_path, "wb") as f {
+            f.write(data);
+        }
+    }
+
+    return {
+        "id": digest[0:16],
+        "name": source_name,
+        "sha256": digest,
+        "size_bytes": len(data),
+        "relpath": path.relpath(stored_path, project_path),
+        "source": "upload"
+    };
+}
+
+def _merge_weight_artifacts(entries: list) -> list {
+    dedup = {};
+    out = [];
+    for item in entries {
+        if not item or "sha256" not in item {
+            continue;
+        }
+        key = item["sha256"];
+        if key in dedup {
+            continue;
+        }
+        dedup[key] = True;
+        out.append(item);
+    }
+    return out;
 }
 
 def _apply_llm_env_from_config(
@@ -339,6 +443,7 @@ def _is_allowed_repo_path(rel_path: str, project_name: str) -> bool {
     }
     allowed = [
         path.join("projects", project_name),
+        path.join("kernels", "private", "projects", project_name),
         path.join("kernels", "optimized"),
         path.join("kernels", "generated")
     ];
@@ -356,25 +461,27 @@ walker:pub CreateProject {
     has projectName: str,
         code: str,
         weightsFileB64: str = "",
+        weightsFileName: str = "",
+        pthFiles: list = [],
         validationSetPath: str = "",
         validationZipB64: str = "",
         validationZipName: str = "";
 
     can create with entry {
         try {
-            projects_dir = path.join(repo_root, "projects");
-            if not path.exists(projects_dir) {
-                makedirs(projects_dir);
-            }
+            projects_dir = _projects_base_dir();
+            _ensure_dir(projects_dir);
 
             project_path = path.join(projects_dir, self.projectName);
+            legacy_path = path.join(_legacy_projects_dir(), self.projectName);
 
-            if path.exists(project_path) {
+            if path.exists(project_path) or path.exists(legacy_path) {
                 report {"error": "Project already exists", "success": False} ;
                 disengage;
             }
 
             makedirs(project_path);
+            _ensure_legacy_project_link(self.projectName, project_path);
 
             if self.code {
                 with open(path.join(project_path, "model.py"), "w") as f {
@@ -382,12 +489,39 @@ walker:pub CreateProject {
                 }
             }
 
+            weight_artifacts = [];
             if self.weightsFileB64 {
                 weights_data = b64decode(self.weightsFileB64);
                 with open(path.join(project_path, "weights.pt"), "wb") as f {
                     f.write(weights_data);
                 }
+                legacy_meta = _store_weight_artifact(
+                    project_path,
+                    (self.weightsFileName if self.weightsFileName else "weights.pt"),
+                    self.weightsFileB64
+                );
+                if legacy_meta {
+                    weight_artifacts.append(legacy_meta);
+                }
             }
+
+            if self.pthFiles {
+                for item in self.pthFiles {
+                    if not item {
+                        continue;
+                    }
+                    p_name = str(item["name"]) if "name" in item and item["name"] else "checkpoint.pth";
+                    p_b64 = str(item["b64"]) if "b64" in item and item["b64"] else "";
+                    if not p_b64 {
+                        continue;
+                    }
+                    p_meta = _store_weight_artifact(project_path, p_name, p_b64);
+                    if p_meta {
+                        weight_artifacts.append(p_meta);
+                    }
+                }
+            }
+            weight_artifacts = _merge_weight_artifacts(weight_artifacts);
 
             validation_dir = self.validationSetPath;
             if self.validationZipB64 {
@@ -417,7 +551,10 @@ walker:pub CreateProject {
                     "extra_validation_cases": 1,
                     "target_device": target_device
                 },
-                "profile": {"allow_ops": [], "skip_ops": [], "skip_prefixes": []}
+                "profile": {"allow_ops": [], "skip_ops": [], "skip_prefixes": []},
+                "artifacts": {
+                    "weights": weight_artifacts
+                }
             };
             with open(path.join(project_path, "config.json"), "w") as f {
                 dump(config, f, indent=2);
@@ -487,6 +624,7 @@ walker:pub CreateProject {
             report {
                 "success": True,
                 "name": self.projectName,
+                "weights_count": weight_artifacts.length,
                 "profile": profile_result,
                 "prepare": prepare_result
             } ;
@@ -500,17 +638,21 @@ walker:pub CreateProject {
 walker:pub GetProjects {
     can return_projects with entry {
         try {
-            projects_dir = path.join(repo_root, "projects");
-            if not path.exists(projects_dir) {
-                report {"projects": []} ;
-                disengage;
-            }
-
             projects = [];
-            for name in listdir(projects_dir) {
-                full_path = path.join(projects_dir, name);
-                if path.isdir(full_path) {
-                    projects.append({"name": name});
+            seen = {};
+            for projects_dir in _all_projects_dirs() {
+                if not path.exists(projects_dir) {
+                    continue;
+                }
+                for name in listdir(projects_dir) {
+                    if name in seen {
+                        continue;
+                    }
+                    full_path = path.join(projects_dir, name);
+                    if path.isdir(full_path) {
+                        seen[name] = True;
+                        projects.append({"name": name});
+                    }
                 }
             }
             report {"projects": projects} ;
@@ -527,7 +669,7 @@ walker:pub GetProjectOps {
     can return_ops with entry {
         try {
             base_dir = path.join(
-                repo_root, "projects", self.projectName, "io", "individual_ops"
+                _project_dir(self.projectName), "io", "individual_ops"
             );
             if not path.exists(base_dir) {
                 report {"ops": []} ;

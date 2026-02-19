@@ -12,8 +12,8 @@ import from ...components.ui.Icons {
 }
 
 # Client-side helper for reading file as base64
-def fileToBase64(file: any) -> any {
-    def executor(resolve: any, reject: any) -> None {
+def fileToBase64(file: Any) -> Any {
+    def executor(resolve: Any, reject: Any) -> None {
         reader = Reflect.construct(FileReader, []);
         reader.readAsDataURL(file);
         reader.onload = lambda -> None { resolve(reader.result.split(",")[1]);};
@@ -22,8 +22,8 @@ def fileToBase64(file: any) -> any {
     return Reflect.construct(Promise, [executor]);
 }
 
-def fileToText(file: any) -> any {
-    def executor(resolve: any, reject: any) -> None {
+def fileToText(file: Any) -> Any {
+    def executor(resolve: Any, reject: Any) -> None {
         reader = Reflect.construct(FileReader, []);
         reader.readAsText(file);
         reader.onload = lambda -> None { resolve(reader.result);};
@@ -32,30 +32,32 @@ def fileToText(file: any) -> any {
     return Reflect.construct(Promise, [executor]);
 }
 
-def:pub NewProject {
+def:pub NewProject -> Any {
     navigate = useNavigate();
     has code: str = "",
         formData: dict = {
             "projectName": "",
             "modelFile": None,
             "weightsFile": None,
+            "pthFiles": [],
             "validationZip": None
         },
         isSubmitting: bool = False,
         submitStage: str = "";
 
-    def handleInputChange(field: str, value: any) -> None {
+    def handleInputChange(field: str, value: Any) -> None {
         newFormData = {
             "projectName": formData["projectName"],
             "modelFile": formData["modelFile"],
             "weightsFile": formData["weightsFile"],
+            "pthFiles": formData["pthFiles"],
             "validationZip": formData["validationZip"]
         };
         newFormData[field] = value;
         formData = newFormData;
     }
 
-    async def handleModelFile(file: any) -> None {
+    async def handleModelFile(file: Any) -> None {
         if not file {
             return;
         }
@@ -71,18 +73,13 @@ def:pub NewProject {
 
     # Handle Escape key to navigate back
     # Handle Escape key to navigate back
-    def handleKeyDown(event: any) -> None {
+    def handleKeyDown(event: Any) -> None {
         if event.key == "Escape" {
             navigate("/");
         }
     }
 
-    useEffect(
-        lambda -> None { window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
-            "keydown", handleKeyDown
-        );}; },
-        []
-    );
+    useEffect(lambda -> None { window.addEventListener("keydown", handleKeyDown);}, []);
 
     async def handleCreate -> None {
         if not formData["projectName"].trim() {
@@ -102,6 +99,21 @@ def:pub NewProject {
             if formData["weightsFile"] {
                 submitStage = "Encoding weights";
                 weights_b64 = await fileToBase64(formData["weightsFile"]);
+            }
+
+            pth_payload = [];
+            if formData["pthFiles"] and formData["pthFiles"].length > 0 {
+                submitStage = "Encoding .pth checkpoints";
+                for pth_file in formData["pthFiles"] {
+                    if not pth_file {
+                        continue;
+                    }
+                    pth_b64 = await fileToBase64(pth_file);
+                    pth_payload.push({
+                        "name": pth_file.name,
+                        "b64": pth_b64
+                    });
+                }
             }
 
             validation_b64 = "";
@@ -124,6 +136,12 @@ def:pub NewProject {
                     "projectName": formData["projectName"].trim(),
                     "code": code,
                     "weightsFileB64": weights_b64,
+                    "weightsFileName": (
+                        formData["weightsFile"].name
+                        if formData["weightsFile"] and "name" in formData["weightsFile"]
+                        else "weights.pt"
+                    ),
+                    "pthFiles": pth_payload,
                     "validationSetPath": "",
                     "validationZipB64": validation_b64,
                     "validationZipName": validation_name
@@ -302,6 +320,48 @@ def:pub NewProject {
                                 </p>
                                 <p className="text-xs text-zinc-600 mt-1">
                                     PyTorch weights only
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="space-y-2">
+                        <label
+                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
+                        >
+                            Additional Checkpoints (.pth)
+                        </label>
+                        <div className="relative group">
+                            <input
+                                type="file"
+                                accept=".pth"
+                                multiple={True}
+                                onChange={lambda e: any  -> None {
+                                    p_files = [];
+                                    if e and e.target and e.target.files {
+                                        i = 0;
+                                        while i < e.target.files.length {
+                                            p_files.push(e.target.files[i]);
+                                            i = i + 1;
+                                        }
+                                    }
+                                    handleInputChange("pthFiles", p_files);
+                                }}
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                            />
+                            <div
+                                className="w-full h-20 bg-zinc-900/50 border-2 border-dashed border-zinc-800 group-hover:border-zinc-600 rounded-xl flex flex-col items-center justify-center transition-all"
+                            >
+                                <p className="text-sm text-zinc-400 font-medium">
+                                    {
+                                        (
+                                            formData["pthFiles"].length.toString() + " file(s) selected"
+                                        )
+                                        if formData["pthFiles"] and formData["pthFiles"].length > 0
+                                        else "Click to select .pth file(s)"
+                                    }
+                                </p>
+                                <p className="text-xs text-zinc-600 mt-1">
+                                    Stored under project artifacts/weights
                                 </p>
                             </div>
                         </div>
