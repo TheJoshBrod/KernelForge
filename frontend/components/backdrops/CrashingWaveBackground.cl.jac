@@ -2,11 +2,11 @@
 
 import from react { useEffect, useRef }
 
-def:pub CrashingWaveBackground() -> any {
+def:pub CrashingWaveBackground() -> Any {
     canvasRef = useRef(None);
 
     useEffect(
-        lambda -> None { canvas = canvasRef.current;if not canvas {
+        lambda -> Any { canvas = canvasRef.current;if not canvas {
             return;
         }ctx = canvas.getContext("2d");
         # Configuration

@@ -5,7 +5,7 @@ import from ...components.ui.GlowButton { GlowButton }
 import from "react-router-dom" { useParams }
 import from react { useState }
 
-def:pub Export {
+def:pub Export -> Any {
     params = useParams();
     name = params.projectName;
 

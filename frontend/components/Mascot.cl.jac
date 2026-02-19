@@ -10,7 +10,7 @@ def:pub Mascot(
     ambient: bool = False,
     enableVideo: bool = False
 ) -> Any {
-    has _unused_enable_video = enableVideo;
+    _unused_enable_video = enableVideo;
 
     containerRef = useRef(None);
     classes = f"mascot mascot--{variant}";

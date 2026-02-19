@@ -3,7 +3,7 @@
 import from ...components.ui.Icons { ActivityIcon }
 import from ...components.ui.GlowButton { GlowButton }
 
-def:pub Arena {
+def:pub Arena -> Any {
     # Mock data for now
     kernels = [
         {
@@ -204,7 +204,7 @@ def:pub Arena {
                             </label>
                             <div className="flex gap-2">
                                 {(
-                                    lambda -> list { items = [];for v in [
+                                    lambda() -> list { items = [];for v in [
                                         32,
                                         64,
                                         128,
@@ -228,7 +228,7 @@ def:pub Arena {
                             </label>
                             <div className="flex gap-2">
                                 {(
-                                    lambda -> list { items = [];for v in [4, 8] {
+                                    lambda() -> list { items = [];for v in [4, 8] {
                                         items.push(
                                             <div
                                                 key={v}
@@ -247,7 +247,7 @@ def:pub Arena {
                             </label>
                             <div className="flex gap-2">
                                 {(
-                                    lambda -> list { items = [];for v in [2, 3, 4] {
+                                    lambda() -> list { items = [];for v in [2, 3, 4] {
                                         items.push(
                                             <div
                                                 key={v}

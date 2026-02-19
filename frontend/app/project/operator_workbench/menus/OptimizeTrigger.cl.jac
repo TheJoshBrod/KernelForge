@@ -2,7 +2,7 @@
 
 import from .....components.ui.Icons { ZapIcon }
 
-def:pub OptimizeTrigger(props: any) {
+def:pub OptimizeTrigger(props: any) -> Any {
     onOptimize = props.onOptimize;
     hasTree = props.hasTree if props and "hasTree" in props else True;
 

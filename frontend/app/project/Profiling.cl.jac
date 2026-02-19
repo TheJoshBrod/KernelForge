@@ -3,7 +3,7 @@
 import from ...components.ui.Icons { ActivityIcon, UploadIcon }
 import from ...components.ui.GlowButton { GlowButton }
 
-def:pub Profiling {
+def:pub Profiling -> Any {
     # Mock insights for now
     insights = [
         {

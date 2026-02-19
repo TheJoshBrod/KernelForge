@@ -2,11 +2,11 @@
 
 import from react { useEffect, useRef }
 
-def:pub EmberBackground(className: str = "") -> any {
+def:pub EmberBackground(className: str = "") -> Any {
     canvasRef = useRef(None);
 
     useEffect(
-        lambda -> None { canvas = canvasRef.current;if not canvas {
+        lambda -> Any { canvas = canvasRef.current;if not canvas {
             return;
         }ctx = canvas.getContext("2d");
         # Config

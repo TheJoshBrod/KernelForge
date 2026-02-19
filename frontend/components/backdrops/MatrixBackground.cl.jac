@@ -2,11 +2,11 @@
 
 import from react { useEffect, useRef }
 
-def:pub MatrixBackground() -> any {
+def:pub MatrixBackground() -> Any {
     canvasRef = useRef(None);
 
     useEffect(
-        lambda -> None { canvas = canvasRef.current;if not canvas {
+        lambda -> Any { canvas = canvasRef.current;if not canvas {
             return;
         }ctx = canvas.getContext("2d");
         # Set canvas size to window size

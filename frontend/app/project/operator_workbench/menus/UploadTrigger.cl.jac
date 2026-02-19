@@ -2,7 +2,7 @@
 
 import from .....components.ui.Icons { UploadIcon }
 
-def:pub UploadTrigger(props: any) {
+def:pub UploadTrigger(props: any) -> Any {
     onUpload = props.onUpload;
 
     def handleClick -> None {

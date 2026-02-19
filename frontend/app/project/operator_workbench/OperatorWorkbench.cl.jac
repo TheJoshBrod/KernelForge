@@ -5,7 +5,7 @@ import from "react-router-dom" { useParams, useNavigate }
 import from .OpSelector { OpSelector }
 import from .OperatorWorkbenchView { OperatorWorkbenchView }
 
-def:pub OperatorWorkbench {
+def:pub OperatorWorkbench -> Any {
     params = useParams();
     projectName = params.projectName;
     opName = params.opName;

@@ -5,7 +5,7 @@ import from "react-router-dom" { useNavigate, useParams }
 import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
 import from ...components.ui.Icons { CGinSLogo }
 
-def:pub OpDetails {
+def:pub OpDetails -> Any {
     navigate = useNavigate();
     params = useParams();
     projectName: str = params.projectName or "";
@@ -82,7 +82,7 @@ def:pub OpDetails {
     }
 
     useEffect(
-        lambda -> None { window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
+        lambda -> Any { window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
             "keydown", handleKeyDown
         );}; },
         [projectName]

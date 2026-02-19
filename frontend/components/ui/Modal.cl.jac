@@ -4,7 +4,7 @@ import from "react-dom" { createPortal }
 import from react { useEffect }
 import from .Icons { XIcon }
 
-def:pub Modal(props: any) {
+def:pub Modal(props: any) -> Any {
     isOpen = props.isOpen;
     onClose = props.onClose;
     children = props.children;
@@ -12,7 +12,7 @@ def:pub Modal(props: any) {
 
     # Close on Escape key
     useEffect(
-        lambda -> None { def handle_keydown(e: any) {
+        lambda -> Any { def handle_keydown(e: any) {
             if e.key == "Escape" {
                 onClose();
             }

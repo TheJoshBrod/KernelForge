@@ -3,7 +3,7 @@
 import from react { useState, useEffect, useRef }
 import from .Icons { ChevronDownIcon, SearchIcon, CheckIcon }
 
-def:pub SearchableSelect(props: any) {
+def:pub SearchableSelect(props: any) -> Any {
     # Props: value, onChange, options, placeholder, disabled, loading
     value = props.value;
     onChange = props.onChange;
@@ -24,7 +24,7 @@ def:pub SearchableSelect(props: any) {
 
     # Filter options
     filteredOptions = options.filter(
-        lambda o: any  -> bool { if not searchTerm {
+        lambda (o: any) -> bool { if not searchTerm {
             return True;
         }return o["label"].toLowerCase().includes(searchTerm.toLowerCase())
         or o["value"].toLowerCase().includes(searchTerm.toLowerCase()); }
@@ -32,7 +32,7 @@ def:pub SearchableSelect(props: any) {
 
     # Handle outside click to close
     useEffect(
-        lambda -> None { def handleClickOutside(event: any) -> None {
+        lambda -> Any { def handleClickOutside(event: any) -> None {
             if wrapperRef.current and not wrapperRef.current.contains(event.target) {
                 setIsOpen(False);
             }
@@ -49,7 +49,7 @@ def:pub SearchableSelect(props: any) {
     }
 
     selectedOption = options.find(
-        lambda o: any  -> bool { return o["value"] == value; }
+        lambda (o: any) -> bool { return o["value"] == value; }
     );
 
     return (
@@ -87,18 +87,18 @@ def:pub SearchableSelect(props: any) {
                                 className="w-full py-1.5 bg-transparent border-none focus:outline-none text-sm text-zinc-300 placeholder-zinc-600"
                                 placeholder="Search..."
                                 value={searchTerm}
-                                onChange={lambda e: any  -> None { setSearchTerm(
+                                onChange={lambda (e: any) -> None { setSearchTerm(
                                     e.target.value
                                 );}}
                                 autoFocus={True}
-                                onClick={lambda e: any  -> None { e.stopPropagation();}}
+                                onClick={lambda (e: any) -> None { e.stopPropagation();}}
                             />
                         </div>
                     </div>
                     <div className="overflow-y-auto flex-1">
                         {(
                             filteredOptions.map(
-                                lambda option: any  -> Any { isSelected = option[
+                                lambda (option: any) -> Any { isSelected = option[
                                     "value"
                                 ] == value;return (
                                     <div
@@ -108,7 +108,7 @@ def:pub SearchableSelect(props: any) {
                                             if isSelected
                                             else "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
                                         )}
-                                        onClick={lambda e: any  -> None { e.stopPropagation();handleSelect(
+                                        onClick={lambda (e: any) -> None { e.stopPropagation();handleSelect(
                                             option
                                         );}}
                                     >

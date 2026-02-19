@@ -7,7 +7,7 @@ import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground 
 import from .SSHSettings { SSHSettings }
 import from ...context.ConfigContext { useConfig }
 
-def:pub SshPage {
+def:pub SshPage -> Any {
     navigate = useNavigate();
     config_ctx = useConfig();
     config = config_ctx.config;

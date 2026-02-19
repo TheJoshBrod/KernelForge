@@ -6,7 +6,7 @@ import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground 
 
 import from ...context.ConfigContext { useConfig }
 
-def:pub GpuPage {
+def:pub GpuPage -> Any {
     navigate = useNavigate();
     config_ctx = useConfig();
     config = config_ctx.config;

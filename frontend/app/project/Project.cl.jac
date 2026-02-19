@@ -19,7 +19,7 @@ import from ...components.ui.GlowButton { GlowButton }
 import from ...components.ui.Icons { CGinSLogo }
 import from ...components.ui.Modal { Modal }
 
-def:pub Project {
+def:pub Project -> Any {
     navigate = useNavigate();
     params = useParams();
     raw_name = params.projectName;
@@ -254,7 +254,7 @@ def:pub Project {
 
     useEffect(lambda -> None { refreshAll();detectHardware();}, [name]);
     useEffect(
-        lambda -> None { timer = setInterval(lambda -> None { refreshStatus();}, 4000);return lambda -> None { clearInterval(
+        lambda -> Any { timer = setInterval(lambda -> None { refreshStatus();}, 4000);return lambda -> None { clearInterval(
             timer
         );}; },
         [name]

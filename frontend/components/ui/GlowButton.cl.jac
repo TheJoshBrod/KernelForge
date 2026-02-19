@@ -6,7 +6,7 @@ def:pub GlowButton(
     variant: str = "primary",
     disabled: bool = False,
     className: str = ""
-) -> any {
+) -> Any {
     classes = f"glow-button {variant}";
     if disabled {
         classes += " is-disabled";

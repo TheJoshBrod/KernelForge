@@ -6,7 +6,7 @@ import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground 
 import from ...components.settings.SettingsMenu { SettingsMenu }
 import from ...context.ConfigContext { useConfig }
 
-def:pub SettingsPage {
+def:pub SettingsPage -> Any {
     navigate = useNavigate();
     location = useLocation();
     config_ctx = useConfig();

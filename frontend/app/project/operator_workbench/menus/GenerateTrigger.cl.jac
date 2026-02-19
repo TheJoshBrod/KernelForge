@@ -2,7 +2,7 @@
 
 import from .....components.ui.Icons { PlusIcon }
 
-def:pub GenerateTrigger(props: any) {
+def:pub GenerateTrigger(props: any) -> Any {
     onGenerate = props.onGenerate;
 
     def handleClick -> None {

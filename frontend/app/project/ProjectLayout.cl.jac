@@ -3,7 +3,7 @@
 import from "react-router-dom" { Outlet, Link, useLocation, useParams }
 import from ...components.ui.Icons { HomeIcon, ArrowRightIcon, CodeIcon, SettingsIcon }
 
-def:pub ProjectLayout {
+def:pub ProjectLayout -> Any {
     location = useLocation();
     params = useParams();
     projectName = params.projectName;
