@@ -3055,10 +3055,10 @@ walker:pub ImportKernel {
         backend: str = "CUDA";
 
     can run with entry {
-        project_name = str(self.projectName).strip() if self.projectName else "";
-        op_name_raw = str(self.opName).strip() if self.opName else "";
-        source_code = str(self.source) if self.source is not None else "";
-        backend_raw = str(self.backend).strip().lower() if self.backend else "cuda";
+        project_name = str(self.projectName).strip();
+        op_name_raw = str(self.opName).strip();
+        source_code = str(self.source);
+        backend_raw = str(self.backend).strip().lower();
 
         if not project_name {
             report {"success": False, "error": "Missing project context."};
@@ -3110,7 +3110,7 @@ walker:pub ImportKernel {
         }
 
         op_name = _normalize_metric_op_name(op_name_raw);
-        project_dir = _project_dir(project_name);
+        project_dir = _project_dir(str(project_name));
         generated_dir = path.join(
             project_dir,
             "kernels",
@@ -3311,7 +3311,7 @@ print(
         }
 
         try {
-            _refresh_project_metrics(project_name);
+            _refresh_project_metrics(str(project_name));
         } except Exception as e {
             _ = str(e);
         }
