@@ -206,11 +206,58 @@ def:pub Dashboard -> Any {
         }
     }
 
+    sortedTimeRows = [];
+    remainingTimeRows = [];
+    for row in timeRows {
+        remainingTimeRows.push(row);
+    }
+    while list_len(remainingTimeRows) > 0 {
+        best_idx = 0;
+        best_row = remainingTimeRows[0];
+        best_val = to_num(
+            best_row["total_time_ms"]
+            if best_row and "total_time_ms" in best_row
+            else 0
+        );
+        if best_val is None {
+            best_val = 0;
+        }
+
+        scan_idx = 1;
+        while scan_idx < list_len(remainingTimeRows) {
+            candidate = remainingTimeRows[scan_idx];
+            candidate_val = to_num(
+                candidate["total_time_ms"]
+                if candidate and "total_time_ms" in candidate
+                else 0
+            );
+            if candidate_val is None {
+                candidate_val = 0;
+            }
+            if candidate_val > best_val {
+                best_val = candidate_val;
+                best_idx = scan_idx;
+            }
+            scan_idx += 1;
+        }
+
+        sortedTimeRows.push(remainingTimeRows[best_idx]);
+        next_remaining = [];
+        next_idx = 0;
+        while next_idx < list_len(remainingTimeRows) {
+            if next_idx != best_idx {
+                next_remaining.push(remainingTimeRows[next_idx]);
+            }
+            next_idx += 1;
+        }
+        remainingTimeRows = next_remaining;
+    }
+
     pieData = [];
     hasPie = False;
     pieTotal = 0;
     op_idx = 0;
-    for op in timeRows {
+    for op in sortedTimeRows {
         slice_val = op["total_time_ms"] if "total_time_ms" in op else 0;
         pieTotal += slice_val;
         pieData.push(
