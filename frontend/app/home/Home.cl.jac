@@ -4,7 +4,7 @@ import from react { useEffect }
 import from "react-router-dom" { useNavigate }
 import from ...components.backdrops.EmberBackground { EmberBackground }
 import from ...components.ui.GlowButton { GlowButton }
-import from ...components.ui.Icons { CGinSLogo, SettingsIcon, ArrowRightIcon }
+import from ...components.ui.Icons { CGinSLogo, SettingsIcon, ArrowRightIcon, GithubIcon, DiscordIcon }
 import from ...components.SplashScreen { SplashScreen }
 
 def:pub Home -> Any {
@@ -119,16 +119,25 @@ def:pub Home -> Any {
                 className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/50 z-10 pointer-events-none"
             ></div>
             {(
-                <div className="absolute top-6 right-6 z-50">
-                    <button
-                        onClick={lambda -> None { navigate(
-                            "/settings", {"state": {"return_to": "/"}}
-                        );}}
-                        className="p-2 rounded-full hover:bg-white/10 text-white/70 hover:text-[var(--accent)] transition-all duration-200"
-                        title="Settings"
+                <div className="absolute top-6 right-8 z-50 flex items-center gap-6">
+                    <a
+                        href="https://discord.gg/"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-white/50 hover:text-[#5865F2] transition-all duration-300 hover:scale-110 hover:-translate-y-1 hover:drop-shadow-[0_0_12px_rgba(88,101,242,0.6)]"
+                        title="Discord Server"
                     >
-                        <SettingsIcon className="w-6 h-6"/>
-                    </button>
+                        <DiscordIcon className="w-7 h-7"/>
+                    </a>
+                    <a
+                        href="https://github.com/TheJoshBrod/CGinS"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-white/50 hover:text-white transition-all duration-300 hover:scale-110 hover:-translate-y-1 hover:drop-shadow-[0_0_12px_rgba(255,255,255,0.6)]"
+                        title="GitHub Repository"
+                    >
+                        <GithubIcon className="w-7 h-7"/>
+                    </a>
                 </div>
             ) if splashDone else None}
             <div className="relative z-20 flex flex-col items-center justify-center mb-8 animation-fade-in-up">
@@ -150,7 +159,7 @@ def:pub Home -> Any {
                     <div
                         className="absolute top-0 left-0 right-0 heat-divider"
                     ></div>
-                    <div className="relative">
+                    <div className="relative flex items-center gap-4">
                         <input
                             type="text"
                             placeholder="SEARCH PROJECTS..."
@@ -158,6 +167,15 @@ def:pub Home -> Any {
                             onChange={lambda e: any  -> None { searchQuery = e.target.value;}}
                             className="w-full bg-[var(--bg-darker)] border border-[var(--border)] rounded-sm px-4 py-2 text-sm text-[var(--text-light)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/20 transition-all font-mono uppercase"
                         />
+                        <button
+                            onClick={lambda -> None { navigate(
+                                "/settings", {"state": {"return_to": "/"}}
+                            );}}
+                            className="p-2 rounded-sm bg-[var(--bg-darker)] border border-[var(--border)] hover:border-[var(--accent)] text-[var(--text-muted)] hover:text-[var(--accent)] transition-all shrink-0"
+                            title="Settings"
+                        >
+                            <SettingsIcon className="w-5 h-5"/>
+                        </button>
                     </div>
                 </div>
                 <div
