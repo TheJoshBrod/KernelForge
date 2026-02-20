@@ -355,6 +355,7 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
         return {};
     }
     changed = False;
+    refresh_metrics = False;
     if "generate_adv" in state {
         if not ("generate" in state) {
             state["generate"] = state["generate_adv"];
@@ -453,6 +454,7 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
                 if not ("message" in job) or not job["message"] {
                     job["message"] = "Profile and baseline benchmark already available.";
                 }
+                refresh_metrics = True;
             } elif job_key == "generate"
             and (
                 (
@@ -489,6 +491,7 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
                 } elif not ("message" in job) or not job["message"] {
                     job["message"] = "Kernel generation completed.";
                 }
+                refresh_metrics = True;
             } elif job_key == "optimize"
             and _has_optimize_outputs_after(project_name, started_at) {
                 job["status"] = "completed";
@@ -499,6 +502,7 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
                 if not ("message" in job) or not job["message"] {
                     job["message"] = "Kernel optimization completed.";
                 }
+                refresh_metrics = True;
             } elif job_key == "benchmark"
             and _has_benchmark_outputs_after(project_name, started_at) {
                 job["status"] = "completed";
@@ -509,6 +513,7 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
                 if not ("message" in job) or not job["message"] {
                     job["message"] = "Benchmark completed.";
                 }
+                refresh_metrics = True;
             } else {
                 job["status"] = "error";
                 job["control"] = "idle";
@@ -535,6 +540,13 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
             }
         } except Exception as e {
             print(f"Failed to write normalized state.json: {e}");
+        }
+    }
+    if refresh_metrics {
+        try {
+            _refresh_project_metrics(project_name);
+        } except Exception as e {
+            print(f"Failed to refresh project metrics: {e}");
         }
     }
     return state;
@@ -576,6 +588,25 @@ def _update_job_state(project_name: str, job_key: str, updates: dict) -> None {
     }
     _write_job_state_db(project_name, job_key, job_state);
     _upsert_project_catalog(project_name, _project_dir(project_name));
+    status_text = (
+        str(job_state["status"]).strip().lower()
+        if "status" in job_state and job_state["status"]
+        else ""
+    );
+    if (
+        status_text == "completed" or status_text == "success"
+    ) and (
+        job_key == "profile"
+        or job_key == "generate"
+        or job_key == "optimize"
+        or job_key == "benchmark"
+    ) {
+        try {
+            _refresh_project_metrics(project_name);
+        } except Exception as e {
+            print(f"Failed to refresh project metrics from job state update: {e}");
+        }
+    }
 }
 
 def _pid_is_alive(pid_val: Any) -> bool {
@@ -1373,6 +1404,7 @@ def _ensure_catalog_schema() -> None {
             profile_status TEXT,
             profile_message TEXT,
             errors_json TEXT,
+            metrics_version INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT
         )
         """
@@ -1401,6 +1433,22 @@ def _ensure_catalog_schema() -> None {
         )
         """
     );
+    try {
+        cursor.execute("PRAGMA table_info(project_metric_meta)");
+        meta_cols = {};
+        for col in cursor.fetchall() {
+            if col and len(col) > 1 and col[1] {
+                meta_cols[str(col[1])] = True;
+            }
+        }
+        if not ("metrics_version" in meta_cols) {
+            cursor.execute(
+                "ALTER TABLE project_metric_meta ADD COLUMN metrics_version INTEGER NOT NULL DEFAULT 0"
+            );
+        }
+    } except Exception as e {
+        print(f"Warning: failed to migrate project_metric_meta schema: {e}");
+    }
     conn.commit();
     conn.close();
 }
@@ -1765,6 +1813,19 @@ def _upsert_project_metric_rows(project_name: str, payload: dict) -> None {
     db_path = _catalog_db_path();
     conn = sqlite3.connect(db_path);
     cursor = conn.cursor();
+    metrics_version = 1;
+    cursor.execute(
+        "SELECT metrics_version FROM project_metric_meta WHERE project_name = ?",
+        (project_name,)
+    );
+    existing_meta = cursor.fetchone();
+    if existing_meta and len(existing_meta) > 0 and existing_meta[0] is not None {
+        try {
+            metrics_version = int(existing_meta[0]) + 1;
+        } except Exception {
+            metrics_version = 1;
+        }
+    }
 
     cursor.execute(
         "DELETE FROM operator_metrics WHERE project_name = ?",
@@ -1834,10 +1895,18 @@ def _upsert_project_metric_rows(project_name: str, payload: dict) -> None {
     cursor.execute(
         """
         INSERT OR REPLACE INTO project_metric_meta(
-            project_name, status, profile_status, profile_message, errors_json, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            project_name, status, profile_status, profile_message, errors_json, metrics_version, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (project_name, status, profile_status, profile_message, errors_json, now)
+        (
+            project_name,
+            status,
+            profile_status,
+            profile_message,
+            errors_json,
+            metrics_version,
+            now
+        )
     );
     conn.commit();
     conn.close();
@@ -1861,7 +1930,7 @@ def _read_project_metric_rows(project_name: str) -> dict {
 
     cursor.execute(
         """
-        SELECT status, profile_status, profile_message, errors_json
+        SELECT status, profile_status, profile_message, errors_json, metrics_version, updated_at
         FROM project_metric_meta
         WHERE project_name = ?
         """,
@@ -1951,6 +2020,8 @@ def _read_project_metric_rows(project_name: str) -> dict {
     profile_status = "";
     profile_message = "";
     errors = [];
+    metrics_version = 0;
+    metrics_updated_at = "";
     meta_vals = [];
     if meta is not None {
         try {
@@ -1978,6 +2049,16 @@ def _read_project_metric_rows(project_name: str) -> dict {
             errors = [];
         }
     }
+    if len(meta_vals) > 4 and meta_vals[4] is not None {
+        try {
+            metrics_version = int(meta_vals[4]);
+        } except Exception {
+            metrics_version = 0;
+        }
+    }
+    if len(meta_vals) > 5 and meta_vals[5] {
+        metrics_updated_at = str(meta_vals[5]);
+    }
 
     return {
         "rows": rows,
@@ -1987,7 +2068,9 @@ def _read_project_metric_rows(project_name: str) -> dict {
         "status": status,
         "profile_status": profile_status,
         "profile_message": profile_message,
-        "errors": errors
+        "errors": errors,
+        "metrics_version": metrics_version,
+        "updated_at": metrics_updated_at
     };
 }
 
@@ -2250,7 +2333,10 @@ walker:pub GetProjectOps {
                         if summary and "op_counts" in summary
                         else {};
                         for full_name in op_counts {
-                            op_name = full_name.replace(".", "_").replace("/", "_");
+                            op_name = _normalize_metric_op_name(full_name);
+                            if not op_name {
+                                continue;
+                            }
                             c = op_counts[full_name];
                             try {
                                 c = int(c);
@@ -2886,8 +2972,76 @@ walker:pub GetMctsTree {
                 edges.append({"parent_id": row[0], "child_id": row[1]});
             }
 
+            pytorch_ms = None;
+            try {
+                metric_payload = _collect_project_metrics(self.projectName);
+                op_key = _normalize_metric_op_name(self.opName);
+                rows_by_op = (
+                    metric_payload["rows_by_op"]
+                    if metric_payload
+                    and "rows_by_op" in metric_payload
+                    and metric_payload["rows_by_op"]
+                    else {}
+                );
+                metric_row = (
+                    rows_by_op[op_key]
+                    if rows_by_op and op_key in rows_by_op
+                    else None
+                );
+                if not metric_row {
+                    metric_rows = (
+                        metric_payload["rows"]
+                        if metric_payload
+                        and "rows" in metric_payload
+                        and metric_payload["rows"]
+                        else []
+                    );
+                    for mrow in metric_rows {
+                        if not mrow {
+                            continue;
+                        }
+                        row_name = (
+                            mrow["name"]
+                            if "name" in mrow and mrow["name"]
+                            else (
+                                mrow["op"]
+                                if "op" in mrow and mrow["op"]
+                                else ""
+                            )
+                        );
+                        if _normalize_metric_op_name(row_name) == op_key {
+                            metric_row = mrow;
+                            break;
+                        }
+                    }
+                }
+                if metric_row {
+                    raw_pytorch = (
+                        metric_row["pytorch_ms"]
+                        if "pytorch_ms" in metric_row
+                        and metric_row["pytorch_ms"] is not None
+                        else (
+                            metric_row["pytorch"]
+                            if "pytorch" in metric_row
+                            and metric_row["pytorch"] is not None
+                            else None
+                        )
+                    );
+                    if raw_pytorch is not None {
+                        pytorch_ms = float(raw_pytorch);
+                    }
+                }
+            } except Exception {
+                _ = 0;
+            }
+
             conn.close();
-            report {"success": True, "nodes": mcts_nodes, "edges": edges};
+            report {
+                "success": True,
+                "nodes": mcts_nodes,
+                "edges": edges,
+                "pytorch_ms": pytorch_ms
+            };
         } except Exception as e {
             report {"success": False, "error": str(e)};
         }
@@ -2968,7 +3122,10 @@ walker:pub GetDashboardCharts {
                 if payload and "profile_message" in payload
                 else ""
             ),
-            "errors": payload["errors"] if payload and "errors" in payload else []
+            "errors": payload["errors"] if payload and "errors" in payload else [],
+            "metrics_version": (
+                payload["metrics_version"] if payload and "metrics_version" in payload else 0
+            )
         };
     }
 }
@@ -3008,7 +3165,7 @@ def _to_int(raw: Any) -> int {
     }
 }
 
-def _collect_project_metrics(project_name: str) -> dict {
+def _compute_project_metrics(project_name: str) -> dict {
     project_dir = _project_dir(project_name);
 
     bench_results = [];
@@ -3298,15 +3455,61 @@ def _collect_project_metrics(project_name: str) -> dict {
         "status": chart_status,
         "profile_status": profile_status,
         "profile_message": profile_message,
-        "errors": bench_errors
+        "errors": bench_errors,
+        "metrics_version": 0
     };
+    return computed_payload;
+}
+
+def _refresh_project_metrics(project_name: str) -> dict {
+    project_dir = _project_dir(project_name);
+    computed_payload = _compute_project_metrics(project_name);
     _upsert_project_catalog(project_name, project_dir);
     _upsert_project_metric_rows(project_name, computed_payload);
     persisted = _read_project_metric_rows(project_name);
-    if persisted and "status" in persisted and persisted["status"] {
+    if persisted and "metrics_version" in persisted {
         return persisted;
     }
     return computed_payload;
+}
+
+def _collect_project_metrics(project_name: str) -> dict {
+    _upsert_project_catalog(project_name, _project_dir(project_name));
+    persisted = _read_project_metric_rows(project_name);
+    if persisted {
+        version_val = 0;
+        if "metrics_version" in persisted and persisted["metrics_version"] is not None {
+            version_val = _to_int(persisted["metrics_version"]);
+        }
+        rows_len = (
+            len(persisted["rows"])
+            if "rows" in persisted and persisted["rows"]
+            else 0
+        );
+        if version_val > 0 or rows_len > 0 {
+            persisted_updated_at = (
+                str(persisted["updated_at"])
+                if "updated_at" in persisted and persisted["updated_at"]
+                else ""
+            );
+            summary_path = path.join(_project_dir(project_name), "io", "summary.json");
+            needs_refresh = False;
+            if persisted_updated_at {
+                if _modified_after(summary_path, persisted_updated_at) {
+                    needs_refresh = True;
+                } elif _has_benchmark_outputs_after(project_name, persisted_updated_at) {
+                    needs_refresh = True;
+                } elif _has_optimize_outputs_after(project_name, persisted_updated_at) {
+                    needs_refresh = True;
+                }
+            }
+            if needs_refresh {
+                return _refresh_project_metrics(project_name);
+            }
+            return persisted;
+        }
+    }
+    return _refresh_project_metrics(project_name);
 }
 
 walker:pub GetProjectMetrics {
@@ -3340,7 +3543,10 @@ walker:pub GetOperatorMetrics {
                 if payload and "profile_message" in payload
                 else ""
             ),
-            "errors": payload["errors"] if payload and "errors" in payload else []
+            "errors": payload["errors"] if payload and "errors" in payload else [],
+            "metrics_version": (
+                payload["metrics_version"] if payload and "metrics_version" in payload else 0
+            )
         };
     }
 }

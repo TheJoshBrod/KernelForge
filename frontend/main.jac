@@ -28,7 +28,9 @@ import from walkers.project {
     GetProjectBenchmarks,
     GetMctsTree,
     ImportKernel,
-    GetProjectMctsSummary
+    GetProjectMctsSummary,
+    GetProjectMetrics,
+    GetOperatorMetrics
 }
 
 cl import from react { useEffect }

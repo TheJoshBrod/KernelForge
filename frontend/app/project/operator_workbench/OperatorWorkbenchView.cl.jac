@@ -134,7 +134,55 @@ def:pub OperatorWorkbenchView -> Any {
         if text.startsWith(prefix) {
             text = "torch_nn_functional_" + text.replace(prefix, "");
         }
-        return text.replace(".", "_");
+        return text.replace(".", "_").replace("/", "_");
+    }
+
+    def decode_param(value: Any) -> str {
+        text = str(value or "");
+        if not text {
+            return "";
+        }
+        try {
+            return decodeURIComponent(text);
+        } except Exception {
+            return text;
+        }
+    }
+
+    def canonical_op_param(value: Any) -> str {
+        text = decode_param(value).trim();
+        if not text {
+            return "";
+        }
+        lowered = text.toLowerCase();
+        marker = "/kernels/";
+        idx = lowered.indexOf(marker);
+        if idx >= 0 {
+            text = text.slice(0, idx);
+        }
+        marker = "\\kernels\\";
+        idx = lowered.indexOf(marker);
+        if idx >= 0 {
+            text = text.slice(0, idx);
+        }
+        return text.trim();
+    }
+
+    def op_matches(candidate: Any, target: str) -> bool {
+        cand = normalize_op_name(candidate);
+        if not cand or not target {
+            return False;
+        }
+        if cand == target {
+            return True;
+        }
+        if target.startsWith(cand + "_") {
+            return True;
+        }
+        if cand.startsWith(target + "_") {
+            return True;
+        }
+        return False;
     }
 
     def get_layouted_elements(nodes_data: list, edges_data: list) -> dict {
@@ -286,7 +334,9 @@ def:pub OperatorWorkbenchView -> Any {
     }
 
     async def fetchData(showLoader: bool = False) -> None {
-        if not resolvedProjectName or not resolvedOpName {
+        project_for_query = decode_param(resolvedProjectName);
+        op_for_query = canonical_op_param(resolvedOpName);
+        if not project_for_query or not op_for_query {
             if showLoader {
                 setLoading(False);
             }
@@ -296,21 +346,58 @@ def:pub OperatorWorkbenchView -> Any {
             setLoading(True);
         }
         try {
+            metrics_req = __jacSpawn(
+                "GetProjectMetrics", "", {"projectName": project_for_query}
+            );
+            tree_req = __jacSpawn(
+                "GetMctsTree",
+                "",
+                {"projectName": project_for_query, "opName": op_for_query}
+            );
             torch_ms = None;
             try {
-                metric_resp = await __jacSpawn(
-                    "GetOperatorMetrics",
-                    "",
-                    {"projectName": resolvedProjectName, "opName": resolvedOpName}
-                );
-                metric_data = metric_resp.reports[0]
-                if metric_resp and metric_resp.reports
+                metrics_resp = await metrics_req;
+                metrics_data = metrics_resp.reports[0]
+                if metrics_resp and metrics_resp.reports
                 else {};
-                metric_row = (
-                    metric_data["metric"]
-                    if metric_data and "metric" in metric_data and metric_data["metric"]
+                target_op = normalize_op_name(op_for_query);
+                rows_by_op = (
+                    metrics_data["rows_by_op"]
+                    if metrics_data and "rows_by_op" in metrics_data and metrics_data["rows_by_op"]
                     else {}
                 );
+                metric_row = rows_by_op[target_op]
+                if rows_by_op and target_op in rows_by_op
+                else None;
+                if not metric_row and rows_by_op {
+                    for row_key in Object.keys(rows_by_op) {
+                        if op_matches(row_key, target_op) {
+                            metric_row = rows_by_op[row_key];
+                            break;
+                        }
+                    }
+                }
+                if not metric_row {
+                    metric_rows = to_list(
+                        metrics_data["rows"]
+                        if metrics_data and "rows" in metrics_data
+                        else []
+                    );
+                    for row in metric_rows {
+                        if not row {
+                            continue;
+                        }
+                        row_name = (
+                            row["name"]
+                            if "name" in row
+                            else (row["op"] if "op" in row else "")
+                        );
+                        if op_matches(row_name, target_op) {
+                            metric_row = row;
+                            break;
+                        }
+                    }
+                }
                 pytorch_raw = (
                     metric_row["pytorch_ms"]
                     if metric_row and "pytorch_ms" in metric_row
@@ -321,14 +408,18 @@ def:pub OperatorWorkbenchView -> Any {
                     )
                 );
                 torch_ms = to_num(pytorch_raw);
-                if torch_ms is None {
+            } except Exception as metrics_err {
+                console.warn("Failed to load project metrics:", metrics_err);
+            }
+            if torch_ms is None {
+                try {
                     chart_resp = await __jacSpawn(
-                        "GetDashboardCharts", "", {"projectName": resolvedProjectName}
+                        "GetDashboardCharts", "", {"projectName": project_for_query}
                     );
                     chart_data = chart_resp.reports[0]
                     if chart_resp and chart_resp.reports
                     else {};
-                    target_op = normalize_op_name(resolvedOpName);
+                    target_op = normalize_op_name(op_for_query);
                     speed_rows = to_list(
                         chart_data["speed_comparison"]
                         if chart_data and "speed_comparison" in chart_data
@@ -343,7 +434,7 @@ def:pub OperatorWorkbenchView -> Any {
                             if "name" in row
                             else (row["op"] if "op" in row else "")
                         );
-                        if normalize_op_name(row_name) != target_op {
+                        if not op_matches(row_name, target_op) {
                             continue;
                         }
                         pytorch_raw = row["pytorch"] if "pytorch" in row else None;
@@ -353,19 +444,22 @@ def:pub OperatorWorkbenchView -> Any {
                         torch_ms = to_num(pytorch_raw);
                         break;
                     }
+                } except Exception as chart_err {
+                    console.warn("Failed to load dashboard chart fallback:", chart_err);
                 }
-            } except Exception as metrics_err {
-                console.warn("Failed to load operator metrics:", metrics_err);
             }
 
-            setTorchOpMs(torch_ms);
-
-            tree_resp = await __jacSpawn(
-                "GetMctsTree",
-                "",
-                {"projectName": resolvedProjectName, "opName": resolvedOpName}
-            );
+            tree_resp = await tree_req;
             tree_data = tree_resp.reports[0] if tree_resp and tree_resp.reports else {};
+            tree_pytorch = to_num(
+                tree_data["pytorch_ms"]
+                if tree_data and "pytorch_ms" in tree_data
+                else None
+            );
+            if tree_pytorch and tree_pytorch > 0 {
+                torch_ms = tree_pytorch;
+            }
+            setTorchOpMs(torch_ms);
 
             m_nodes = tree_data["nodes"] if tree_data and "nodes" in tree_data else [];
             m_edges = tree_data["edges"] if tree_data and "edges" in tree_data else [];
@@ -611,6 +705,13 @@ def:pub OperatorWorkbenchView -> Any {
     }
 
     hasTree = nodes.length > 0;
+    torch_display_ms = to_num(torchOpMs);
+    torch_display_text = "--";
+    if torch_display_ms and torch_display_ms > 0 {
+        torch_display_text = f"{Number(torch_display_ms).toFixed(9)} ms";
+    }
+    resolvedProjectNameClean = decode_param(resolvedProjectName);
+    resolvedOpNameClean = canonical_op_param(resolvedOpName);
 
     return
         <div
@@ -811,9 +912,7 @@ def:pub OperatorWorkbenchView -> Any {
                                 PyTorch Op Time
                             </span>
                             <span className="font-mono text-orange-300">
-                                {f"{Number(torchOpMs).toFixed(9)} ms"
-                                if torchOpMs is not None
-                                else "--"}
+                                {torch_display_text}
                             </span>
                         </div>
                     </div>
@@ -824,8 +923,8 @@ def:pub OperatorWorkbenchView -> Any {
                 </div>
                 <div className="p-4 border-t border-zinc-800 bg-zinc-900/30">
                     <NewKernel
-                        projectName={resolvedProjectName}
-                        opName={resolvedOpName}
+                        projectName={resolvedProjectNameClean}
+                        opName={resolvedOpNameClean}
                         hasTree={hasTree}
                     />
                 </div>
