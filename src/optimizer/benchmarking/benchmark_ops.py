@@ -24,7 +24,7 @@ def _now_iso() -> str:
 
 
 def _resolve_device() -> str:
-    target = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    target = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
     if target == "mps" and hasattr(torch, "backends") and torch.backends.mps.is_available():
         return "mps"
     if target in {"gpu", "cuda"} and torch.cuda.is_available():
@@ -433,12 +433,12 @@ def main() -> int:
         progress_offset = 0
         progress_total_override = 0
         try:
-            progress_offset = int(os.environ.get("CGINS_PROGRESS_OFFSET", "0") or "0")
+            progress_offset = int(os.environ.get("KFORGE_PROGRESS_OFFSET", "0") or "0")
         except Exception:
             progress_offset = 0
         try:
             progress_total_override = int(
-                os.environ.get("CGINS_PROGRESS_TOTAL", "0") or "0"
+                os.environ.get("KFORGE_PROGRESS_TOTAL", "0") or "0"
             )
         except Exception:
             progress_total_override = 0

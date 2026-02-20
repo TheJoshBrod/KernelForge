@@ -253,7 +253,7 @@ def validate_remote_kernel(ssh_config: dict, generated_py_code: str, paths: dict
         io_files = list(io_dir.glob("*.pt"))
         file_map = {str(f): f.name for f in io_files}
 
-        remote_io_dir = "cgins_workspace/io_cache/" + io_dir.name
+        remote_io_dir = "kforge_workspace/io_cache/" + io_dir.name
         upload_files(worker.client, file_map, remote_io_dir)
 
         # Send verify task

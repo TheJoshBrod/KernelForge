@@ -1,6 +1,6 @@
-# CGinS: CUDA Ghost in the Shell
+# Kernel Forge: CUDA Ghost in the Shell
 
-CGinS is an operator-level kernel generation and optimization system for PyTorch workloads.
+Kernel Forge is an operator-level kernel generation and optimization system for PyTorch workloads.
 It profiles model operators, generates correct kernels, optimizes them, and benchmarks results against PyTorch baselines.
 
 ## What is current in this repo

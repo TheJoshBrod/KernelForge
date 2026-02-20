@@ -109,7 +109,7 @@ def get_module(kernel_path: Path, baseline: bool):
         # Already compiled case: load existing module
         module_name = so_files[0].stem
 
-    target_device = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    target_device = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
     if target_device in {"gpu", "cuda"} or target_device == "":
         module = load_inline(
             name=module_name,
@@ -162,7 +162,7 @@ def get_input_files(io_dir: Path) -> list:
 
 
 def _target_device() -> str:
-    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    value = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
     if value in {"gpu", "cuda"}:
         return "cuda"
     if value == "mps":
@@ -365,7 +365,7 @@ def profile_remote_kernel(ssh_config: dict, paths: dict[str, Path], baseline: bo
         io_files = sorted(list(io_dir.glob("*.pt")))
         file_map = {str(f): f.name for f in io_files}
         
-        remote_io_dir = "cgins_workspace/io_cache/" + io_dir.name
+        remote_io_dir = "kforge_workspace/io_cache/" + io_dir.name
         upload_files(worker.client, file_map, remote_io_dir)
         
         # 3. Send profile task

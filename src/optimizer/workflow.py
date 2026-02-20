@@ -225,7 +225,7 @@ def run_generate(args: argparse.Namespace) -> int:
     env = dict(os.environ)
 
     target_device = _normalize_device(args.target_device)
-    env["CGINS_TARGET_DEVICE"] = target_device
+    env["KFORGE_TARGET_DEVICE"] = target_device
     if target_device == "cuda":
         ok, reason = _preflight_cuda_target()
         if not ok:
@@ -250,8 +250,8 @@ def run_generate(args: argparse.Namespace) -> int:
     progress_total = total_ops
     update_job_progress(0, progress_total, "Starting kernel generation.")
     subprocess_env = dict(env)
-    subprocess_env.pop("CGINS_STATE_PATH", None)
-    subprocess_env.pop("CGINS_JOB_KEY", None)
+    subprocess_env.pop("KFORGE_STATE_PATH", None)
+    subprocess_env.pop("KFORGE_JOB_KEY", None)
 
     failed_ops: list[tuple[str, str]] = []
 
@@ -455,7 +455,7 @@ def run_optimize(args: argparse.Namespace) -> int:
     root = _repo_root()
     env = dict(os.environ)
     target_device = _normalize_device(args.target_device)
-    env["CGINS_TARGET_DEVICE"] = target_device
+    env["KFORGE_TARGET_DEVICE"] = target_device
 
     project_dir = _project_dir(args.project)
     io_dir = project_dir / "io" / "individual_ops"

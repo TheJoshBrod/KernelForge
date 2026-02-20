@@ -11,7 +11,7 @@ def repo_root() -> Path:
 
 
 def data_root() -> Path:
-    env = os.environ.get("CGINS_DATA_DIR", "").strip()
+    env = os.environ.get("KFORGE_DATA_DIR", "").strip()
     if env:
         return Path(env).expanduser().resolve()
     return repo_root() / "kernels" / "private"

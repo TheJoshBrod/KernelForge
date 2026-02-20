@@ -71,8 +71,8 @@ def resolve_runtime_env(
 
     env: dict[str, str] = {
         "LLM_PROVIDER": provider,
-        "CGINS_LLM_PROVIDER": provider,
-        "CGINS_LLM_MODEL": model,
+        "KFORGE_LLM_PROVIDER": provider,
+        "KFORGE_LLM_MODEL": model,
     }
 
     if provider == "openai":

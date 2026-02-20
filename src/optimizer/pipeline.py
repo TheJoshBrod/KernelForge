@@ -681,7 +681,7 @@ Examples:
     
     if project_config_path:
         print(f"Loading project config from: {project_config_path}")
-        os.environ["CGINS_PROJECT_CONFIG_PATH"] = str(project_config_path)
+        os.environ["KFORGE_PROJECT_CONFIG_PATH"] = str(project_config_path)
     
     # Initialize LLM config from environment/file
     ensure_llm_config()

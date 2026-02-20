@@ -37,7 +37,7 @@ except ImportError:
 
 
 def _is_triton() -> bool:
-    return os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower() == "triton"
+    return os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower() == "triton"
 
 
 def _kernel_ext() -> str:
@@ -50,7 +50,7 @@ def _kernel_filename() -> str:
 
 def _success_filename() -> str:
     """Backend-specific success marker, e.g. 'success.cuda', 'success.triton'."""
-    device = os.environ.get("CGINS_TARGET_DEVICE", "cuda").strip().lower()
+    device = os.environ.get("KFORGE_TARGET_DEVICE", "cuda").strip().lower()
     return f"success.{device}"
 
 
@@ -93,7 +93,7 @@ def _validate_kernel(cu_code, entry_file, log_file_loc, tmpdir):
     return call_success, exec_success, log_msg
 
 # Configuration
-MAX_ATTEMPTS = int(os.environ.get("CGINS_MAX_ATTEMPTS", "8"))
+MAX_ATTEMPTS = int(os.environ.get("KFORGE_MAX_ATTEMPTS", "8"))
 OUTPUT_BASE_DIR = Path("kernels/generated")
 
 
@@ -141,16 +141,16 @@ def _bool_env(name: str) -> bool | None:
 
 
 def _codex_model() -> str | None:
-    return os.environ.get("CGINS_CODEX_MODEL") or os.environ.get("OPENAI_MODEL")
+    return os.environ.get("KFORGE_CODEX_MODEL") or os.environ.get("OPENAI_MODEL")
 
 
 def _codex_sandbox() -> str:
-    return os.environ.get("CGINS_CODEX_SANDBOX", "workspace-write")
+    return os.environ.get("KFORGE_CODEX_SANDBOX", "workspace-write")
 
 
 def _codex_attempts(default: int = 3) -> int:
     try:
-        return int(os.environ.get("CGINS_CODEX_MAX_ATTEMPTS", str(default)))
+        return int(os.environ.get("KFORGE_CODEX_MAX_ATTEMPTS", str(default)))
     except Exception:
         return default
 
@@ -291,17 +291,17 @@ def validate_with_retries(
 
     # Try n times to go through entire test suite
     try:
-        max_attempts = int(os.environ.get("CGINS_MAX_ATTEMPTS", str(MAX_ATTEMPTS)))
+        max_attempts = int(os.environ.get("KFORGE_MAX_ATTEMPTS", str(MAX_ATTEMPTS)))
     except Exception:
         max_attempts = MAX_ATTEMPTS
     last_feedback = ""
     last_stage = "llm"
 
     use_codex_generate = codex_utils.op_enabled(
-        "CGINS_CODEX_GENERATE", "CGINS_CODEX_GENERATE_OPS", op_key
+        "KFORGE_CODEX_GENERATE", "KFORGE_CODEX_GENERATE_OPS", op_key
     ) if codex_utils else False
     use_codex_repair = codex_utils.op_enabled(
-        "CGINS_CODEX_REPAIR", "CGINS_CODEX_REPAIR_OPS", op_key
+        "KFORGE_CODEX_REPAIR", "KFORGE_CODEX_REPAIR_OPS", op_key
     ) if codex_utils else False
     codex_work_dir = output_dir / "work"
     codex_seed = template or ("# TODO: implement kernel.py\n" if _is_triton() else "// TODO: implement kernel.cu\n")
@@ -656,7 +656,7 @@ def main():
     if project_dir:
         config_path = project_dir / "config.json"
         if config_path.exists():
-            os.environ["CGINS_CONFIG_PATH"] = str(config_path)
+            os.environ["KFORGE_CONFIG_PATH"] = str(config_path)
             # Reload config to apply project-specific settings
             ensure_llm_config()
 
@@ -664,7 +664,7 @@ def main():
     project_cfg = load_project_config(project_dir)
     gen_cfg = project_cfg.get("generator", {})
 
-    target_device = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    target_device = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
     if not target_device:
         cfg_device = str(gen_cfg.get("target_device", "")).strip().lower() if isinstance(gen_cfg, dict) else ""
         target_device = cfg_device
@@ -688,7 +688,7 @@ def main():
         if not (hasattr(torch, "backends") and torch.backends.mps.is_available()):
             print("MPS not available; falling back to CPU target for generation.")
             target_device = "cpu"
-    os.environ["CGINS_TARGET_DEVICE"] = target_device
+    os.environ["KFORGE_TARGET_DEVICE"] = target_device
     skip_ops = _op_set(gen_cfg.get("skip_ops"))
     only_ops = _op_set(gen_cfg.get("only_ops"))
     if args.only_ops:
@@ -698,21 +698,21 @@ def main():
     max_ops = gen_cfg.get("max_ops")
     use_baseline = bool(gen_cfg.get("use_baseline_kernels", True))
     baseline_as_template = bool(gen_cfg.get("use_baseline_as_template", True))
-    env_use_baseline = _bool_env("CGINS_USE_BASELINE_KERNELS")
+    env_use_baseline = _bool_env("KFORGE_USE_BASELINE_KERNELS")
     if env_use_baseline is not None:
         use_baseline = env_use_baseline
-    env_baseline_template = _bool_env("CGINS_USE_BASELINE_TEMPLATE")
+    env_baseline_template = _bool_env("KFORGE_USE_BASELINE_TEMPLATE")
     if env_baseline_template is not None:
         baseline_as_template = env_baseline_template
     if target_device in {"cpu", "mps"}:
         use_baseline = False
         baseline_as_template = False
     if "extra_validation_cases" in gen_cfg:
-        os.environ["CGINS_EXTRA_VALIDATION_CASES"] = str(
+        os.environ["KFORGE_EXTRA_VALIDATION_CASES"] = str(
             gen_cfg.get("extra_validation_cases")
         )
     if "max_attempts" in gen_cfg:
-        os.environ["CGINS_MAX_ATTEMPTS"] = str(gen_cfg.get("max_attempts"))
+        os.environ["KFORGE_MAX_ATTEMPTS"] = str(gen_cfg.get("max_attempts"))
 
     # Loop over all function directories
     function_dirs = sorted(glob.glob(os.path.join(io_dir, "*")))
@@ -803,7 +803,7 @@ def main():
                         )
 
         codex_enabled = codex_utils.op_enabled(
-            "CGINS_CODEX_GENERATE", "CGINS_CODEX_GENERATE_OPS", op_key
+            "KFORGE_CODEX_GENERATE", "KFORGE_CODEX_GENERATE_OPS", op_key
         ) if codex_utils else False
 
         if baseline_ok and not codex_enabled:

@@ -23,7 +23,7 @@ def format_verifier_output(
     """
     Format verifier output with raw error and optional LLM-generated feedback.
     """
-    disable_summary = os.environ.get("CGINS_DISABLE_SUMMARY", "").lower() in {
+    disable_summary = os.environ.get("KFORGE_DISABLE_SUMMARY", "").lower() in {
         "1",
         "true",
         "yes",

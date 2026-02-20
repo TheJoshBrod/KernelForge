@@ -6,7 +6,7 @@ from src.llm.runtime_config import resolve_runtime_env
 
 
 def _find_config_path() -> Path | None:
-    override = os.environ.get("CGINS_CONFIG_PATH")
+    override = os.environ.get("KFORGE_CONFIG_PATH")
     if override:
         candidate = Path(override)
         if candidate.exists():
@@ -54,7 +54,7 @@ def apply_llm_config() -> bool:
         global_cfg = {}
 
     project_cfg: dict = {}
-    project_cfg_override = os.environ.get("CGINS_PROJECT_CONFIG_PATH")
+    project_cfg_override = os.environ.get("KFORGE_PROJECT_CONFIG_PATH")
     if project_cfg_override:
         try:
             project_path = Path(project_cfg_override)

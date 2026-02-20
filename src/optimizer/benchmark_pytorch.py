@@ -11,7 +11,7 @@ from pathlib import Path
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--project", default=os.environ.get("CGINS_PROJECT_NAME", ""))
+    parser.add_argument("--project", default=os.environ.get("KFORGE_PROJECT_NAME", ""))
     args = parser.parse_args()
 
     if not args.project:

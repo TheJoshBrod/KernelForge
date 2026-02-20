@@ -1,4 +1,4 @@
-# CGinS Source (`src`)
+# Kernel Forge Source (`src`)
 
 This directory contains the backend generation, optimization, and benchmarking logic.
 

@@ -49,7 +49,7 @@ def profile_single_op(context: dict, full_exec_string: str) -> str:
     Output:
         op_details (str): Formatted string of Aten/kernel info for the LLM.
     """
-    target_device = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    target_device = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
     if not _HAS_CUDA or target_device == "cpu":
         return ""
 

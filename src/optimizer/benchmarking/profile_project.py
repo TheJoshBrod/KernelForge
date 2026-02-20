@@ -440,7 +440,7 @@ def get_samples(module, max_batches: int, validation_path: str | None):
 
 
 def _resolve_device() -> str:
-    target = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    target = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
     if target == "mps" and hasattr(torch, "backends") and torch.backends.mps.is_available():
         return "mps"
     if target in {"gpu", "cuda"} and torch.cuda.is_available():

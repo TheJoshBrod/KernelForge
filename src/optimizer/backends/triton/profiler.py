@@ -411,7 +411,7 @@ if __name__ == "__main__":
     get_specs()
 '''
         script_name = "triton_specs_fetcher.py"
-        remote_workspace = "cgins_workspace"
+        remote_workspace = "kforge_workspace"
 
         # Upload script
         with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
@@ -423,7 +423,7 @@ if __name__ == "__main__":
         os.unlink(tmp_path)
 
         # Execute
-        cmd = f"~/cgins_workspace/venv/bin/python3 {remote_workspace}/{script_name}"
+        cmd = f"~/kforge_workspace/venv/bin/python3 {remote_workspace}/{script_name}"
         exit_code, out, err = execute_remote_command(client, cmd)
 
         # Cleanup
@@ -468,7 +468,7 @@ def profile_remote_kernel(ssh_config: dict, paths: dict[str, Path], baseline: bo
         io_files = sorted(list(io_dir.glob("*.pt")))
         file_map = {str(f): f.name for f in io_files}
 
-        remote_io_dir = "cgins_workspace/io_cache/" + io_dir.name
+        remote_io_dir = "kforge_workspace/io_cache/" + io_dir.name
         upload_files(worker.client, file_map, remote_io_dir)
 
         # 3. Send profile task

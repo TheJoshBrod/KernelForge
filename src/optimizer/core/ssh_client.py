@@ -18,7 +18,7 @@ SETUP_SCRIPT = """
 import os, subprocess, sys, shutil
 
 # Expand user to get home dir
-WORKSPACE = os.path.expanduser("~/cgins_workspace")
+WORKSPACE = os.path.expanduser("~/kforge_workspace")
 VENV_PATH = os.path.join(WORKSPACE, "venv")
 
 if not os.path.exists(WORKSPACE):
@@ -186,11 +186,11 @@ class RemoteWorkerClient:
             files_to_upload.update(aux_files)
             
         print(f"DEBUG: Uploading worker from {worker_script_path}...", flush=True)
-        upload_files(self.client, files_to_upload, "cgins_workspace")
+        upload_files(self.client, files_to_upload, "kforge_workspace")
         
         # 3. Start Worker Process
         # Use line buffered unbuffered python? -u is important
-        start_cmd = "~/cgins_workspace/venv/bin/python3 -u ~/cgins_workspace/worker.py"
+        start_cmd = "~/kforge_workspace/venv/bin/python3 -u ~/kforge_workspace/worker.py"
         print(f"DEBUG: Starting worker: {start_cmd}", flush=True)
         
         # We need a channel for interactive I/O
