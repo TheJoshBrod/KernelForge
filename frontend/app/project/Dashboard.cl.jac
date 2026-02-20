@@ -1,6 +1,6 @@
 """Dashboard Page"""
 
-import from react { useEffect, useState }
+import from react { useEffect, useLayoutEffect, useState }
 import from "react-router-dom" { useNavigate, useParams }
 import from ...components.ui.Icons {
     CpuIcon,
@@ -197,6 +197,61 @@ def:pub Dashboard -> Any {
 
     def list_len(items: Any) -> int {
         return to_list(items).length;
+    }
+
+    def get_dashboard_cache_store -> dict {
+        try {
+            if not ("__cginsDashboardCache" in window) or not window["__cginsDashboardCache"] {
+                window["__cginsDashboardCache"] = {};
+            }
+            return window["__cginsDashboardCache"];
+        } except Exception {
+            return {};
+        }
+    }
+
+    def read_dashboard_cache(project_name: Any) -> dict {
+        key = str(project_name or "").trim();
+        if not key {
+            return {};
+        }
+        try {
+            store = get_dashboard_cache_store();
+            if store and key in store and store[key] {
+                return store[key];
+            }
+        } except Exception {
+        # no-op
+        }
+        return {};
+    }
+
+    def write_dashboard_cache(project_name: Any, payload: dict) -> None {
+        key = str(project_name or "").trim();
+        if not key or not payload {
+            return;
+        }
+        try {
+            store = get_dashboard_cache_store();
+            if store {
+                store[key] = payload;
+            }
+        } except Exception {
+        # no-op
+        }
+    }
+
+    def persist_dashboard_cache(project_name: Any) -> None {
+        write_dashboard_cache(
+            project_name,
+            {
+                "operator_usage": ops,
+                "speed_comparison": speedData,
+                "status": status,
+                "hardware_info": hardwareInfo,
+                "mcts_summary": mctsSummary
+            }
+        );
     }
 
     def normalize_speed_rows(rows: list) -> list {
@@ -490,6 +545,7 @@ def:pub Dashboard -> Any {
                 if mcts_resp and mcts_resp.reports
                 else {};
                 mctsSummary = mcts_data or {};
+                persist_dashboard_cache(name);
             }
         } except Exception as e {
             console.error("Failed to fetch dashboard data:", e);
@@ -497,6 +553,31 @@ def:pub Dashboard -> Any {
             loading = False;
         }
     }
+
+    useLayoutEffect(
+        lambda -> None { if name {
+            cached = read_dashboard_cache(name);
+            if cached {
+                if "operator_usage" in cached {
+                    ops = to_list(cached["operator_usage"]);
+                }
+                if "speed_comparison" in cached {
+                    setSpeedData(to_list(cached["speed_comparison"]));
+                }
+                if "status" in cached and cached["status"] {
+                    status = cached["status"];
+                }
+                if "hardware_info" in cached and cached["hardware_info"] {
+                    hardwareInfo = cached["hardware_info"];
+                }
+                if "mcts_summary" in cached and cached["mcts_summary"] {
+                    mctsSummary = cached["mcts_summary"];
+                }
+                loading = False;
+            }
+        }},
+        [name]
+    );
 
     useEffect(lambda -> None { refreshData();}, [name]);
 
@@ -518,6 +599,7 @@ def:pub Dashboard -> Any {
                         if "speed_comparison" in c_data {
                             setSpeedData(to_list(c_data["speed_comparison"]));
                         }
+                        persist_dashboard_cache(name);
                     }}
                 ).catch(
                     lambda e: any  -> None {
@@ -528,7 +610,8 @@ def:pub Dashboard -> Any {
                     lambda m_resp: any  -> None { m_data = m_resp.reports[0]
                     if m_resp and m_resp.reports
                     else {};
-                    mctsSummary = m_data or {};}
+                    mctsSummary = m_data or {};
+                    persist_dashboard_cache(name);}
                 ).catch(
                     lambda e: any  -> None {
                     # console.error("Failed to poll mcts summary:", e);
@@ -704,7 +787,9 @@ def:pub Dashboard -> Any {
                 </span>
             </div>
             <div className="text-2xl font-bold text-white mb-1">
-                {mctsSummary["total_nodes"] if "total_nodes" in mctsSummary else 0}
+                {mctsSummary["total_nodes"]
+                if "total_nodes" in mctsSummary
+                else ("--" if loading else 0)}
             </div>
             <div className="text-xs text-zinc-400">
                 Nodes Explored
