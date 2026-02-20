@@ -121,7 +121,8 @@ def optimize(
     gpu_specs: GPUSpecs,
     paths: dict[str, Path],
     parent_node: KernelNode,
-    ssh_config: dict = None
+    ssh_config: dict = None,
+    model: str = None
 ) -> tuple[KernelNode | None, str]:
     """Optimizes target kernel
     """
@@ -153,7 +154,7 @@ def optimize(
         # Kernel Generation
         print(f"\tBeginning generation (history: {len(improvement_log)} entries)...")
         improvement_description, is_valid, failure_reason = generator.generate(
-            backend, kernel_code, gpu_specs, improvement_log, paths, ancestor_codes=ancestor_codes, ssh_config=ssh_config)
+            backend, kernel_code, gpu_specs, improvement_log, paths, model=model, ancestor_codes=ancestor_codes, ssh_config=ssh_config)
         print("\tFinished generation.")
         print(f"\t\t- Status: {is_valid}")
 
@@ -169,7 +170,7 @@ def optimize(
     return None, str(failure_reason)
 
 
-def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path]) -> KernelNode:
+def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path], model: str = None) -> KernelNode:
     """Generate a fresh kernel as an independent root node.
     
     Creates a new optimization tree separate from existing ones by generating
@@ -251,7 +252,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         
         # Initial attempt
         feedback, code = generator.extract_feedback_and_code(
-            llm.chat(prompt, settings.llm_model_name)
+            llm.chat(prompt, model or settings.llm_model_name)
         )
         
         if code is None:
@@ -277,7 +278,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
             
             # Send error back to LLM for correction
             feedback, code = generator.extract_feedback_and_code(
-                llm.chat(error, settings.llm_model_name)
+                llm.chat(error, model or settings.llm_model_name)
             )
             
             if code is None:
@@ -406,7 +407,7 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
 
     return proj_dir
 
-def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict, n_workers: int = 4, max_iterations: int = 100, ssh_config: dict = None):
+def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict, n_workers: int = 4, max_iterations: int = 100, ssh_config: dict = None, model: str = None):
     """Run parallel MCTS optimization using multiprocessing.
     
     Dispatches nodes to workers as they become available, stops after max_iterations.
@@ -464,7 +465,7 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
         backend_type = "metal"
 
     for i in range(n_workers):
-        p = Process(target=worker_routine, args=(task_queue, result_queue, gpu_lock, node_counter, paths, backend_type))
+        p = Process(target=worker_routine, args=(task_queue, result_queue, gpu_lock, node_counter, paths, backend_type, model))
         p.start()
         workers.append(p)
     
@@ -699,7 +700,6 @@ Examples:
     
     if model_name:
         print(f"Using LLM Model: {model_name} (Provider: {provider})")
-        os.environ["OPTIMIZER_LLM_MODEL_NAME"] = model_name
 
     ssh_config = None
     
@@ -773,7 +773,7 @@ Examples:
         }
         
         print(f"Creating new root for {op_name}...")
-        new_root = create_new_root(backend, gpu_specs, paths)
+        new_root = create_new_root(backend, gpu_specs, paths, model=model_name)
         
         if new_root:
             print(f"\nSuccess! Created new root: Node {new_root.id}")
@@ -835,7 +835,8 @@ Examples:
                 paths=paths,
                 ssh_config=ssh_config,
                 n_workers=args.workers,
-                max_iterations=args.max_iterations
+                max_iterations=args.max_iterations,
+                model=model_name
             )
             print(
                 f"[optimize-result] op={op_name} status=unknown "
@@ -850,7 +851,7 @@ Examples:
                 # Select parent node then optimize off of it
                 parent_node = mcts.choose_optimization(paths)
                 new_node, failure_reason = optimize(
-                    backend, gpu_specs, paths, parent_node, ssh_config
+                    backend, gpu_specs, paths, parent_node, ssh_config, model=model_name
                 )
                 
                 # Update tree with the new node (if optimization succeeded)

@@ -2,7 +2,6 @@
 src/optimizer/components/llm/generator.py
 Uses LLM to generate CUDA kernels that is model-agnostic.
 """
-import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -180,7 +179,7 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
     """
     if not model:
         ensure_llm_config()
-        model = settings.llm_model_name
+        model = model or settings.llm_model_name
 
     # Attempt initial CUDA code generation
     sys_prompt = backend.get_sys_prompt()

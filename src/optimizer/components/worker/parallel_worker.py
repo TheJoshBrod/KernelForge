@@ -10,7 +10,7 @@ from typing import Tuple, Optional
 from src.optimizer.core.types import KernelNode
 
 
-def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_template: dict, backend_type: str = "cuda"):
+def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_template: dict, backend_type: str = "cuda", model: str = None):
     """Persistent worker process for parallel optimization.
     
     Pulls tasks from task_queue, generates/compiles/validates kernels,
@@ -136,7 +136,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                 # For retries, current_prompt is the error message (GenModel keeps history)
                 
                 try:
-                    response = llm.chat(current_prompt, settings.llm_model_name)
+                    response = llm.chat(current_prompt, model or settings.llm_model_name)
                 except Exception as e:
                     result_queue.put((node_id, None, f"llm_error: {e}"))
                     break
