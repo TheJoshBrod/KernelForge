@@ -1,6 +1,6 @@
 """Project Layout Component"""
 
-import from react { useState }
+import from react { useState, useEffect }
 import from "react-router-dom" { Outlet, Link, useLocation, useParams }
 import from ...components.ui.Icons { HomeIcon, ArrowRightIcon, CodeIcon, SettingsIcon, MenuIcon, ChevronLeftIcon, ChevronRightIcon }
 
@@ -8,6 +8,20 @@ def:pub ProjectLayout -> Any {
     location = useLocation();
     params = useParams();
     projectName = params.projectName;
+
+    useEffect(
+        lambda -> None {
+            if projectName {
+                document.title = f"{projectName} - Kernel Forge";
+            } else {
+                document.title = "Kernel Forge";
+            }
+            return lambda -> None {
+                document.title = "Kernel Forge";
+            };
+        },
+        [projectName]
+    );
 
     navItems = [
         {

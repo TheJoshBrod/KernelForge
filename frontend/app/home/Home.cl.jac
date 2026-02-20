@@ -57,7 +57,10 @@ def:pub Home -> Any {
         }
     }
 
-    useEffect(lambda -> None { fetchProjects();}, []);
+    useEffect(lambda -> None { 
+        fetchProjects();
+        document.title = "Kernel Forge";
+    }, []);
 
     # Filter Projects
     filteredProjects = [];

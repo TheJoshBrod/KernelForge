@@ -44,6 +44,13 @@ def:pub SettingsPage -> Any {
         []
     );
 
+    useEffect(
+        lambda -> None {
+            document.title = "Kernel Forge";
+        },
+        []
+    );
+
     def handleReturn -> None {
         navigate(returnTo or "/", {"replace": True});
     }
