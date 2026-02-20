@@ -1,4 +1,4 @@
-"""Forge-themed Monaco editor for Python model code."""
+"""Forge-themed Monaco editor for code editing/viewing."""
 
 import from react { useEffect, useRef, useState }
 
@@ -14,6 +14,38 @@ def _theme_var(name: str, fallback: str) -> str {
         return fallback;
     }
     return fallback;
+}
+
+def _resolve_editor_language(raw: Any) -> str {
+    value = str(raw).toLowerCase() if raw else "python";
+    if value == "cuda"
+    or value == "c++"
+    or value == "cpp"
+    or value == "cc"
+    or value == "cxx" {
+        return "cpp";
+    }
+    if value == "py" {
+        return "python";
+    }
+    if value == "js" {
+        return "javascript";
+    }
+    if value == "ts" {
+        return "typescript";
+    }
+    if value == "json" {
+        return "json";
+    }
+    if value == "metal" {
+        # No dedicated Monaco language id by default; closest syntax
+        # for C-like shader code is C++.
+        return "cpp";
+    }
+    if value {
+        return value;
+    }
+    return "python";
 }
 
 def _is_alpha(ch: Any) -> bool {
@@ -350,6 +382,9 @@ def _load_monaco(on_ready: Any, on_error: Any) -> None {
 def:pub ForgePythonEditor(props: Any) -> Any {
     value = props.value if "value" in props and props.value else "";
     readOnly = props.readOnly if "readOnly" in props and props.readOnly else False;
+    language = _resolve_editor_language(
+        props.language if "language" in props and props.language else "python"
+    );
     placeholder = (
         props.placeholder
         if "placeholder" in props and props.placeholder
@@ -376,11 +411,17 @@ def:pub ForgePythonEditor(props: Any) -> Any {
         if not editor_ref.current or not monaco_ref.current {
             return;
         }
-        source = editor_ref.current.getValue();
-        next_decorations = _build_editor_decorations(monaco_ref.current, source);
         current_decorations = (
             decorations_ref.current if decorations_ref.current else []
         );
+        if language != "python" {
+            decorations_ref.current = editor_ref.current.deltaDecorations(
+                current_decorations, []
+            );
+            return;
+        }
+        source = editor_ref.current.getValue();
+        next_decorations = _build_editor_decorations(monaco_ref.current, source);
         decorations_ref.current = editor_ref.current.deltaDecorations(
             current_decorations, next_decorations
         );
@@ -410,7 +451,7 @@ def:pub ForgePythonEditor(props: Any) -> Any {
                     "value": latest_value_ref.current
                     if latest_value_ref.current
                     else "",
-                    "language": "python",
+                    "language": language,
                     "theme": "kernal-forge",
                     "automaticLayout": True,
                     "minimap": {"enabled": False},
@@ -459,6 +500,17 @@ def:pub ForgePythonEditor(props: Any) -> Any {
             editor_ref.current.updateOptions({"readOnly": readOnly});
         }},
         [readOnly]
+    );
+
+    useEffect(
+        lambda -> None { if editor_ref.current and monaco_ref.current {
+            model = editor_ref.current.getModel();
+            if model {
+                monaco_ref.current.editor.setModelLanguage(model, language);
+            }
+            applyDecorations();
+        }},
+        [language]
     );
 
     useEffect(

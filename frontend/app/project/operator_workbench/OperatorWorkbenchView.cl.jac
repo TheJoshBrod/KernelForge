@@ -22,6 +22,7 @@ import from ....components.ui.Icons {
     ArrowRightIcon
 }
 import from .NewKernel { NewKernel }
+import from ....components.editor.ForgePythonEditor { ForgePythonEditor }
 
 def:pub OperatorWorkbenchView -> Any {
     has projectName: str,
@@ -233,6 +234,13 @@ def:pub OperatorWorkbenchView -> Any {
 
     useEffect(lambda -> None { fetchData();}, [resolvedProjectName, resolvedOpName]);
 
+    useEffect(
+        lambda -> Any { timer = setInterval(lambda -> None { fetchData();}, 3000);return lambda -> None { clearInterval(
+            timer
+        );}; },
+        [resolvedProjectName, resolvedOpName]
+    );
+
     onNodeClick = useCallback(
         lambda event: any , node: any  -> None { setSelectedNodeId(node.id);}, []
     );
@@ -402,34 +410,6 @@ def:pub OperatorWorkbenchView -> Any {
             </div>;
     }
 
-    def highlightCuda(code: str) -> str {
-        if not code {
-            return "// Select a node to view code";
-        }
-        hl = code;
-        hl = hl.replace(Reflect.construct(RegExp, ["<", "g"]), "&lt;");
-        hl = hl.replace(Reflect.construct(RegExp, [">", "g"]), "&gt;");
-
-        keywords = ["__global__", "__device__", "__host__", "void", "int", "float", "float2", "float4", "bool", "return", "if", "else", "for", "while", "const", "auto", "dim3"];
-        for kw in keywords {
-            reg = Reflect.construct(RegExp, ["\\\\b(" + kw + ")\\\\b", "g"]);
-            hl = hl.replace(reg, "<span class='hl-kw'>$1</span>");
-        }
-        
-        builtins = ["threadIdx", "blockIdx", "blockDim", "gridDim", "atomicAdd", "__syncthreads"];
-        for b in builtins {
-            reg = Reflect.construct(RegExp, ["\\\\b(" + b + ")\\\\b", "g"]);
-            hl = hl.replace(reg, "<span class='hl-built'>$1</span>");
-        }
-
-        reg_num = Reflect.construct(RegExp, ["\\\\b([0-9]+(?:\\\\.[0-9]+)?f?)\\\\b", "g"]);
-        hl = hl.replace(reg_num, "<span class='hl-num'>$1</span>");
-
-        reg_comment = Reflect.construct(RegExp, ["(\\\\/\\\\/.*)", "g"]);
-        hl = hl.replace(reg_comment, "<span class='hl-comment'>$1</span>");
-        return hl;
-    }
-
     hasTree = nodes.length > 0;
 
     return
@@ -451,10 +431,12 @@ def:pub OperatorWorkbenchView -> Any {
                             Node{selectedNodeId or "?"}
                         </span>
                     </div>
-                    <div className="flex-1 overflow-auto bg-[#0d0a08] p-4 border-l-2 border-[var(--accent)]/30">
-                        <pre
-                            className="font-mono text-xs text-zinc-300 whitespace-pre"
-                            dangerouslySetInnerHTML={{"__html": highlightCuda(selectedNodeData["code"] if "code" in selectedNodeData else "")}}
+                    <div className="flex-1 min-h-0 relative bg-[#0d0a08] border-l-2 border-[var(--accent)]/30">
+                        <ForgePythonEditor
+                            value={selectedNodeData["code"] if "code" in selectedNodeData else ""}
+                            readOnly={True}
+                            language="cpp"
+                            placeholder="// Select a node to view code"
                         />
                     </div>
                 </div>
