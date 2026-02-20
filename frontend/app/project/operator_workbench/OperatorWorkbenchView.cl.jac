@@ -23,6 +23,13 @@ import from ....components.ui.Icons {
 }
 import from .NewKernel { NewKernel }
 import from ....components.editor.ForgePythonEditor { ForgePythonEditor }
+import from ..shared.MetricsAdapter {
+    to_list,
+    to_num,
+    normalize_op_name,
+    op_matches,
+    get_metric_row_for_op
+}
 
 def:pub OperatorWorkbenchView -> Any {
     has projectName: str,
@@ -79,64 +86,6 @@ def:pub OperatorWorkbenchView -> Any {
     selected_node_ref = useRef(None);
 
     # --- Helpers ---
-    def to_list(items: Any) -> list {
-        if not items {
-            return [];
-        }
-        try {
-            if Array.isArray(items) {
-                return items;
-            }
-        } except Exception {
-        # no-op
-        }
-        normalized = [];
-        try {
-            for item in items {
-                normalized.push(item);
-            }
-            return normalized;
-        } except Exception {
-        # no-op
-        }
-        try {
-            return Object.values(items);
-        } except Exception {
-            return [];
-        }
-    }
-
-    def to_num(value: Any) -> Any {
-        if value is None {
-            return None;
-        }
-        try {
-            text = f"{value}".trim();
-            if not text {
-                return None;
-            }
-            parsed = parseFloat(text);
-            if parsed == parsed {
-                return parsed;
-            }
-        } except Exception {
-        # no-op
-        }
-        return None;
-    }
-
-    def normalize_op_name(value: Any) -> str {
-        text = str(value or "").trim().toLowerCase();
-        if not text {
-            return "";
-        }
-        prefix = "torch.nn.functional.";
-        if text.startsWith(prefix) {
-            text = "torch_nn_functional_" + text.replace(prefix, "");
-        }
-        return text.replace(".", "_").replace("/", "_");
-    }
-
     def decode_param(value: Any) -> str {
         text = str(value or "");
         if not text {
@@ -166,23 +115,6 @@ def:pub OperatorWorkbenchView -> Any {
             text = text.slice(0, idx);
         }
         return text.trim();
-    }
-
-    def op_matches(candidate: Any, target: str) -> bool {
-        cand = normalize_op_name(candidate);
-        if not cand or not target {
-            return False;
-        }
-        if cand == target {
-            return True;
-        }
-        if target.startsWith(cand + "_") {
-            return True;
-        }
-        if cand.startsWith(target + "_") {
-            return True;
-        }
-        return False;
     }
 
     def get_layouted_elements(nodes_data: list, edges_data: list) -> dict {
@@ -360,51 +292,18 @@ def:pub OperatorWorkbenchView -> Any {
                 metrics_data = metrics_resp.reports[0]
                 if metrics_resp and metrics_resp.reports
                 else {};
-                target_op = normalize_op_name(op_for_query);
-                rows_by_op = (
-                    metrics_data["rows_by_op"]
-                    if metrics_data and "rows_by_op" in metrics_data and metrics_data["rows_by_op"]
-                    else {}
-                );
-                metric_row = rows_by_op[target_op]
-                if rows_by_op and target_op in rows_by_op
-                else None;
-                if not metric_row and rows_by_op {
-                    for row_key in Object.keys(rows_by_op) {
-                        if op_matches(row_key, target_op) {
-                            metric_row = rows_by_op[row_key];
-                            break;
-                        }
-                    }
-                }
-                if not metric_row {
-                    metric_rows = to_list(
-                        metrics_data["rows"]
-                        if metrics_data and "rows" in metrics_data
-                        else []
-                    );
-                    for row in metric_rows {
-                        if not row {
-                            continue;
-                        }
-                        row_name = (
-                            row["name"]
-                            if "name" in row
-                            else (row["op"] if "op" in row else "")
-                        );
-                        if op_matches(row_name, target_op) {
-                            metric_row = row;
-                            break;
-                        }
-                    }
-                }
+                metric_row = get_metric_row_for_op(metrics_data, op_for_query);
                 pytorch_raw = (
                     metric_row["pytorch_ms"]
                     if metric_row and "pytorch_ms" in metric_row
                     else (
                         metric_row["pytorch"]
                         if metric_row and "pytorch" in metric_row
-                        else None
+                        else (
+                            metric_row["baseline"]
+                            if metric_row and "baseline" in metric_row
+                            else None
+                        )
                     )
                 );
                 torch_ms = to_num(pytorch_raw);
@@ -419,31 +318,21 @@ def:pub OperatorWorkbenchView -> Any {
                     chart_data = chart_resp.reports[0]
                     if chart_resp and chart_resp.reports
                     else {};
-                    target_op = normalize_op_name(op_for_query);
-                    speed_rows = to_list(
-                        chart_data["speed_comparison"]
-                        if chart_data and "speed_comparison" in chart_data
-                        else []
+                    metric_row = get_metric_row_for_op(chart_data, op_for_query);
+                    pytorch_raw = (
+                        metric_row["pytorch_ms"]
+                        if metric_row and "pytorch_ms" in metric_row
+                        else (
+                            metric_row["pytorch"]
+                            if metric_row and "pytorch" in metric_row
+                            else (
+                                metric_row["baseline"]
+                                if metric_row and "baseline" in metric_row
+                                else None
+                            )
+                        )
                     );
-                    for row in speed_rows {
-                        if not row {
-                            continue;
-                        }
-                        row_name = (
-                            row["name"]
-                            if "name" in row
-                            else (row["op"] if "op" in row else "")
-                        );
-                        if not op_matches(row_name, target_op) {
-                            continue;
-                        }
-                        pytorch_raw = row["pytorch"] if "pytorch" in row else None;
-                        if pytorch_raw is None and "baseline" in row {
-                            pytorch_raw = row["baseline"];
-                        }
-                        torch_ms = to_num(pytorch_raw);
-                        break;
-                    }
+                    torch_ms = to_num(pytorch_raw);
                 } except Exception as chart_err {
                     console.warn("Failed to load dashboard chart fallback:", chart_err);
                 }
