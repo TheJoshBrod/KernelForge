@@ -1,12 +1,18 @@
 """Settings Menu Component"""
 
 import from "react-router-dom" { useNavigate }
-import from ..ui.Icons { ArrowRightIcon, CodeIcon, CpuIcon, ShieldCheckIcon }
+import from ..ui.Icons { ArrowRightIcon, CodeIcon, CpuIcon, ShieldCheckIcon, AlertCircleIcon }
 
 def:pub SettingsMenu -> Any {
     navigate = useNavigate();
 
     items = [
+        {
+            "href": "/settings/about",
+            "title": "About",
+            "desc": "Information on the developer environment.",
+            "Icon": AlertCircleIcon 
+        },
         {
             "href": "/settings/api-keys",
             "title": "API Keys",

@@ -4,7 +4,7 @@ import from react { useEffect }
 import from "react-router-dom" { useNavigate }
 import from ...components.backdrops.EmberBackground { EmberBackground }
 import from ...components.ui.GlowButton { GlowButton }
-import from ...components.ui.Icons { CGinSLogo, SettingsIcon, ArrowRightIcon, GithubIcon, DiscordIcon }
+import from ...components.ui.Icons { CGinSLogo, SettingsIcon, ArrowRightIcon, GithubIcon, DiscordIcon, TrashIcon }
 import from ...components.SplashScreen { SplashScreen }
 
 def:pub Home -> Any {
@@ -12,7 +12,20 @@ def:pub Home -> Any {
     has projects: list = [],
         loading: bool = True,
         splashDone: bool = (sessionStorage.getItem("splash_shown") == "true"),
-        searchQuery: str = "";
+        searchQuery: str = "",
+        projectToDelete: str = "";
+
+    async def confirmDelete -> None {
+        if not projectToDelete { return; }
+        try {
+            await __jacSpawn("DeleteProject", "", {"projectName": projectToDelete});
+            await fetchProjects();
+        } except Exception as e {
+            console.error("Failed to delete project:", e);
+        } finally {
+            projectToDelete = "";
+        }
+    }
 
     async def fetchProjects -> None {
         start: float = Date.now();
@@ -84,27 +97,71 @@ def:pub Home -> Any {
                 clickHandler = lambda ignore: any  -> None { navigate(
                     "/project/" + projName
                 );};
+                deleteHandler = lambda e: any -> None {
+                    e.stopPropagation();
+                    projectToDelete = projName;
+                };
+
                 projectList.append(
-                    <button
-                        key={projName}
-                        onClick={clickHandler}
-                        className="w-full text-left p-4 mb-2 bg-[var(--surface)] border-l-2 border-transparent hover:border-[var(--accent)] hover:bg-[var(--surface-0)] transition-all group flex items-center justify-between gap-4 clip-anvil"
-                    >
-                        <span
-                            className="font-medium text-[var(--text-light)] group-hover:text-white text-lg truncate min-w-0 flex-1 font-sans"
+                    <div key={projName} className="flex w-full mb-2 bg-[var(--surface)] border-l-2 border-transparent hover:border-[var(--accent)] transition-all clip-anvil overflow-hidden">
+                        <button
+                            onClick={clickHandler}
+                            className="group flex-1 text-left p-4 flex items-center justify-between gap-4 hover:bg-[var(--surface-0)] transition-colors"
                         >
-                            {projName}
-                        </span>
-                        <span
-                            className="text-[var(--text-muted)] group-hover:text-[var(--accent)] text-sm shrink-0 flex items-center gap-1 transition-transform group-hover:translate-x-1 font-mono uppercase tracking-wider text-xs"
+                            <span
+                                className="font-medium text-[var(--text-light)] group-hover:text-white text-lg truncate min-w-0 flex-1 font-sans"
+                            >
+                                {projName}
+                            </span>
+                            <span
+                                className="text-[var(--text-muted)] group-hover:text-[var(--accent)] text-sm shrink-0 flex items-center gap-1 transition-transform group-hover:translate-x-1 font-mono uppercase tracking-wider text-xs"
+                            >
+                                Load
+                                <ArrowRightIcon className="w-3 h-3"/>
+                            </span>
+                        </button>
+                        <button
+                            onClick={deleteHandler}
+                            className="p-4 px-6 bg-red-500/10 hover:bg-red-500/20 text-red-500/70 hover:text-red-500 transition-all border-l border-red-500/20"
+                            title="Delete Project"
                         >
-                            Load
-                            <ArrowRightIcon className="w-3 h-3"/>
-                        </span>
-                    </button>
+                            <TrashIcon className="w-5 h-5"/>
+                        </button>
+                    </div>
                 );
             }
         }
+    }
+
+    deleteModal = None;
+    if projectToDelete != "" {
+        deleteModal = (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animation-fade-in">
+                <div className="bg-[var(--bg-panel)] border border-[var(--border)] p-8 max-w-md w-full relative overflow-hidden clip-anvil">
+                    <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-red-600 to-orange-500"></div>
+                    <h2 className="text-xl font-bold text-white mb-4 industrial-font-display uppercase tracking-wider">
+                        Delete Project
+                    </h2>
+                    <p className="text-[var(--text-light)] mb-8 font-sans">
+                        Are you sure you want to delete <span className="text-white font-mono break-all">{projectToDelete}</span>? This action cannot be undone and will destroy all generated kernels and benchmarks.
+                    </p>
+                    <div className="flex justify-end gap-4">
+                        <button
+                            onClick={lambda -> None { projectToDelete = ""; }}
+                            className="px-4 py-2 border border-[var(--border)] text-[var(--text-muted)] hover:text-white hover:border-[var(--text-muted)] transition-colors font-mono uppercase tracking-widest text-sm"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={confirmDelete}
+                            className="px-4 py-2 bg-red-600/20 border border-red-500/50 text-red-500 hover:bg-red-600 hover:text-white hover:border-red-600 transition-colors font-mono uppercase tracking-widest text-sm clip-anvil"
+                        >
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
     }
 
     return
@@ -193,5 +250,7 @@ def:pub Home -> Any {
                     />
                 </div>
             </div>
+
+            {deleteModal}
         </main>;
 }

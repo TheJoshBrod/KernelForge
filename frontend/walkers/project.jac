@@ -3901,3 +3901,21 @@ walker:pub GetOperatorMetrics {
         };
     }
 }
+
+walker:pub DeleteProject {
+    has projectName: str;
+
+    can execute with entry {
+        try {
+            proj_dir = _project_dir(self.projectName);
+            if path.exists(proj_dir) {
+                shutil.rmtree(proj_dir);
+                report {"success": True, "message": f"Project {self.projectName} deleted successfully"};
+            } else {
+                report {"success": False, "message": f"Project {self.projectName} not found"};
+            }
+        } except Exception as e {
+            report {"success": False, "message": f"Error deleting project: {e}"};
+        }
+    }
+}

@@ -30,7 +30,8 @@ import from walkers.project {
     ImportKernel,
     GetProjectMctsSummary,
     GetProjectMetrics,
-    GetOperatorMetrics
+    GetOperatorMetrics,
+    DeleteProject
 }
 
 cl import from react { useEffect }
@@ -42,6 +43,7 @@ cl import from .app.settings.SettingsPage { SettingsPage }
 cl import from .app.settings.ApiKeysPage { ApiKeysPage }
 cl import from .app.settings.GpuPage { GpuPage }
 cl import from .app.settings.SshPage { SshPage }
+cl import from .app.settings.AboutSettings { AboutSettings }
 cl import from .app.create.NewProject { NewProject }
 cl import from .app.project.ProjectLayout { ProjectLayout }
 cl import from .app.project.Dashboard { Dashboard }
@@ -75,6 +77,7 @@ cl {
                             <Route path="/settings/api-keys" element={<ApiKeysPage/>}/>
                             <Route path="/settings/gpu" element={<GpuPage/>}/>
                             <Route path="/settings/ssh" element={<SshPage/>}/>
+                            <Route path="/settings/about" element={<AboutSettings/>}/>
                             <Route path="/new-project" element={<NewProject/>}/>
                             <Route
                                 path="/project/:projectName"
