@@ -544,20 +544,38 @@ def _read_state(project_name: str) -> dict {
     state_path = path.join(_project_dir(project_name), "state.json");
     state = _read_state_raw(state_path);
     state = _reconcile_legacy_profile_state(project_name, state, state_path);
-    return _normalize_job_flags(project_name, state, state_path);
+    state = _normalize_job_flags(project_name, state, state_path);
+    if state and len(state) > 0 {
+        _write_project_run_state_db(project_name, state);
+    }
+    db_state = _read_project_run_state_db(project_name);
+    if db_state and len(db_state) > 0 {
+        db_state = _normalize_job_flags(project_name, db_state, state_path);
+        _write_project_run_state_db(project_name, db_state);
+        return db_state;
+    }
+    return state if state else {};
 }
 
 def _update_job_state(project_name: str, job_key: str, updates: dict) -> None {
     state_path = path.join(_project_dir(project_name), "state.json");
     state = _read_state_raw(state_path);
+    if not state or len(state) == 0 {
+        state = _read_project_run_state_db(project_name);
+    }
     job_state = state[job_key] if job_key in state else {};
     for k in updates {
         job_state[k] = updates[k];
+    }
+    if not ("updated_at" in job_state) or not job_state["updated_at"] {
+        job_state["updated_at"] = datetime.now().isoformat();
     }
     state[job_key] = job_state;
     with open(state_path, "w") as f {
         dump(state, f, indent=2);
     }
+    _write_job_state_db(project_name, job_key, job_state);
+    _upsert_project_catalog(project_name, _project_dir(project_name));
 }
 
 def _pid_is_alive(pid_val: Any) -> bool {
@@ -937,13 +955,22 @@ def _refresh_running_job_state(project_name: str, job_key: str, job: dict) -> bo
         }
         target_progress = progress;
         if structured_progress is not None {
-            target_progress = structured_progress;
+            try {
+                target_progress = float(structured_progress);
+            } except Exception {
+                target_progress = progress;
+            }
         }
         should_update_progress = False;
         if current_progress is None {
             should_update_progress = True;
         } elif structured_progress is not None {
-            should_update_progress = abs(target_progress - current_progress) > 0.000001;
+            try {
+                delta = float(target_progress) - float(current_progress);
+                should_update_progress = delta > 0.000001 or delta < -0.000001;
+            } except Exception {
+                should_update_progress = False;
+            }
         } elif target_progress > current_progress {
             should_update_progress = True;
         }
@@ -1304,6 +1331,666 @@ def _is_allowed_repo_path(rel_path: str, project_name: str) -> bool {
     return False;
 }
 
+# --- Canonical Metadata DB (project + metrics) ---
+def _catalog_db_path() -> str {
+    return path.join(_projects_base_dir(), "catalog.db");
+}
+
+def _ensure_catalog_schema() -> None {
+    db_path = _catalog_db_path();
+    conn = sqlite3.connect(db_path);
+    cursor = conn.cursor();
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS projects (
+            name TEXT PRIMARY KEY,
+            project_path TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )
+        """
+    );
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS operator_metrics (
+            project_name TEXT NOT NULL,
+            op_name TEXT NOT NULL,
+            op_count INTEGER NOT NULL DEFAULT 0,
+            pytorch_ms REAL,
+            forged_ms REAL,
+            winner TEXT,
+            total_time_ms REAL NOT NULL DEFAULT 0,
+            updated_at TEXT,
+            PRIMARY KEY (project_name, op_name)
+        )
+        """
+    );
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_metric_meta (
+            project_name TEXT PRIMARY KEY,
+            status TEXT,
+            profile_status TEXT,
+            profile_message TEXT,
+            errors_json TEXT,
+            updated_at TEXT
+        )
+        """
+    );
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS run_state (
+            project_name TEXT NOT NULL,
+            job_key TEXT NOT NULL,
+            status TEXT,
+            control TEXT,
+            active INTEGER NOT NULL DEFAULT 0,
+            phase TEXT,
+            message TEXT,
+            progress_percent REAL,
+            started_at TEXT,
+            updated_at TEXT,
+            finished_at TEXT,
+            log TEXT,
+            command_json TEXT,
+            run_id TEXT,
+            pid INTEGER,
+            progress_json TEXT,
+            extras_json TEXT,
+            PRIMARY KEY (project_name, job_key)
+        )
+        """
+    );
+    conn.commit();
+    conn.close();
+}
+
+def _upsert_project_catalog(project_name: str, project_path: str = "") -> None {
+    if not project_name {
+        return;
+    }
+    _ensure_catalog_schema();
+    now = datetime.now().isoformat();
+    db_path = _catalog_db_path();
+    conn = sqlite3.connect(db_path);
+    cursor = conn.cursor();
+    created_at = now;
+    cursor.execute(
+        "SELECT created_at FROM projects WHERE name = ?",
+        (project_name,)
+    );
+    existing = cursor.fetchone();
+    if existing and len(existing) > 0 and existing[0] {
+        created_at = str(existing[0]);
+    }
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO projects(name, project_path, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (project_name, project_path, created_at, now)
+    );
+    conn.commit();
+    conn.close();
+}
+
+def _prune_missing_catalog_projects() -> None {
+    _ensure_catalog_schema();
+    db_path = _catalog_db_path();
+    conn = sqlite3.connect(db_path);
+    cursor = conn.cursor();
+    cursor.execute("SELECT name, project_path FROM projects");
+    rows = cursor.fetchall();
+    for row in rows {
+        if not row or len(row) < 1 or not row[0] {
+            continue;
+        }
+        p_name = str(row[0]);
+        p_path = str(row[1]) if len(row) > 1 and row[1] else "";
+        resolved_path = p_path if p_path else _project_dir(p_name);
+        if path.exists(resolved_path) {
+            continue;
+        }
+        cursor.execute("DELETE FROM projects WHERE name = ?", (p_name,));
+        cursor.execute(
+            "DELETE FROM operator_metrics WHERE project_name = ?",
+            (p_name,)
+        );
+        cursor.execute(
+            "DELETE FROM project_metric_meta WHERE project_name = ?",
+            (p_name,)
+        );
+        cursor.execute("DELETE FROM run_state WHERE project_name = ?", (p_name,));
+    }
+    conn.commit();
+    conn.close();
+}
+
+def _sync_project_catalog_from_fs() -> None {
+    for projects_dir in _all_projects_dirs() {
+        if not path.exists(projects_dir) {
+            continue;
+        }
+        for name in listdir(projects_dir) {
+            full_path = path.join(projects_dir, name);
+            if not path.isdir(full_path) {
+                continue;
+            }
+            _upsert_project_catalog(name, full_path);
+        }
+    }
+}
+
+def _load_project_catalog() -> list {
+    _ensure_catalog_schema();
+    db_path = _catalog_db_path();
+    conn = sqlite3.connect(db_path);
+    cursor = conn.cursor();
+    cursor.execute(
+        "SELECT name, project_path, created_at, updated_at FROM projects ORDER BY lower(name)"
+    );
+    rows = cursor.fetchall();
+    conn.close();
+    out = [];
+    for row in rows {
+        if not row or len(row) < 1 or not row[0] {
+            continue;
+        }
+        out.append(
+            {
+                "name": str(row[0]),
+                "project_path": str(row[1]) if len(row) > 1 and row[1] else "",
+                "created_at": str(row[2]) if len(row) > 2 and row[2] else "",
+                "updated_at": str(row[3]) if len(row) > 3 and row[3] else ""
+            }
+        );
+    }
+    return out;
+}
+
+def _json_load_safe(raw: str, default_value: Any) -> Any {
+    if not raw {
+        return default_value;
+    }
+    try {
+        return loads(raw);
+    } except Exception {
+        return default_value;
+    }
+}
+
+def _write_job_state_db(project_name: str, job_key: str, job_state: dict) -> None {
+    if not project_name or not job_key or not job_state {
+        return;
+    }
+    _ensure_catalog_schema();
+    now = datetime.now().isoformat();
+    status = str(job_state["status"]) if "status" in job_state and job_state["status"] else "";
+    control = str(job_state["control"]) if "control" in job_state and job_state["control"] else "";
+    active = 1 if ("active" in job_state and job_state["active"]) else 0;
+    phase = str(job_state["phase"]) if "phase" in job_state and job_state["phase"] else "";
+    message = str(job_state["message"]) if "message" in job_state and job_state["message"] else "";
+    progress_percent = None;
+    if "progress_percent" in job_state and job_state["progress_percent"] is not None {
+        try {
+            progress_percent = float(job_state["progress_percent"]);
+        } except Exception {
+            progress_percent = None;
+        }
+    }
+    started_at = str(job_state["started_at"]) if "started_at" in job_state and job_state["started_at"] else "";
+    updated_at = str(job_state["updated_at"]) if "updated_at" in job_state and job_state["updated_at"] else now;
+    finished_at = str(job_state["finished_at"]) if "finished_at" in job_state and job_state["finished_at"] else "";
+    log_path = str(job_state["log"]) if "log" in job_state and job_state["log"] else "";
+    run_id = str(job_state["run_id"]) if "run_id" in job_state and job_state["run_id"] else "";
+    pid_val = None;
+    if "pid" in job_state and job_state["pid"] is not None and str(job_state["pid"]) != "" {
+        try {
+            pid_val = int(job_state["pid"]);
+        } except Exception {
+            pid_val = None;
+        }
+    }
+    command_json = "[]";
+    if "command" in job_state and job_state["command"] is not None {
+        try {
+            command_json = dumps(job_state["command"]);
+        } except Exception {
+            command_json = "[]";
+        }
+    }
+    progress_json = "{}";
+    if "progress" in job_state and job_state["progress"] is not None {
+        try {
+            progress_json = dumps(job_state["progress"]);
+        } except Exception {
+            progress_json = "{}";
+        }
+    }
+    known_keys = [
+        "status",
+        "control",
+        "active",
+        "phase",
+        "message",
+        "progress_percent",
+        "started_at",
+        "updated_at",
+        "finished_at",
+        "log",
+        "command",
+        "run_id",
+        "pid",
+        "progress"
+    ];
+    extras = {};
+    for key in job_state {
+        if key in known_keys {
+            continue;
+        }
+        extras[key] = job_state[key];
+    }
+    extras_json = "{}";
+    try {
+        extras_json = dumps(extras);
+    } except Exception {
+        extras_json = "{}";
+    }
+
+    db_path = _catalog_db_path();
+    conn = sqlite3.connect(db_path);
+    cursor = conn.cursor();
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO run_state(
+            project_name, job_key, status, control, active, phase, message,
+            progress_percent, started_at, updated_at, finished_at, log,
+            command_json, run_id, pid, progress_json, extras_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            project_name,
+            job_key,
+            status,
+            control,
+            active,
+            phase,
+            message,
+            progress_percent,
+            started_at,
+            updated_at,
+            finished_at,
+            log_path,
+            command_json,
+            run_id,
+            pid_val,
+            progress_json,
+            extras_json
+        )
+    );
+    conn.commit();
+    conn.close();
+}
+
+def _write_project_run_state_db(project_name: str, state: dict) -> None {
+    if not project_name or not state or len(state) == 0 {
+        return;
+    }
+    _ensure_catalog_schema();
+    db_path = _catalog_db_path();
+    conn = sqlite3.connect(db_path);
+    cursor = conn.cursor();
+    cursor.execute("DELETE FROM run_state WHERE project_name = ?", (project_name,));
+    conn.commit();
+    conn.close();
+    for job_key in state {
+        job_state = state[job_key];
+        if not job_state or not ("status" in job_state) {
+            continue;
+        }
+        _write_job_state_db(project_name, str(job_key), job_state);
+    }
+}
+
+def _read_project_run_state_db(project_name: str) -> dict {
+    if not project_name {
+        return {};
+    }
+    _ensure_catalog_schema();
+    db_path = _catalog_db_path();
+    conn = sqlite3.connect(db_path);
+    cursor = conn.cursor();
+    cursor.execute(
+        """
+        SELECT
+            job_key, status, control, active, phase, message, progress_percent,
+            started_at, updated_at, finished_at, log, command_json, run_id, pid,
+            progress_json, extras_json
+        FROM run_state
+        WHERE project_name = ?
+        ORDER BY job_key
+        """,
+        (project_name,)
+    );
+    rows = cursor.fetchall();
+    conn.close();
+
+    state = {};
+    for row in rows {
+        if not row or len(row) < 16 or not row[0] {
+            continue;
+        }
+        job_key = str(row[0]);
+        job = {};
+        job["status"] = str(row[1]) if row[1] else "";
+        job["control"] = str(row[2]) if row[2] else "";
+        job["active"] = bool(row[3]) if row[3] is not None else False;
+        job["phase"] = str(row[4]) if row[4] else "";
+        job["message"] = str(row[5]) if row[5] else "";
+        if row[6] is not None {
+            try {
+                job["progress_percent"] = float(row[6]);
+            } except Exception as e {
+                _ = str(e);
+            }
+        }
+        if row[7] {
+            job["started_at"] = str(row[7]);
+        }
+        if row[8] {
+            job["updated_at"] = str(row[8]);
+        }
+        if row[9] {
+            job["finished_at"] = str(row[9]);
+        }
+        if row[10] {
+            job["log"] = str(row[10]);
+        }
+        if row[11] {
+            job["command"] = _json_load_safe(str(row[11]), []);
+        }
+        if row[12] {
+            job["run_id"] = str(row[12]);
+        }
+        if row[13] is not None {
+            try {
+                job["pid"] = int(row[13]);
+            } except Exception as e {
+                _ = str(e);
+            }
+        }
+        if row[14] {
+            job["progress"] = _json_load_safe(str(row[14]), {});
+        }
+        extras = _json_load_safe(str(row[15]) if row[15] else "{}", {});
+        if extras and type(extras) == dict {
+            for extra_key in extras {
+                if not (extra_key in job) {
+                    job[extra_key] = extras[extra_key];
+                }
+            }
+        }
+        state[job_key] = job;
+    }
+    return state;
+}
+
+def _upsert_project_metric_rows(project_name: str, payload: dict) -> None {
+    if not project_name {
+        return;
+    }
+    _ensure_catalog_schema();
+    now = datetime.now().isoformat();
+    rows = payload["rows"] if payload and "rows" in payload and payload["rows"] else [];
+    status = str(payload["status"]) if payload and "status" in payload and payload["status"] else "empty";
+    profile_status = (
+        str(payload["profile_status"])
+        if payload and "profile_status" in payload and payload["profile_status"]
+        else ""
+    );
+    profile_message = (
+        str(payload["profile_message"])
+        if payload and "profile_message" in payload and payload["profile_message"]
+        else ""
+    );
+    errors_json = "[]";
+    if payload and "errors" in payload and payload["errors"] {
+        try {
+            errors_json = dumps(payload["errors"]);
+        } except Exception {
+            errors_json = "[]";
+        }
+    }
+
+    db_path = _catalog_db_path();
+    conn = sqlite3.connect(db_path);
+    cursor = conn.cursor();
+
+    cursor.execute(
+        "DELETE FROM operator_metrics WHERE project_name = ?",
+        (project_name,)
+    );
+    for row in rows {
+        if not row {
+            continue;
+        }
+        op_name = str(row["name"]) if "name" in row and row["name"] else "";
+        if not op_name {
+            continue;
+        }
+        op_count = 0;
+        try {
+            op_count = int(row["count"]) if "count" in row and row["count"] else 0;
+        } except Exception {
+            op_count = 0;
+        }
+        pytorch_ms = None;
+        if "pytorch_ms" in row and row["pytorch_ms"] is not None {
+            try {
+                pytorch_ms = float(row["pytorch_ms"]);
+            } except Exception {
+                pytorch_ms = None;
+            }
+        }
+        forged_ms = None;
+        if "forged_ms" in row and row["forged_ms"] is not None {
+            try {
+                forged_ms = float(row["forged_ms"]);
+            } except Exception {
+                forged_ms = None;
+            }
+        }
+        total_time_ms = 0.0;
+        try {
+            total_time_ms = (
+                float(row["total_time_ms"])
+                if "total_time_ms" in row and row["total_time_ms"] is not None
+                else 0.0
+            );
+        } except Exception {
+            total_time_ms = 0.0;
+        }
+        winner = str(row["winner"]) if "winner" in row and row["winner"] else "";
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO operator_metrics(
+                project_name, op_name, op_count, pytorch_ms, forged_ms, winner,
+                total_time_ms, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                project_name,
+                op_name,
+                op_count,
+                pytorch_ms,
+                forged_ms,
+                winner,
+                total_time_ms,
+                now
+            )
+        );
+    }
+
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO project_metric_meta(
+            project_name, status, profile_status, profile_message, errors_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (project_name, status, profile_status, profile_message, errors_json, now)
+    );
+    conn.commit();
+    conn.close();
+}
+
+def _read_project_metric_rows(project_name: str) -> dict {
+    _ensure_catalog_schema();
+    db_path = _catalog_db_path();
+    conn = sqlite3.connect(db_path);
+    cursor = conn.cursor();
+    cursor.execute(
+        """
+        SELECT op_name, op_count, pytorch_ms, forged_ms, winner, total_time_ms
+        FROM operator_metrics
+        WHERE project_name = ?
+        ORDER BY op_name
+        """,
+        (project_name,)
+    );
+    metric_rows = cursor.fetchall();
+
+    cursor.execute(
+        """
+        SELECT status, profile_status, profile_message, errors_json
+        FROM project_metric_meta
+        WHERE project_name = ?
+        """,
+        (project_name,)
+    );
+    meta = cursor.fetchone();
+    conn.close();
+
+    rows = [];
+    rows_by_op = {};
+    speed_comparison = [];
+    operator_usage = [];
+
+    for m in metric_rows {
+        if not m or len(m) < 6 or not m[0] {
+            continue;
+        }
+        op_name = str(m[0]);
+        count = 0;
+        try {
+            count = int(m[1]) if m[1] is not None else 0;
+        } except Exception {
+            count = 0;
+        }
+        pytorch_ms = None;
+        if m[2] is not None {
+            try {
+                parsed = float(m[2]);
+                if parsed > 0.0 {
+                    pytorch_ms = parsed;
+                }
+            } except Exception {
+                pytorch_ms = None;
+            }
+        }
+        forged_ms = None;
+        if m[3] is not None {
+            try {
+                parsed = float(m[3]);
+                if parsed > 0.0 {
+                    forged_ms = parsed;
+                }
+            } except Exception {
+                forged_ms = None;
+            }
+        }
+        winner = str(m[4]) if m[4] else "unknown";
+        total_time_ms = 0.0;
+        try {
+            total_time_ms = float(m[5]) if m[5] is not None else 0.0;
+        } except Exception {
+            total_time_ms = 0.0;
+        }
+
+        row = {
+            "name": op_name,
+            "count": count,
+            "winner": winner,
+            "total_time_ms": total_time_ms
+        };
+        if pytorch_ms is not None {
+            row["pytorch_ms"] = pytorch_ms;
+        }
+        if forged_ms is not None {
+            row["forged_ms"] = forged_ms;
+        }
+
+        rows.append(row);
+        rows_by_op[op_name] = row;
+
+        if pytorch_ms is not None {
+            srow = {"name": op_name, "pytorch": pytorch_ms};
+            if forged_ms is not None {
+                srow["forged"] = forged_ms;
+                srow["optimized"] = forged_ms;
+            }
+            speed_comparison.append(srow);
+        }
+        if total_time_ms > 0.0 {
+            operator_usage.append(
+                {"name": op_name, "count": count, "total_time_ms": total_time_ms}
+            );
+        }
+    }
+
+    status = "empty";
+    profile_status = "";
+    profile_message = "";
+    errors = [];
+    meta_vals = [];
+    if meta is not None {
+        try {
+            meta_vals = list(meta);
+        } except Exception {
+            meta_vals = [];
+        }
+    }
+    if len(meta_vals) > 0 and meta_vals[0] {
+        status = str(meta_vals[0]);
+    }
+    if len(meta_vals) > 1 and meta_vals[1] {
+        profile_status = str(meta_vals[1]);
+    }
+    if len(meta_vals) > 2 and meta_vals[2] {
+        profile_message = str(meta_vals[2]);
+    }
+    if len(meta_vals) > 3 and meta_vals[3] {
+        try {
+            parsed_errors = loads(str(meta_vals[3]));
+            if parsed_errors {
+                errors = parsed_errors;
+            }
+        } except Exception {
+            errors = [];
+        }
+    }
+
+    return {
+        "rows": rows,
+        "rows_by_op": rows_by_op,
+        "operator_usage": operator_usage,
+        "speed_comparison": speed_comparison,
+        "status": status,
+        "profile_status": profile_status,
+        "profile_message": profile_message,
+        "errors": errors
+    };
+}
+
 # --- Walkers ---
 # --- Walkers ---
 walker:pub CreateProject {
@@ -1473,6 +2160,7 @@ walker:pub CreateProject {
             profile_result = _start_job(
                 self.projectName, "profile", profile_cmd, "profile.log"
             );
+            _upsert_project_catalog(self.projectName, project_path);
 
             report {
                 "success": True,
@@ -1491,22 +2179,24 @@ walker:pub CreateProject {
 walker:pub GetProjects {
     can return_projects with entry {
         try {
+            _sync_project_catalog_from_fs();
+            _prune_missing_catalog_projects();
             projects = [];
-            seen = {};
-            for projects_dir in _all_projects_dirs() {
-                if not path.exists(projects_dir) {
+            catalog_rows = _load_project_catalog();
+            for row in catalog_rows {
+                if not row or not ("name" in row) or not row["name"] {
                     continue;
                 }
-                for name in listdir(projects_dir) {
-                    if name in seen {
-                        continue;
-                    }
-                    full_path = path.join(projects_dir, name);
-                    if path.isdir(full_path) {
-                        seen[name] = True;
-                        projects.append({"name": name});
-                    }
+                p_name = str(row["name"]);
+                p_path = (
+                    str(row["project_path"])
+                    if "project_path" in row and row["project_path"]
+                    else _project_dir(p_name)
+                );
+                if not path.exists(p_path) or not path.isdir(p_path) {
+                    continue;
                 }
+                projects.append({"name": p_name});
             }
             report {"projects": projects};
         } except Exception as e {
@@ -2029,6 +2719,7 @@ walker:pub GetMctsTree {
                     or code_text.endswith(".metal")
                     or "/kernels/" in code_text
                 ) {
+                    resolved_inline_code = False;
                     path_candidates = [];
                     if path.isabs(code_text) {
                         path_candidates.append(code_text);
@@ -2051,6 +2742,43 @@ walker:pub GetMctsTree {
                                 code_text
                             )
                         );
+                        path_candidates.append(
+                            path.join(
+                                project_dir, "kernels", "generated", "individual_op_kernels", code_text
+                            )
+                        );
+                        path_candidates.append(
+                            path.join(
+                                project_dir,
+                                "kernels",
+                                "generated",
+                                "individual_op_kernels",
+                                self.opName,
+                                code_text
+                            )
+                        );
+                        path_candidates.append(
+                            path.join(
+                                project_dir,
+                                "kernels",
+                                "generated",
+                                "individual_op_kernels",
+                                self.opName,
+                                "kernel",
+                                code_text
+                            )
+                        );
+                        path_candidates.append(
+                            path.join(
+                                project_dir,
+                                "kernels",
+                                "generated",
+                                "individual_op_kernels",
+                                self.opName,
+                                "kernels",
+                                code_text
+                            )
+                        );
                     }
                     for p in path_candidates {
                         if not path.exists(p) {
@@ -2060,36 +2788,77 @@ walker:pub GetMctsTree {
                             with open(p, "r", encoding="utf-8", errors="ignore") as f {
                                 node_code = f.read();
                             }
+                            resolved_inline_code = True;
                             break;
                         } except Exception {
                             continue;
                         }
                     }
+                    if not resolved_inline_code {
+                        node_code = None;
+                    }
                 }
                 if node_code is None or str(node_code).strip() == "" {
-                    kernels_dir = path.join(project_dir, "trees", self.opName, "kernels");
+                    kernel_dirs = [
+                        path.join(project_dir, "trees", self.opName, "kernels"),
+                        path.join(
+                            project_dir,
+                            "kernels",
+                            "generated",
+                            "individual_op_kernels",
+                            self.opName,
+                            "kernel"
+                        ),
+                        path.join(
+                            project_dir,
+                            "kernels",
+                            "generated",
+                            "individual_op_kernels",
+                            self.opName,
+                            "kernels"
+                        ),
+                        path.join(
+                            project_dir,
+                            "kernels",
+                            "generated",
+                            "individual_op_kernels",
+                            self.opName
+                        )
+                    ];
                     candidates = [
                         f"kernel_{row[0]}.cu",
                         f"kernel_{row[0]}.py",
                         f"kernel_{row[0]}.metal",
+                        f"kernel-{row[0]}-g.cu",
                         "kernel_0.cu",
                         "kernel_0.py",
-                        "kernel_0.metal"
+                        "kernel_0.metal",
+                        "kernel-0-g.cu",
+                        "kernel.cu",
+                        "cuda.cu"
                     ];
-                    for fname in candidates {
-                        candidate_path = path.join(kernels_dir, fname);
-                        if not path.exists(candidate_path) {
+                    for kernels_dir in kernel_dirs {
+                        if not path.exists(kernels_dir) {
                             continue;
                         }
-                        try {
-                            with open(
-                                candidate_path, "r", encoding="utf-8", errors="ignore"
-                            ) as f {
-                                node_code = f.read();
+                        for fname in candidates {
+                            candidate_path = path.join(kernels_dir, fname);
+                            if not path.exists(candidate_path) {
+                                continue;
                             }
+                            try {
+                                with open(
+                                    candidate_path, "r", encoding="utf-8", errors="ignore"
+                                ) as f {
+                                    node_code = f.read();
+                                }
+                                break;
+                            } except Exception {
+                                continue;
+                            }
+                        }
+                        if node_code is not None and str(node_code).strip() != "" {
                             break;
-                        } except Exception {
-                            continue;
                         }
                     }
                 }
@@ -2180,262 +2949,398 @@ walker:pub GetDashboardCharts {
     has projectName: str;
 
     can return_charts with entry {
-        project_dir = _project_dir(self.projectName);
-
-        bench_results = [];
-        bench_file_status = "";
-        bench_errors = [];
-        bench_path = path.join(project_dir, "benchmarks", "op_benchmarks.json");
-        if path.exists(bench_path) {
-            try {
-                with open(bench_path, "r") as f {
-                    bench_data = load(f);
-                }
-                bench_results = bench_data["results"]
-                if bench_data and "results" in bench_data
-                else [];
-                bench_file_status = (
-                    str(bench_data["status"])
-                    if bench_data and "status" in bench_data and bench_data["status"]
-                    else ""
-                );
-                bench_errors = (
-                    bench_data["errors"]
-                    if bench_data and "errors" in bench_data and bench_data["errors"]
-                    else []
-                );
-            } except Exception as e {
-                print(f"Error reading op_benchmarks.json: {e}");
-                bench_results = [];
-                bench_file_status = "error";
-                bench_errors = [str(e)];
-            }
-        }
-
-        op_counts = {};
-        op_profile_ms = {};
-        summary_path = path.join(project_dir, "io", "summary.json");
-        if path.exists(summary_path) {
-            try {
-                with open(summary_path, "r") as f {
-                    summary_data = load(f);
-                }
-                op_counts = summary_data["op_counts"]
-                if summary_data and "op_counts" in summary_data
-                else {};
-                op_profile_ms = summary_data["op_profile_ms"]
-                if summary_data and "op_profile_ms" in summary_data
-                else {};
-            } except Exception as e {
-                print(f"Error reading io/summary.json: {e}");
-                op_counts = {};
-                op_profile_ms = {};
-            }
-        }
-
-        # Convert counts to the on-disk op directory naming convention:
-        # "torch.nn.functional.linear" -> "torch_nn_functional_linear"
-        count_by_op = {};
-        for full_name in op_counts {
-            try {
-                op_dir_name = full_name.replace(".", "_").replace("/", "_");
-                count_by_op[op_dir_name] = op_counts[full_name];
-            } except Exception {
-                continue;
-            }
-        }
-        profile_ms_by_op = {};
-        for full_name in op_profile_ms {
-            try {
-                op_dir_name = full_name.replace(".", "_").replace("/", "_");
-                ms_val = float(op_profile_ms[full_name]);
-                profile_ms_by_op[op_dir_name] = ms_val;
-            } except Exception {
-                continue;
-            }
-        }
-
-        bench_by_op = {};
-        for r in bench_results {
-            if r and "op" in r and r["op"] {
-                bench_by_op[r["op"]] = r;
-            }
-        }
-        tree_best_by_op = _load_tree_best_by_op(self.projectName);
-
-        baseline_by_op = {};
-        for op_name in profile_ms_by_op {
-            ms_val = profile_ms_by_op[op_name];
-            if ms_val and ms_val > 0.0 {
-                baseline_by_op[op_name] = ms_val;
-            }
-        }
-        for op_name in bench_by_op {
-            b_row = bench_by_op[op_name];
-            if b_row and "pytorch_ms" in b_row and b_row["pytorch_ms"] is not None {
-                try {
-                    ms_val = float(b_row["pytorch_ms"]);
-                    if ms_val > 0.0 {
-                        baseline_by_op[op_name] = ms_val;
-                    }
-                } except Exception {
-                    _ = 0;
-                }
-            }
-        }
-
-        forged_best_by_op = {};
-        for op_name in bench_by_op {
-            b_row = bench_by_op[op_name];
-            if (
-                b_row
-                and "kernel_status" in b_row
-                and b_row["kernel_status"] == "ok"
-                and "kernel_ms" in b_row
-                and b_row["kernel_ms"] is not None
-            ) {
-                try {
-                    k_ms = float(b_row["kernel_ms"]);
-                    if k_ms > 0.0 {
-                        forged_best_by_op[op_name] = k_ms;
-                    }
-                } except Exception {
-                    _ = 0;
-                }
-            }
-        }
-        for op_name in tree_best_by_op {
-            tree_ms = tree_best_by_op[op_name];
-            if not tree_ms or tree_ms <= 0.0 {
-                continue;
-            }
-            if not (op_name in forged_best_by_op) {
-                forged_best_by_op[op_name] = tree_ms;
-            } elif tree_ms < forged_best_by_op[op_name] {
-                forged_best_by_op[op_name] = tree_ms;
-            }
-        }
-
-        speed_comparison = [];
-        speed_order = [];
-        seen_speed = {};
-        for r in bench_results {
-            if r and "op" in r and r["op"] and r["op"] in baseline_by_op {
-                op_name = r["op"];
-                if not (op_name in seen_speed) {
-                    speed_order.append(op_name);
-                    seen_speed[op_name] = True;
-                }
-            }
-        }
-        for op_name in baseline_by_op {
-            if not (op_name in seen_speed) {
-                speed_order.append(op_name);
-                seen_speed[op_name] = True;
-            }
-        }
-        for op_name in speed_order {
-            row = {"name": op_name, "pytorch": baseline_by_op[op_name]};
-            if op_name in forged_best_by_op {
-                row["forged"] = forged_best_by_op[op_name];
-                row["optimized"] = forged_best_by_op[op_name];
-            }
-            speed_comparison.append(row);
-        }
-
-        operator_usage = [];
-        all_ops = [];
-        seen_ops = {};
-        for op_name in bench_by_op {
-            if not (op_name in seen_ops) {
-                all_ops.append(op_name);
-                seen_ops[op_name] = True;
-            }
-        }
-        for op_name in count_by_op {
-            if not (op_name in seen_ops) {
-                all_ops.append(op_name);
-                seen_ops[op_name] = True;
-            }
-        }
-        for op_name in profile_ms_by_op {
-            if not (op_name in seen_ops) {
-                all_ops.append(op_name);
-                seen_ops[op_name] = True;
-            }
-        }
-        for op_name in tree_best_by_op {
-            if not (op_name in seen_ops) {
-                all_ops.append(op_name);
-                seen_ops[op_name] = True;
-            }
-        }
-
-        for op_name in all_ops {
-            pytorch_ms = baseline_by_op[op_name] if op_name in baseline_by_op else 0.0;
-            optimized_ms = (
-                forged_best_by_op[op_name] if op_name in forged_best_by_op else None
-            );
-            b = {};
-            if op_name in bench_by_op {
-                b = bench_by_op[op_name];
-            }
-
-            count = count_by_op[op_name] if op_name in count_by_op else 0;
-            if count <= 0 and b and "entries" in b and b["entries"] {
-                count = b["entries"];
-            }
-            try {
-                count = int(count);
-            } except Exception {
-                count = 0;
-            }
-
-            effective_ms = optimized_ms if optimized_ms is not None else pytorch_ms;
-            total_time_ms = effective_ms * count if effective_ms and count else 0.0;
-            if total_time_ms > 0.0 {
-                operator_usage.append(
-                    {"name": op_name, "count": count, "total_time_ms": total_time_ms}
-                );
-            }
-        }
-
-        state = _read_state(self.projectName);
-        profile_status = "";
-        profile_message = "";
-        if state and "profile" in state and state["profile"] {
-            p = state["profile"];
-            profile_status = str(p["status"]) if "status" in p and p["status"] else "";
-            profile_message = str(p["message"])
-            if "message" in p and p["message"]
-            else "";
-        }
-
-        chart_status = "ready";
-        if len(speed_comparison) == 0 and len(operator_usage) == 0 {
-            p_status = profile_status.lower() if profile_status else "";
-            if bench_file_status == "partial" {
-                chart_status = "partial";
-            } elif bench_file_status and bench_file_status != "ready" {
-                chart_status = bench_file_status;
-            } elif p_status == "running"
-            or p_status == "queued"
-            or p_status == "paused" {
-                chart_status = "pending";
-            } elif p_status == "error" {
-                chart_status = "error";
-            } else {
-                chart_status = "empty";
-            }
-        }
-
+        payload = _collect_project_metrics(self.projectName);
         report {
-            "operator_usage": operator_usage,
-            "speed_comparison": speed_comparison,
-            "status": chart_status,
-            "profile_status": profile_status,
-            "profile_message": profile_message,
-            "errors": bench_errors
+            "operator_usage": (
+                payload["operator_usage"] if payload and "operator_usage" in payload else []
+            ),
+            "speed_comparison": (
+                payload["speed_comparison"]
+                if payload and "speed_comparison" in payload
+                else []
+            ),
+            "status": payload["status"] if payload and "status" in payload else "empty",
+            "profile_status": (
+                payload["profile_status"] if payload and "profile_status" in payload else ""
+            ),
+            "profile_message": (
+                payload["profile_message"]
+                if payload and "profile_message" in payload
+                else ""
+            ),
+            "errors": payload["errors"] if payload and "errors" in payload else []
+        };
+    }
+}
+
+def _normalize_metric_op_name(raw: Any) -> str {
+    text = str(raw).strip().lower() if raw is not None else "";
+    if not text {
+        return "";
+    }
+    prefix = "torch.nn.functional.";
+    if text.startswith(prefix) {
+        text = "torch_nn_functional_" + text.replace(prefix, "");
+    }
+    return text.replace(".", "_").replace("/", "_");
+}
+
+def _to_positive_float(raw: Any) -> Any {
+    if raw is None {
+        return None;
+    }
+    try {
+        val = float(raw);
+        if val > 0.0 {
+            return val;
+        }
+    } except Exception {
+        _ = 0;
+    }
+    return None;
+}
+
+def _to_int(raw: Any) -> int {
+    try {
+        return int(raw);
+    } except Exception {
+        return 0;
+    }
+}
+
+def _collect_project_metrics(project_name: str) -> dict {
+    project_dir = _project_dir(project_name);
+
+    bench_results = [];
+    bench_file_status = "";
+    bench_errors = [];
+    bench_path = path.join(project_dir, "benchmarks", "op_benchmarks.json");
+    if path.exists(bench_path) {
+        try {
+            with open(bench_path, "r") as f {
+                bench_data = load(f);
+            }
+            bench_results = bench_data["results"]
+            if bench_data and "results" in bench_data
+            else [];
+            bench_file_status = (
+                str(bench_data["status"])
+                if bench_data and "status" in bench_data and bench_data["status"]
+                else ""
+            );
+            bench_errors = (
+                bench_data["errors"]
+                if bench_data and "errors" in bench_data and bench_data["errors"]
+                else []
+            );
+        } except Exception as e {
+            print(f"Error reading op_benchmarks.json: {e}");
+            bench_results = [];
+            bench_file_status = "error";
+            bench_errors = [str(e)];
+        }
+    }
+
+    op_counts = {};
+    op_profile_ms = {};
+    summary_path = path.join(project_dir, "io", "summary.json");
+    if path.exists(summary_path) {
+        try {
+            with open(summary_path, "r") as f {
+                summary_data = load(f);
+            }
+            op_counts = summary_data["op_counts"]
+            if summary_data and "op_counts" in summary_data
+            else {};
+            op_profile_ms = summary_data["op_profile_ms"]
+            if summary_data and "op_profile_ms" in summary_data
+            else {};
+        } except Exception as e {
+            print(f"Error reading io/summary.json: {e}");
+            op_counts = {};
+            op_profile_ms = {};
+        }
+    }
+
+    count_by_op = {};
+    for full_name in op_counts {
+        op_name = _normalize_metric_op_name(full_name);
+        if not op_name {
+            continue;
+        }
+        count_by_op[op_name] = _to_int(op_counts[full_name]);
+    }
+
+    profile_ms_by_op = {};
+    for full_name in op_profile_ms {
+        op_name = _normalize_metric_op_name(full_name);
+        if not op_name {
+            continue;
+        }
+        ms_val = _to_positive_float(op_profile_ms[full_name]);
+        if ms_val is not None {
+            profile_ms_by_op[op_name] = ms_val;
+        }
+    }
+
+    bench_by_op = {};
+    bench_order = [];
+    seen_bench = {};
+    for r in bench_results {
+        if not r {
+            continue;
+        }
+        op_name = "";
+        if "op" in r and r["op"] {
+            op_name = _normalize_metric_op_name(r["op"]);
+        } elif "name" in r and r["name"] {
+            op_name = _normalize_metric_op_name(r["name"]);
+        }
+        if not op_name {
+            continue;
+        }
+        bench_by_op[op_name] = r;
+        if not (op_name in seen_bench) {
+            bench_order.append(op_name);
+            seen_bench[op_name] = True;
+        }
+    }
+
+    tree_best_by_op = {};
+    tree_raw = _load_tree_best_by_op(project_name);
+    for op_name in tree_raw {
+        norm_name = _normalize_metric_op_name(op_name);
+        if not norm_name {
+            continue;
+        }
+        ms_val = _to_positive_float(tree_raw[op_name]);
+        if ms_val is None {
+            continue;
+        }
+        if not (norm_name in tree_best_by_op)
+        or ms_val < tree_best_by_op[norm_name] {
+            tree_best_by_op[norm_name] = ms_val;
+        }
+    }
+
+    baseline_by_op = {};
+    for op_name in profile_ms_by_op {
+        baseline_by_op[op_name] = profile_ms_by_op[op_name];
+    }
+    for op_name in bench_by_op {
+        b_row = bench_by_op[op_name];
+        pytorch_raw = None;
+        if "pytorch_ms" in b_row and b_row["pytorch_ms"] is not None {
+            pytorch_raw = b_row["pytorch_ms"];
+        } elif "pytorch" in b_row and b_row["pytorch"] is not None {
+            pytorch_raw = b_row["pytorch"];
+        } elif "baseline" in b_row and b_row["baseline"] is not None {
+            pytorch_raw = b_row["baseline"];
+        }
+        ms_val = _to_positive_float(pytorch_raw);
+        if ms_val is not None {
+            baseline_by_op[op_name] = ms_val;
+        }
+    }
+
+    forged_best_by_op = {};
+    for op_name in bench_by_op {
+        b_row = bench_by_op[op_name];
+        kernel_status = (
+            str(b_row["kernel_status"]).lower()
+            if "kernel_status" in b_row and b_row["kernel_status"]
+            else ""
+        );
+        if kernel_status != "ok" {
+            continue;
+        }
+        kernel_ms = (
+            _to_positive_float(b_row["kernel_ms"])
+            if "kernel_ms" in b_row
+            else None
+        );
+        if kernel_ms is not None {
+            forged_best_by_op[op_name] = kernel_ms;
+        }
+    }
+    for op_name in tree_best_by_op {
+        tree_ms = tree_best_by_op[op_name];
+        if not (op_name in forged_best_by_op) {
+            forged_best_by_op[op_name] = tree_ms;
+        } elif tree_ms < forged_best_by_op[op_name] {
+            forged_best_by_op[op_name] = tree_ms;
+        }
+    }
+
+    all_ops = [];
+    seen_ops = {};
+    for op_name in bench_order {
+        if not (op_name in seen_ops) {
+            all_ops.append(op_name);
+            seen_ops[op_name] = True;
+        }
+    }
+    for op_name in count_by_op {
+        if not (op_name in seen_ops) {
+            all_ops.append(op_name);
+            seen_ops[op_name] = True;
+        }
+    }
+    for op_name in baseline_by_op {
+        if not (op_name in seen_ops) {
+            all_ops.append(op_name);
+            seen_ops[op_name] = True;
+        }
+    }
+    for op_name in forged_best_by_op {
+        if not (op_name in seen_ops) {
+            all_ops.append(op_name);
+            seen_ops[op_name] = True;
+        }
+    }
+
+    rows = [];
+    rows_by_op = {};
+    speed_comparison = [];
+    operator_usage = [];
+
+    for op_name in all_ops {
+        b_row = bench_by_op[op_name] if op_name in bench_by_op else {};
+        count = count_by_op[op_name] if op_name in count_by_op else 0;
+        if count <= 0 and b_row and "entries" in b_row and b_row["entries"] {
+            count = _to_int(b_row["entries"]);
+        }
+        if count < 0 {
+            count = 0;
+        }
+
+        pytorch_ms = baseline_by_op[op_name] if op_name in baseline_by_op else None;
+        forged_ms = (
+            forged_best_by_op[op_name] if op_name in forged_best_by_op else None
+        );
+
+        winner = "unknown";
+        if pytorch_ms is not None {
+            winner = "pytorch";
+        }
+        if forged_ms is not None and (pytorch_ms is None or forged_ms < pytorch_ms) {
+            winner = "forged";
+        }
+
+        effective_ms = forged_ms if forged_ms is not None else pytorch_ms;
+        total_time_ms = effective_ms * count if effective_ms is not None and count > 0 else 0.0;
+
+        row = {
+            "name": op_name,
+            "count": count,
+            "winner": winner,
+            "total_time_ms": total_time_ms
+        };
+        if pytorch_ms is not None {
+            row["pytorch_ms"] = pytorch_ms;
+        }
+        if forged_ms is not None {
+            row["forged_ms"] = forged_ms;
+        }
+        rows.append(row);
+        rows_by_op[op_name] = row;
+
+        if pytorch_ms is not None {
+            speed_row = {"name": op_name, "pytorch": pytorch_ms};
+            if forged_ms is not None {
+                speed_row["forged"] = forged_ms;
+                speed_row["optimized"] = forged_ms;
+            }
+            speed_comparison.append(speed_row);
+        }
+
+        if total_time_ms > 0.0 {
+            operator_usage.append(
+                {"name": op_name, "count": count, "total_time_ms": total_time_ms}
+            );
+        }
+    }
+
+    state = _read_state(project_name);
+    profile_status = "";
+    profile_message = "";
+    if state and "profile" in state and state["profile"] {
+        p = state["profile"];
+        profile_status = str(p["status"]) if "status" in p and p["status"] else "";
+        profile_message = (
+            str(p["message"]) if "message" in p and p["message"] else ""
+        );
+    }
+
+    chart_status = "ready";
+    if len(speed_comparison) == 0 and len(operator_usage) == 0 {
+        p_status = profile_status.lower() if profile_status else "";
+        if bench_file_status == "partial" {
+            chart_status = "partial";
+        } elif bench_file_status and bench_file_status != "ready" {
+            chart_status = bench_file_status;
+        } elif p_status == "running"
+        or p_status == "queued"
+        or p_status == "paused" {
+            chart_status = "pending";
+        } elif p_status == "error" {
+            chart_status = "error";
+        } else {
+            chart_status = "empty";
+        }
+    }
+
+    computed_payload = {
+        "rows": rows,
+        "rows_by_op": rows_by_op,
+        "operator_usage": operator_usage,
+        "speed_comparison": speed_comparison,
+        "status": chart_status,
+        "profile_status": profile_status,
+        "profile_message": profile_message,
+        "errors": bench_errors
+    };
+    _upsert_project_catalog(project_name, project_dir);
+    _upsert_project_metric_rows(project_name, computed_payload);
+    persisted = _read_project_metric_rows(project_name);
+    if persisted and "status" in persisted and persisted["status"] {
+        return persisted;
+    }
+    return computed_payload;
+}
+
+walker:pub GetProjectMetrics {
+    has projectName: str;
+
+    can run with entry {
+        payload = _collect_project_metrics(self.projectName);
+        report payload;
+    }
+}
+
+walker:pub GetOperatorMetrics {
+    has projectName: str,
+        opName: str;
+
+    can run with entry {
+        payload = _collect_project_metrics(self.projectName);
+        op_key = _normalize_metric_op_name(self.opName);
+        rows_by_op = payload["rows_by_op"] if payload and "rows_by_op" in payload else {};
+        metric = rows_by_op[op_key] if op_key in rows_by_op else None;
+        report {
+            "success": bool(metric),
+            "op": op_key,
+            "metric": metric,
+            "status": payload["status"] if payload and "status" in payload else "empty",
+            "profile_status": (
+                payload["profile_status"] if payload and "profile_status" in payload else ""
+            ),
+            "profile_message": (
+                payload["profile_message"]
+                if payload and "profile_message" in payload
+                else ""
+            ),
+            "errors": payload["errors"] if payload and "errors" in payload else []
         };
     }
 }

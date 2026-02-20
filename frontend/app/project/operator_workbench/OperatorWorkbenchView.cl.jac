@@ -71,10 +71,72 @@ def:pub OperatorWorkbenchView -> Any {
     liveUpdates = live_updates_state[0];
     setLiveUpdates = live_updates_state[1];
 
+    torch_op_ms_state = useState(None);
+    torchOpMs = torch_op_ms_state[0];
+    setTorchOpMs = torch_op_ms_state[1];
+
     tree_signature_ref = useRef("");
     selected_node_ref = useRef(None);
 
     # --- Helpers ---
+    def to_list(items: Any) -> list {
+        if not items {
+            return [];
+        }
+        try {
+            if Array.isArray(items) {
+                return items;
+            }
+        } except Exception {
+        # no-op
+        }
+        normalized = [];
+        try {
+            for item in items {
+                normalized.push(item);
+            }
+            return normalized;
+        } except Exception {
+        # no-op
+        }
+        try {
+            return Object.values(items);
+        } except Exception {
+            return [];
+        }
+    }
+
+    def to_num(value: Any) -> Any {
+        if value is None {
+            return None;
+        }
+        try {
+            text = f"{value}".trim();
+            if not text {
+                return None;
+            }
+            parsed = parseFloat(text);
+            if parsed == parsed {
+                return parsed;
+            }
+        } except Exception {
+        # no-op
+        }
+        return None;
+    }
+
+    def normalize_op_name(value: Any) -> str {
+        text = str(value or "").trim().toLowerCase();
+        if not text {
+            return "";
+        }
+        prefix = "torch.nn.functional.";
+        if text.startsWith(prefix) {
+            text = "torch_nn_functional_" + text.replace(prefix, "");
+        }
+        return text.replace(".", "_");
+    }
+
     def get_layouted_elements(nodes_data: list, edges_data: list) -> dict {
         levels = {};
         node_map = {};
@@ -234,6 +296,70 @@ def:pub OperatorWorkbenchView -> Any {
             setLoading(True);
         }
         try {
+            torch_ms = None;
+            try {
+                metric_resp = await __jacSpawn(
+                    "GetOperatorMetrics",
+                    "",
+                    {"projectName": resolvedProjectName, "opName": resolvedOpName}
+                );
+                metric_data = metric_resp.reports[0]
+                if metric_resp and metric_resp.reports
+                else {};
+                metric_row = (
+                    metric_data["metric"]
+                    if metric_data and "metric" in metric_data and metric_data["metric"]
+                    else {}
+                );
+                pytorch_raw = (
+                    metric_row["pytorch_ms"]
+                    if metric_row and "pytorch_ms" in metric_row
+                    else (
+                        metric_row["pytorch"]
+                        if metric_row and "pytorch" in metric_row
+                        else None
+                    )
+                );
+                torch_ms = to_num(pytorch_raw);
+                if torch_ms is None {
+                    chart_resp = await __jacSpawn(
+                        "GetDashboardCharts", "", {"projectName": resolvedProjectName}
+                    );
+                    chart_data = chart_resp.reports[0]
+                    if chart_resp and chart_resp.reports
+                    else {};
+                    target_op = normalize_op_name(resolvedOpName);
+                    speed_rows = to_list(
+                        chart_data["speed_comparison"]
+                        if chart_data and "speed_comparison" in chart_data
+                        else []
+                    );
+                    for row in speed_rows {
+                        if not row {
+                            continue;
+                        }
+                        row_name = (
+                            row["name"]
+                            if "name" in row
+                            else (row["op"] if "op" in row else "")
+                        );
+                        if normalize_op_name(row_name) != target_op {
+                            continue;
+                        }
+                        pytorch_raw = row["pytorch"] if "pytorch" in row else None;
+                        if pytorch_raw is None and "baseline" in row {
+                            pytorch_raw = row["baseline"];
+                        }
+                        torch_ms = to_num(pytorch_raw);
+                        break;
+                    }
+                }
+            } except Exception as metrics_err {
+                console.warn("Failed to load operator metrics:", metrics_err);
+            }
+
+            setTorchOpMs(torch_ms);
+
             tree_resp = await __jacSpawn(
                 "GetMctsTree",
                 "",
@@ -284,6 +410,7 @@ def:pub OperatorWorkbenchView -> Any {
             }
         } except Exception as e {
             console.error("Failed to fetch operator workbench data:", e);
+            setTorchOpMs(None);
         } finally {
             if showLoader {
                 setLoading(False);
@@ -293,6 +420,11 @@ def:pub OperatorWorkbenchView -> Any {
 
     useEffect(
         lambda -> None { fetchData(True);}, [resolvedProjectName, resolvedOpName]
+    );
+
+    useEffect(
+        lambda -> None { setTorchOpMs(None);tree_signature_ref.current = "";},
+        [resolvedProjectName, resolvedOpName]
     );
 
     useEffect(
@@ -672,6 +804,16 @@ def:pub OperatorWorkbenchView -> Any {
                                 {Number(selectedNodeData["best_subtree_value"] or 0).toFixed(
                                     6
                                 )}
+                            </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <span className="text-zinc-500 text-sm">
+                                PyTorch Op Time
+                            </span>
+                            <span className="font-mono text-orange-300">
+                                {f"{Number(torchOpMs).toFixed(9)} ms"
+                                if torchOpMs is not None
+                                else "--"}
                             </span>
                         </div>
                     </div>
