@@ -61,29 +61,14 @@ def:pub Dashboard -> Any {
         '#f472b6'
     ];
 
-    pieData = [];
-    hasPie = False;
-    pieTotal = 0;
-
-    op_idx = 0;
-    for op in ops {
-        slice_val = op["total_time_ms"] if "total_time_ms" in op else 0;
-        pieTotal += slice_val;
-        pieData.push(
-            {
-                "name": format_op_short(op["name"]),
-                "value": slice_val,
-                "fill": COLORS[op_idx % COLORS.length]
-            }
-        );
-        op_idx += 1;
-    }
-    hasPie = pieData.length > 0 and pieTotal > 0;
-
     # Speed Comparison Data State
     speedData_state = useState([]);
     speedData = speedData_state[0];
     setSpeedData = speedData_state[1];
+
+    op_time_mode_state = useState("best");
+    opTimeMode = op_time_mode_state[0];
+    setOpTimeMode = op_time_mode_state[1];
 
     forge_mode_state = useState("auto");
     forgeMode = forge_mode_state[0];
@@ -120,6 +105,124 @@ def:pub Dashboard -> Any {
             break;
         }
     }
+
+    opCountByName = {};
+    for op in ops {
+        if not op or not ("name" in op) or not op["name"] {
+            continue;
+        }
+        op_name = str(op["name"]);
+        raw_count = op["count"] if "count" in op else 0;
+        count_val = parseInt(f"{raw_count}") if raw_count is not None else 0;
+        if count_val != count_val or count_val <= 0 {
+            count_val = 1;
+        }
+        opCountByName[op_name] = count_val;
+    }
+
+    timeRows = [];
+    seenTimeNames = {};
+    for row in speedData {
+        if not row {
+            continue;
+        }
+        row_name = str(row["name"]) if "name" in row and row["name"] else "";
+        if not row_name {
+            continue;
+        }
+
+        pytorch_raw = row["pytorch"] if "pytorch" in row else None;
+        if pytorch_raw is None and "baseline" in row {
+            pytorch_raw = row["baseline"];
+        }
+        pytorch_ms = to_num(pytorch_raw);
+
+        forged_raw = row["forged"] if "forged" in row else None;
+        if forged_raw is None and "optimized" in row {
+            forged_raw = row["optimized"];
+        }
+        if forged_raw is None and "kernel_ms" in row {
+            forged_raw = row["kernel_ms"];
+        }
+        forged_ms = to_num(forged_raw);
+
+        selected_ms = None;
+        if opTimeMode == "pytorch" {
+            selected_ms = pytorch_ms;
+        } elif opTimeMode == "forged" {
+            selected_ms = forged_ms;
+        } else {
+            if pytorch_ms is not None and forged_ms is not None {
+                selected_ms = pytorch_ms if pytorch_ms <= forged_ms else forged_ms;
+            } elif forged_ms is not None {
+                selected_ms = forged_ms;
+            } else {
+                selected_ms = pytorch_ms;
+            }
+        }
+
+        if selected_ms is None or selected_ms <= 0 {
+            continue;
+        }
+
+        count_val = opCountByName[row_name] if row_name in opCountByName else 1;
+        total_ms = selected_ms * count_val;
+        if total_ms <= 0 {
+            continue;
+        }
+
+        timeRows.push(
+            {
+                "name": row_name,
+                "count": count_val,
+                "total_time_ms": total_ms
+            }
+        );
+        seenTimeNames[row_name] = True;
+    }
+
+    if opTimeMode == "best" {
+        for op in ops {
+            if not op or not ("name" in op) or not op["name"] {
+                continue;
+            }
+            row_name = str(op["name"]);
+            if row_name in seenTimeNames {
+                continue;
+            }
+            fallback_total = to_num(op["total_time_ms"] if "total_time_ms" in op else None);
+            if fallback_total is None or fallback_total <= 0 {
+                continue;
+            }
+            count_val = opCountByName[row_name] if row_name in opCountByName else 1;
+            timeRows.push(
+                {
+                    "name": row_name,
+                    "count": count_val,
+                    "total_time_ms": fallback_total
+                }
+            );
+            seenTimeNames[row_name] = True;
+        }
+    }
+
+    pieData = [];
+    hasPie = False;
+    pieTotal = 0;
+    op_idx = 0;
+    for op in timeRows {
+        slice_val = op["total_time_ms"] if "total_time_ms" in op else 0;
+        pieTotal += slice_val;
+        pieData.push(
+            {
+                "name": format_op_short(op["name"]),
+                "value": slice_val,
+                "fill": COLORS[op_idx % COLORS.length]
+            }
+        );
+        op_idx += 1;
+    }
+    hasPie = pieData.length > 0 and pieTotal > 0;
 
     def format_op(raw: str) -> str {
         raw_text = raw or "";
@@ -1566,9 +1669,43 @@ def:pub Dashboard -> Any {
                         <h3 className="font-semibold text-zinc-200">
                             Operator Time Consumption
                         </h3>
-                        <span className="text-xs text-zinc-500">
-                            Total (ms)
-                        </span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-zinc-500">
+                                {timeRows.length} operators
+                            </span>
+                            <div className="inline-flex rounded-md border border-zinc-700 overflow-hidden">
+                                <button
+                                    className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors " + (
+                                        "bg-zinc-700 text-zinc-100"
+                                        if opTimeMode == "best"
+                                        else "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+                                    )}
+                                    onClick={lambda -> None { setOpTimeMode("best");}}
+                                >
+                                    Best
+                                </button>
+                                <button
+                                    className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors border-l border-zinc-700 " + (
+                                        "bg-zinc-700 text-zinc-100"
+                                        if opTimeMode == "forged"
+                                        else "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+                                    )}
+                                    onClick={lambda -> None { setOpTimeMode("forged");}}
+                                >
+                                    Forged
+                                </button>
+                                <button
+                                    className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors border-l border-zinc-700 " + (
+                                        "bg-zinc-700 text-zinc-100"
+                                        if opTimeMode == "pytorch"
+                                        else "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+                                    )}
+                                    onClick={lambda -> None { setOpTimeMode("pytorch");}}
+                                >
+                                    PyTorch
+                                </button>
+                            </div>
+                        </div>
                     </div>
                     <div
                         className="p-4 flex-1 flex items-center justify-center min-h-[220px]"
