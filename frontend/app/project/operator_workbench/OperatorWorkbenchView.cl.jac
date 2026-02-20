@@ -889,7 +889,6 @@ def:pub OperatorWorkbenchView -> Any {
                             <span className="text-zinc-500 text-sm">
                                 Node ID
                             </span>
-                            <span className="font-mono text-indigo-400">
                             <span className="font-mono text-orange-300">
                                 {selectedNodeData["id"]}
                             </span>
