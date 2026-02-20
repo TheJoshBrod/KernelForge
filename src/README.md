@@ -1,48 +1,62 @@
 # CGinS Source (`src`)
 
-This directory contains the core Python logic for the **Generator** (Correctness) and **Optimizer** (Performance) pipelines.
+This directory contains the backend generation, optimization, and benchmarking logic.
 
 ## Structure
 
-```
+```text
 src/
-├── generator/          # Correctness Pipeline
-│   ├── generator.py        # LLM interaction & kernel generation
-│   ├── verifier.py         # JIT compilation & output validation
-│   ├── main.py             # Entry point for generator pipeline
-│   └── prompts/            # System prompts for LLMs
-└── optimizer/          # Performance Pipeline
-    ├── pipeline.py         # Main optimization loop & MCTS driver
-    ├── core/               # MCTS & Tree logic
-    │   ├── mcts.py
-    │   └── types.py
-    └── components/
-        └── hardware/       # Profiling & Hardware specs
-            └── profiler.py
+├── generator/                  # Kernel generation + correctness validation
+│   ├── main.py                 # Generator entrypoint (operator-level)
+│   ├── generator.py            # LLM interaction and code extraction
+│   └── prompts/                # Prompt templates/system prompts
+├── optimizer/
+│   ├── workflow.py             # Canonical orchestration CLI (profile/generate/optimize/benchmark)
+│   ├── pipeline.py             # Optimization pipeline (MCTS-driven)
+│   ├── benchmarking/           # Baseline + optimized benchmarking pipeline
+│   ├── core/                   # MCTS core types/logic
+│   └── backends/               # CUDA/Triton/Metal backend abstractions
+└── progress.py                 # Job progress + pause/cancel helpers via state.json
 ```
 
-## 1. Generator Pipeline
-**Location:** `src/generator/`
+## Canonical entrypoints
 
-Responsible for producing an initial set of *correct* CUDA kernels for a given operator. It uses an iterative LLM-driven loop to generate code, compile it, and verify its output against PyTorch ground truth.
+### Orchestration (preferred)
 
-**Usage:**
 ```bash
-python3 -m src.generator.main <input_torch_dir>
+python -m src.optimizer.workflow <action> [flags]
 ```
 
-## 2. Optimizer Pipeline
-**Location:** `src/optimizer/`
+Actions:
 
-Responsible for taking a correct kernel and optimizing it for specific hardware. It uses Monte Carlo Tree Search (MCTS) to explore optimization strategies (tiling, unrolling, etc.) and benchmarks them on the target GPU.
+- `profile`
+- `generate`
+- `optimize`
+- `benchmark`
 
-**Usage:**
-```bash
-python3 -m src.optimizer.pipeline <input_torch_dir> <optional_project_name>
-```
+### Generator direct
 
-## Key Components
+`src.generator.main` is called by workflow for generation.
 
--   **`verifier.py`**: Handles dynamic C++ extension compilation (`torch.utils.cpp_extension`) to validate generated CUDA code.
--   **`profiler.py`**: Benchmarks kernel execution time (`mean_time_ms`) to guide the optimization search.
--   **`mcts.py`**: Implements the search algorithm to navigate the space of possible kernel optimizations.
+### Optimizer direct
+
+`src.optimizer.pipeline` is called by workflow for optimization.
+
+## Current execution model
+
+- `profile`: captures operator data and baseline benchmark artifacts.
+- `generate`: runs per-operator generation, verifies success markers, then optionally optimize+benchmark.
+- `optimize`: runs optimization by operator, optionally benchmark.
+- `benchmark`: rebuilds `op_benchmarks.json` from current project outputs.
+
+## Project artifact location
+
+`kernels/projects/<project_name>/...`
+
+Key files:
+
+- `state.json`
+- `io/summary.json`
+- `kernels/generated/individual_op_kernels/<op>/`
+- `trees/<op>/`
+- `benchmarks/op_benchmarks.json`

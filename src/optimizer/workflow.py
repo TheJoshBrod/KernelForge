@@ -477,7 +477,16 @@ def run_optimize(args: argparse.Namespace) -> int:
             opt_cmd += ["--max-iterations", str(args.iterations)]
         rc = _run(opt_cmd, root, env)
         if rc != 0:
+            reason = f"pipeline_exit_{rc}"
+            print(
+                f"[workflow-optimize-result] op={op_name} status=hard_error "
+                f"new_nodes=0 last_reason={json.dumps(reason)}"
+            )
             return rc
+        print(
+            f"[workflow-optimize-result] op={op_name} status=completed "
+            f"pipeline_exit={rc}"
+        )
 
     if args.benchmark:
         bench_cmd = [

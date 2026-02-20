@@ -20,6 +20,55 @@ def _log(msg: str):
     print(f"[Generator] {msg}")
 
 
+def _format_reason(reason: str, max_len: int = 240) -> str:
+    text = str(reason or "").replace("\n", " ").replace("\r", " ").strip()
+    if not text:
+        return ""
+    if len(text) > max_len:
+        return text[:max_len] + "..."
+    return text
+
+
+def _current_op_name(paths: dict[Path]) -> str:
+    proj_dir = paths["proj_dir"] if "proj_dir" in paths else None
+    if proj_dir is None:
+        return "unknown"
+    try:
+        return str(proj_dir.name)
+    except Exception:
+        return "unknown"
+
+
+def _log_attempt_result(paths: dict[Path], status: str, reason: str = "") -> None:
+    op_name = _current_op_name(paths)
+    iteration = paths["iteration"] if "iteration" in paths else "unknown"
+    attempt = paths["attempt"] if "attempt" in paths else "unknown"
+    line = (
+        f"\t\t[optimize-attempt] op={op_name} iteration={iteration} "
+        f"attempt={attempt} status={status}"
+    )
+    short_reason = _format_reason(reason)
+    if short_reason:
+        line += f" reason={short_reason}"
+    print(line)
+
+
+def _dump_failed_llm_response(paths: dict[Path], response: str, tag: str) -> None:
+    proj_dir = paths["proj_dir"] if "proj_dir" in paths else None
+    if not proj_dir:
+        return
+    try:
+        dump_dir = proj_dir / "garbage_dump"
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        iteration = paths["iteration"] if "iteration" in paths else "unknown"
+        attempt = paths["attempt"] if "attempt" in paths else "unknown"
+        dump_path = dump_dir / f"llm_response_iter{iteration}_attempt{attempt}_{tag}.txt"
+        dump_path.write_text(str(response or ""), encoding="utf-8")
+        print(f"\t\t- Saved failed LLM response to: {dump_path}")
+    except Exception as e:
+        print(f"\t\t- Failed to save LLM response dump: {e}")
+
+
 def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str]]:
     """
     Extract feedback and code sections from a formatted string.
@@ -76,7 +125,10 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
     feedback, cu_code = extract_feedback_and_code(response)
 
     if cu_code is None:
-        return feedback, False, "Failed to extract code"
+        reason = "Failed to extract code from LLM response"
+        _dump_failed_llm_response(paths, response, "extract_failed")
+        _log_attempt_result(paths, "failed", reason)
+        return feedback, False, reason
     
     # Serialize validation (compilation + execution) if GPU lock is available
     gpu_lock = paths.get("gpu_lock")
@@ -89,6 +141,7 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
     
     _log(f"Validation result: {'PASSED' if is_valid else 'FAILED'}")
     if not is_valid:
+        _log_attempt_result(paths, "failed", str(error))
         # Save to garbage dump
         proj_dir = paths.get("proj_dir")
         if proj_dir:
@@ -108,10 +161,11 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
             except Exception as e:
                 print(f"\t\t- Failed to save garbage kernel: {e}")
 
+    _log_attempt_result(paths, "success", "")
     return feedback, is_valid, error
 
 
-def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None, ssh_config: dict = None) -> Tuple[str, bool]:
+def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None, ssh_config: dict = None) -> Tuple[str, bool, str]:
     """Generates and validates CUDA kernels 
 
     Args:
@@ -157,14 +211,19 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
     paths["attempt"] = 0
     feedback, is_valid, error = create_and_validate(backend, llm, msg, model, paths, ssh_config)
     if is_valid:
-        return feedback, True
+        return feedback, True, ""
     print("\t\tInitial gen failed...")
+    last_error = str(error) if error else ""
     # On failure attempt fix before giving up
     for i in range(settings.retry_limit):
         print(f"\t\t\tReattempt {i}")
         paths["attempt"] = i + 1
-        _, is_valid, error = create_and_validate(backend, llm, error, model, paths, ssh_config)
+        retry_feedback, is_valid, error = create_and_validate(backend, llm, error, model, paths, ssh_config)
         if is_valid:
-            return feedback, True
+            return retry_feedback, True, ""
+        if error:
+            last_error = str(error)
 
-    return "", False
+    if not last_error:
+        last_error = "No valid kernel produced after retries."
+    return "", False, last_error

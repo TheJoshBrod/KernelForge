@@ -10,13 +10,13 @@ PROVIDER_ALIASES = {
 
 DEFAULT_TEST_MODELS = {
     "openai": "gpt-4o-mini",
-    "anthropic": "claude-3-5-haiku-latest",
+    "anthropic": "claude-haiku-4-5-20251001",
     "google": "gemini-2.0-flash",
 }
 
 DEFAULT_PROJECT_MODELS = {
     "openai": "gpt-4.1-mini",
-    "anthropic": "claude-3-5-sonnet-latest",
+    "anthropic": "claude-sonnet-4-6",
     "google": "gemini-2.0-flash",
 }
 
@@ -24,4 +24,3 @@ DEFAULT_PROJECT_MODELS = {
 def normalize_provider(provider: str | None) -> str:
     value = (provider or "").strip().lower()
     return PROVIDER_ALIASES.get(value, value)
-

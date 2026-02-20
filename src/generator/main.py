@@ -315,7 +315,7 @@ def validate_with_retries(
     if llm_provider == "openai":
         llm_model = os.environ.get("OPENAI_MODEL", "gpt-5")
     elif llm_provider == "anthropic":
-        llm_model = os.environ.get("ANTHROPIC_MODEL", "claude-4-6-sonnet")
+        llm_model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
     elif llm_provider == "google" or llm_provider == "gemini":
         llm_model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
     

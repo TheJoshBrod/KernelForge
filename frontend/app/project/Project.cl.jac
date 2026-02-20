@@ -35,7 +35,6 @@ def:pub Project -> Any {
         benchResults: list = [],
         benchLoading: bool = False,
         selectedOps: list = [],
-        advOptimize: bool = True,
         advBenchmark: bool = True,
         advIterations: int = 3,
         advPatience: int = 2,
@@ -94,8 +93,8 @@ def:pub Project -> Any {
                 if resp and resp.reports and resp.reports.length > 0
                 else {};
                 status = data or {};
-                adv_job = data["generate_adv"]
-                if data and "generate_adv" in data
+                adv_job = data["generate"]
+                if data and "generate" in data
                 else {};
                 if adv_job and adv_job["status"] {
                     await refreshAdvLog();
@@ -115,7 +114,7 @@ def:pub Project -> Any {
         }
         advLogLoading = True;
         try {
-            rel_path = f"projects/{name}/logs/generate_adv.log";
+            rel_path = f"kernels/projects/{name}/logs/generate.log";
             resp = await __jacSpawn(
                 "ReadRepoFile", "", {"projectName": name, "relPath": rel_path}
             );
@@ -134,7 +133,7 @@ def:pub Project -> Any {
                 advLog = "";
             }
         } except Exception as e {
-            console.error("Failed to fetch advanced log:", e);
+            console.error("Failed to fetch generation log:", e);
             advLog = "";
         } finally {
             advLogLoading = False;
@@ -293,14 +292,8 @@ def:pub Project -> Any {
                 {
                     "projectName": name,
                     "ops": ops_to_use,
-                    "optimize": advOptimize,
                     "benchmark": advBenchmark,
                     "iterations": advIterations,
-                    "patience": advPatience,
-                    "minImproveMs": advMinImprove,
-                    "minSpeedupPct": advSpeedupPct,
-                    "genAttempts": advGenAttempts,
-                    "image": advImage,
                     "targetDevice": targetDevice
                 }
             );
@@ -463,8 +456,6 @@ def:pub Project -> Any {
         {"key": "profile", "label": "Profile"},
         {"key": "prepare", "label": "Prepare"},
         {"key": "generate", "label": "Generate"},
-        {"key": "generate_adv", "label": "Adv Generate"},
-        {"key": "optimize_adv", "label": "Adv Optimize"},
         {"key": "optimize", "label": "Optimize"},
         {"key": "benchmark", "label": "Benchmark"}
     ];
@@ -488,8 +479,6 @@ def:pub Project -> Any {
         show_progress = (
             (
                 item["key"] == "generate"
-                or item["key"] == "generate_adv"
-                or item["key"] == "optimize_adv"
                 or item["key"] == "optimize"
                 or item["key"] == "benchmark"
             )
@@ -501,8 +490,6 @@ def:pub Project -> Any {
         controls = <span></span>;
         if (
             item["key"] == "generate"
-            or item["key"] == "generate_adv"
-            or item["key"] == "optimize_adv"
             or item["key"] == "optimize"
         ) {
             if job and job["status"] == "running" {
@@ -606,11 +593,11 @@ def:pub Project -> Any {
     }
 
     def _usage_label(key: str) -> str {
-        if key == "optimize_adv" {
-            return "Adv Optimize";
+        if key == "optimize" {
+            return "Optimize";
         }
-        if key == "generate_adv" {
-            return "Adv Generate";
+        if key == "generate" {
+            return "Generate";
         }
         return key;
     }
@@ -618,7 +605,7 @@ def:pub Project -> Any {
     usageData = {};
     usageJob = "";
     usageTime = 0.0;
-    for key in ["optimize_adv", "generate_adv"] {
+    for key in ["optimize", "generate"] {
         job = status[key] if status and key in status else {};
         usage = job["usage"] if job and "usage" in job else {};
         if _usage_available(usage) {
@@ -977,18 +964,8 @@ def:pub Project -> Any {
                                     Benchmark after generate
                                 </span>
                             </label>
-                            <label className="checkbox-row">
-                                <input
-                                    type="checkbox"
-                                    checked={advOptimize}
-                                    onChange={lambda e: any  -> None { advOptimize = not advOptimize;}}
-                                />
-                                <span>
-                                    Optimize with Codex loop
-                                </span>
-                            </label>
                             <label className="input-label">
-                                Optimize iterations
+                                Benchmark iterations
                             </label>
                             <input
                                 type="number"
@@ -1114,7 +1091,7 @@ def:pub Project -> Any {
                                 variant="primary"
                             />
                             <GlowButton
-                                label="Advanced Optimize"
+                                label="Optimize"
                                 onClick={lambda -> None { handleOptimizeAdvanced();}}
                                 variant="secondary"
                             />
@@ -1425,7 +1402,7 @@ def:pub Project -> Any {
                         <div className="panel">
                             <div className="panel-header">
                                 <span className="panel-title">
-                                    Advanced generate log
+                                    Generation log
                                 </span>
                                 <button
                                     onClick={lambda -> None { refreshAdvLog();}}

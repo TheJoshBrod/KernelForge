@@ -96,56 +96,56 @@ def publish_generated_root(
     target_kernel = kernels_dir / f"kernel_0{kernel_src.suffix}"
     shutil.copy2(kernel_src, target_kernel)
 
-    db_path = tree_op_dir / "nodes.db"
-    _ensure_tree_schema(db_path)
-
     normalized_ms = _normalize_kernel_ms(kernel_ms)
     code_rel = f"{op_name}/kernels/{target_kernel.name}"
     now_ts = time.time()
 
-    with sqlite3.connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT visits, value, best_subtree_value, code FROM nodes WHERE id = 0"
-        ).fetchone()
+    if normalized_ms is not None:
+        db_path = tree_op_dir / "nodes.db"
+        _ensure_tree_schema(db_path)
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT visits, value, best_subtree_value, code FROM nodes WHERE id = 0"
+            ).fetchone()
 
-        if row is None:
-            conn.execute(
-                """
-                INSERT INTO nodes
-                (id, visits, value, best_subtree_value, code, improvement_description, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    0,
-                    1,
-                    normalized_ms,
-                    normalized_ms,
-                    code_rel,
-                    description,
-                    now_ts,
-                ),
-            )
-        else:
-            existing_visits, existing_value, existing_best, existing_code = row
-            visits = max(int(existing_visits or 0), 1)
-            value = normalized_ms if normalized_ms is not None else existing_value
-            if value is None:
-                best = existing_best
-            elif existing_best is None:
-                best = value
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO nodes
+                    (id, visits, value, best_subtree_value, code, improvement_description, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        0,
+                        1,
+                        normalized_ms,
+                        normalized_ms,
+                        code_rel,
+                        description,
+                        now_ts,
+                    ),
+                )
             else:
-                best = min(float(existing_best), float(value))
-            code = code_rel if not existing_code else str(existing_code)
-            conn.execute(
-                """
-                UPDATE nodes
-                SET visits = ?, value = ?, best_subtree_value = ?, code = ?,
-                    improvement_description = ?, timestamp = ?
-                WHERE id = 0
-                """,
-                (visits, value, best, code, description, now_ts),
-            )
-        conn.commit()
+                existing_visits, existing_value, existing_best, existing_code = row
+                visits = max(int(existing_visits or 0), 1)
+                value = normalized_ms if normalized_ms is not None else existing_value
+                if value is None:
+                    best = existing_best
+                elif existing_best is None:
+                    best = value
+                else:
+                    best = min(float(existing_best), float(value))
+                code = code_rel if not existing_code else str(existing_code)
+                conn.execute(
+                    """
+                    UPDATE nodes
+                    SET visits = ?, value = ?, best_subtree_value = ?, code = ?,
+                        improvement_description = ?, timestamp = ?
+                    WHERE id = 0
+                    """,
+                    (visits, value, best, code, description, now_ts),
+                )
+            conn.commit()
 
     meta_path = tree_op_dir / "generated_root.json"
     meta_payload = {
@@ -165,6 +165,7 @@ def publish_generated_root(
         "tree_op_dir": str(tree_op_dir),
         "kernel_relpath": str(target_kernel.relative_to(project_dir)),
         "kernel_ms": normalized_ms,
+        "benchmarked": normalized_ms is not None,
     }
 
 

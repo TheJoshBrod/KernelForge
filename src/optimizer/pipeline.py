@@ -46,6 +46,15 @@ def _generated_kernels_root(optional_proj_name: str | None = None) -> Path:
     return _repo_root() / "kernels" / "generated" / "individual_op_kernels"
 
 
+def _compact_reason(reason: str, limit: int = 320) -> str:
+    text = str(reason or "").replace("\n", " ").replace("\r", " ").strip()
+    if not text:
+        return ""
+    if len(text) > limit:
+        return text[:limit] + "..."
+    return text
+
+
 def get_project_dir(gpu_name: str, optional_name: str = None, backend_name: str = "cuda"):
     letters = string.ascii_letters + string.digits
     proj_name = ''.join(random.choices(letters, k=10))
@@ -107,7 +116,13 @@ def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, impro
     return log_entry, node_obj
 
 
-def optimize(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNode, ssh_config: dict = None):
+def optimize(
+    backend: Backend,
+    gpu_specs: GPUSpecs,
+    paths: dict[str, Path],
+    parent_node: KernelNode,
+    ssh_config: dict = None
+) -> tuple[KernelNode | None, str]:
     """Optimizes target kernel
     """
 
@@ -133,11 +148,11 @@ def optimize(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path], pare
             kernel_code = kernel_code_path.read_text()
         else:
             print(f"\t\tError: Kernel code file not found: {kernel_code_path}")
-            return None
+            return None, f"Kernel code file not found: {kernel_code_path}"
 
         # Kernel Generation
         print(f"\tBeginning generation (history: {len(improvement_log)} entries)...")
-        improvement_description, is_valid = generator.generate(
+        improvement_description, is_valid, failure_reason = generator.generate(
             backend, kernel_code, gpu_specs, improvement_log, paths, ancestor_codes=ancestor_codes, ssh_config=ssh_config)
         print("\tFinished generation.")
         print(f"\t\t- Status: {is_valid}")
@@ -147,9 +162,11 @@ def optimize(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path], pare
             log_entry, new_node = save_iteration(
                 backend, paths, parent_node, improvement_description, str(paths["proj_dir"] / "kernels" / f"kernel_{parent_node.id}{backend.kernel_extension}"), ssh_config=ssh_config)
             
-            return new_node
+            return new_node, ""
     
-    return None
+    if not failure_reason:
+        failure_reason = "No valid candidate generated."
+    return None, str(failure_reason)
 
 
 def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path]) -> KernelNode:
@@ -794,7 +811,12 @@ Examples:
         # Check if IO exists
         io_dir = io_parent_dir / op_name
         if not io_dir.exists():
-            print(f"  Skipping {op_name}: IO directory not found at {io_dir}")
+            reason = f"IO directory not found at {io_dir}"
+            print(f"  Skipping {op_name}: {reason}")
+            print(
+                f"[optimize-result] op={op_name} status=hard_error "
+                f"new_nodes=0 last_reason={json.dumps(_compact_reason(reason))}"
+            )
             continue
 
         # Paths for optimization
@@ -815,19 +837,44 @@ Examples:
                 n_workers=args.workers,
                 max_iterations=args.max_iterations
             )
+            print(
+                f"[optimize-result] op={op_name} status=unknown "
+                "new_nodes=0 last_reason="
+                f"{json.dumps('parallel_mode_result_not_tracked')}"
+            )
         else:
             # === SEQUENTIAL MODE (original) ===
+            op_new_nodes = 0
+            op_last_reason = ""
             for i in range(args.max_iterations):
                 # Select parent node then optimize off of it
                 parent_node = mcts.choose_optimization(paths)
-                new_node = optimize(backend, gpu_specs, paths, parent_node, ssh_config)
+                new_node, failure_reason = optimize(
+                    backend, gpu_specs, paths, parent_node, ssh_config
+                )
                 
                 # Update tree with the new node (if optimization succeeded)
                 if new_node:
                     mcts.update_tree(paths, new_node)
+                    op_new_nodes += 1
+                    op_last_reason = ""
+                elif failure_reason:
+                    op_last_reason = str(failure_reason)
                 
                 if (i + 1) % 10 == 0:
                     print(f"  Progress: {i+1}/{args.max_iterations} iterations")
+            if op_new_nodes > 0:
+                print(
+                    f"[optimize-result] op={op_name} status=improved "
+                    f"new_nodes={op_new_nodes} last_reason={json.dumps('')}"
+                )
+            else:
+                if not op_last_reason:
+                    op_last_reason = "No valid candidates were produced."
+                print(
+                    f"[optimize-result] op={op_name} status=no_improvement "
+                    f"new_nodes=0 last_reason={json.dumps(_compact_reason(op_last_reason))}"
+                )
     
 if __name__ == "__main__":
     main()

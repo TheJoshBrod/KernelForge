@@ -2,12 +2,7 @@
 
 ## Canonical data layout
 
-- Source logic: `src/optimizer/benchmarking/`
-- CLI entrypoints: `src/cli/`
-- Frontend orchestration: `frontend/walkers/project.jac`
-- Runtime artifacts: `kernels/projects/<project>/...`
-
-Generated runtime outputs:
+Runtime artifacts are written under:
 
 - `kernels/projects/<project>/io/individual_ops/`
 - `kernels/projects/<project>/io/summary.json`
@@ -17,17 +12,44 @@ Generated runtime outputs:
 
 ## Execution model
 
-The profile flow is one tracked job (`profile`) with staged progress:
+### Profile stage
 
-1. `Preparing assets`
-2. `Profiling operators`
-3. `Benchmarking operators`
+The `profile` job prepares project inputs and baseline benchmark data.
 
-`src.cli.run_job` tracks lifecycle (`running`, `completed`, `error`) and pipeline stage messages.
+### Generate stage (standard path)
+
+`generate` runs per operator (sequentially):
+
+1. Generate kernel for operator
+2. Validate compile/correctness via backend success marker
+3. Optional optimize for the same operator
+4. Optional benchmark refresh
+
+This enables incremental chart updates while the run is in progress.
+
+### Optimize stage
+
+Optimization is MCTS-driven per operator and writes tree artifacts under `trees/<op>/`.
+
+### Benchmark stage
+
+Benchmark reads baseline data and optimized outputs to build `op_benchmarks.json`.
+
+## Orchestration entrypoint
+
+Canonical CLI orchestration is:
+
+```bash
+python -m src.optimizer.workflow <profile|generate|optimize|benchmark> ...
+```
+
+Frontend orchestration is implemented in:
+
+- `frontend/walkers/project.jac`
 
 ## Robustness rules
 
-- State and benchmark JSON writes use file locks and atomic replace.
-- Torch baseline is cached by op signature + runtime fingerprint.
-- Missing benchmark outputs do not silently appear as success; chart APIs expose status (`pending`, `error`, `empty`, `ready`).
-- Legacy stuck state (`profile=queued` + `prepare=completed`) is reconciled on read.
+- State transitions are persisted in `state.json`.
+- Stale process recovery avoids silent success.
+- Chart status is explicit (`pending|error|empty|partial|ready`).
+- Baseline benchmark cache is fingerprinted by runtime/device context.

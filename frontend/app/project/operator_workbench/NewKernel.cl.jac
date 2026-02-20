@@ -1,6 +1,7 @@
 """New Kernel Component"""
 
 import from react { useState, useRef, useEffect }
+import from "react-router-dom" { useParams }
 import from ....components.ui.Icons { CpuIcon }
 import from .menus.UploadModal { UploadModal }
 import from .menus.UploadTrigger { UploadTrigger }
@@ -13,6 +14,14 @@ def:pub NewKernel -> Any {
     has projectName: str,
         opName: str,
         hasTree: bool = False;
+
+    params = useParams();
+    resolvedProjectName = projectName or params.projectName;
+    resolvedOpName = opName or params.opName;
+    resolvedHasTree = hasTree;
+    if not resolvedHasTree and resolvedProjectName and resolvedOpName {
+        resolvedHasTree = True;
+    }
 
     is_open_state = useState(False);
     isOpen = is_open_state[0];
@@ -34,7 +43,7 @@ def:pub NewKernel -> Any {
     menu_ref = useRef(None);
 
     missingProject = False;
-    if not projectName {
+    if not resolvedProjectName {
         missingProject = True;
     }
 
@@ -111,7 +120,7 @@ def:pub NewKernel -> Any {
             >
                 <UploadTrigger onUpload={handle_upload_click}/>
                 <GenerateTrigger onGenerate={handle_generate_click}/>
-                <OptimizeTrigger onOptimize={handle_optimize_click} hasTree={hasTree}/>
+                <OptimizeTrigger onOptimize={handle_optimize_click} hasTree={resolvedHasTree}/>
             </div>
             if isOpen
             else <span/>}
@@ -119,25 +128,25 @@ def:pub NewKernel -> Any {
                 isOpen={uploadModalOpen}
                 onClose={lambda -> None { setUploadModalOpen(False);}}
                 onSuccess={lambda -> None { setIsOpen(False);}}
-                projectName={projectName}
-                opName={opName}
+                projectName={resolvedProjectName}
+                opName={resolvedOpName}
             />
             <GenerateModal
                 isOpen={generateModalOpen}
                 onClose={lambda -> None { setGenerateModalOpen(False);}}
                 onComplete={lambda -> None { setIsOpen(False);}}
                 onStarted={on_complete}
-                projectName={projectName}
-                opName={opName}
+                projectName={resolvedProjectName}
+                opName={resolvedOpName}
             />
             <OptimizeModal
                 isOpen={optimizeModalOpen}
                 onClose={lambda -> None { setOptimizeModalOpen(False);}}
                 onComplete={lambda -> None { setIsOpen(False);}}
                 onStarted={on_complete}
-                projectName={projectName}
-                opName={opName}
-                hasTree={hasTree}
+                projectName={resolvedProjectName}
+                opName={resolvedOpName}
+                hasTree={resolvedHasTree}
             />
         </div>;
 }

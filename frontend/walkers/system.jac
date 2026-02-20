@@ -50,7 +50,7 @@ def _default_model_for_provider(provider: str) -> str {
     if provider == "openai" {
         return "gpt-4o-mini";
     } elif provider == "anthropic" {
-        return "claude-3-5-haiku-latest";
+        return "claude-haiku-4-5-20251001";
     } elif provider == "google" {
         return "gemini-2.0-flash";
     }

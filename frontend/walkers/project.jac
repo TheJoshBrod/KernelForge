@@ -441,6 +441,10 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
                 if "message" in job and job["message"]
                 else ""
             );
+            optimize_result_status = "";
+            if job_key == "optimize" and "log" in job and job["log"] {
+                optimize_result_status = _read_optimize_result_status(str(job["log"]));
+            }
             nonfatal_generate_summary = (
                 "unable to forge" in message_text
                 or ("forged " in message_text and "operators" in message_text)
@@ -493,13 +497,25 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
                 }
                 refresh_metrics = True;
             } elif job_key == "optimize"
-            and _has_optimize_outputs_after(project_name, started_at) {
+            and (
+                _has_optimize_outputs_after(project_name, started_at)
+                or optimize_result_status == "improved"
+                or optimize_result_status == "no_improvement"
+            ) {
                 job["status"] = "completed";
                 job["control"] = "idle";
                 job["active"] = False;
                 job["phase"] = "done";
                 job["progress_percent"] = 1.0;
-                if not ("message" in job) or not job["message"] {
+                job["result"] = "completed";
+                if optimize_result_status == "no_improvement" {
+                    job["result"] = "completed_no_improvement";
+                    job["message"] = "Optimization finished; no valid improvements this run.";
+                } elif (
+                    not ("message" in job)
+                    or not job["message"]
+                    or str(job["message"]).strip().lower().startswith("queued for optimization")
+                ) {
                     job["message"] = "Kernel optimization completed.";
                 }
                 refresh_metrics = True;
@@ -519,6 +535,7 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
                 job["control"] = "idle";
                 job["active"] = False;
                 job["phase"] = "error";
+                job["result"] = "error";
                 error_summary = "";
                 if "log" in job and job["log"] {
                     error_summary = _extract_job_error_summary(str(job["log"]));
@@ -850,6 +867,7 @@ def _extract_job_error_summary(log_path: str) -> str {
             or "[compilation failed]" in line_lower
             or "[runtime error" in line_lower
             or "traceback" in line_lower
+            or "failed to extract code" in line_lower
             or "generation failed" in line_lower
             or "optimization failed" in line_lower
             or "benchmark failed" in line_lower
@@ -863,10 +881,63 @@ def _extract_job_error_summary(log_path: str) -> str {
     idx = len(lines) - 1;
     while idx >= start_idx {
         line = str(lines[idx]).strip();
+        line_lower = line.lower();
         if line and not line.startswith("[job]") {
+            if line_lower.startswith("[workflow] running:") {
+                idx = idx - 1;
+                continue;
+            }
+            if line_lower.startswith("[optimize-result]") {
+                idx = idx - 1;
+                continue;
+            }
+            if line_lower.startswith("[workflow-optimize-result]") {
+                idx = idx - 1;
+                continue;
+            }
             return line;
         }
         idx = idx - 1;
+    }
+    return "";
+}
+
+
+def _read_optimize_result_status(log_path: str) -> str {
+    log_text = _read_log_excerpt(log_path);
+    if not log_text {
+        return "";
+    }
+    lines = log_text.splitlines();
+    idx = len(lines) - 1;
+    while idx >= 0 {
+        line_lower = str(lines[idx]).strip().lower();
+        if (
+            ("[optimize-result]" in line_lower or "[workflow-optimize-result]" in line_lower)
+            and "status=" in line_lower
+        ) {
+            if "status=no_improvement" in line_lower {
+                return "no_improvement";
+            }
+            if "status=improved" in line_lower {
+                return "improved";
+            }
+            if "status=hard_error" in line_lower {
+                return "hard_error";
+            }
+        }
+        idx = idx - 1;
+    }
+    log_lower = log_text.lower();
+    if (
+        "status: false" in log_lower
+        and not ("traceback" in log_lower)
+        and not ("[system error]" in log_lower)
+        and not ("[worker crash]" in log_lower)
+        and not ("[compilation failed]" in log_lower)
+        and not ("[runtime error" in log_lower)
+    ) {
+        return "no_improvement";
     }
     return "";
 }

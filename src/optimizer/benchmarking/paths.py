@@ -81,6 +81,16 @@ def project_dir_for_name(project_name: str, create: bool = False) -> Path:
 
 
 def find_latest_optimized_dir(project_name: str) -> Path | None:
+    project_trees = project_dir_for_name(project_name) / "trees"
+    if project_trees.exists():
+        has_tree_data = False
+        for child in project_trees.iterdir():
+            if child.is_dir():
+                has_tree_data = True
+                break
+        if has_tree_data:
+            return project_trees
+
     base = repo_root() / "kernels" / "optimized"
     if not base.exists():
         return None
