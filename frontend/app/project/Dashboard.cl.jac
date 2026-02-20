@@ -6,21 +6,17 @@ import from ...components.ui.Icons {
     CpuIcon,
     ShieldCheckIcon,
     ArrowRightIcon,
-    CheckIcon,
-    AlertCircleIcon
+    CheckIcon
 }
 import from ...components.ui.GlowButton { GlowButton }
 import from ...components.ui.Modal { Modal }
 import from recharts {
-    PieChart,
-    Pie,
     BarChart,
     Bar,
     XAxis,
     YAxis,
     CartesianGrid,
     Tooltip,
-    Legend,
     ResponsiveContainer
 }
 import from ...context.ConfigContext { useConfig }
@@ -48,19 +44,6 @@ def:pub Dashboard -> Any {
         benchLogCopied: bool = False,
         benchLog: str = "";
 
-    COLORS = [
-        '#86e6a9',
-        '#5bbbd3',
-        '#b7f0d0',
-        '#d8f3ff',
-        '#c4b5fd',
-        '#a78bfa',
-        '#818cf8',
-        '#60a5fa',
-        '#34d399',
-        '#f472b6'
-    ];
-
     # Speed Comparison Data State
     speedData_state = useState([]);
     speedData = speedData_state[0];
@@ -69,6 +52,10 @@ def:pub Dashboard -> Any {
     op_time_mode_state = useState("best");
     opTimeMode = op_time_mode_state[0];
     setOpTimeMode = op_time_mode_state[1];
+
+    comparison_view_state = useState("absolute");
+    comparisonView = comparison_view_state[0];
+    setComparisonView = comparison_view_state[1];
 
     forge_mode_state = useState("auto");
     forgeMode = forge_mode_state[0];
@@ -89,22 +76,6 @@ def:pub Dashboard -> Any {
     forge_notice_state = useState("");
     forgeNotice = forge_notice_state[0];
     setForgeNotice = forge_notice_state[1];
-
-    hasForged = False;
-    for row in speedData {
-        forged_raw = row["forged"] if row else None;
-        if forged_raw is None {
-            forged_raw = row["optimized"] if row else None;
-        }
-        if forged_raw is None {
-            forged_raw = row["kernel_ms"] if row else None;
-        }
-        forged_val = to_num(forged_raw);
-        if forged_val is not None {
-            hasForged = True;
-            break;
-        }
-    }
 
     opCountByName = {};
     for op in ops {
@@ -127,6 +98,12 @@ def:pub Dashboard -> Any {
             continue;
         }
         row_name = str(row["name"]) if "name" in row and row["name"] else "";
+        if not row_name and "op" in row and row["op"] {
+            row_name = str(row["op"]);
+        }
+        if not row_name and "operator" in row and row["operator"] {
+            row_name = str(row["operator"]);
+        }
         if not row_name {
             continue;
         }
@@ -134,6 +111,9 @@ def:pub Dashboard -> Any {
         pytorch_raw = row["pytorch"] if "pytorch" in row else None;
         if pytorch_raw is None and "baseline" in row {
             pytorch_raw = row["baseline"];
+        }
+        if pytorch_raw is None and "pytorch_ms" in row {
+            pytorch_raw = row["pytorch_ms"];
         }
         pytorch_ms = to_num(pytorch_raw);
 
@@ -143,6 +123,9 @@ def:pub Dashboard -> Any {
         }
         if forged_raw is None and "kernel_ms" in row {
             forged_raw = row["kernel_ms"];
+        }
+        if forged_raw is None and "forged_ms" in row {
+            forged_raw = row["forged_ms"];
         }
         forged_ms = to_num(forged_raw);
 
@@ -253,23 +236,217 @@ def:pub Dashboard -> Any {
         remainingTimeRows = next_remaining;
     }
 
-    pieData = [];
-    hasPie = False;
-    pieTotal = 0;
-    op_idx = 0;
-    for op in sortedTimeRows {
-        slice_val = op["total_time_ms"] if "total_time_ms" in op else 0;
-        pieTotal += slice_val;
-        pieData.push(
+    timeListMax = 0;
+    if list_len(sortedTimeRows) > 0 {
+        max_row = sortedTimeRows[0];
+        timeListMax = to_num(
+            max_row["total_time_ms"] if max_row and "total_time_ms" in max_row else 0
+        );
+        if timeListMax is None or timeListMax < 0 {
+            timeListMax = 0;
+        }
+    }
+
+    timeListRows = [];
+    time_idx = 0;
+    while time_idx < list_len(sortedTimeRows) and time_idx < 12 {
+        row = sortedTimeRows[time_idx];
+        row_total = to_num(row["total_time_ms"] if row and "total_time_ms" in row else 0);
+        if row_total is None {
+            row_total = 0;
+        }
+        bar_width = 0;
+        if timeListMax > 0 {
+            bar_width = (row_total / timeListMax) * 100;
+        }
+        if row_total > 0 and bar_width < 2 {
+            bar_width = 2;
+        }
+        if bar_width > 100 {
+            bar_width = 100;
+        }
+        timeListRows.push(
             {
-                "name": format_op_short(op["name"]),
-                "value": slice_val,
-                "fill": COLORS[op_idx % COLORS.length]
+                "rank": time_idx + 1,
+                "name": format_op_short(str(row["name"]) if row and "name" in row else ""),
+                "value": row_total,
+                "count": row["count"] if row and "count" in row else 1,
+                "bar_width": f"{bar_width}%"
             }
         );
-        op_idx += 1;
+        time_idx += 1;
     }
-    hasPie = pieData.length > 0 and pieTotal > 0;
+
+    speedRows = [];
+    for row in to_list(speedData) {
+        if not row {
+            continue;
+        }
+        row_name = str(row["name"]) if "name" in row and row["name"] else "";
+        if not row_name and "op" in row and row["op"] {
+            row_name = str(row["op"]);
+        }
+        if not row_name and "operator" in row and row["operator"] {
+            row_name = str(row["operator"]);
+        }
+        if not row_name {
+            continue;
+        }
+        pytorch_raw = row["pytorch"] if "pytorch" in row else None;
+        if pytorch_raw is None and "baseline" in row {
+            pytorch_raw = row["baseline"];
+        }
+        if pytorch_raw is None and "pytorch_ms" in row {
+            pytorch_raw = row["pytorch_ms"];
+        }
+        pytorch_ms = to_num(pytorch_raw);
+
+        forged_raw = row["forged"] if "forged" in row else None;
+        if forged_raw is None and "optimized" in row {
+            forged_raw = row["optimized"];
+        }
+        if forged_raw is None and "kernel_ms" in row {
+            forged_raw = row["kernel_ms"];
+        }
+        if forged_raw is None and "forged_ms" in row {
+            forged_raw = row["forged_ms"];
+        }
+        forged_ms = to_num(forged_raw);
+
+        sort_ms = pytorch_ms if pytorch_ms is not None else forged_ms;
+        if sort_ms is None or sort_ms <= 0 {
+            continue;
+        }
+        ratio_val = None;
+        if pytorch_ms is not None and pytorch_ms > 0 and forged_ms is not None {
+            ratio_val = forged_ms / pytorch_ms;
+        }
+        speedRows.push(
+            {
+                "name": row_name,
+                "short_name": format_op_short(row_name),
+                "sort_ms": sort_ms,
+                "pytorch": pytorch_ms if pytorch_ms is not None else 0,
+                "forged": forged_ms if forged_ms is not None else 0,
+                "ratio": ratio_val
+            }
+        );
+    }
+
+    sortedSpeedRows = [];
+    remainingSpeedRows = [];
+    for row in speedRows {
+        remainingSpeedRows.push(row);
+    }
+    while list_len(remainingSpeedRows) > 0 {
+        best_idx = 0;
+        best_row = remainingSpeedRows[0];
+        best_val = to_num(best_row["sort_ms"] if best_row and "sort_ms" in best_row else 0);
+        if best_val is None {
+            best_val = 0;
+        }
+
+        scan_idx = 1;
+        while scan_idx < list_len(remainingSpeedRows) {
+            candidate = remainingSpeedRows[scan_idx];
+            candidate_val = to_num(
+                candidate["sort_ms"] if candidate and "sort_ms" in candidate else 0
+            );
+            if candidate_val is None {
+                candidate_val = 0;
+            }
+            if candidate_val > best_val {
+                best_val = candidate_val;
+                best_idx = scan_idx;
+            }
+            scan_idx += 1;
+        }
+
+        sortedSpeedRows.push(remainingSpeedRows[best_idx]);
+        next_remaining = [];
+        next_idx = 0;
+        while next_idx < list_len(remainingSpeedRows) {
+            if next_idx != best_idx {
+                next_remaining.push(remainingSpeedRows[next_idx]);
+            }
+            next_idx += 1;
+        }
+        remainingSpeedRows = next_remaining;
+    }
+
+    topSpeedRows = [];
+    top_idx = 0;
+    while top_idx < list_len(sortedSpeedRows) and top_idx < 8 {
+        topSpeedRows.push(sortedSpeedRows[top_idx]);
+        top_idx += 1;
+    }
+
+    if list_len(topSpeedRows) == 0 {
+        fallback_rows = normalize_speed_rows(to_list(speedData));
+        fallback_idx = 0;
+        while fallback_idx < list_len(fallback_rows) and fallback_idx < 8 {
+            fallback = fallback_rows[fallback_idx];
+            fallback_name = (
+                str(fallback["name"])
+                if fallback and "name" in fallback and fallback["name"]
+                else f"op_{fallback_idx + 1}"
+            );
+            fallback_pytorch = to_num(
+                fallback["pytorch"] if fallback and "pytorch" in fallback else None
+            );
+            fallback_forged = to_num(
+                fallback["forged"] if fallback and "forged" in fallback else None
+            );
+            baseline_val = (
+                fallback_pytorch
+                if fallback_pytorch is not None
+                else fallback_forged
+            );
+            if baseline_val is None or baseline_val <= 0 {
+                fallback_idx += 1;
+                continue;
+            }
+            forged_val = (
+                fallback_forged
+                if fallback_forged is not None and fallback_forged > 0
+                else baseline_val
+            );
+            topSpeedRows.push(
+                {
+                    "name": fallback_name,
+                    "short_name": format_op_short(fallback_name),
+                    "sort_ms": baseline_val,
+                    "pytorch": baseline_val,
+                    "forged": forged_val,
+                    "ratio": forged_val / baseline_val if baseline_val > 0 else None
+                }
+            );
+            fallback_idx += 1;
+        }
+    }
+
+    ratioChartRows = [];
+    absoluteChartRows = [];
+    for row in topSpeedRows {
+        row_label = row["short_name"] if row and "short_name" in row else "";
+        ratio_val = to_num(row["ratio"] if row and "ratio" in row else None);
+        if ratio_val is not None {
+            ratioChartRows.push({"name": row_label, "ratio": ratio_val});
+        }
+        absoluteChartRows.push(
+            {
+                "name": row_label,
+                "forged": row["forged"] if row and "forged" in row else 0,
+                "pytorch": row["pytorch"] if row and "pytorch" in row else 0
+            }
+        );
+    }
+    effectiveComparisonView = comparisonView;
+    if comparisonView == "ratio" and list_len(ratioChartRows) == 0 and list_len(absoluteChartRows) > 0 {
+        effectiveComparisonView = "absolute";
+    }
+    speedChartData = ratioChartRows if effectiveComparisonView == "ratio" else absoluteChartRows;
+    hasSpeedChart = list_len(speedChartData) > 0;
 
     def format_op(raw: str) -> str {
         raw_text = raw or "";
@@ -294,7 +471,34 @@ def:pub Dashboard -> Any {
     }
 
     def format_tick_ms(value: any) -> str {
-        return f"{value}ms";
+        num = to_num(value);
+        if num is None {
+            return "0 ms";
+        }
+        if num <= 0 {
+            return "0 ms";
+        }
+        if num < 0.000001 {
+            return f"{num.toExponential(2)} ms";
+        }
+        if num < 0.001 {
+            return f"{(num * 1000).toFixed(3)} µs";
+        }
+        if num < 0.01 {
+            return f"{num.toFixed(5)} ms";
+        }
+        if num < 1 {
+            return f"{num.toFixed(3)} ms";
+        }
+        return f"{num.toFixed(2)} ms";
+    }
+
+    def format_tick_ratio(value: any) -> str {
+        num = to_num(value);
+        if num is None {
+            return "--";
+        }
+        return f"{num.toFixed(2)}x";
     }
 
     def to_num(value: Any) -> Any {
@@ -410,17 +614,28 @@ def:pub Dashboard -> Any {
             if not row {
                 continue;
             }
-            row_name = str(row["name"]) if row else "";
+            row_name = str(row["name"]) if row and "name" in row and row["name"] else "";
+            if not row_name {
+                row_name = str(row["op"]) if row and "op" in row and row["op"] else "";
+            }
+            if not row_name {
+                row_name = (
+                    str(row["operator"])
+                    if row and "operator" in row and row["operator"]
+                    else ""
+                );
+            }
+            if not row_name {
+                row_name = f"op_{out.length + 1}";
+            }
             pytorch_raw = row["pytorch"] if row else None;
             if pytorch_raw is None {
                 pytorch_raw = row["baseline"] if row else None;
             }
-            pytorch_val = to_num(pytorch_raw);
-            if pytorch_val is None {
-                continue;
+            if pytorch_raw is None {
+                pytorch_raw = row["pytorch_ms"] if row else None;
             }
-
-            next_row = {"name": row_name, "pytorch": pytorch_val};
+            pytorch_val = to_num(pytorch_raw);
 
             forged_raw = row["forged"] if row else None;
             if forged_raw is None {
@@ -429,10 +644,21 @@ def:pub Dashboard -> Any {
             if forged_raw is None {
                 forged_raw = row["kernel_ms"] if row else None;
             }
-            forged_val = to_num(forged_raw);
-            if forged_val is not None {
-                next_row["forged"] = forged_val;
+            if forged_raw is None {
+                forged_raw = row["forged_ms"] if row else None;
             }
+            forged_val = to_num(forged_raw);
+            if pytorch_val is None and forged_val is None {
+                continue;
+            }
+
+            baseline_val = pytorch_val if pytorch_val is not None else forged_val;
+            if baseline_val is None or baseline_val <= 0 {
+                continue;
+            }
+            forged_final = forged_val if forged_val is not None and forged_val > 0 else baseline_val;
+            next_row = {"name": row_name, "pytorch": baseline_val};
+            next_row["forged"] = forged_final;
             out.push(next_row);
         }
         return out;
@@ -649,8 +875,8 @@ def:pub Dashboard -> Any {
             if name {
                 # Spawn all requests concurrently
                 ops_req = __jacSpawn("GetProjectOps", "", {"projectName": name});
-                charts_req = __jacSpawn(
-                    "GetDashboardCharts", "", {"projectName": name}
+                metrics_req = __jacSpawn(
+                    "GetProjectMetrics", "", {"projectName": name}
                 );
                 status_req = __jacSpawn("GetProjectStatus", "", {"projectName": name});
                 hw_req = __jacSpawn("DetectHardware", "", {});
@@ -659,7 +885,7 @@ def:pub Dashboard -> Any {
                 );
                 # Await all responses
                 ops_resp = await ops_req;
-                charts_resp = await charts_req;
+                metrics_resp = await metrics_req;
                 status_resp = await status_req;
                 hw_resp = await hw_req;
                 mcts_resp = await mcts_req;
@@ -670,16 +896,24 @@ def:pub Dashboard -> Any {
                 ops = to_list(ops_data["ops"])
                 if ops_data and "ops" in ops_data
                 else [];
-                # Process Charts
-                charts_data = charts_resp.reports[0]
-                if charts_resp and charts_resp.reports
+                # Process Metrics (same source used by Operator Workbench)
+                metrics_data = metrics_resp.reports[0]
+                if metrics_resp and metrics_resp.reports
                 else {};
-                if charts_data {
-                    if "operator_usage" in charts_data {
-                        ops = to_list(charts_data["operator_usage"]);
+                if metrics_data {
+                    if "operator_usage" in metrics_data {
+                        ops = to_list(metrics_data["operator_usage"]);
                     }
-                    if "speed_comparison" in charts_data {
-                        setSpeedData(to_list(charts_data["speed_comparison"]));
+                    if "speed_comparison" in metrics_data {
+                        setSpeedData(
+                            normalize_speed_rows(to_list(metrics_data["speed_comparison"]))
+                        );
+                    } elif "rows" in metrics_data {
+                        setSpeedData(normalize_speed_rows(to_list(metrics_data["rows"])));
+                    } elif "rows_by_op" in metrics_data {
+                        setSpeedData(
+                            normalize_speed_rows(to_list(metrics_data["rows_by_op"]))
+                        );
                     }
                 }
                 # Process Status
@@ -712,7 +946,7 @@ def:pub Dashboard -> Any {
                     ops = to_list(cached["operator_usage"]);
                 }
                 if "speed_comparison" in cached {
-                    setSpeedData(to_list(cached["speed_comparison"]));
+                    setSpeedData(normalize_speed_rows(to_list(cached["speed_comparison"])));
                 }
                 if "status" in cached and cached["status"] {
                     status = cached["status"];
@@ -738,7 +972,7 @@ def:pub Dashboard -> Any {
                 lambda resp: any  -> None { data = resp.reports[0]
                 if resp and resp.reports
                 else {};status = data or {};
-                __jacSpawn("GetDashboardCharts", "", {"projectName": name}).then(
+                __jacSpawn("GetProjectMetrics", "", {"projectName": name}).then(
                     lambda c_resp: any  -> None { c_data = c_resp.reports[0]
                     if c_resp and c_resp.reports
                     else {};
@@ -747,13 +981,21 @@ def:pub Dashboard -> Any {
                             ops = to_list(c_data["operator_usage"]);
                         }
                         if "speed_comparison" in c_data {
-                            setSpeedData(to_list(c_data["speed_comparison"]));
+                            setSpeedData(
+                                normalize_speed_rows(to_list(c_data["speed_comparison"]))
+                            );
+                        } elif "rows" in c_data {
+                            setSpeedData(normalize_speed_rows(to_list(c_data["rows"])));
+                        } elif "rows_by_op" in c_data {
+                            setSpeedData(
+                                normalize_speed_rows(to_list(c_data["rows_by_op"]))
+                            );
                         }
                         persist_dashboard_cache(name);
                     }}
                 ).catch(
                     lambda e: any  -> None {
-                    # console.error("Failed to poll dashboard charts:", e);
+                    # console.error("Failed to poll project metrics:", e);
                     }
                 );
                 __jacSpawn("GetProjectMctsSummary", "", {"projectName": name}).then(
@@ -918,80 +1160,6 @@ def:pub Dashboard -> Any {
         }
     }
 
-    # Helper for Status Cards
-    status_cards = [];
-
-    # MCTS Explorer Card
-    status_cards.push(
-        <div
-            key="mcts"
-            className="bg-zinc-900 border border-zinc-800 p-4 rounded-lg cursor-pointer hover:border-indigo-500/50 transition-all"
-            onClick={lambda -> None { navigate(f"/project/{name}/operator-workbench");}}
-        >
-            <div className="flex justify-between items-start mb-2">
-                <div className="p-2 bg-indigo-500/10 rounded-lg">
-                    <ShieldCheckIcon className="text-indigo-400 w-5 h-5"/>
-                </div>
-                <span className="text-xs text-zinc-500 bg-zinc-800 px-2 py-1 rounded">
-                    MCTS
-                </span>
-            </div>
-            <div className="text-2xl font-bold text-white mb-1">
-                {mctsSummary["total_nodes"]
-                if "total_nodes" in mctsSummary
-                else ("--" if loading else 0)}
-            </div>
-            <div className="text-xs text-zinc-400">
-                Nodes Explored
-            </div>
-        </div>
-    );
-
-    # Hardware Card
-    status_cards.push(
-        <div
-            key="hardware"
-            className="bg-zinc-900 border border-zinc-800 p-4 rounded-lg flex flex-col justify-between h-full"
-        >
-            <div>
-                <div className="flex justify-between items-start mb-2">
-                    <div className="p-2 bg-emerald-500/10 rounded-lg">
-                        <CpuIcon className="text-emerald-400 w-5 h-5"/>
-                    </div>
-                </div>
-                <div
-                    className="text-lg font-bold text-white mb-2 truncate"
-                    title={hardwareStatus}
-                >
-                    {hardwareStatus}
-                </div>
-                {<div className="text-xs text-zinc-400 space-y-1 mb-4">
-                    <div>
-                        Memory:{gpu_mem}
-                    </div>
-                    <div>
-                        Compute:{gpu_compute}
-                    </div>
-                    <div>
-                        SMs:{gpu_sms}
-                    </div>
-                </div>
-                if gpu_mem or gpu_compute or gpu_sms
-                else <span></span>}
-            </div>
-            <div className="mt-2">
-                <span className="text-xs text-zinc-500 block mb-1">
-                    Backend
-                </span>
-                <div
-                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
-                >
-                    {activeBackend}
-                </div>
-            </div>
-        </div>
-    );
-
     # Pipeline job state
     profile_job = status["profile"] if status and "profile" in status else {};
     profile_raw = (profile_job["status"] or "").toLowerCase()
@@ -1037,18 +1205,6 @@ def:pub Dashboard -> Any {
     bench_progress_text = (
         f" ({bench_current}/{bench_total})" if bench_total and bench_total > 0 else ""
     );
-    bench_pct = bench_progress["percent"] * 100
-    if bench_progress and "percent" in bench_progress
-    else 0;
-    bar_pct = bench_pct;
-    if bar_pct > 100 {
-        bar_pct = 100;
-    }
-    if bar_pct < 4 {
-        bar_pct = 4;
-    }
-    bench_bar_width = f"{bar_pct}%";
-
     gen_job = status["generate"] if status and "generate" in status else {};
     gen_raw = (gen_job["status"] or "").toLowerCase()
     if gen_job and "status" in gen_job
@@ -1119,109 +1275,6 @@ def:pub Dashboard -> Any {
         } elif gen_norm == "failed" and gen_phase == "benchmarking" {
             benchmark_step_status = "failed";
         }
-    }
-
-    jobs = [
-        {"key": "profile", "label": "Analysis", "status": profile_norm},
-        {
-            "key": "generate",
-            "label": "Generation",
-            "status": generation_step_status
-        },
-        {
-            "key": "optimize",
-            "label": "Optimization",
-            "status": optimization_step_status
-        },
-        {"key": "benchmark", "label": "Benchmark", "status": benchmark_step_status}
-    ];
-    step_items = [];
-    step_idx = 0;
-
-    while step_idx < jobs.length {
-        job = jobs[step_idx];
-        job_status = str(job["status"]).toLowerCase()
-        if job and "status" in job and job["status"]
-        else "idle";
-
-        is_completed = job_status == "completed";
-        is_running = job_status == "running";
-        is_failed = job_status == "failed";
-        is_active = is_running or is_completed;
-
-        step_icon = <div className="w-2 h-2 rounded-full bg-zinc-600"></div>;
-        if is_completed {
-            step_icon = <CheckIcon className="w-4 h-4 text-emerald-950"/>;
-        } elif is_failed {
-            step_icon = <AlertCircleIcon className="w-4 h-4 text-red-950"/>;
-        } elif is_running {
-            step_icon = <div
-                className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"
-            ></div>;
-        }
-
-        circle_style = "bg-zinc-800 border-zinc-700 text-zinc-500";
-        if is_completed {
-            circle_style = "bg-emerald-400 border-emerald-400 text-emerald-950";
-        } elif is_failed {
-            circle_style = "bg-red-400 border-red-400 text-red-950";
-        } elif is_running {
-            circle_style = "bg-indigo-500/20 border-indigo-500 text-indigo-400 ring-4 ring-indigo-500/10";
-        }
-
-        step_items.push(
-            <div
-                key={job["key"]}
-                className="flex-1 flex flex-col items-center relative"
-            >
-                <div className="flex items-center w-full">
-                    {<div
-                        className={"h-0.5 flex-1 " + (
-                            "bg-emerald-500/50"
-                            if is_completed or is_running or is_failed
-                            else "bg-zinc-800"
-                        )}
-                    ></div>
-                    if step_idx > 0
-                    else <div className="flex-1"></div>}
-                    <div
-                        className={"w-8 h-8 rounded-full border-2 flex items-center justify-center z-10 transition-all duration-300 " + circle_style}
-                    >
-                        {step_icon}
-                    </div>
-                    {<div
-                        className={"h-0.5 flex-1 " + (
-                            "bg-emerald-500/50" if is_completed else "bg-zinc-800"
-                        )}
-                    ></div>
-                    if step_idx < jobs.length - 1
-                    else <div className="flex-1"></div>}
-                </div>
-                <div className="mt-3 text-center">
-                    <div
-                        className={"text-xs font-medium " + (
-                            "text-zinc-200"
-                            if is_active or is_failed
-                            else "text-zinc-500"
-                        )}
-                    >
-                        {job["label"]}
-                    </div>
-                    <div
-                        className={"text-[10px] uppercase tracking-wider font-bold mt-0.5 " + (
-                            "text-emerald-400"
-                            if is_completed
-                            else "text-red-400"
-                            if is_failed
-                            else "text-indigo-400" if is_running else "text-zinc-600"
-                        )}
-                    >
-                        {job_status if job_status != "idle" else ""}
-                    </div>
-                </div>
-            </div>
-        );
-        step_idx += 1;
     }
 
     current_phase = "idle";
@@ -1361,6 +1414,155 @@ def:pub Dashboard -> Any {
         current_state_meta = f"Started: {current_started_at}";
     }
 
+    forgeStateToneClass = "border-[var(--border)] bg-[var(--surface-0)] text-zinc-300";
+    if current_phase == "completed" {
+        forgeStateToneClass = "border-emerald-500/45 bg-emerald-500/10 text-emerald-200";
+    } elif current_phase == "failed" {
+        forgeStateToneClass = "border-red-500/45 bg-red-500/10 text-red-200";
+    } elif active_poll or current_phase == "queued" {
+        forgeStateToneClass = "border-[var(--accent-orange)]/45 bg-[var(--accent-orange)]/10 text-orange-100";
+    }
+
+    nodesExplored = 0;
+    if mctsSummary and "total_nodes" in mctsSummary and mctsSummary["total_nodes"] is not None {
+        nodesExplored = parseInt(f"{mctsSummary['total_nodes']}");
+    } elif mctsSummary and "ops" in mctsSummary {
+        nodesExplored = list_len(to_list(mctsSummary["ops"]));
+    } else {
+        nodesExplored = list_len(ops);
+    }
+    if nodesExplored != nodesExplored or nodesExplored < 0 {
+        nodesExplored = 0;
+    }
+    if nodesExplored == 0 and list_len(speedData) > 0 {
+        nodesExplored = list_len(speedData);
+    }
+
+    bestSpeedup = 1;
+    hasBestSpeedup = False;
+    totalSavedMs = 0;
+    for row in speedData {
+        if not row {
+            continue;
+        }
+        row_name = str(row["name"]) if "name" in row and row["name"] else "";
+        if not row_name and "op" in row and row["op"] {
+            row_name = str(row["op"]);
+        }
+        if not row_name and "operator" in row and row["operator"] {
+            row_name = str(row["operator"]);
+        }
+        pytorch_raw = row["pytorch"] if "pytorch" in row else None;
+        if pytorch_raw is None and "baseline" in row {
+            pytorch_raw = row["baseline"];
+        }
+        if pytorch_raw is None and "pytorch_ms" in row {
+            pytorch_raw = row["pytorch_ms"];
+        }
+        pytorch_ms = to_num(pytorch_raw);
+
+        forged_raw = row["forged"] if "forged" in row else None;
+        if forged_raw is None and "optimized" in row {
+            forged_raw = row["optimized"];
+        }
+        if forged_raw is None and "kernel_ms" in row {
+            forged_raw = row["kernel_ms"];
+        }
+        if forged_raw is None and "forged_ms" in row {
+            forged_raw = row["forged_ms"];
+        }
+        forged_ms = to_num(forged_raw);
+
+        if pytorch_ms is not None and pytorch_ms > 0 and forged_ms is not None and forged_ms > 0 {
+            speedup = pytorch_ms / forged_ms;
+            if speedup > bestSpeedup {
+                bestSpeedup = speedup;
+                hasBestSpeedup = True;
+            }
+        }
+        if pytorch_ms is not None and forged_ms is not None {
+            count_val = opCountByName[row_name] if row_name in opCountByName else 1;
+            delta = (pytorch_ms - forged_ms) * count_val;
+            if delta > 0 {
+                totalSavedMs += delta;
+            }
+        }
+    }
+    bestSpeedupText = f"{bestSpeedup.toFixed(2)}x" if hasBestSpeedup else "--";
+    totalSavedText = f"{totalSavedMs.toFixed(2)} ms" if totalSavedMs > 0 else "0.00 ms";
+
+    metricCardClass = "relative clip-anvil border border-[var(--border)] bg-[color:rgba(15,18,24,0.76)] backdrop-blur-md p-4 shadow-[0_14px_30px_rgba(0,0,0,0.38)] overflow-hidden";
+
+    status_cards = [];
+    status_cards.push(
+        <div key="metric-nodes" className={metricCardClass}>
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent-orange)]/65 to-transparent"></div>
+            <div className="flex items-center justify-between mb-3">
+                <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                    Nodes Explored
+                </span>
+                <ShieldCheckIcon className="w-4 h-4 text-[var(--accent-orange)]/90"/>
+            </div>
+            <div className="text-2xl font-semibold text-[var(--text-strong)]">
+                {nodesExplored}
+            </div>
+            <div className="mt-1 text-[11px] text-zinc-500">
+                MCTS operator tree nodes
+            </div>
+        </div>
+    );
+    status_cards.push(
+        <div key="metric-gpu" className={metricCardClass}>
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
+            <div className="flex items-center justify-between mb-3">
+                <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                    Selected GPU
+                </span>
+                <CpuIcon className="w-4 h-4 text-zinc-300"/>
+            </div>
+            <div className="text-sm font-semibold text-[var(--text-strong)] truncate" title={hardwareStatus}>
+                {hardwareStatus}
+            </div>
+            <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-zinc-500">
+                Backend: {activeBackend}
+            </div>
+        </div>
+    );
+    status_cards.push(
+        <div key="metric-speedup" className={metricCardClass}>
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent-orange)]/65 to-transparent"></div>
+            <div className="flex items-center justify-between mb-3">
+                <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                    Best Speedup
+                </span>
+                <ArrowRightIcon className="w-4 h-4 text-[var(--accent-orange)]/90"/>
+            </div>
+            <div className="text-2xl font-semibold text-[var(--accent-orange)]">
+                {bestSpeedupText}
+            </div>
+            <div className="mt-1 text-[11px] text-zinc-500">
+                Kernel Forge vs PyTorch
+            </div>
+        </div>
+    );
+    status_cards.push(
+        <div key="metric-saved" className={metricCardClass}>
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent-orange)]/65 to-transparent"></div>
+            <div className="flex items-center justify-between mb-3">
+                <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                    Total Time Saved
+                </span>
+                <CheckIcon className="w-4 h-4 text-[var(--accent-orange)]/90"/>
+            </div>
+            <div className="text-xl font-semibold text-[var(--text-strong)]">
+                {totalSavedText}
+            </div>
+            <div className="mt-1 text-[11px] text-zinc-500">
+                Estimated using operator counts
+            </div>
+        </div>
+    );
+
     charts_empty_message = "No benchmark results yet. Run Benchmark to see PyTorch timings.";
     if profile_active {
         charts_empty_message = "Profiling model...";
@@ -1420,38 +1622,35 @@ def:pub Dashboard -> Any {
     }
 
     return
-        <div className="p-8 max-w-7xl mx-auto space-y-8">
-            <div>
-                <h2 className="text-2xl font-bold text-white mb-2">
+        <div className="p-6 md:p-8 max-w-7xl mx-auto space-y-6">
+            <div className="space-y-1">
+                <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-[var(--text-strong)]">
                     Project Dashboard
                 </h2>
-                <p className="text-zinc-400">
-                    Overview of{name}
+                <p className="text-[10px] uppercase tracking-[0.22em] text-[var(--text-muted)]">
+                    Forge command center · {name}
                 </p>
             </div>
             <div
-                className="relative rounded-xl border border-orange-500/30 bg-gradient-to-r from-[#2e1808] via-[#24130a] to-[#171111] p-5 overflow-hidden"
+                className="relative clip-anvil border border-[var(--border)] bg-[color:rgba(16,19,24,0.82)] backdrop-blur-xl p-5 md:p-6 shadow-[0_20px_48px_rgba(0,0,0,0.46)] overflow-hidden"
             >
-                <div
-                    className="absolute -top-16 -right-10 w-56 h-56 rounded-full bg-orange-500/15 blur-3xl"
-                ></div>
-                <div
-                    className="absolute -bottom-20 left-10 w-56 h-56 rounded-full bg-red-500/10 blur-3xl"
-                ></div>
-                <div className="relative grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent-orange)]/90 to-transparent"></div>
+                <div className="absolute -top-24 -right-8 w-64 h-64 rounded-full bg-[var(--accent-orange)]/10 blur-3xl"></div>
+                <div className="absolute -bottom-24 left-8 w-64 h-64 rounded-full bg-[var(--molten-gold)]/8 blur-3xl"></div>
+                <div className="relative grid grid-cols-1 lg:grid-cols-3 gap-5">
                     <div className="space-y-3">
-                        <h3 className="text-sm font-semibold text-orange-200">
-                            Kernel Forge Control
+                        <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-zinc-200">
+                            Forge Control
                         </h3>
-                        <p className="text-xs text-zinc-300 leading-relaxed">
-                            Start profiling and baseline benchmarking, then route into operator-level optimization.
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                            Run profiling + kernel forging from one command surface, then jump to operator-level work when needed.
                         </p>
                         <div className="flex items-center gap-2">
                             <GlowButton
                                 label={(
                                     "Heating forge..."
                                     if forgeBusy
-                                    else "Start Forging Kernels"
+                                    else "Start / Resume Forging"
                                 )}
                                 onClick={lambda -> None { startForge();}}
                                 disabled={forgeBusy
@@ -1461,7 +1660,7 @@ def:pub Dashboard -> Any {
                                 or opt_active}
                             />
                             <button
-                                className="px-3 py-2 rounded-lg border border-orange-400/40 bg-orange-500/10 text-orange-200 text-xs font-semibold hover:bg-orange-500/20 transition-colors inline-flex items-center gap-1"
+                                className="px-3 py-2 rounded-lg border border-[var(--accent-orange)]/35 bg-[var(--accent-orange)]/10 text-orange-100 text-xs font-semibold hover:bg-[var(--accent-orange)]/20 transition-colors inline-flex items-center gap-1"
                                 onClick={lambda -> None { openWorkbench();}}
                             >
                                 Open Workbench
@@ -1472,34 +1671,32 @@ def:pub Dashboard -> Any {
                             {forgeError}
                         </div>
                         if forgeError
-                        else <div className="text-xs text-emerald-300">
+                        else <div className="text-xs text-zinc-400">
                             {forgeNotice}
                         </div>
                         if forgeNotice
                         else <span></span>}
                     </div>
                     <div className="space-y-3">
-                        <div
-                            className="text-xs uppercase tracking-wider font-bold text-zinc-400"
-                        >
+                        <div className="text-xs uppercase tracking-[0.18em] font-semibold text-zinc-500">
                             Run Mode
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="inline-flex rounded-md border border-[var(--border)] overflow-hidden bg-[var(--surface-0)]">
                             <button
-                                className={"px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors " + (
-                                    "border-amber-400 bg-amber-500/20 text-amber-100"
+                                className={"px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.15em] transition-colors " + (
+                                    "bg-[var(--accent-orange)]/15 text-orange-100"
                                     if forgeMode == "auto"
-                                    else "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800"
+                                    else "text-zinc-400 hover:text-zinc-200"
                                 )}
                                 onClick={lambda -> None { setForgeMode("auto");}}
                             >
                                 Automatic
                             </button>
                             <button
-                                className={"px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors " + (
-                                    "border-amber-400 bg-amber-500/20 text-amber-100"
+                                className={"px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.15em] border-l border-[var(--border)] transition-colors " + (
+                                    "bg-[var(--accent-orange)]/15 text-orange-100"
                                     if forgeMode == "manual"
-                                    else "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800"
+                                    else "text-zinc-400 hover:text-zinc-200"
                                 )}
                                 onClick={lambda -> None { setForgeMode("manual");}}
                             >
@@ -1507,310 +1704,288 @@ def:pub Dashboard -> Any {
                             </button>
                         </div>
                         {<div className="space-y-2">
-                            <div
-                                className="text-xs uppercase tracking-wider font-bold text-zinc-400"
-                            >
-                                Manual Operators
-                            </div>
                             <div className="flex items-center gap-2">
                                 <button
-                                    className="px-2 py-1 rounded-md text-[11px] font-semibold border border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800 transition-colors"
+                                    className="px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-[0.14em] border border-[var(--border)] bg-[var(--surface-0)] text-zinc-300 hover:border-[var(--border-strong)] transition-colors"
                                     onClick={lambda -> None { selectAllManualOps();}}
                                 >
                                     Select all
                                 </button>
                                 <button
-                                    className="px-2 py-1 rounded-md text-[11px] font-semibold border border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800 transition-colors"
+                                    className="px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-[0.14em] border border-[var(--border)] bg-[var(--surface-0)] text-zinc-300 hover:border-[var(--border-strong)] transition-colors"
                                     onClick={lambda -> None { clearManualOps();}}
                                 >
                                     Clear
                                 </button>
                             </div>
-                            <div className="max-h-28 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900/60 p-2 space-y-1">
+                            <div className="max-h-28 overflow-y-auto clip-anvil border border-[var(--border)] bg-[var(--surface-0)] p-2 space-y-1">
                                 {manualOpItems
                                 if list_len(manualOpItems) > 0
                                 else <div className="text-xs text-zinc-500">
                                     No operators discovered yet.
                                 </div>}
                             </div>
-                            <div className="text-[11px] text-zinc-400">
+                            <div className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">
                                 Selected: {manualSelectedCount}
                             </div>
                         </div>
                         if forgeMode == "manual"
-                        else <div className="space-y-1">
-                            <div
-                                className="text-xs uppercase tracking-wider font-bold text-zinc-400"
-                            >
-                                Automatic Scope
-                            </div>
-                            <div className="text-xs text-zinc-300">
-                                Generates and benchmarks all discovered operators.
-                            </div>
+                        else <div className="text-xs text-zinc-400">
+                            Automatic mode processes all discovered operators.
                         </div>}
                     </div>
                     <div className="space-y-3">
-                        <div
-                            className="text-xs uppercase tracking-wider font-bold text-zinc-400"
-                        >
-                            Current State
+                        <div className="text-xs uppercase tracking-[0.18em] font-semibold text-zinc-500">
+                            Forge State
                         </div>
                         <div
-                            className="px-3 py-2 rounded-md border border-zinc-700 bg-zinc-950/80 text-sm text-zinc-100"
+                            className={"px-3 py-2 clip-anvil border text-xs font-semibold uppercase tracking-[0.16em] " + forgeStateToneClass}
                         >
                             {forge_status}
                         </div>
-                        <div
-                            className={"px-3 py-2 rounded-md border text-xs font-semibold " + (
-                                "border-orange-500/50 bg-orange-500/10 text-orange-200"
-                                if active_poll
-                                else "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                                if current_phase == "completed"
-                                else "border-zinc-700 bg-zinc-900/70 text-zinc-300"
-                            )}
-                        >
+                        <div className="text-sm text-zinc-200 leading-relaxed">
                             {forge_detail}
                         </div>
-                        {<div
-                            className="w-full h-1.5 rounded-full bg-zinc-800 overflow-hidden border border-zinc-700"
-                        >
+                        {<div className="w-full h-1.5 rounded-full bg-zinc-900 overflow-hidden border border-[var(--border)]">
                             <div
-                                className="h-full bg-gradient-to-r from-orange-400 via-amber-300 to-yellow-300 transition-all duration-500"
+                                className="h-full bg-gradient-to-r from-[var(--accent-orange)] via-[var(--molten-gold)] to-[#f3c567] transition-all duration-500"
                                 style={{"width": f"{current_progress_bar}%"}}
                             ></div>
                         </div>
                         if active_poll
                         else <span></span>}
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                            Auto-refresh: {poll_label}
+                        </div>
                         {<div className="text-[10px] text-zinc-500 leading-relaxed">
                             {current_state_meta}
                         </div>
                         if current_state_meta
                         else <span></span>}
-                        <div className="text-xs text-zinc-400">
-                            Full generate/optimize settings live in Operator Workbench modals. Dashboard stays open after profiling unless you open Workbench manually.
-                        </div>
                     </div>
                 </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                 {status_cards}
-                <div
-                    className="col-span-1 md:col-span-2 bg-zinc-900 border border-zinc-800 p-4 rounded-lg"
-                >
-                    <div className="flex justify-between items-center mb-4">
-                        <h3 className="text-sm font-semibold text-zinc-200">
-                            Pipeline Status
-                        </h3>
-                        <div className="text-xs text-zinc-500">
-                            Auto-refresh:{poll_label}
-                        </div>
-                    </div>
-                    <div className="flex items-center justify-between px-4 py-6">
-                        {step_items}
-                    </div>
-                </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
                 <div
-                    className="md:col-span-2 bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden flex flex-col"
+                    className="xl:col-span-2 relative clip-anvil border border-[var(--border)] bg-[color:rgba(15,18,24,0.76)] backdrop-blur-md overflow-hidden shadow-[0_16px_36px_rgba(0,0,0,0.42)]"
                 >
-                    <div
-                        className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/50"
-                    >
-                        <h3 className="font-semibold text-zinc-200">
-                            Speed Comparison (ms)
-                        </h3>
+                    <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent-orange)]/75 to-transparent"></div>
+                    <div className="p-4 border-b border-[var(--border)] flex flex-wrap justify-between items-center gap-3">
+                        <div>
+                            <h3 className="text-sm font-semibold text-zinc-200">
+                                Speed Comparison
+                            </h3>
+                            <p className="text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+                                Top 8 slowest operators by baseline time
+                            </p>
+                        </div>
                         <div className="flex items-center gap-2">
-                            <span className="text-xs text-zinc-500">
-                                Lower is better
-                            </span>
+                            <div className="inline-flex rounded-md border border-[var(--border)] overflow-hidden bg-[var(--surface-0)]">
+                                <button
+                                    className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] transition-colors " + (
+                                        "bg-[var(--accent-orange)]/15 text-orange-100"
+                                        if comparisonView == "ratio"
+                                        else "text-zinc-400 hover:text-zinc-200"
+                                    )}
+                                    onClick={lambda -> None { setComparisonView("ratio");}}
+                                >
+                                    Ratio
+                                </button>
+                                <button
+                                    className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] border-l border-[var(--border)] transition-colors " + (
+                                        "bg-[var(--accent-orange)]/15 text-orange-100"
+                                        if comparisonView == "absolute"
+                                        else "text-zinc-400 hover:text-zinc-200"
+                                    )}
+                                    onClick={lambda -> None { setComparisonView("absolute");}}
+                                >
+                                    Absolute ms
+                                </button>
+                            </div>
                             <button
                                 onClick={lambda -> None { benchLogOpen = True;}}
-                                className="text-[11px] px-2 py-1 rounded border border-zinc-700 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 transition-colors"
+                                className="text-[10px] px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface-0)] text-zinc-300 hover:border-[var(--border-strong)] transition-colors"
                             >
                                 benchmark.log
                             </button>
                         </div>
                     </div>
-                    <div
-                        className="p-4 flex-1 flex items-center justify-center min-h-[220px]"
-                    >
-                        <div className="w-full h-[220px] min-h-[220px]">
-                            {<ResponsiveContainer
-                                width="100%"
-                                height="100%"
-                                minWidth={0}
-                                minHeight={0}
-                            >
+                    <div className="px-4 pt-3 flex items-center gap-4 text-[11px] text-zinc-400">
+                        {<span className="inline-flex items-center gap-1.5">
+                            <span className="inline-block w-2 h-2 rounded-full bg-[var(--accent-orange)]"></span>
+                            Kernel Forge / PyTorch
+                        </span>
+                        if effectiveComparisonView == "ratio"
+                        else <span className="inline-flex items-center gap-1.5">
+                            <span className="inline-block w-2 h-2 rounded-full bg-[var(--accent-orange)]"></span>
+                            Kernel Forge
+                        </span>}
+                        {<span></span>
+                        if effectiveComparisonView == "ratio"
+                        else <span className="inline-flex items-center gap-1.5">
+                            <span className="inline-block w-2 h-2 rounded-full bg-slate-400"></span>
+                            PyTorch
+                        </span>}
+                    </div>
+                    <div className="p-4 pt-2 min-h-[280px]">
+                        {<div className="w-full h-[250px] min-h-[250px]">
+                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                                 <BarChart
-                                    data={speedData}
-                                    margin={{
-                                        "top": 5,
-                                        "right": 30,
-                                        "left": 20,
-                                        "bottom": 5
-                                    }}
+                                    data={to_list(speedChartData)}
+                                    margin={{"top": 8, "right": 12, "left": 12, "bottom": 8}}
                                 >
                                     <CartesianGrid
                                         strokeDasharray="3 3"
-                                        stroke="#27272a"
+                                        stroke="rgba(148, 163, 184, 0.18)"
                                         vertical={False}
                                     />
                                     <XAxis
                                         dataKey="name"
-                                        stroke="#71717a"
-                                        fontSize={12}
+                                        stroke="#7a8494"
+                                        fontSize={11}
                                         tickLine={False}
                                         axisLine={False}
-                                        tickFormatter={format_tick_op}
                                     />
-                                    <YAxis
-                                        stroke="#71717a"
-                                        fontSize={12}
+                                    {<YAxis
+                                        stroke="#7a8494"
+                                        fontSize={11}
+                                        tickLine={False}
+                                        axisLine={False}
+                                        tickFormatter={format_tick_ratio}
+                                    />
+                                    if effectiveComparisonView == "ratio"
+                                    else <YAxis
+                                        stroke="#7a8494"
+                                        fontSize={11}
                                         tickLine={False}
                                         axisLine={False}
                                         tickFormatter={format_tick_ms}
-                                    />
+                                    />}
                                     <Tooltip
-                                        cursor={{"fill": '#27272a'}}
+                                        cursor={{"fill": 'rgba(20, 26, 34, 0.45)'}}
                                         contentStyle={{
-                                            "backgroundColor": '#18181b',
-                                            "borderColor": '#27272a',
+                                            "backgroundColor": 'rgba(11, 16, 22, 0.96)',
+                                            "borderColor": 'rgba(120, 132, 148, 0.35)',
                                             "borderRadius": '8px',
-                                            "color": '#f4f4f5'
+                                            "color": '#e5e7eb'
                                         }}
-                                        labelFormatter={format_tick_op}
+                                        formatter={format_tick_ratio if effectiveComparisonView == "ratio" else format_tick_ms}
                                     />
-                                    <Legend/>
+                                    <Bar
+                                        dataKey="ratio"
+                                        name="Kernel Forge / PyTorch"
+                                        fill="#e17055"
+                                        radius={[4, 4, 0, 0]}
+                                        minPointSize={3}
+                                        hide={effectiveComparisonView != "ratio"}
+                                    />
                                     <Bar
                                         dataKey="forged"
                                         name="Kernel Forge"
-                                        fill="#06b6d4"
-                                        stroke="#06b6d4"
-                                        fillOpacity={1}
-                                        minPointSize={3}
+                                        fill="#e17055"
                                         radius={[4, 4, 0, 0]}
+                                        minPointSize={3}
+                                        hide={effectiveComparisonView != "absolute"}
                                     />
                                     <Bar
                                         dataKey="pytorch"
                                         name="PyTorch"
-                                        fill="#EE4C2C"
-                                        minPointSize={3}
+                                        fill="#94a3b8"
                                         radius={[4, 4, 0, 0]}
+                                        minPointSize={3}
+                                        hide={effectiveComparisonView != "absolute"}
                                     />
                                 </BarChart>
                             </ResponsiveContainer>
-                            if list_len(speedData) > 0
-                            else <div className="text-zinc-500 text-sm italic">
-                                {charts_empty_message}
-                            </div>}
                         </div>
+                        if hasSpeedChart
+                        else <div className="text-zinc-500 text-sm italic">
+                            {charts_empty_message}
+                        </div>}
                     </div>
                 </div>
                 <div
-                    className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden flex flex-col"
+                    className="relative clip-anvil border border-[var(--border)] bg-[color:rgba(15,18,24,0.76)] backdrop-blur-md overflow-hidden shadow-[0_16px_36px_rgba(0,0,0,0.42)]"
                 >
-                    <div
-                        className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/50"
-                    >
-                        <h3 className="font-semibold text-zinc-200">
-                            Operator Time Consumption
-                        </h3>
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs text-zinc-500">
-                                {timeRows.length} operators
-                            </span>
-                            <div className="inline-flex rounded-md border border-zinc-700 overflow-hidden">
-                                <button
-                                    className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors " + (
-                                        "bg-zinc-700 text-zinc-100"
-                                        if opTimeMode == "best"
-                                        else "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
-                                    )}
-                                    onClick={lambda -> None { setOpTimeMode("best");}}
-                                >
-                                    Best
-                                </button>
-                                <button
-                                    className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors border-l border-zinc-700 " + (
-                                        "bg-zinc-700 text-zinc-100"
-                                        if opTimeMode == "forged"
-                                        else "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
-                                    )}
-                                    onClick={lambda -> None { setOpTimeMode("forged");}}
-                                >
-                                    Forged
-                                </button>
-                                <button
-                                    className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors border-l border-zinc-700 " + (
-                                        "bg-zinc-700 text-zinc-100"
-                                        if opTimeMode == "pytorch"
-                                        else "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
-                                    )}
-                                    onClick={lambda -> None { setOpTimeMode("pytorch");}}
-                                >
-                                    PyTorch
-                                </button>
-                            </div>
+                    <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent-orange)]/75 to-transparent"></div>
+                    <div className="p-4 border-b border-[var(--border)] flex justify-between items-center gap-2">
+                        <div>
+                            <h3 className="text-sm font-semibold text-zinc-200">
+                                Operator Time Consumption
+                            </h3>
+                            <p className="text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+                                Ranked slowest to fastest
+                            </p>
+                        </div>
+                        <div className="inline-flex rounded-md border border-[var(--border)] overflow-hidden bg-[var(--surface-0)]">
+                            <button
+                                className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] transition-colors " + (
+                                    "bg-[var(--accent-orange)]/15 text-orange-100"
+                                    if opTimeMode == "best"
+                                    else "text-zinc-400 hover:text-zinc-200"
+                                )}
+                                onClick={lambda -> None { setOpTimeMode("best");}}
+                            >
+                                Best
+                            </button>
+                            <button
+                                className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] border-l border-[var(--border)] transition-colors " + (
+                                    "bg-[var(--accent-orange)]/15 text-orange-100"
+                                    if opTimeMode == "forged"
+                                    else "text-zinc-400 hover:text-zinc-200"
+                                )}
+                                onClick={lambda -> None { setOpTimeMode("forged");}}
+                            >
+                                Forged
+                            </button>
+                            <button
+                                className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] border-l border-[var(--border)] transition-colors " + (
+                                    "bg-[var(--accent-orange)]/15 text-orange-100"
+                                    if opTimeMode == "pytorch"
+                                    else "text-zinc-400 hover:text-zinc-200"
+                                )}
+                                onClick={lambda -> None { setOpTimeMode("pytorch");}}
+                            >
+                                PyTorch
+                            </button>
                         </div>
                     </div>
-                    <div className="p-4 flex-1 min-h-[220px]">
-                        {<div className="w-full h-full flex flex-col gap-3">
-                            <div className="w-full h-[220px] min-h-[220px]">
-                                <ResponsiveContainer
-                                    width="100%"
-                                    height="100%"
-                                    minWidth={0}
-                                    minHeight={0}
+                    <div className="p-4 min-h-[280px]">
+                        {<div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+                            {to_list(timeListRows).map(
+                                lambda item: dict  -> Any { return <div
+                                    key={f"{item['rank']}-{item['name']}"}
+                                    className="clip-anvil border border-[var(--border)] bg-[var(--surface-0)] px-3 py-2 transition-all duration-300 ease-out"
                                 >
-                                    <PieChart>
-                                        <Pie
-                                            data={pieData}
-                                            innerRadius={55}
-                                            outerRadius={80}
-                                            paddingAngle={4}
-                                            dataKey="value"
-                                            isAnimationActive={True}
-                                            animationDuration={420}
-                                            animationEasing="ease-in-out"
-                                        />
-                                        <Tooltip
-                                            cursor={{"fill": 'rgba(15, 23, 32, 0.6)'}}
-                                            contentStyle={{
-                                                "backgroundColor": '#0b1218',
-                                                "borderColor": '#1f2a36',
-                                                "borderRadius": '10px'
-                                            }}
-                                            itemStyle={{"color": '#e6f2ff'}}
-                                            labelStyle={{"color": '#9fb1c7'}}
-                                            formatter={format_tick_ms}
-                                        />
-                                    </PieChart>
-                                </ResponsiveContainer>
-                            </div>
-                            <div className="grid grid-cols-1 gap-1 max-h-[180px] overflow-y-auto pr-1">
-                                {to_list(pieData).map(
-                                    lambda item: dict  -> Any { return <div
-                                        key={f"{item['name']}"}
-                                        className="flex items-center justify-between rounded border border-zinc-800 bg-zinc-950/40 px-2 py-1 text-[11px] text-zinc-300 transition-all duration-200"
-                                    >
-                                        <div className="flex items-center gap-2 min-w-0">
-                                            <span
-                                                className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-                                                style={{"backgroundColor": item["fill"] if item and "fill" in item else "#64748b"}}
-                                            ></span>
-                                            <span className="truncate">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="min-w-0 flex items-center gap-2">
+                                            <span className="text-[10px] uppercase tracking-[0.14em] text-zinc-500 shrink-0">
+                                                #{item["rank"] if item and "rank" in item else ""}
+                                            </span>
+                                            <span className="text-xs text-zinc-200 truncate">
                                                 {item["name"] if item and "name" in item else ""}
                                             </span>
                                         </div>
-                                        <span className="font-mono text-zinc-400 ml-2">
+                                        <span className="text-[11px] font-mono text-zinc-300 shrink-0">
                                             {format_tick_ms(item["value"] if item and "value" in item else 0)}
                                         </span>
-                                    </div>; }
-                                )}
-                            </div>
+                                    </div>
+                                    <div className="mt-2 h-1.5 rounded-full border border-[var(--border)] bg-zinc-900/80 overflow-hidden">
+                                        <div
+                                            className="h-full rounded-full bg-gradient-to-r from-[var(--accent-orange)] to-[var(--molten-gold)] transition-all duration-500 ease-out"
+                                            style={{"width": item["bar_width"] if item and "bar_width" in item else "0%"}}
+                                        ></div>
+                                    </div>
+                                    <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+                                        Count: {item["count"] if item and "count" in item else 1}
+                                    </div>
+                                </div>; }
+                            )}
                         </div>
-                        if hasPie
+                        if list_len(timeListRows) > 0
                         else <div className="text-zinc-500 text-sm italic">
                             {charts_empty_message}
                         </div>}
@@ -1838,7 +2013,7 @@ def:pub Dashboard -> Any {
                             </button>
                             <button
                                 onClick={lambda -> None { copyBenchLog();}}
-                                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-md text-xs text-white border border-indigo-500/40 transition-colors"
+                                className="px-3 py-1.5 bg-[var(--accent-orange)] hover:bg-[var(--molten-gold-dark)] rounded-md text-xs text-zinc-950 border border-[var(--accent-orange)]/40 transition-colors"
                             >
                                 {"Copied" if benchLogCopied else "Copy"}
                             </button>
