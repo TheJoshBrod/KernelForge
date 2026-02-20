@@ -2021,6 +2021,78 @@ walker:pub GetMctsTree {
                 if node_val is None or node_val <= 0.0 {
                     continue;
                 }
+                node_code = row[6];
+                code_text = str(node_code).strip() if node_code is not None else "";
+                if code_text and "\n" not in code_text and (
+                    code_text.endswith(".cu")
+                    or code_text.endswith(".py")
+                    or code_text.endswith(".metal")
+                    or "/kernels/" in code_text
+                ) {
+                    path_candidates = [];
+                    if path.isabs(code_text) {
+                        path_candidates.append(code_text);
+                    } else {
+                        path_candidates.append(path.join(project_dir, "trees", code_text));
+                        path_candidates.append(path.join(project_dir, code_text));
+                        path_candidates.append(path.join(repo_root, code_text));
+                        path_candidates.append(
+                            path.join(
+                                repo_root, "kernels", "projects", self.projectName, code_text
+                            )
+                        );
+                        path_candidates.append(
+                            path.join(
+                                repo_root,
+                                "kernels",
+                                "projects",
+                                self.projectName,
+                                "trees",
+                                code_text
+                            )
+                        );
+                    }
+                    for p in path_candidates {
+                        if not path.exists(p) {
+                            continue;
+                        }
+                        try {
+                            with open(p, "r", encoding="utf-8", errors="ignore") as f {
+                                node_code = f.read();
+                            }
+                            break;
+                        } except Exception {
+                            continue;
+                        }
+                    }
+                }
+                if node_code is None or str(node_code).strip() == "" {
+                    kernels_dir = path.join(project_dir, "trees", self.opName, "kernels");
+                    candidates = [
+                        f"kernel_{row[0]}.cu",
+                        f"kernel_{row[0]}.py",
+                        f"kernel_{row[0]}.metal",
+                        "kernel_0.cu",
+                        "kernel_0.py",
+                        "kernel_0.metal"
+                    ];
+                    for fname in candidates {
+                        candidate_path = path.join(kernels_dir, fname);
+                        if not path.exists(candidate_path) {
+                            continue;
+                        }
+                        try {
+                            with open(
+                                candidate_path, "r", encoding="utf-8", errors="ignore"
+                            ) as f {
+                                node_code = f.read();
+                            }
+                            break;
+                        } except Exception {
+                            continue;
+                        }
+                    }
+                }
                 valid_ids[row[0]] = True;
                 mcts_nodes.append(
                     {
@@ -2030,7 +2102,7 @@ walker:pub GetMctsTree {
                         "best_subtree_value": row[3],
                         "improvement_description": row[4],
                         "timestamp": row[5],
-                        "code": row[6]
+                        "code": node_code
                     }
                 );
             }
