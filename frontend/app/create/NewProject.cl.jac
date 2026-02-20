@@ -232,176 +232,198 @@ def:pub NewProject -> Any {
     }
 
     return
-        <main
-            className="flex h-screen bg-zinc-950 text-zinc-100 overflow-hidden relative"
-        >
+        <main className="app-shell">
             {loadingOverlay}
-            <div className="absolute top-2 right-6">
-                <a
-                    onClick={lambda -> None { navigate(
-                        "/settings", {"state": {"return_to": "/new-project"}}
-                    );}}
-                    className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white cursor-pointer"
-                    aria-label="Settings"
-                >
-                    <SettingsIcon/>
-                </a>
-            </div>
-            <div className="absolute top-2 right-16 z-10">
-                <a
-                    onClick={lambda -> None { navigate("/");}}
-                    className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white bg-zinc-950/50 backdrop-blur-sm cursor-pointer"
-                    aria-label="Go Back"
-                >
-                    <BackIcon/>
-                </a>
-            </div>
-            <div className="w-1/2 flex flex-col border-r border-zinc-900">
+            <div className="app-backdrop app-backdrop--natural"></div>
+            <div className="app-content-layer h-screen w-full p-4 md:p-6">
                 <div
-                    className="h-14 flex items-center px-6 border-b border-zinc-900 bg-zinc-950"
+                    className="h-full w-full border border-[var(--border)] bg-[var(--surface-0)] clip-anvil shadow-[0_22px_48px_rgba(0,0,0,0.45)] overflow-hidden"
                 >
-                    <h2
-                        className="text-sm font-bold uppercase tracking-wider text-zinc-400"
+                    <div
+                        className="h-14 flex items-center justify-between px-6 border-b border-[var(--border)] bg-[var(--surface-1)] relative"
                     >
-                        Model Code
-                    </h2>
-                </div>
-                <div className="flex-1 relative">
-                    <ForgePythonEditor
-                        value={code}
-                        onChange={lambda next_code: Any  -> None { code = str(
-                            next_code
-                        )
-                        if next_code
-                        else "";}}
-                        readOnly={isSubmitting}
-                        placeholder="# Paste your model code here or upload model.py"
-                    />
-                </div>
-            </div>
-            <div className="w-1/2 flex flex-col bg-zinc-950">
-                <div
-                    className="h-14 flex items-center justify-between px-6 border-b border-zinc-900"
-                >
-                    <h2
-                        className="text-sm font-bold uppercase tracking-wider text-zinc-400"
-                    >
-                        Project Details
-                    </h2>
-                </div>
-                <div className="p-8 space-y-8 max-w-xl mx-auto w-full mt-10">
-                    <div className="space-y-2">
-                        <label
-                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
-                        >
-                            Project Name
-                        </label>
-                        <input
-                            type="text"
-                            value={formData["projectName"]}
-                            onChange={lambda e: any  -> None { handleInputChange(
-                                "projectName", e.target.value
-                            );}}
-                            placeholder="e.g. ResNet-50 Fine-tune"
-                            className="w-full h-12 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-lg px-4 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <label
-                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
-                        >
-                            Model Code (.py)
-                        </label>
-                        <div className="relative group">
-                            <input
-                                type="file"
-                                accept=".py,.txt"
-                                onChange={lambda e: any  -> None { previewModelFile(
-                                    e.target.files[0]
-                                );}}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                            />
-                            <div
-                                className="w-full h-20 bg-zinc-900/50 border-2 border-dashed border-zinc-800 group-hover:border-zinc-600 rounded-xl flex flex-col items-center justify-center transition-all"
+                        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent"></div>
+                        <div>
+                            <h1 className="text-sm font-bold uppercase tracking-[0.18em] text-[var(--text-strong)]">
+                                Create Project
+                            </h1>
+                            <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-muted)]">
+                                Kernel Forge Onboarding
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <a
+                                onClick={lambda -> None { navigate("/");}}
+                                className="flex items-center justify-center p-2 rounded-full border border-[var(--border)] hover:border-[var(--border-strong)] bg-[var(--surface-0)] transition-colors text-zinc-400 hover:text-white cursor-pointer"
+                                aria-label="Go Back"
                             >
-                                <p className="text-sm text-zinc-400 font-medium">
-                                    {formData["modelFile"].name
-                                    if formData["modelFile"]
-                                    else "Click to select model.py"}
-                                </p>
-                                <p className="text-xs text-zinc-600 mt-1">
-                                    Uploading will replace the editor content
-                                </p>
-                            </div>
+                                <BackIcon/>
+                            </a>
+                            <a
+                                onClick={lambda -> None { navigate(
+                                    "/settings", {"state": {"return_to": "/new-project"}}
+                                );}}
+                                className="flex items-center justify-center p-2 rounded-full border border-[var(--border)] hover:border-[var(--border-strong)] bg-[var(--surface-0)] transition-colors text-zinc-400 hover:text-white cursor-pointer"
+                                aria-label="Settings"
+                            >
+                                <SettingsIcon/>
+                            </a>
                         </div>
                     </div>
-                    <div className="space-y-2">
-                        <label
-                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
-                        >
-                            Upload Weights (.pt or .pth)
-                        </label>
-                        <div className="relative group">
-                            <input
-                                type="file"
-                                accept=".pt,.pth"
-                                onChange={lambda e: any  -> None { handleInputChange(
-                                    "weightsFile", e.target.files[0]
-                                );}}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                            />
+                    <div className="h-[calc(100%-3.5rem)] flex">
+                        <div className="w-1/2 min-w-0 flex flex-col border-r border-[var(--border)]">
                             <div
-                                className="w-full h-32 bg-zinc-900/50 border-2 border-dashed border-zinc-800 group-hover:border-zinc-600 rounded-xl flex flex-col items-center justify-center transition-all"
+                                className="h-14 flex items-center px-6 border-b border-[var(--border)] bg-[var(--surface-0)] relative"
                             >
-                                <div className="p-3 rounded-full bg-zinc-900 mb-2">
-                                    <UploadIcon className="text-zinc-400"/>
+                                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
+                                <h2
+                                    className="text-sm font-bold uppercase tracking-wider text-zinc-400"
+                                >
+                                    Model Code
+                                </h2>
+                            </div>
+                            <div className="flex-1 relative">
+                                <ForgePythonEditor
+                                    value={code}
+                                    onChange={lambda next_code: Any  -> None { code = str(
+                                        next_code
+                                    )
+                                    if next_code
+                                    else "";}}
+                                    readOnly={isSubmitting}
+                                    placeholder="# Paste your model code here or upload model.py"
+                                />
+                            </div>
+                        </div>
+                        <div className="w-1/2 min-w-0 flex flex-col bg-[var(--surface-0)]">
+                            <div
+                                className="h-14 flex items-center justify-between px-6 border-b border-[var(--border)] bg-[var(--surface-0)] relative"
+                            >
+                                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
+                                <h2
+                                    className="text-sm font-bold uppercase tracking-wider text-zinc-400"
+                                >
+                                    Project Details
+                                </h2>
+                            </div>
+                            <div className="flex-1 overflow-y-auto">
+                                <div className="p-8 space-y-8 max-w-xl mx-auto w-full">
+                                    <div className="space-y-2">
+                                        <label
+                                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
+                                        >
+                                            Project Name
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={formData["projectName"]}
+                                            onChange={lambda e: any  -> None { handleInputChange(
+                                                "projectName", e.target.value
+                                            );}}
+                                            placeholder="e.g. ResNet-50 Fine-tune"
+                                            className="w-full h-12 bg-[var(--surface-2)] border border-[var(--border)] hover:border-[var(--border-strong)] rounded-lg px-4 text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-orange-400/30 transition-all"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label
+                                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
+                                        >
+                                            Model Code (.py)
+                                        </label>
+                                        <div className="relative group">
+                                            <input
+                                                type="file"
+                                                accept=".py,.txt"
+                                                onChange={lambda e: any  -> None { previewModelFile(
+                                                    e.target.files[0]
+                                                );}}
+                                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                            />
+                                            <div
+                                                className="w-full h-20 bg-[var(--surface-2)] border border-[var(--border)] group-hover:border-[var(--border-strong)] clip-anvil flex flex-col items-center justify-center transition-colors px-4"
+                                            >
+                                                <p className="text-sm text-zinc-300 font-medium truncate w-full text-center">
+                                                    {formData["modelFile"].name
+                                                    if formData["modelFile"]
+                                                    else "Click to select model.py"}
+                                                </p>
+                                                <p className="text-xs text-zinc-500 mt-1">
+                                                    Uploading will replace the editor content
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label
+                                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
+                                        >
+                                            Upload Weights (.pt or .pth)
+                                        </label>
+                                        <div className="relative group">
+                                            <input
+                                                type="file"
+                                                accept=".pt,.pth"
+                                                onChange={lambda e: any  -> None { handleInputChange(
+                                                    "weightsFile", e.target.files[0]
+                                                );}}
+                                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                            />
+                                            <div
+                                                className="w-full h-32 bg-[var(--surface-2)] border border-[var(--border)] group-hover:border-[var(--border-strong)] clip-anvil flex flex-col items-center justify-center transition-colors px-4"
+                                            >
+                                                <div className="p-3 rounded-full bg-[var(--surface-1)] mb-2">
+                                                    <UploadIcon className="text-zinc-400"/>
+                                                </div>
+                                                <p className="text-sm text-zinc-300 font-medium truncate w-full text-center">
+                                                    {formData["weightsFile"].name
+                                                    if formData["weightsFile"]
+                                                    else "Click to select or drag file"}
+                                                </p>
+                                                <p className="text-xs text-zinc-500 mt-1">
+                                                    PyTorch checkpoint file
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label
+                                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
+                                        >
+                                            Validation Set (.zip)
+                                        </label>
+                                        <div className="relative group">
+                                            <input
+                                                type="file"
+                                                accept=".zip"
+                                                onChange={lambda e: any  -> None { handleInputChange(
+                                                    "validationZip", e.target.files[0]
+                                                );}}
+                                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                            />
+                                            <div
+                                                className="w-full h-12 bg-[var(--surface-2)] border border-[var(--border)] group-hover:border-[var(--border-strong)] clip-anvil px-4 flex items-center text-zinc-300 transition-colors"
+                                            >
+                                                <FolderIcon className="mr-3 text-zinc-400"/>
+                                                <span className="truncate">
+                                                    {formData["validationZip"].name
+                                                    if formData["validationZip"]
+                                                    else "Select .zip file..."}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="pt-6">
+                                        <button
+                                            onClick={lambda e: any  -> None { handleCreate();}}
+                                            disabled={isSubmitting}
+                                            className="w-full h-12 bg-[var(--accent-orange)] hover:bg-[var(--molten-gold-dark)] text-zinc-950 font-bold rounded-lg transition-all shadow-[0_10px_24px_rgba(225,112,85,0.28)] hover:shadow-[0_12px_28px_rgba(232,168,56,0.26)] disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            {"Creating..." if isSubmitting else "Create Project"}
+                                        </button>
+                                    </div>
                                 </div>
-                                <p className="text-sm text-zinc-400 font-medium">
-                                    {formData["weightsFile"].name
-                                    if formData["weightsFile"]
-                                    else "Click to select or drag file"}
-                                </p>
-                                <p className="text-xs text-zinc-600 mt-1">
-                                    PyTorch checkpoint file
-                                </p>
                             </div>
                         </div>
-                    </div>
-                    <div className="space-y-2">
-                        <label
-                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
-                        >
-                            Validation Set (.zip)
-                        </label>
-                        <div className="relative group">
-                            <input
-                                type="file"
-                                accept=".zip"
-                                onChange={lambda e: any  -> None { handleInputChange(
-                                    "validationZip", e.target.files[0]
-                                );}}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                            />
-                            <div
-                                className="w-full h-12 bg-zinc-900 border border-zinc-800 group-hover:border-zinc-600 rounded-lg px-4 flex items-center text-zinc-400 transition-all"
-                            >
-                                <FolderIcon className="mr-3"/>
-                                <span className="truncate">
-                                    {formData["validationZip"].name
-                                    if formData["validationZip"]
-                                    else "Select .zip file..."}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="pt-6">
-                        <button
-                            onClick={lambda e: any  -> None { handleCreate();}}
-                            disabled={isSubmitting}
-                            className="w-full h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {"Creating..." if isSubmitting else "Create Project"}
-                        </button>
                     </div>
                 </div>
             </div>
