@@ -12,6 +12,9 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from src.progress import update_job_progress
+from src.optimizer.tree_store import update_root_value
+
 from .paths import find_latest_optimized_dir, project_dir_for_name
 from .state import read_json_file, write_json_file
 
@@ -113,6 +116,17 @@ def _runtime_fingerprint(device: str) -> str:
         except Exception:
             pass
     return json.dumps(payload, sort_keys=True)
+
+
+def _ops_from_csv(raw: str) -> list[str]:
+    if not raw:
+        return []
+    out: list[str] = []
+    for part in str(raw).split(","):
+        name = str(part).strip()
+        if name:
+            out.append(name)
+    return out
 
 
 def _load_entries(io_dir: Path, max_entries: int) -> list[tuple[Any, dict[str, Any]]]:
@@ -256,6 +270,50 @@ def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
         return None, "error", ""
 
 
+def _profile_generated_kernel_ms(
+    project_dir: Path, op_name: str, io_op_dir: Path | None
+) -> tuple[float | None, str, str]:
+    generated_dir = (
+        project_dir
+        / "kernels"
+        / "generated"
+        / "individual_op_kernels"
+        / op_name
+    )
+    if not generated_dir.exists():
+        return None, "missing_generated", ""
+
+    if (generated_dir / "success.cuda").exists():
+        if io_op_dir is None or not io_op_dir.exists():
+            return None, "missing_io_entries", "cuda"
+        if not (generated_dir / "kernel.cu").exists():
+            return None, "missing_kernel_source", "cuda"
+        try:
+            from src.optimizer.backends.cuda import CUDABackend
+
+            stats = CUDABackend().profile_kernel(
+                {"tmp_dir": generated_dir, "io_dir": io_op_dir},
+                baseline=True,
+            )
+            ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
+            if ms is None:
+                return None, "generated_profile_missing", "cuda"
+            return float(ms), "ok", "cuda"
+        except Exception as e:
+            msg = str(e).strip()
+            if "Ninja is required to load C++ extensions" in msg:
+                return None, "generated_profile_error_ninja", "cuda"
+            return None, "generated_profile_error", "cuda"
+
+    if (generated_dir / "success.triton").exists():
+        return None, "unsupported_generated_backend", "triton"
+    if (generated_dir / "success.mps").exists():
+        return None, "unsupported_generated_backend", "mps"
+    if (generated_dir / "success.cpu").exists():
+        return None, "unsupported_generated_backend", "cpu"
+    return None, "missing_generated", ""
+
+
 def _normalize_op_dir_name(name: str) -> str:
     return str(name).replace(".", "_").replace("/", "_")
 
@@ -304,6 +362,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
     parser.add_argument("--max-entries", type=int, default=50)
+    parser.add_argument("--ops", default="")
     args = parser.parse_args()
 
     project_dir = project_dir_for_name(args.project)
@@ -345,7 +404,7 @@ def main() -> int:
                 except Exception:
                     continue
 
-        results = []
+        results_by_op: dict[str, dict[str, Any]] = {}
         errors: list[str] = []
         op_dirs: dict[str, Path] = {}
         if io_root.exists():
@@ -354,7 +413,88 @@ def main() -> int:
                     op_dirs[d.name] = d
 
         candidate_ops = sorted(set(op_dirs.keys()) | set(op_counts.keys()) | set(op_profile_ms.keys()))
-        for op_name in candidate_ops:
+        selected_ops = _ops_from_csv(args.ops)
+        if selected_ops:
+            selected_set = set(selected_ops)
+            candidate_ops = [op for op in candidate_ops if op in selected_set]
+
+        existing_payload = read_json_file(output_path, {})
+        if isinstance(existing_payload, dict):
+            existing_results = existing_payload.get("results")
+            if isinstance(existing_results, list):
+                for r in existing_results:
+                    if isinstance(r, dict) and r.get("op"):
+                        results_by_op[str(r["op"])] = r
+        if selected_ops:
+            for op_name in selected_ops:
+                results_by_op.pop(op_name, None)
+
+        total_ops = len(candidate_ops)
+        progress_offset = 0
+        progress_total_override = 0
+        try:
+            progress_offset = int(os.environ.get("CGINS_PROGRESS_OFFSET", "0") or "0")
+        except Exception:
+            progress_offset = 0
+        try:
+            progress_total_override = int(
+                os.environ.get("CGINS_PROGRESS_TOTAL", "0") or "0"
+            )
+        except Exception:
+            progress_total_override = 0
+
+        def _update_phase_progress(current_phase: int, message: str) -> None:
+            absolute_total = (
+                progress_total_override if progress_total_override > 0 else total_ops
+            )
+            absolute_current = progress_offset + current_phase
+            if absolute_current < 0:
+                absolute_current = 0
+            if absolute_total > 0 and absolute_current > absolute_total:
+                absolute_current = absolute_total
+            update_job_progress(absolute_current, absolute_total, message)
+
+        if total_ops <= 0:
+            write_json_file(cache_path, cache)
+            write_json_file(
+                output_path,
+                {
+                    "project": args.project,
+                    "timestamp": _now_iso(),
+                    "status": "empty",
+                    "device": device,
+                    "runtime_fingerprint": json.loads(runtime_fingerprint),
+                    "optimized_dir": str(optimized_root) if optimized_root else "",
+                    "results": [results_by_op[k] for k in sorted(results_by_op.keys())],
+                    "errors": errors,
+                },
+            )
+            print(f"[benchmarking.benchmark_ops] Wrote {output_path}")
+            return 0
+
+        def _write_incremental(status: str, current: int, total: int) -> None:
+            payload = {
+                "project": args.project,
+                "timestamp": _now_iso(),
+                "status": status,
+                "device": device,
+                "runtime_fingerprint": json.loads(runtime_fingerprint),
+                "optimized_dir": str(optimized_root) if optimized_root else "",
+                "results": [results_by_op[k] for k in sorted(results_by_op.keys())],
+                "errors": errors,
+                "progress": {
+                    "current": int(current),
+                    "total": int(total),
+                    "percent": (float(current) / float(total)) if total else 0.0,
+                },
+            }
+            write_json_file(output_path, payload)
+
+        for idx, op_name in enumerate(candidate_ops):
+            _update_phase_progress(
+                idx,
+                f"Benchmarking {op_name} ({idx + 1}/{total_ops})",
+            )
             op_dir = op_dirs.get(op_name)
             entries = _load_entries(op_dir, args.max_entries) if op_dir else []
             func = _get_pytorch_func(op_name)
@@ -389,12 +529,51 @@ def main() -> int:
             kernel_ms = None
             kernel_status = "missing"
             backend = ""
+            kernel_estimated = False
             if optimized_root:
                 kernel_ms, kernel_status, backend = _read_best_kernel_ms(optimized_root / op_name)
             else:
                 kernel_status = "missing_optimized_dir"
 
+            if kernel_status != "ok":
+                generated_ms, generated_status, generated_backend = _profile_generated_kernel_ms(
+                    project_dir, op_name, op_dir
+                )
+                if generated_ms is not None:
+                    kernel_ms = generated_ms
+                    kernel_status = "ok"
+                    if generated_backend:
+                        backend = generated_backend
+                elif generated_status == "generated_profile_error_ninja" and pytorch_ms > 0.0:
+                    kernel_ms = float(pytorch_ms)
+                    kernel_status = "ok"
+                    kernel_estimated = True
+                    if generated_backend and not backend:
+                        backend = generated_backend
+                    errors.append(
+                        f"{op_name}: generated kernel profiling unavailable (install ninja for direct kernel benchmarking)"
+                    )
+                else:
+                    if kernel_status in {"missing", "missing_optimized_dir"}:
+                        kernel_status = generated_status
+                    if generated_backend and not backend:
+                        backend = generated_backend
+                    if generated_status in {
+                        "generated_profile_error",
+                        "generated_profile_error_ninja",
+                    }:
+                        errors.append(f"{op_name}: generated kernel benchmark failed")
+
             if count <= 0 and pytorch_ms <= 0.0 and kernel_status != "ok":
+                _update_phase_progress(
+                    idx + 1,
+                    f"Benchmarked {idx + 1}/{total_ops} operators.",
+                )
+                _write_incremental(
+                    "partial" if (idx + 1) < total_ops or errors else "ready",
+                    idx + 1,
+                    total_ops,
+                )
                 continue
 
             winner = "pytorch"
@@ -412,25 +591,37 @@ def main() -> int:
             }
             if backend:
                 row["backend"] = backend
+            if kernel_estimated:
+                row["kernel_estimated"] = True
             if pytorch_ms and kernel_ms:
                 row["speedup"] = float(pytorch_ms / kernel_ms) if kernel_ms > 0 else None
-            results.append(row)
+            results_by_op[op_name] = row
+            if kernel_status == "ok" and kernel_ms is not None:
+                try:
+                    update_root_value(
+                        project_dir,
+                        op_name,
+                        kernel_ms,
+                        description="Generated baseline kernel (benchmarked)",
+                    )
+                except Exception as e:
+                    errors.append(f"{op_name}: tree sync failed: {e}")
+            _update_phase_progress(
+                idx + 1,
+                f"Benchmarked {idx + 1}/{total_ops} operators.",
+            )
+            _write_incremental(
+                "partial" if (idx + 1) < total_ops or errors else "ready",
+                idx + 1,
+                total_ops,
+            )
 
         write_json_file(cache_path, cache)
+        results = [results_by_op[k] for k in sorted(results_by_op.keys())]
         status = "ready" if results else "empty"
         if errors and status == "ready":
             status = "partial"
-        payload = {
-            "project": args.project,
-            "timestamp": _now_iso(),
-            "status": status,
-            "device": device,
-            "runtime_fingerprint": json.loads(runtime_fingerprint),
-            "optimized_dir": str(optimized_root) if optimized_root else "",
-            "results": results,
-            "errors": errors,
-        }
-        write_json_file(output_path, payload)
+        _write_incremental(status, total_ops, total_ops)
         print(f"[benchmarking.benchmark_ops] Wrote {output_path}")
         return 0
     except Exception as e:

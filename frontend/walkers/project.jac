@@ -355,6 +355,13 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
         return {};
     }
     changed = False;
+    if "generate_adv" in state {
+        if not ("generate" in state) {
+            state["generate"] = state["generate_adv"];
+        }
+        state.pop("generate_adv", None);
+        changed = True;
+    }
     for job_key in state {
         job = state[job_key];
         if not job or not ("status" in job) {
@@ -407,6 +414,36 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
             status_raw == "running" or status_raw == "queued" or status_raw == "paused"
         )
         and not has_live_pid {
+            started_at = (
+                str(job["started_at"])
+                if "started_at" in job and job["started_at"]
+                else ""
+            );
+            progress_raw = job["progress"] if "progress" in job and job["progress"] else {};
+            progress_total = 0;
+            progress_current = 0;
+            try {
+                progress_total = int(progress_raw["total"]) if "total" in progress_raw else 0;
+            } except Exception {
+                progress_total = 0;
+            }
+            try {
+                progress_current = int(progress_raw["current"])
+                if "current" in progress_raw
+                else 0;
+            } except Exception {
+                progress_current = 0;
+            }
+            progress_complete = progress_total > 0 and progress_current >= progress_total;
+            message_text = (
+                str(job["message"]).strip().lower()
+                if "message" in job and job["message"]
+                else ""
+            );
+            nonfatal_generate_summary = (
+                "unable to forge" in message_text
+                or ("forged " in message_text and "operators" in message_text)
+            );
             if job_key == "profile" and _has_profile_outputs(project_name) {
                 job["status"] = "completed";
                 job["control"] = "idle";
@@ -416,23 +453,44 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
                 if not ("message" in job) or not job["message"] {
                     job["message"] = "Profile and baseline benchmark already available.";
                 }
-            } elif (job_key == "generate" or job_key == "generate_adv")
+            } elif job_key == "generate"
             and (
-                _has_generate_outputs(project_name)
-                or _has_benchmark_outputs(project_name)
+                (
+                    progress_complete
+                    and (
+                        _has_generate_outputs_after(project_name, started_at)
+                        or _has_optimize_outputs_after(project_name, started_at)
+                        or _has_benchmark_outputs_after(project_name, started_at)
+                        or nonfatal_generate_summary
+                    )
+                )
+                or (
+                    progress_total <= 0
+                    and (
+                        _has_generate_outputs_after(project_name, started_at)
+                        or _has_optimize_outputs_after(project_name, started_at)
+                        or _has_benchmark_outputs_after(project_name, started_at)
+                    )
+                )
             ) {
                 job["status"] = "completed";
                 job["control"] = "idle";
                 job["active"] = False;
                 job["phase"] = "done";
                 job["progress_percent"] = 1.0;
-                if _has_benchmark_outputs(project_name) {
-                    job["message"] = "Kernel generation and benchmark completed.";
+                if _has_benchmark_outputs_after(project_name, started_at) {
+                    if not ("message" in job) or not job["message"] {
+                        job["message"] = "Kernel generation and benchmark completed.";
+                    }
+                } elif _has_optimize_outputs_after(project_name, started_at) {
+                    if not ("message" in job) or not job["message"] {
+                        job["message"] = "Kernel generation and optimization completed.";
+                    }
                 } elif not ("message" in job) or not job["message"] {
                     job["message"] = "Kernel generation completed.";
                 }
-            } elif (job_key == "optimize" or job_key == "optimize_adv")
-            and _has_optimize_outputs(project_name) {
+            } elif job_key == "optimize"
+            and _has_optimize_outputs_after(project_name, started_at) {
                 job["status"] = "completed";
                 job["control"] = "idle";
                 job["active"] = False;
@@ -441,7 +499,8 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
                 if not ("message" in job) or not job["message"] {
                     job["message"] = "Kernel optimization completed.";
                 }
-            } elif job_key == "benchmark" and _has_benchmark_outputs(project_name) {
+            } elif job_key == "benchmark"
+            and _has_benchmark_outputs_after(project_name, started_at) {
                 job["status"] = "completed";
                 job["control"] = "idle";
                 job["active"] = False;
@@ -455,7 +514,15 @@ def _normalize_job_flags(project_name: str, state: dict, state_path: str) -> dic
                 job["control"] = "idle";
                 job["active"] = False;
                 job["phase"] = "error";
-                job["message"] = "Recovered stale job state (process not running).";
+                error_summary = "";
+                if "log" in job and job["log"] {
+                    error_summary = _extract_job_error_summary(str(job["log"]));
+                }
+                if error_summary {
+                    job["message"] = error_summary;
+                } else {
+                    job["message"] = "Recovered stale job state (process not running).";
+                }
             }
             changed = True;
         }
@@ -507,6 +574,23 @@ def _pid_is_alive(pid_val: Any) -> bool {
         return False;
     }
     try {
+        proc_stat = path.join("/proc", str(pid), "stat");
+        if path.exists(proc_stat) {
+            with open(proc_stat, "r") as f {
+                raw = f.read().strip();
+            }
+            close_idx = raw.rfind(")");
+            if close_idx >= 0 and close_idx + 2 < len(raw) {
+                proc_state = raw[close_idx + 2];
+                if proc_state == "Z" {
+                    return False;
+                }
+            }
+        }
+    } except Exception as e {
+        _ = str(e);
+    }
+    try {
         os.kill(pid, 0);
         return True;
     } except Exception {
@@ -543,6 +627,63 @@ def _has_generate_outputs(project_name: str) -> bool {
     return False;
 }
 
+def _iso_to_epoch(iso_value: str) -> float {
+    if not iso_value {
+        return 0.0;
+    }
+    try {
+        text = str(iso_value);
+        if text.endswith("Z") {
+            text = text[0 : len(text) - 1] + "+00:00";
+        }
+        return datetime.fromisoformat(text).timestamp();
+    } except Exception {
+        return 0.0;
+    }
+}
+
+def _modified_after(file_path: str, started_at: str) -> bool {
+    if not path.exists(file_path) {
+        return False;
+    }
+    started_ts = _iso_to_epoch(started_at);
+    if started_ts <= 0.0 {
+        return True;
+    }
+    try {
+        return path.getmtime(file_path) >= (started_ts - 1.0);
+    } except Exception {
+        return False;
+    }
+}
+
+def _has_generate_outputs_after(project_name: str, started_at: str = "") -> bool {
+    generated_root = path.join(
+        _project_dir(project_name), "kernels", "generated", "individual_op_kernels"
+    );
+    if not path.exists(generated_root) or not path.isdir(generated_root) {
+        return False;
+    }
+    for op_name in listdir(generated_root) {
+        op_dir = path.join(generated_root, op_name);
+        if not path.isdir(op_dir) {
+            continue;
+        }
+        markers = [
+            path.join(op_dir, "success.cuda"),
+            path.join(op_dir, "success.triton"),
+            path.join(op_dir, "success.mps"),
+            path.join(op_dir, "success.cpu")
+        ];
+        for marker in markers {
+            if _modified_after(marker, started_at) {
+                return True;
+            }
+        }
+    }
+    return False;
+}
+
 def _has_optimize_outputs(project_name: str) -> bool {
     trees_dir = path.join(_project_dir(project_name), "trees");
     if not path.exists(trees_dir) or not path.isdir(trees_dir) {
@@ -557,11 +698,63 @@ def _has_optimize_outputs(project_name: str) -> bool {
     return False;
 }
 
+def _has_optimize_outputs_after(project_name: str, started_at: str = "") -> bool {
+    trees_dir = path.join(_project_dir(project_name), "trees");
+    if not path.exists(trees_dir) or not path.isdir(trees_dir) {
+        return False;
+    }
+    for op_name in listdir(trees_dir) {
+        db_path = path.join(trees_dir, op_name, "nodes.db");
+        if _modified_after(db_path, started_at) {
+            return True;
+        }
+    }
+    return False;
+}
+
+def _load_tree_best_by_op(project_name: str) -> dict {
+    best_by_op = {};
+    trees_dir = path.join(_project_dir(project_name), "trees");
+    if not path.exists(trees_dir) or not path.isdir(trees_dir) {
+        return best_by_op;
+    }
+    for op_name in listdir(trees_dir) {
+        db_path = path.join(trees_dir, op_name, "nodes.db");
+        if not path.exists(db_path) {
+            continue;
+        }
+        try {
+            conn = sqlite3.connect(db_path);
+            cursor = conn.cursor();
+            cursor.execute("SELECT MIN(value) FROM nodes WHERE value IS NOT NULL");
+            row = cursor.fetchone();
+            conn.close();
+            if row and row[0] is not None {
+                try {
+                    best_by_op[op_name] = float(row[0]);
+                } except Exception {
+                    continue;
+                }
+            }
+        } except Exception as e {
+            print(f"Error loading tree best value for {op_name}: {e}");
+        }
+    }
+    return best_by_op;
+}
+
 def _has_benchmark_outputs(project_name: str) -> bool {
     bench_path = path.join(
         _project_dir(project_name), "benchmarks", "op_benchmarks.json"
     );
     return path.exists(bench_path);
+}
+
+def _has_benchmark_outputs_after(project_name: str, started_at: str = "") -> bool {
+    bench_path = path.join(
+        _project_dir(project_name), "benchmarks", "op_benchmarks.json"
+    );
+    return _modified_after(bench_path, started_at);
 }
 
 def _read_log_excerpt(log_path: str, max_bytes: int = 131072) -> str {
@@ -580,6 +773,53 @@ def _read_log_excerpt(log_path: str, max_bytes: int = 131072) -> str {
     } except Exception {
         return "";
     }
+}
+
+def _extract_job_error_summary(log_path: str) -> str {
+    log_text = _read_log_excerpt(log_path);
+    if not log_text {
+        return "";
+    }
+
+    lines = log_text.splitlines();
+    if len(lines) == 0 {
+        return "";
+    }
+
+    start_idx = len(lines) - 120;
+    if start_idx < 0 {
+        start_idx = 0;
+    }
+
+    idx = len(lines) - 1;
+    while idx >= start_idx {
+        line = str(lines[idx]).strip();
+        if line {
+            line_lower = line.lower();
+            if "[system error]" in line_lower
+            or "[worker crash]" in line_lower
+            or "[compilation failed]" in line_lower
+            or "[runtime error" in line_lower
+            or "traceback" in line_lower
+            or "generation failed" in line_lower
+            or "optimization failed" in line_lower
+            or "benchmark failed" in line_lower
+            or "cuda preflight failed" in line_lower {
+                return line;
+            }
+        }
+        idx = idx - 1;
+    }
+
+    idx = len(lines) - 1;
+    while idx >= start_idx {
+        line = str(lines[idx]).strip();
+        if line and not line.startswith("[job]") {
+            return line;
+        }
+        idx = idx - 1;
+    }
+    return "";
 }
 
 def _refresh_running_job_state(project_name: str, job_key: str, job: dict) -> bool {
@@ -612,7 +852,7 @@ def _refresh_running_job_state(project_name: str, job_key: str, job: dict) -> bo
             message = "Profiling and baseline benchmarking in progress.";
             progress = 0.2;
         }
-    } elif job_key == "generate" or job_key == "generate_adv" {
+    } elif job_key == "generate" {
         if "src.optimizer.benchmarking.benchmark_ops" in log_text {
             phase = "benchmarking";
             message = "Generation complete. Benchmarking kernels.";
@@ -630,7 +870,7 @@ def _refresh_running_job_state(project_name: str, job_key: str, job: dict) -> bo
             message = "Queued for kernel generation.";
             progress = 0.1;
         }
-    } elif job_key == "optimize" or job_key == "optimize_adv" {
+    } elif job_key == "optimize" {
         if "src.optimizer.benchmarking.benchmark_ops" in log_text {
             phase = "benchmarking";
             message = "Optimization complete. Benchmarking kernels.";
@@ -657,6 +897,31 @@ def _refresh_running_job_state(project_name: str, job_key: str, job: dict) -> bo
         job["phase"] = phase;
         changed = True;
     }
+    structured_progress = None;
+    if (
+        "progress" in job
+        and job["progress"]
+        and "total" in job["progress"]
+        and job["progress"]["total"]
+        and "percent" in job["progress"]
+        and job["progress"]["percent"] is not None
+    ) {
+        try {
+            structured_progress = float(job["progress"]["percent"]);
+        } except Exception {
+            structured_progress = None;
+        }
+    }
+    if (
+        "progress" in job
+        and job["progress"]
+        and "total" in job["progress"]
+        and job["progress"]["total"]
+        and "message" in job
+        and job["message"]
+    ) {
+        message = str(job["message"]);
+    }
     if message and ((not ("message" in job)) or job["message"] != message) {
         job["message"] = message;
         changed = True;
@@ -670,8 +935,20 @@ def _refresh_running_job_state(project_name: str, job_key: str, job: dict) -> bo
                 current_progress = None;
             }
         }
-        if current_progress is None or progress > current_progress {
-            job["progress_percent"] = progress;
+        target_progress = progress;
+        if structured_progress is not None {
+            target_progress = structured_progress;
+        }
+        should_update_progress = False;
+        if current_progress is None {
+            should_update_progress = True;
+        } elif structured_progress is not None {
+            should_update_progress = abs(target_progress - current_progress) > 0.000001;
+        } elif target_progress > current_progress {
+            should_update_progress = True;
+        }
+        if should_update_progress {
+            job["progress_percent"] = target_progress;
             changed = True;
         }
     }
@@ -739,11 +1016,11 @@ def _start_job(project_name: str, job_key: str, cmd: list, log_name: str) -> dic
         initial_phase = "profiling";
         initial_message = "Profiling and baseline benchmarking started.";
         initial_progress = 0.1;
-    } elif job_key == "generate" or job_key == "generate_adv" {
+    } elif job_key == "generate" {
         initial_phase = "generating";
         initial_message = "Kernel generation started.";
         initial_progress = 0.05;
-    } elif job_key == "optimize" or job_key == "optimize_adv" {
+    } elif job_key == "optimize" {
         initial_phase = "optimizing";
         initial_message = "Kernel optimization started.";
         initial_progress = 0.05;
@@ -772,17 +1049,20 @@ def _start_job(project_name: str, job_key: str, cmd: list, log_name: str) -> dic
         }
     );
 
-    with open(log_path, "a") as f {
+    with open(log_path, "w") as f {
         f.write(f"[job] Started at {datetime.now().isoformat()}\n");
         f.write(f"[job] Command: {cmd}\n");
     }
+    child_env = os.environ.copy();
+    child_env["CGINS_STATE_PATH"] = path.join(_project_dir(project_name), "state.json");
+    child_env["CGINS_JOB_KEY"] = job_key;
     log_file = open(log_path, "a");
     proc = subprocess.Popen(
         cmd,
         cwd=repo_root,
         stdout=log_file,
         stderr=subprocess.STDOUT,
-        env=os.environ.copy()
+        env=child_env
     );
     log_file.close();
     _update_job_state(project_name, job_key, {"pid": proc.pid});
@@ -792,19 +1072,36 @@ def _start_job(project_name: str, job_key: str, cmd: list, log_name: str) -> dic
 def _start_job_container(
     project_name: str, job_key: str, cmd: list, log_name: str, image: str
 ) -> dict {
-    project_dir = _project_dir(project_name);
-    logs_dir = path.join(project_dir, "logs");
-    _ensure_dir(logs_dir);
-    log_path = path.join(logs_dir, log_name);
-    with open(log_path, "a") as f {
-        f.write(
-            "[job] Container mode requested" + (f" ({image})" if image else "") + " - executing in host runtime.\n"
-        );
-    }
     return _start_job(project_name, job_key, cmd, log_name);
 }
 
 def _find_optimized_dir(project_name: str) -> str {
+    project_trees = path.join(_project_dir(project_name), "trees");
+    if path.exists(project_trees) and path.isdir(project_trees) {
+        for name in listdir(project_trees) {
+            full_path = path.join(project_trees, name);
+            if not path.isdir(full_path) {
+                continue;
+            }
+            if path.exists(path.join(full_path, "nodes.db")) {
+                return project_trees;
+            }
+            kernels_dir = path.join(full_path, "kernels");
+            if path.exists(kernels_dir) and path.isdir(kernels_dir) {
+                for fname in listdir(kernels_dir) {
+                    if fname.endswith(".cu")
+                    or fname.endswith(".py")
+                    or fname.endswith(".metal") {
+                        return project_trees;
+                    }
+                }
+            }
+            if path.exists(path.join(full_path, "generated_root.json")) {
+                return project_trees;
+            }
+        }
+    }
+
     base_dir = path.join(repo_root, "kernels", "optimized");
     if not path.exists(base_dir) {
         return "";
@@ -1348,19 +1645,31 @@ walker:pub StartProfile {
 walker:pub StartGenerate {
     has projectName: str,
         ops: list = [],
-        optimize: bool = False,
         benchmark: bool = False,
         iterations: int = 0,
-        genAttempts: int = 8,
-        generator_config: dict = {};
+        targetDevice: str = "cuda";
 
     can run with entry {
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
         out_dir = path.join(_project_dir(self.projectName), "kernels", "generated");
         _ensure_dir(out_dir);
-        target_device = "cuda";
-        if self.generator_config and "target_device" in self.generator_config {
-            target_device = str(self.generator_config["target_device"]).lower();
+        target_device = str(self.targetDevice).lower() if self.targetDevice else "cuda";
+        if not self.targetDevice {
+            cfg_path = path.join(_project_dir(self.projectName), "config.json");
+            if path.exists(cfg_path) {
+                try {
+                    with open(cfg_path, "r") as f {
+                        project_cfg = load(f);
+                    }
+                    if project_cfg
+                    and "generator" in project_cfg
+                    and "target_device" in project_cfg["generator"] {
+                        target_device = str(project_cfg["generator"]["target_device"]).lower();
+                    }
+                } except Exception as e {
+                    print(f"Failed reading config target_device: {e}");
+                }
+            }
         }
         if target_device == "gpu"
         or target_device == "cuda"
@@ -1402,9 +1711,6 @@ walker:pub StartGenerate {
             "--target-device",
             target_device
         ];
-        if self.optimize {
-            cmd.append("--optimize");
-        }
         if self.benchmark {
             cmd.append("--benchmark");
         }
@@ -1412,14 +1718,7 @@ walker:pub StartGenerate {
             cmd.append("--iterations");
             cmd.append(str(self.iterations));
         }
-        if self.genAttempts > 0 {
-            cmd.append("--gen-attempts");
-            cmd.append(str(self.genAttempts));
-        } elif self.generator_config and "max_attempts" in self.generator_config {
-            cmd.append("--gen-attempts");
-            cmd.append(str(self.generator_config["max_attempts"]));
-        }
-        result = _start_job(self.projectName, "generate_adv", cmd, "generate_adv.log");
+        result = _start_job(self.projectName, "generate", cmd, "generate.log");
         report result;
     }
 }
@@ -1481,7 +1780,7 @@ walker:pub StartOptimize {
         if self.benchmark {
             cmd.append("--benchmark");
         }
-        result = _start_job(self.projectName, "optimize_adv", cmd, "optimize_adv.log");
+        result = _start_job(self.projectName, "optimize", cmd, "optimize.log");
         report result;
     }
 }
@@ -1547,8 +1846,13 @@ walker:pub GetOpDetails {
             opt_base = path.join(repo_root, "kernels", "optimized");
         }
         opt_dir = path.join(opt_base, self.opName) if opt_base else "";
-        opt_kernels = _list_files(opt_dir, [".cu", ".so"]);
-        opt_logs = _list_files(opt_dir, [".txt", ".log"]);
+        opt_kernel_dir = path.join(opt_dir, "kernels") if opt_dir else "";
+        opt_kernels = (
+            _list_files(opt_kernel_dir, [".cu", ".py", ".metal", ".so"])
+            if opt_kernel_dir and path.exists(opt_kernel_dir)
+            else _list_files(opt_dir, [".cu", ".py", ".metal", ".so"])
+        );
+        opt_logs = _list_files(opt_dir, [".txt", ".log", ".json"]);
 
         report {
             "op": self.opName,
@@ -1763,7 +2067,7 @@ walker:pub GetProjectMctsSummary {
                         cursor.execute("SELECT COUNT(*) FROM nodes");
                         node_count = cursor.fetchone()[0];
 
-                        cursor.execute("SELECT MAX(value) FROM nodes");
+                        cursor.execute("SELECT MIN(value) FROM nodes");
                         best_val = cursor.fetchone()[0] or 0.0;
 
                         total_nodes += node_count;
@@ -1871,6 +2175,7 @@ walker:pub GetDashboardCharts {
                 bench_by_op[r["op"]] = r;
             }
         }
+        tree_best_by_op = _load_tree_best_by_op(self.projectName);
 
         speed_comparison = [];
         for r in bench_results {
@@ -1917,6 +2222,32 @@ walker:pub GetDashboardCharts {
                 speed_comparison.append({"name": op_name, "pytorch": ms_val});
             }
         }
+        for op_name in tree_best_by_op {
+            best_ms = tree_best_by_op[op_name];
+            if not best_ms or best_ms <= 0.0 {
+                continue;
+            }
+            found = False;
+            idx = 0;
+            while idx < len(speed_comparison) {
+                row = speed_comparison[idx];
+                if row and "name" in row and row["name"] == op_name {
+                    found = True;
+                    if not ("optimized" in row) {
+                        speed_comparison[idx]["optimized"] = best_ms;
+                    }
+                    break;
+                }
+                idx = idx + 1;
+            }
+            if not found {
+                add_row = {"name": op_name, "optimized": best_ms};
+                if op_name in profile_ms_by_op and profile_ms_by_op[op_name] > 0.0 {
+                    add_row["pytorch"] = profile_ms_by_op[op_name];
+                }
+                speed_comparison.append(add_row);
+            }
+        }
 
         operator_usage = [];
         all_ops = [];
@@ -1939,9 +2270,16 @@ walker:pub GetDashboardCharts {
                 seen_ops[op_name] = True;
             }
         }
+        for op_name in tree_best_by_op {
+            if not (op_name in seen_ops) {
+                all_ops.append(op_name);
+                seen_ops[op_name] = True;
+            }
+        }
 
         for op_name in all_ops {
             pytorch_ms = 0.0;
+            optimized_ms = None;
             b = {};
             if op_name in bench_by_op {
                 b = bench_by_op[op_name];
@@ -1954,10 +2292,27 @@ walker:pub GetDashboardCharts {
                         pytorch_ms = 0.0;
                     }
                 }
+                if b
+                and "kernel_status" in b
+                and b["kernel_status"] == "ok"
+                and "kernel_ms" in b
+                and b["kernel_ms"] is not None {
+                    try {
+                        optimized_ms = float(b["kernel_ms"]);
+                    } except Exception {
+                        optimized_ms = None;
+                    }
+                }
             } elif op_name in profile_ms_by_op {
                 pytorch_ms = profile_ms_by_op[op_name];
                 if pytorch_ms < 0.0 {
                     pytorch_ms = 0.0;
+                }
+            }
+            if optimized_ms is None and op_name in tree_best_by_op {
+                tree_ms = tree_best_by_op[op_name];
+                if tree_ms and tree_ms > 0.0 {
+                    optimized_ms = tree_ms;
                 }
             }
 
@@ -1971,7 +2326,8 @@ walker:pub GetDashboardCharts {
                 count = 0;
             }
 
-            total_time_ms = pytorch_ms * count if pytorch_ms and count else 0.0;
+            effective_ms = optimized_ms if optimized_ms is not None else pytorch_ms;
+            total_time_ms = effective_ms * count if effective_ms and count else 0.0;
             if total_time_ms > 0.0 {
                 operator_usage.append(
                     {"name": op_name, "count": count, "total_time_ms": total_time_ms}

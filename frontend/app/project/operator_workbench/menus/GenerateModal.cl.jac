@@ -7,7 +7,6 @@ import from .....components.ui.Icons {
     SettingsIcon,
     CpuIcon,
     BrainIcon,
-    ActivityIcon,
     ChevronDownIcon
 }
 import from .....components.ui.SearchableSelect { SearchableSelect }
@@ -81,17 +80,9 @@ def:pub GenerateModal(props: any) -> Any {
     llmModel = llm_model_state[0];
     setLlmModel = llm_model_state[1];
 
-    max_attempts_state = useState(8);
-    maxAttempts = max_attempts_state[0];
-    setMaxAttempts = max_attempts_state[1];
-
     target_device_state = useState("cuda");
     targetDevice = target_device_state[0];
     setTargetDevice = target_device_state[1];
-
-    use_template_state = useState(True);
-    useTemplate = use_template_state[0];
-    setUseTemplate = use_template_state[1];
 
     # Model List State
     models_state = useState([]);
@@ -255,23 +246,9 @@ def:pub GenerateModal(props: any) -> Any {
             payload = {
                 "projectName": resolvedProjectName,
                 "ops": [selectedOp],
-                "optimize": False,
-                "benchmark": False,
-                "generator_config": {
-                    "max_attempts": int(maxAttempts),
-                    "target_device": targetDevice,
-                    "use_baseline_kernels": True,
-                    "use_baseline_as_template": useTemplate,
-                    "extra_validation_cases": 0
-                }
+                "benchmark": True,
+                "targetDevice": targetDevice
             };
-
-            if llmModel {
-                payload["llm_model"] = llmModel;
-            }
-            if llmProvider {
-                payload["llm_provider"] = llmProvider;
-            }
 
             resp = await __jacSpawn("StartGenerate", "", payload);
             data = resp.reports[0] if resp and resp.reports else {};
@@ -382,25 +359,7 @@ def:pub GenerateModal(props: any) -> Any {
                             Select model from{" " + str(list_len(models))} available
                         </p>}
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                            <label
-                                className="text-sm font-medium text-zinc-300 flex items-center gap-2"
-                            >
-                                <ActivityIcon className="w-4 h-4 text-blue-400"/>
-                                Max Attempts
-                            </label>
-                            <input
-                                type="number"
-                                value={maxAttempts}
-                                onChange={lambda e: any  -> None { setMaxAttempts(
-                                    e.target.value
-                                );}}
-                                min="1"
-                                max="50"
-                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                            />
-                        </div>
+                    <div className="grid grid-cols-1 gap-4">
                         <div className="space-y-2">
                             <label
                                 className="text-sm font-medium text-zinc-300 flex items-center gap-2"
@@ -418,28 +377,6 @@ def:pub GenerateModal(props: any) -> Any {
                                 {available_device_nodes}
                             </select>
                         </div>
-                    </div>
-                    <div className="space-y-2 pt-2">
-                        <label
-                            className="flex items-center gap-2 cursor-pointer group"
-                        >
-                            <input
-                                type="checkbox"
-                                checked={useTemplate}
-                                onChange={lambda e: any  -> None { setUseTemplate(
-                                    e.target.checked
-                                );}}
-                                className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-indigo-600 focus:ring-indigo-500/50"
-                            />
-                            <span
-                                className="text-sm text-zinc-300 group-hover:text-white transition-colors"
-                            >
-                                Use Baseline as Template
-                            </span>
-                        </label>
-                        <p className="text-[10px] text-zinc-500 pl-6">
-                            Inject PyTorch code as a reference template in the prompt
-                        </p>
                     </div>
                 </div>
                 <div className="pt-6 flex justify-end gap-3 border-t border-zinc-800">
