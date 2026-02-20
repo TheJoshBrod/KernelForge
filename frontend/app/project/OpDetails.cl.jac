@@ -3,7 +3,7 @@
 import from react { useEffect }
 import from "react-router-dom" { useNavigate, useParams }
 import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
-import from ...components.ui.Icons { CGinSLogo }
+import from ...components.ui.Icons { KernelForgeLogo }
 
 def:pub OpDetails -> Any {
     navigate = useNavigate();
@@ -243,7 +243,7 @@ def:pub OpDetails -> Any {
                 <aside className="sidebar">
                     <div className="sidebar-header">
                         <div className="brand">
-                            <CGinSLogo className="mascot mascot--logo"/>
+                            <KernelForgeLogoclassName="mascot mascot--logo"/>
                             <div className="brand-meta">
                                 <span>
                                     Op Details
@@ -359,7 +359,7 @@ def:pub OpDetails -> Any {
                                 </span>
                             </div>
                         </div>
-                        <CGinSLogo className="mascot mascot--cta"/>
+                        <KernelForgeLogoclassName="mascot mascot--cta"/>
                     </div>
                     <div className="panel">
                         <div className="panel-header">

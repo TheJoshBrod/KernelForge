@@ -1,6 +1,6 @@
 """UI Icons Component"""
 
-import from "@jac-client/assets/KernelForge.svg" { default as cginsLogo }
+import from "@jac-client/assets/KernelForge.svg" { default as kernelForgeLogo }
 
 def:pub FolderIcon(className: str = "") -> Any {
     return
@@ -214,9 +214,9 @@ def:pub MenuIcon(className: str = "") -> Any {
         </svg>;
 }
 
-def:pub CGinSLogo(className: str = "") -> Any {
+def:pub KernelForgeLogo(className: str = "") -> Any {
     return
-        <img src={cginsLogo} alt="CGinS Logo" className={className}/>;
+        <img src={kernelForgeLogo} alt="Kernel Forge Logo" className={className}/>;
 }
 
 def:pub ActivityIcon(className: str = "") -> Any {

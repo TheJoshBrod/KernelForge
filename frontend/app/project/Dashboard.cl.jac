@@ -210,10 +210,10 @@ def:pub Dashboard -> Any {
 
     def get_dashboard_cache_store -> dict {
         try {
-            if not ("__cginsDashboardCache" in window) or not window["__cginsDashboardCache"] {
-                window["__cginsDashboardCache"] = {};
+            if not ("__kernelForgeDashboardCache" in window) or not window["__kernelForgeDashboardCache"] {
+                window["__kernelForgeDashboardCache"] = {};
             }
-            return window["__cginsDashboardCache"];
+            return window["__kernelForgeDashboardCache"];
         } except Exception {
             return {};
         }

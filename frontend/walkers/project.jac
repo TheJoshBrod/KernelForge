@@ -28,8 +28,8 @@ def _ensure_dir(dir_path: str) -> None {
 
 def _projects_base_dir() -> str {
     data_dir = (
-        os.environ["CGINS_DATA_DIR"]
-        if "CGINS_DATA_DIR" in os.environ and os.environ["CGINS_DATA_DIR"]
+        os.environ["KFORGE_DATA_DIR"]
+        if "KFORGE_DATA_DIR" in os.environ and os.environ["KFORGE_DATA_DIR"]
         else path.join(repo_root, "kernels")
     );
     projects_dir = path.join(data_dir, "projects");
@@ -1183,8 +1183,8 @@ def _start_job(project_name: str, job_key: str, cmd: list, log_name: str) -> dic
         f.write(f"[job] Command: {cmd}\n");
     }
     child_env = os.environ.copy();
-    child_env["CGINS_STATE_PATH"] = path.join(_project_dir(project_name), "state.json");
-    child_env["CGINS_JOB_KEY"] = job_key;
+    child_env["KFORGE_STATE_PATH"] = path.join(_project_dir(project_name), "state.json");
+    child_env["KFORGE_JOB_KEY"] = job_key;
     log_file = open(log_path, "a");
     proc = subprocess.Popen(
         cmd,
@@ -1319,7 +1319,7 @@ def _export_project_zip(project_name: str, ops: list = None) -> dict {
 
     export_dir = path.join(_project_dir(project_name), "exports");
     _ensure_dir(export_dir);
-    export_path = path.join(export_dir, project_name + ".cgins.zip");
+    export_path = path.join(export_dir, project_name + ".kforge.zip");
 
     manifest = {
         "project": project_name,
@@ -2776,7 +2776,7 @@ walker:pub DownloadExport {
             export_path = path.join(
                 _project_dir(self.projectName),
                 "exports",
-                self.projectName + ".cgins.zip"
+                self.projectName + ".kforge.zip"
             );
             if not path.exists(export_path) {
                 export_result = _export_project_zip(self.projectName, []);

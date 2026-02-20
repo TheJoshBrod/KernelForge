@@ -27,7 +27,7 @@ def:pub Export -> Any {
             data = resp.reports[0] if resp and resp.reports else None;
 
             if data and data["success"] {
-                file_name = data["name"] if data["name"] else f"{name}.cgins.zip";
+                file_name = data["name"] if data["name"] else f"{name}.kforge.zip";
                 data_uri = f"data:application/zip;base64,{data['data']}";
                 blob_resp = await fetch(data_uri);
                 blob = await blob_resp.blob();

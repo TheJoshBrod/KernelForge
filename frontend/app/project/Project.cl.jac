@@ -16,7 +16,7 @@ import from recharts {
 }
 import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
 import from ...components.ui.GlowButton { GlowButton }
-import from ...components.ui.Icons { CGinSLogo }
+import from ...components.ui.Icons { KernelForgeLogo }
 import from ...components.ui.Modal { Modal }
 
 def:pub Project -> Any {
@@ -41,7 +41,7 @@ def:pub Project -> Any {
         advMinImprove: float = 0.0,
         advSpeedupPct: float = 5.0,
         advGenAttempts: int = 4,
-        advImage: str = "cgins-codex:latest",
+        advImage: str = "kernel-forge-codex:latest",
         targetDevice: str = "cuda",
         hardwareInfo: dict = {},
         hardwareLoading: bool = False,
@@ -402,7 +402,7 @@ def:pub Project -> Any {
                 if resp and resp.reports and resp.reports.length > 0
                 else None;
                 if data and data["success"] {
-                    file_name = data["name"] if data["name"] else f"{name}.cgins.zip";
+                    file_name = data["name"] if data["name"] else f"{name}.kforge.zip";
                     data_uri = f"data:application/zip;base64,{data['data']}";
                     blob_resp = await fetch(data_uri);
                     blob = await blob_resp.blob();
@@ -855,7 +855,7 @@ def:pub Project -> Any {
                 <aside className="sidebar">
                     <div className="sidebar-header">
                         <div className="brand">
-                            <CGinSLogo className="mascot mascot--logo"/>
+                            <KernelForgeLogoclassName="mascot mascot--logo"/>
                             <div className="brand-meta">
                                 <span>
                                     Project
@@ -1134,7 +1134,7 @@ def:pub Project -> Any {
                                 onClick={lambda -> None { handleExport();}}
                                 className="ghost-button"
                             >
-                                Export .cgins
+                                Export .kforge
                             </button>
                             {<button
                                 onClick={lambda -> None { handleDownloadExport();}}
@@ -1168,7 +1168,7 @@ def:pub Project -> Any {
                                 </span>
                             </div>
                         </div>
-                        <CGinSLogo className="mascot mascot--cta"/>
+                        <KernelForgeLogoclassName="mascot mascot--cta"/>
                     </div>
                     <div className="panel-grid">
                         <div className="panel">

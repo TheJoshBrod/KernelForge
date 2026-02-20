@@ -1,4 +1,4 @@
-# CGinS Frontend
+# Kernel Forge Frontend
 
 Frontend is built with Jac + React and orchestrates project lifecycle through walkers.
 

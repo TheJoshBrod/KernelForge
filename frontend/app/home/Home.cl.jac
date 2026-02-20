@@ -4,7 +4,7 @@ import from react { useEffect }
 import from "react-router-dom" { useNavigate }
 import from ...components.backdrops.EmberBackground { EmberBackground }
 import from ...components.ui.GlowButton { GlowButton }
-import from ...components.ui.Icons { CGinSLogo, SettingsIcon, ArrowRightIcon, GithubIcon, DiscordIcon, TrashIcon }
+import from ...components.ui.Icons { KernelForgeLogo, SettingsIcon, ArrowRightIcon, GithubIcon, DiscordIcon, TrashIcon }
 import from ...components.SplashScreen { SplashScreen }
 
 def:pub Home -> Any {
@@ -190,7 +190,7 @@ def:pub Home -> Any {
                         <DiscordIcon className="w-7 h-7"/>
                     </a>
                     <a
-                        href="https://github.com/TheJoshBrod/CGinS"
+                        href="https://github.com/TheJoshBrod/KernelForge"
                         target="_blank"
                         rel="noreferrer"
                         className="text-white/50 hover:text-white transition-all duration-300 hover:scale-110 hover:-translate-y-1 hover:drop-shadow-[0_0_12px_rgba(255,255,255,0.6)]"

@@ -1,7 +1,7 @@
 """Splash Screen Component"""
 
 import from .backdrops.EmberBackground { EmberBackground }
-import from .ui.Icons { CGinSLogo }
+import from .ui.Icons { KernelForgeLogo }
 
 def:pub SplashScreen(exiting: bool) -> Any {
     splashClass = "splash-screen";
@@ -19,7 +19,7 @@ def:pub SplashScreen(exiting: bool) -> Any {
             ></div>
             <div className="splash-content">
                 <div className="splash-mascot bg-[var(--bg-panel)]/50 backdrop-blur-sm border border-[var(--border)] rounded-sm p-8 shadow-[0_0_30px_rgba(225,112,85,0.2)]">
-                    <CGinSLogo className="w-32 h-32 text-[var(--accent)] splash-mascot-img"/>
+                    <KernelForgeLogo className="w-32 h-32 text-[var(--accent)] splash-mascot-img"/>
                 </div>
                 <div className="flex flex-col items-center mt-6">
                     <h1 className="text-6xl font-bold text-white tracking-widest uppercase industrial-font-display mb-2 drop-shadow-[0_0_15px_rgba(225,112,85,0.5)]">
