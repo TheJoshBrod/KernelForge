@@ -3049,9 +3049,289 @@ walker:pub GetMctsTree {
 }
 
 walker:pub ImportKernel {
+    has projectName: str,
+        opName: str,
+        source: str,
+        backend: str = "CUDA";
+
     can run with entry {
-        print("upload!");
-        report {"success": True, "message": "upload!"};
+        project_name = str(self.projectName).strip() if self.projectName else "";
+        op_name_raw = str(self.opName).strip() if self.opName else "";
+        source_code = str(self.source) if self.source is not None else "";
+        backend_raw = str(self.backend).strip().lower() if self.backend else "cuda";
+
+        if not project_name {
+            report {"success": False, "error": "Missing project context."};
+            disengage;
+        }
+        if not op_name_raw {
+            report {"success": False, "error": "Missing operator name."};
+            disengage;
+        }
+        if not source_code or str(source_code).strip() == "" {
+            report {"success": False, "error": "Kernel source is empty."};
+            disengage;
+        }
+
+        backend_name = "cuda";
+        kernel_file = "kernel.cu";
+        success_marker = "success.cuda";
+
+        if backend_raw == "cuda"
+        or backend_raw == "gpu"
+        or backend_raw == "nvidia" {
+            backend_name = "cuda";
+            kernel_file = "kernel.cu";
+            success_marker = "success.cuda";
+        } elif backend_raw == "triton" {
+            backend_name = "triton";
+            kernel_file = "kernel.py";
+            success_marker = "success.triton";
+        } elif backend_raw == "mps"
+        or backend_raw == "metal"
+        or backend_raw == "apple" {
+            backend_name = "mps";
+            kernel_file = "kernel.metal";
+            success_marker = "success.mps";
+        } elif backend_raw == "cpu" {
+            backend_name = "cpu";
+            kernel_file = "kernel.py";
+            success_marker = "success.cpu";
+        }
+
+        if backend_name != "cuda" {
+            report {
+                "success": False,
+                "error": (
+                    "Custom upload requires CUDA right now so it can be benchmarked before tree insertion."
+                )
+            };
+            disengage;
+        }
+
+        op_name = _normalize_metric_op_name(op_name_raw);
+        project_dir = _project_dir(project_name);
+        generated_dir = path.join(
+            project_dir,
+            "kernels",
+            "generated",
+            "individual_op_kernels",
+            op_name
+        );
+        _ensure_dir(generated_dir);
+
+        kernel_path = path.join(generated_dir, kernel_file);
+        stale_markers = [
+            "success.cuda",
+            "success.triton",
+            "success.mps",
+            "success.cpu"
+        ];
+        for marker_name in stale_markers {
+            marker_path = path.join(generated_dir, marker_name);
+            if path.exists(marker_path) {
+                try {
+                    os.remove(marker_path);
+                } except Exception as e {
+                    _ = str(e);
+                }
+            }
+        }
+
+        try {
+            with open(kernel_path, "w", encoding="utf-8", errors="ignore") as f {
+                f.write(source_code);
+            }
+        } except Exception as e {
+            report {"success": False, "error": f"Failed to write kernel source: {e}"};
+            disengage;
+        }
+
+        try {
+            with open(path.join(generated_dir, success_marker), "w") as f {
+                f.write("ok\n");
+            }
+        } except Exception as e {
+            report {"success": False, "error": f"Failed to write success marker: {e}"};
+            disengage;
+        }
+
+        benchmark_script = """
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+from src.optimizer.tree_store import publish_generated_root
+
+project_dir = Path(sys.argv[1])
+project_name = sys.argv[2]
+op_name = sys.argv[3]
+backend = sys.argv[4]
+repo_root = sys.argv[5]
+
+cmd = [
+    sys.executable,
+    "-m",
+    "src.optimizer.benchmarking.benchmark_ops",
+    "--project",
+    project_name,
+    "--ops",
+    op_name,
+]
+proc = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True)
+if proc.returncode != 0:
+    msg = (proc.stderr or proc.stdout or "").strip()
+    print(json.dumps({"ok": False, "error": f"Benchmark command failed: {msg or 'unknown error'}"}))
+    raise SystemExit(0)
+
+bench_path = project_dir / "benchmarks" / "op_benchmarks.json"
+if not bench_path.exists():
+    print(json.dumps({"ok": False, "error": "Benchmark output missing."}))
+    raise SystemExit(0)
+
+try:
+    payload = json.loads(bench_path.read_text(encoding="utf-8"))
+except Exception as e:
+    print(json.dumps({"ok": False, "error": f"Failed to parse benchmark output: {e}"}))
+    raise SystemExit(0)
+
+rows = payload.get("results") if isinstance(payload, dict) else None
+if not isinstance(rows, list):
+    print(json.dumps({"ok": False, "error": "Invalid benchmark output format."}))
+    raise SystemExit(0)
+
+target = None
+for row in rows:
+    if isinstance(row, dict) and str(row.get("op") or "") == op_name:
+        target = row
+        break
+
+if target is None:
+    print(json.dumps({"ok": False, "error": f"No benchmark row for {op_name}."}))
+    raise SystemExit(0)
+
+kernel_status = str(target.get("kernel_status") or "")
+kernel_ms = target.get("kernel_ms")
+pytorch_ms = target.get("pytorch_ms")
+try:
+    kernel_ms = float(kernel_ms) if kernel_ms is not None else None
+except Exception:
+    kernel_ms = None
+try:
+    pytorch_ms = float(pytorch_ms) if pytorch_ms is not None else None
+except Exception:
+    pytorch_ms = None
+
+if kernel_status != "ok" or kernel_ms is None or kernel_ms <= 0.0:
+    print(
+        json.dumps(
+            {
+                "ok": False,
+                "error": "Kernel benchmark did not succeed; tree was not updated.",
+                "kernel_status": kernel_status,
+                "kernel_ms": kernel_ms,
+                "pytorch_ms": pytorch_ms,
+            }
+        )
+    )
+    raise SystemExit(0)
+
+published = publish_generated_root(
+    project_dir,
+    op_name,
+    kernel_ms=kernel_ms,
+    backend=backend,
+    description="Uploaded custom kernel (benchmarked)",
+)
+if not isinstance(published, dict) or not published.get("ok"):
+    reason = published.get("reason") if isinstance(published, dict) else "unknown"
+    print(json.dumps({"ok": False, "error": f"Failed to publish root node: {reason}"}))
+    raise SystemExit(0)
+
+print(
+    json.dumps(
+        {
+            "ok": True,
+            "op": op_name,
+            "backend": backend,
+            "kernel_ms": kernel_ms,
+            "pytorch_ms": pytorch_ms,
+            "kernel_status": kernel_status,
+        }
+    )
+)
+""";
+
+        benchmark_result = {};
+        try {
+            out = subprocess.check_output(
+                [
+                    sys.executable,
+                    "-c",
+                    benchmark_script,
+                    project_dir,
+                    project_name,
+                    op_name,
+                    backend_name,
+                    repo_root
+                ],
+                cwd=repo_root
+            );
+            result_text = out.decode("utf-8").strip();
+            benchmark_result = loads(result_text) if result_text else {};
+        } except Exception as e {
+            report {
+                "success": False,
+                "error": (
+                    "Benchmark execution failed for uploaded kernel. "
+                    + str(e)
+                )
+            };
+            disengage;
+        }
+
+        if (
+            not benchmark_result
+            or not ("ok" in benchmark_result)
+            or not benchmark_result["ok"]
+        ) {
+            err_msg = "Uploaded kernel failed benchmark and was not added to tree.";
+            if benchmark_result
+            and "error" in benchmark_result
+            and benchmark_result["error"] {
+                err_msg = str(benchmark_result["error"]);
+            }
+            report {
+                "success": False,
+                "error": err_msg,
+                "details": benchmark_result
+            };
+            disengage;
+        }
+
+        try {
+            _refresh_project_metrics(project_name);
+        } except Exception as e {
+            _ = str(e);
+        }
+
+        report {
+            "success": True,
+            "message": "Kernel benchmarked and added to tree.",
+            "op": op_name,
+            "kernel_ms": (
+                benchmark_result["kernel_ms"]
+                if "kernel_ms" in benchmark_result
+                else None
+            ),
+            "pytorch_ms": (
+                benchmark_result["pytorch_ms"]
+                if "pytorch_ms" in benchmark_result
+                else None
+            ),
+            "backend": backend_name
+        };
     }
 }
 
