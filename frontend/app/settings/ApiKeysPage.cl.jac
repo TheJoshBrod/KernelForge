@@ -107,7 +107,7 @@ def:pub ApiKeysPage(props: any) -> Any {
                     <button
                         onClick={handleTestAll}
                         disabled={testing or saving}
-                        className={"app-button " + (
+                        className={"px-6 h-10 w-full sm:w-auto flex justify-center items-center bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg transition-all border border-zinc-700 " + (
                             "opacity-50 cursor-not-allowed" if testing else ""
                         )}
                     >

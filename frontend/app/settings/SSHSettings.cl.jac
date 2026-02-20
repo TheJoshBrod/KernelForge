@@ -8,14 +8,12 @@ def:pub SSHSettings(
     handleSetActiveSshConnection: func,
     handleUpdateSshConnection: func,
     saving: bool,
-    checkSshConnectionWalker: func
+    checkSshConnectionWalker: func,
+    view: str,
+    setView: func
 ) -> Any {
     ssh_connections = config["ssh_connections"] if "ssh_connections" in config else [];
     active_idx = config["active_ssh_index"] if "active_ssh_index" in config else -1;
-
-    view_state = useState("list");
-    view = view_state[0];
-    setView = view_state[1];
 
     form_state = useState({"host": "", "user": "", "key_path": ""});
     formData = form_state[0];
@@ -125,13 +123,8 @@ def:pub SSHSettings(
 
     if view == "add" {
         return
-            <div className="space-y-4">
-                <h2 className="text-xl font-bold text-[var(--text-light)] industrial-font-display uppercase tracking-wider">
-                    Add New Connection
-                </h2>
-                <div
-                    className="space-y-3 p-4 bg-[var(--bg-darker)]/30 rounded-sm border border-[var(--border)]"
-                >
+            <div className="flex flex-col h-full min-h-full">
+                <div className="flex-1 overflow-hidden p-6 space-y-4">
                     <div className="space-y-1">
                         <label
                             className="text-xs font-mono text-[var(--text-muted)] uppercase tracking-widest"
@@ -181,19 +174,19 @@ def:pub SSHSettings(
                         />
                     </div>
                 </div>
-                <div className="flex gap-4">
+                <div className="p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0 flex justify-center gap-4">
+                    <button
+                        onClick={lambda -> None { setView("list");}}
+                        className="app-button"
+                    >
+                        Cancel
+                    </button>
                     <button
                         onClick={onSave}
                         disabled={saving}
-                        className="app-button flex-1"
+                        className="app-button"
                     >
                         {"Saving..." if saving else "Save"}
-                    </button>
-                    <button
-                        onClick={lambda -> None { setView("list");}}
-                        className="app-button app-button--secondary flex-1"
-                    >
-                        Cancel
                     </button>
                 </div>
             </div>;
@@ -202,10 +195,6 @@ def:pub SSHSettings(
     conn_list = [];
     i = 0;
     for conn in ssh_connections {
-        # Capture current index in closure to avoid all buttons using final i value
-        # Capture current index in closure to avoid all buttons using final i value
-        # Capture current index in closure to avoid all buttons using final i value
-        # Capture current index in closure to avoid all buttons using final i value
         current_idx = i;
 
         status_cls = "bg-zinc-700";
@@ -225,8 +214,6 @@ def:pub SSHSettings(
 
         btn_cls: str = "bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700 hover:text-white";
         if active_idx == current_idx and not is_failed {
-            # Disconnect style (Red) only if properly connected/pending logic flows
-            # But wait, pending also uses this. Let's start with basic connect style.
             btn_cls = "bg-red-500/10 text-red-500 border-red-500/50 hover:bg-red-500/20";
         }
 
@@ -238,7 +225,6 @@ def:pub SSHSettings(
         if active_idx == current_idx {
             if is_failed {
                 btn_text = "Retry";
-                # Revert to connect style for Retry
                 btn_cls = "bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700 hover:text-white";
             } else {
                 btn_text = "Disconnect";
@@ -253,7 +239,7 @@ def:pub SSHSettings(
             [
                 <div
                     key={current_idx}
-                    className="grid grid-cols-12 gap-2 items-center text-sm py-2 border-b border-[var(--border)] last:border-0 hover:bg-[var(--surface-0)] transition-colors px-2"
+                    className="grid grid-cols-12 gap-2 items-center text-sm py-2 border-b border-[var(--border)] last:border-none hover:bg-[var(--surface-0)] transition-colors px-6"
                 >
                     <div
                         className="col-span-2 min-w-0 truncate text-[var(--text-light)] font-mono text-xs"
@@ -302,19 +288,11 @@ def:pub SSHSettings(
     }
 
     return
-        <div className="space-y-4">
-            <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-[var(--text-light)] industrial-font-display uppercase tracking-wider">
-                    SSH Connections
-                </h2>
-            </div>
+        <div className="flex flex-col h-full min-h-full">
             <div
-                className="bg-[var(--bg-darker)]/30 rounded-sm p-4 border border-[var(--border)] min-h-[300px]"
+                className="grid grid-cols-12 gap-2 font-bold border-b border-[var(--border)] py-3 px-6 text-[var(--text-muted)] font-mono uppercase text-[10px] tracking-widest bg-[var(--bg-panel)] shrink-0"
             >
-                <div
-                    className="grid grid-cols-12 gap-2 font-bold border-b border-[var(--border)] pb-2 mb-2 text-[var(--text-muted)] font-mono uppercase text-[10px] tracking-widest px-2"
-                >
-                    <div className="col-span-2 min-w-0">
+                <div className="col-span-2 min-w-0">
                         User
                     </div>
                     <div className="col-span-4 min-w-0">
@@ -333,7 +311,7 @@ def:pub SSHSettings(
                         Drop
                     </div>
                 </div>
-                <div className="space-y-2">
+                <div className="flex-1 overflow-y-auto charcoal-scrollbar">
                     {conn_list}
                     {(
                         <div
@@ -347,14 +325,5 @@ def:pub SSHSettings(
                     if ssh_connections.length == 0
                     else None}
                 </div>
-            </div>
-            <div className="flex gap-4">
-                <button
-                    onClick={lambda -> None { setView("add");}}
-                    className="app-button w-full justify-center"
-                >
-                    + NEW SSH LINK
-                </button>
-            </div>
         </div>;
 }

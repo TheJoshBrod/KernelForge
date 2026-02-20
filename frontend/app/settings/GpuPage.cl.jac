@@ -142,11 +142,6 @@ def:pub GpuPage -> Any {
                 
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0 charcoal-scrollbar bg-[var(--bg-darker)]/30">
                     <div className="space-y-2">
-                        <div className="text-sm font-semibold text-zinc-300">
-                            Available GPUs{(
-                                "(local + connected SSH)" if gpus.length > 0 else ""
-                            )}
-                        </div>
                         <select
                             className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded px-3 text-zinc-200"
                             value={f"{selected_idx}"}
@@ -205,30 +200,30 @@ def:pub GpuPage -> Any {
                             Select a GPU to see stats.
                         </div>
                     )}
-                    <div className="flex gap-3">
-                        <button
-                            onClick={fetchSystemInfo}
-                            className="flex-1 h-10 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg transition-all border border-zinc-700"
-                        >
-                            Refresh
-                        </button>
-                    </div>
                 </div>
                 
-                <div className="p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0 flex justify-end gap-4">
+                <div className="p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0 flex items-center justify-between gap-4">
                     <button
-                        onClick={handleReturn}
-                        className="app-button"
+                        onClick={fetchSystemInfo}
+                        className="px-6 h-10 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg transition-all border border-zinc-700"
                     >
-                        Back
+                        Refresh
                     </button>
-                    <button
-                        onClick={handleSave}
-                        disabled={saving}
-                        className="app-button"
-                    >
-                        {("Saving..." if saving else "Save")}
-                    </button>
+                    <div className="flex gap-4">
+                        <button
+                            onClick={handleReturn}
+                            className="app-button"
+                        >
+                            Back
+                        </button>
+                        <button
+                            onClick={handleSave}
+                            disabled={saving}
+                            className="app-button"
+                        >
+                            {("Saving..." if saving else "Save")}
+                        </button>
+                    </div>
                 </div>
             </div>
         </main>;

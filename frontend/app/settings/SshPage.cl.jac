@@ -18,6 +18,10 @@ def:pub SshPage -> Any {
 
     has saving: bool = False;
 
+    view_state = useState("list");
+    view = view_state[0];
+    setView = view_state[1];
+
     def handleReturn -> None {
         navigate("/settings");
     }
@@ -141,7 +145,7 @@ def:pub SshPage -> Any {
                     </p>
                 </div>
                 
-                <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0 charcoal-scrollbar bg-[var(--bg-darker)]/30">
+                <div className="flex-1 overflow-hidden min-h-0 bg-[var(--bg-darker)]/30 flex flex-col">
                 <SSHSettings
                     config={config}
                     handleSaveSshConnection={handleSaveSshConnection}
@@ -150,16 +154,26 @@ def:pub SshPage -> Any {
                     handleUpdateSshConnection={handleUpdateSshConnection}
                     saving={saving}
                     checkSshConnectionWalker={checkSshConnectionWalker}
+                    view={view}
+                    setView={setView}
                 />
                 </div>
                 
-                <div className="p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0 flex justify-end gap-4">
+                <div className={"p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0 flex items-center justify-between gap-4" + (" hidden" if view != "list" else "")}>
                     <button
-                        onClick={handleReturn}
-                        className="app-button"
+                        onClick={lambda -> None { setView("add"); }}
+                        className="px-6 h-10 w-full sm:w-auto flex justify-center items-center bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg transition-all border border-zinc-700"
                     >
-                        Back
+                        + NEW SSH LINK
                     </button>
+                    <div className="flex gap-4">
+                        <button
+                            onClick={handleReturn}
+                            className="app-button"
+                        >
+                            Back
+                        </button>
+                    </div>
                 </div>
             </div>
         </main>;
