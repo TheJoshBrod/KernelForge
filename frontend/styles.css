@@ -47,6 +47,12 @@
   --success: #27ae60;
   --danger: var(--ember-red);
 
+  /* Shared code-surface highlight tokens (editor + read-only previews) */
+  --code-active-line-bg: #fdcb6e1f;
+  --code-active-line-border: #fdcb6e59;
+  --code-selection-bg: #b7544230;
+  --code-selection-inactive-bg: #8f3f3324;
+
   /* Fonts */
   --font-sans: "Bitter", serif;
   /* Mapping Bitter as default body font */

@@ -281,9 +281,14 @@ def _configure_forge_theme(monaco: Any) -> None {
     panel = _theme_var("--bg-panel", "#22262b");
     text = _theme_var("--text-light", "#e0e6ed");
     accent_orange = _theme_var("--accent-orange", "#e17055");
-    ember_red = _theme_var("--ember-red", "#d63031");
     molten = _theme_var("--molten-gold", "#fdcb6e");
     molten_dark = _theme_var("--molten-gold-dark", "#e8a838");
+    active_line_bg = _theme_var("--code-active-line-bg", "#fdcb6e1f");
+    active_line_border = _theme_var("--code-active-line-border", "#fdcb6e59");
+    selection_bg = _theme_var("--code-selection-bg", "#b7544230");
+    selection_inactive_bg = _theme_var(
+        "--code-selection-inactive-bg", "#8f3f3324"
+    );
 
     monaco.editor.defineTheme(
         "kernal-forge",
@@ -307,9 +312,10 @@ def _configure_forge_theme(monaco: Any) -> None {
                 "editorLineNumber.foreground": "6c7480",
                 "editorLineNumber.activeForeground": molten,
                 "editorCursor.foreground": molten,
-                "editor.selectionBackground": "e1705546",
-                "editor.inactiveSelectionBackground": "c75b3929",
-                "editor.lineHighlightBackground": "ffffff08",
+                "editor.selectionBackground": selection_bg,
+                "editor.inactiveSelectionBackground": selection_inactive_bg,
+                "editor.lineHighlightBackground": active_line_bg,
+                "editor.lineHighlightBorder": active_line_border,
                 "editorLineNumber.background": panel,
                 "editorGutter.background": panel,
                 "editorWhitespace.foreground": "ffffff22",
