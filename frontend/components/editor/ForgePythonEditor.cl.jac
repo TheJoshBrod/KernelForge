@@ -285,9 +285,9 @@ def _configure_forge_theme(monaco: Any) -> None {
     molten_dark = _theme_var("--molten-gold-dark", "#e8a838");
     active_line_bg = _theme_var("--code-active-line-bg", "#fdcb6e1f");
     active_line_border = _theme_var("--code-active-line-border", "#fdcb6e59");
-    selection_bg = _theme_var("--code-selection-bg", "#b7544230");
+    selection_bg = _theme_var("--code-selection-bg", "#e8a8383d");
     selection_inactive_bg = _theme_var(
-        "--code-selection-inactive-bg", "#8f3f3324"
+        "--code-selection-inactive-bg", "#e8a83826"
     );
 
     monaco.editor.defineTheme(
@@ -471,7 +471,10 @@ def:pub ForgePythonEditor(props: Any) -> Any {
                     "insertSpaces": True,
                     "readOnly": readOnly,
                     "padding": {"top": 18, "bottom": 18},
-                    "smoothScrolling": True
+                    "smoothScrolling": True,
+                    "renderLineHighlight": "line",
+                    "renderLineHighlightOnlyWhenFocus": False,
+                    "selectionHighlight": False
                 }
             );
 

@@ -50,8 +50,10 @@
   /* Shared code-surface highlight tokens (editor + read-only previews) */
   --code-active-line-bg: #fdcb6e1f;
   --code-active-line-border: #fdcb6e59;
-  --code-selection-bg: #b7544230;
-  --code-selection-inactive-bg: #8f3f3324;
+  --code-active-line-bg-unfocused: #fdcb6e14;
+  --code-active-line-border-unfocused: #fdcb6e38;
+  --code-selection-bg: #e8a8383d;
+  --code-selection-inactive-bg: #e8a83826;
 
   /* Fonts */
   --font-sans: "Bitter", serif;
@@ -2196,6 +2198,23 @@ video {
   z-index: 1;
 }
 
+.kf-monaco-shell .monaco-editor .view-overlays .current-line,
+.kf-monaco-shell .monaco-editor .margin-view-overlays .current-line {
+  background-color: var(--code-active-line-bg) !important;
+  border-color: var(--code-active-line-border) !important;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.kf-monaco-shell .monaco-editor.unfocused .view-overlays .current-line,
+.kf-monaco-shell .monaco-editor.unfocused .margin-view-overlays .current-line {
+  background-color: var(--code-active-line-bg-unfocused) !important;
+  border-color: var(--code-active-line-border-unfocused) !important;
+}
+
+.kf-monaco-shell .monaco-editor .line-numbers.active-line-number {
+  color: var(--molten-gold) !important;
+}
+
 .kf-monaco-fallback {
   position: absolute;
   inset: 0;
@@ -2209,9 +2228,15 @@ video {
   resize: none;
   background: rgba(18, 20, 23, 0.95);
   color: var(--text-light);
+  caret-color: var(--molten-gold);
   font-family: "JetBrains Mono", "Source Code Pro", Menlo, Monaco, Consolas, monospace;
   font-size: 0.88rem;
   line-height: 1.6;
+}
+
+.kf-monaco-fallback::selection {
+  background: var(--code-selection-bg);
+  color: var(--text-strong);
 }
 
 .kf-monaco-fallback::placeholder {
