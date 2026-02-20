@@ -234,7 +234,15 @@ def:pub NewProject -> Any {
     return
         <main className="app-shell">
             {loadingOverlay}
-            <div className="app-backdrop app-backdrop--natural"></div>
+            <div className="app-backdrop app-backdrop--forge"></div>
+            <div className="app-backdrop-embers">
+                <span className="ember-particle"></span>
+                <span className="ember-particle"></span>
+                <span className="ember-particle"></span>
+                <span className="ember-particle"></span>
+                <span className="ember-particle"></span>
+                <span className="ember-particle"></span>
+            </div>
             <div className="app-content-layer h-screen w-full p-4 md:p-6">
                 <div
                     className="h-full w-full border border-[var(--border)] bg-[var(--surface-0)] clip-anvil shadow-[0_22px_48px_rgba(0,0,0,0.45)] overflow-hidden"

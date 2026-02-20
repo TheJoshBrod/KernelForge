@@ -1189,6 +1189,71 @@ video {
   opacity: 0.45;
 }
 
+.app-backdrop--forge {
+  background:
+    radial-gradient(circle at 14% 10%, rgba(214, 48, 49, 0.24), transparent 44%),
+    radial-gradient(circle at 84% 8%, rgba(225, 112, 85, 0.22), transparent 50%),
+    radial-gradient(circle at 78% 86%, rgba(232, 168, 56, 0.16), transparent 52%),
+    linear-gradient(165deg, rgba(43, 19, 12, 0.72), rgba(13, 10, 9, 0.96));
+}
+
+.app-backdrop--forge::after {
+  opacity: 0.58;
+  background-image:
+    linear-gradient(118deg, rgba(225, 112, 85, 0.16), transparent 38%),
+    repeating-linear-gradient(90deg, rgba(232, 168, 56, 0.06) 0 1px, transparent 1px 96px),
+    repeating-linear-gradient(0deg, rgba(214, 48, 49, 0.05) 0 1px, transparent 1px 96px);
+}
+
+.app-backdrop-embers {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.app-backdrop-embers .ember-particle {
+  opacity: 0.48;
+  bottom: -18px;
+}
+
+.app-backdrop-embers .ember-particle:nth-child(1) {
+  left: 8%;
+  animation-duration: 9.4s;
+  animation-delay: -1.3s;
+}
+
+.app-backdrop-embers .ember-particle:nth-child(2) {
+  left: 22%;
+  animation-duration: 7.8s;
+  animation-delay: -3.2s;
+}
+
+.app-backdrop-embers .ember-particle:nth-child(3) {
+  left: 41%;
+  animation-duration: 8.9s;
+  animation-delay: -0.7s;
+}
+
+.app-backdrop-embers .ember-particle:nth-child(4) {
+  left: 63%;
+  animation-duration: 10.1s;
+  animation-delay: -2.5s;
+}
+
+.app-backdrop-embers .ember-particle:nth-child(5) {
+  left: 79%;
+  animation-duration: 8.3s;
+  animation-delay: -4.1s;
+}
+
+.app-backdrop-embers .ember-particle:nth-child(6) {
+  left: 92%;
+  animation-duration: 9.7s;
+  animation-delay: -2.1s;
+}
+
 .app-life-canvas {
   position: fixed;
   inset: 0;
