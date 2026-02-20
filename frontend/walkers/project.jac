@@ -726,7 +726,7 @@ def _load_tree_best_by_op(project_name: str) -> dict {
         try {
             conn = sqlite3.connect(db_path);
             cursor = conn.cursor();
-            cursor.execute("SELECT MIN(value) FROM nodes WHERE value IS NOT NULL");
+            cursor.execute("SELECT MIN(value) FROM nodes WHERE value IS NOT NULL AND value > 0");
             row = cursor.fetchone();
             conn.close();
             if row and row[0] is not None {
@@ -1998,6 +1998,7 @@ walker:pub GetMctsTree {
 
         mcts_nodes = [];
         edges = [];
+        valid_ids = {};
 
         try {
             # Since Jac can interop with Python, we can use sqlite3 directly
@@ -2011,11 +2012,21 @@ walker:pub GetMctsTree {
             );
             rows = cursor.fetchall();
             for row in rows {
+                node_val = None;
+                try {
+                    node_val = float(row[2]) if row[2] is not None else None;
+                } except Exception {
+                    node_val = None;
+                }
+                if node_val is None or node_val <= 0.0 {
+                    continue;
+                }
+                valid_ids[row[0]] = True;
                 mcts_nodes.append(
                     {
                         "id": row[0],
                         "visits": row[1],
-                        "value": row[2],
+                        "value": node_val,
                         "best_subtree_value": row[3],
                         "improvement_description": row[4],
                         "timestamp": row[5],
@@ -2028,6 +2039,9 @@ walker:pub GetMctsTree {
             cursor.execute("SELECT parent_id, child_id FROM edges");
             rows = cursor.fetchall();
             for row in rows {
+                if not (row[0] in valid_ids) or not (row[1] in valid_ids) {
+                    continue;
+                }
                 edges.append({"parent_id": row[0], "child_id": row[1]});
             }
 
@@ -2064,10 +2078,10 @@ walker:pub GetProjectMctsSummary {
                         conn = sqlite3.connect(db_path);
                         cursor = conn.cursor();
 
-                        cursor.execute("SELECT COUNT(*) FROM nodes");
+                        cursor.execute("SELECT COUNT(*) FROM nodes WHERE value IS NOT NULL AND value > 0");
                         node_count = cursor.fetchone()[0];
 
-                        cursor.execute("SELECT MIN(value) FROM nodes");
+                        cursor.execute("SELECT MIN(value) FROM nodes WHERE value IS NOT NULL AND value > 0");
                         best_val = cursor.fetchone()[0] or 0.0;
 
                         total_nodes += node_count;
@@ -2177,76 +2191,84 @@ walker:pub GetDashboardCharts {
         }
         tree_best_by_op = _load_tree_best_by_op(self.projectName);
 
-        speed_comparison = [];
-        for r in bench_results {
-            if not r or not ("op" in r) {
-                continue;
-            }
-            op_name = r["op"];
-            pytorch_ms = 0.0;
-            if r and "pytorch_ms" in r and r["pytorch_ms"] is not None {
-                try {
-                    pytorch_ms = float(r["pytorch_ms"]);
-                } except Exception {
-                    pytorch_ms = 0.0;
-                }
-            }
-
-            row = {"name": op_name, "pytorch": pytorch_ms};
-
-            if (
-                r
-                and "kernel_status" in r
-                and r["kernel_status"] == "ok"
-                and "kernel_ms" in r
-                and r["kernel_ms"] is not None
-            ) {
-                optimized_ms = None;
-                try {
-                    optimized_ms = float(r["kernel_ms"]);
-                } except Exception {
-                    optimized_ms = None;
-                }
-                if optimized_ms is not None {
-                    row["optimized"] = optimized_ms;
-                }
-            }
-            speed_comparison.append(row);
-        }
+        baseline_by_op = {};
         for op_name in profile_ms_by_op {
-            if op_name in bench_by_op {
-                continue;
-            }
             ms_val = profile_ms_by_op[op_name];
             if ms_val and ms_val > 0.0 {
-                speed_comparison.append({"name": op_name, "pytorch": ms_val});
+                baseline_by_op[op_name] = ms_val;
+            }
+        }
+        for op_name in bench_by_op {
+            b_row = bench_by_op[op_name];
+            if b_row and "pytorch_ms" in b_row and b_row["pytorch_ms"] is not None {
+                try {
+                    ms_val = float(b_row["pytorch_ms"]);
+                    if ms_val > 0.0 {
+                        baseline_by_op[op_name] = ms_val;
+                    }
+                } except Exception {
+                    _ = 0;
+                }
+            }
+        }
+
+        forged_best_by_op = {};
+        for op_name in bench_by_op {
+            b_row = bench_by_op[op_name];
+            if (
+                b_row
+                and "kernel_status" in b_row
+                and b_row["kernel_status"] == "ok"
+                and "kernel_ms" in b_row
+                and b_row["kernel_ms"] is not None
+            ) {
+                try {
+                    k_ms = float(b_row["kernel_ms"]);
+                    if k_ms > 0.0 {
+                        forged_best_by_op[op_name] = k_ms;
+                    }
+                } except Exception {
+                    _ = 0;
+                }
             }
         }
         for op_name in tree_best_by_op {
-            best_ms = tree_best_by_op[op_name];
-            if not best_ms or best_ms <= 0.0 {
+            tree_ms = tree_best_by_op[op_name];
+            if not tree_ms or tree_ms <= 0.0 {
                 continue;
             }
-            found = False;
-            idx = 0;
-            while idx < len(speed_comparison) {
-                row = speed_comparison[idx];
-                if row and "name" in row and row["name"] == op_name {
-                    found = True;
-                    if not ("optimized" in row) {
-                        speed_comparison[idx]["optimized"] = best_ms;
-                    }
-                    break;
-                }
-                idx = idx + 1;
+            if not (op_name in forged_best_by_op) {
+                forged_best_by_op[op_name] = tree_ms;
+            } elif tree_ms < forged_best_by_op[op_name] {
+                forged_best_by_op[op_name] = tree_ms;
             }
-            if not found {
-                add_row = {"name": op_name, "optimized": best_ms};
-                if op_name in profile_ms_by_op and profile_ms_by_op[op_name] > 0.0 {
-                    add_row["pytorch"] = profile_ms_by_op[op_name];
+        }
+
+        speed_comparison = [];
+        speed_order = [];
+        seen_speed = {};
+        for r in bench_results {
+            if r and "op" in r and r["op"] and r["op"] in baseline_by_op {
+                op_name = r["op"];
+                if not (op_name in seen_speed) {
+                    speed_order.append(op_name);
+                    seen_speed[op_name] = True;
                 }
-                speed_comparison.append(add_row);
             }
+        }
+        for op_name in baseline_by_op {
+            if not (op_name in seen_speed) {
+                speed_order.append(op_name);
+                seen_speed[op_name] = True;
+            }
+        }
+        for op_name in speed_order {
+            row = {"name": op_name, "pytorch": baseline_by_op[op_name]};
+            if op_name in forged_best_by_op {
+                row["forged"] = forged_best_by_op[op_name];
+                row["optimized"] = forged_best_by_op[op_name];
+            }
+            speed_comparison.append(row);
         }
 
         operator_usage = [];
@@ -2278,42 +2300,13 @@ walker:pub GetDashboardCharts {
         }
 
         for op_name in all_ops {
-            pytorch_ms = 0.0;
-            optimized_ms = None;
+            pytorch_ms = baseline_by_op[op_name] if op_name in baseline_by_op else 0.0;
+            optimized_ms = (
+                forged_best_by_op[op_name] if op_name in forged_best_by_op else None
+            );
             b = {};
             if op_name in bench_by_op {
                 b = bench_by_op[op_name];
-            }
-            if op_name in bench_by_op {
-                if b and "pytorch_ms" in b and b["pytorch_ms"] is not None {
-                    try {
-                        pytorch_ms = float(b["pytorch_ms"]);
-                    } except Exception {
-                        pytorch_ms = 0.0;
-                    }
-                }
-                if b
-                and "kernel_status" in b
-                and b["kernel_status"] == "ok"
-                and "kernel_ms" in b
-                and b["kernel_ms"] is not None {
-                    try {
-                        optimized_ms = float(b["kernel_ms"]);
-                    } except Exception {
-                        optimized_ms = None;
-                    }
-                }
-            } elif op_name in profile_ms_by_op {
-                pytorch_ms = profile_ms_by_op[op_name];
-                if pytorch_ms < 0.0 {
-                    pytorch_ms = 0.0;
-                }
-            }
-            if optimized_ms is None and op_name in tree_best_by_op {
-                tree_ms = tree_best_by_op[op_name];
-                if tree_ms and tree_ms > 0.0 {
-                    optimized_ms = tree_ms;
-                }
             }
 
             count = count_by_op[op_name] if op_name in count_by_op else 0;

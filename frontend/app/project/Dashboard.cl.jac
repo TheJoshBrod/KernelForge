@@ -3,9 +3,7 @@
 import from react { useEffect, useState }
 import from "react-router-dom" { useNavigate, useParams }
 import from ...components.ui.Icons {
-    ActivityIcon,
     CpuIcon,
-    CodeIcon,
     ShieldCheckIcon,
     ArrowRightIcon,
     CheckIcon,
@@ -91,9 +89,9 @@ def:pub Dashboard -> Any {
     forgeMode = forge_mode_state[0];
     setForgeMode = forge_mode_state[1];
 
-    focus_policy_state = useState("hottest");
-    focusPolicy = focus_policy_state[0];
-    setFocusPolicy = focus_policy_state[1];
+    manual_ops_state = useState([]);
+    manualOps = manual_ops_state[0];
+    setManualOps = manual_ops_state[1];
 
     forge_busy_state = useState(False);
     forgeBusy = forge_busy_state[0];
@@ -107,10 +105,18 @@ def:pub Dashboard -> Any {
     forgeNotice = forge_notice_state[0];
     setForgeNotice = forge_notice_state[1];
 
-    hasOptimized = False;
+    hasForged = False;
     for row in speedData {
-        if row and "optimized" in row and row["optimized"] is not None {
-            hasOptimized = True;
+        forged_raw = row["forged"] if row else None;
+        if forged_raw is None {
+            forged_raw = row["optimized"] if row else None;
+        }
+        if forged_raw is None {
+            forged_raw = row["kernel_ms"] if row else None;
+        }
+        forged_val = to_num(forged_raw);
+        if forged_val is not None {
+            hasForged = True;
             break;
         }
     }
@@ -139,6 +145,21 @@ def:pub Dashboard -> Any {
 
     def format_tick_ms(value: any) -> str {
         return f"{value}ms";
+    }
+
+    def to_num(value: Any) -> Any {
+        if value is None {
+            return None;
+        }
+        try {
+            parsed = parseFloat(f"{value}");
+            if parsed == parsed {
+                return parsed;
+            }
+        } except Exception {
+        # no-op
+        }
+        return None;
     }
 
     def to_list(items: Any) -> list {
@@ -178,6 +199,40 @@ def:pub Dashboard -> Any {
         return to_list(items).length;
     }
 
+    def normalize_speed_rows(rows: list) -> list {
+        out = [];
+        for row in to_list(rows) {
+            if not row {
+                continue;
+            }
+            row_name = str(row["name"]) if row else "";
+            pytorch_raw = row["pytorch"] if row else None;
+            if pytorch_raw is None {
+                pytorch_raw = row["baseline"] if row else None;
+            }
+            pytorch_val = to_num(pytorch_raw);
+            if pytorch_val is None {
+                continue;
+            }
+
+            next_row = {"name": row_name, "pytorch": pytorch_val};
+
+            forged_raw = row["forged"] if row else None;
+            if forged_raw is None {
+                forged_raw = row["optimized"] if row else None;
+            }
+            if forged_raw is None {
+                forged_raw = row["kernel_ms"] if row else None;
+            }
+            forged_val = to_num(forged_raw);
+            if forged_val is not None {
+                next_row["forged"] = forged_val;
+            }
+            out.push(next_row);
+        }
+        return out;
+    }
+
     def normalize_job_status(raw: str) -> str {
         status_text = (raw or "").toLowerCase();
         if status_text == "success" or status_text == "completed" {
@@ -209,8 +264,8 @@ def:pub Dashboard -> Any {
 
     def get_profile_poll_ms -> int {
         profile_job = status["profile"] if status and "profile" in status else {};
-        gen_job = status["generate_adv"] if status and "generate_adv" in status else {};
-        opt_job = status["optimize_adv"] if status and "optimize_adv" in status else {};
+        gen_job = status["generate"] if status and "generate" in status else {};
+        opt_job = status["optimize"] if status and "optimize" in status else {};
         bench_job = status["benchmark"] if status and "benchmark" in status else {};
         if forgeBusy
         or is_job_active(profile_job)
@@ -222,93 +277,6 @@ def:pub Dashboard -> Any {
         return 15000;
     }
 
-    def pick_focus_op(policy: str = "hottest") -> str {
-        op_rows = to_list(ops);
-        if list_len(op_rows) == 0 {
-            return "";
-        }
-        if policy == "first" {
-            first = op_rows[0];
-            return str(first["name"])
-            if first and "name" in first and first["name"]
-            else "";
-        }
-
-        best_name = "";
-        best_score = -1.0;
-        for op in op_rows {
-            if not op or not ("name" in op) or not op["name"] {
-                continue;
-            }
-            score = 0.0;
-            if "total_time_ms" in op and op["total_time_ms"] is not None {
-                try {
-                    score = float(op["total_time_ms"]);
-                } except Exception {
-                    score = 0.0;
-                }
-            } elif "count" in op and op["count"] is not None {
-                try {
-                    score = float(op["count"]);
-                } except Exception {
-                    score = 0.0;
-                }
-            }
-            if score >= best_score {
-                best_score = score;
-                best_name = str(op["name"]);
-            }
-        }
-
-        if best_name {
-            return best_name;
-        }
-
-        fallback = op_rows[0];
-        return str(fallback["name"])
-        if fallback and "name" in fallback and fallback["name"]
-        else "";
-    }
-
-    def pick_focus_from_ops(op_list: list, policy: str = "hottest") -> str {
-        op_rows = to_list(op_list);
-        if list_len(op_rows) == 0 {
-            return "";
-        }
-        if policy == "first" {
-            first = op_rows[0];
-            return str(first["name"])
-            if first and "name" in first and first["name"]
-            else "";
-        }
-        best_name = "";
-        best_count = -1;
-        for op in op_rows {
-            if not op or not ("name" in op) or not op["name"] {
-                continue;
-            }
-            cnt = 0;
-            if "count" in op and op["count"] is not None {
-                try {
-                    cnt = int(op["count"]);
-                } except Exception {
-                    cnt = 0;
-                }
-            }
-            if cnt >= best_count {
-                best_count = cnt;
-                best_name = str(op["name"]);
-            }
-        }
-        if best_name {
-            return best_name;
-        }
-        fallback = op_rows[0];
-        return str(fallback["name"])
-        if fallback and "name" in fallback and fallback["name"]
-        else "";
-    }
-
     def openWorkbench(opName: str = "") -> None {
         if not name {
             return;
@@ -318,6 +286,40 @@ def:pub Dashboard -> Any {
             return;
         }
         navigate(f"/project/{name}/operator-workbench");
+    }
+
+    def op_names_from_rows(op_rows: list) -> list {
+        names = [];
+        for op in to_list(op_rows) {
+            if op and "name" in op and op["name"] {
+                names.push(str(op["name"]));
+            }
+        }
+        return names;
+    }
+
+    def toggleManualOp(op_name: str) -> None {
+        next_ops = [];
+        found = False;
+        for existing in manualOps {
+            if str(existing) == str(op_name) {
+                found = True;
+                continue;
+            }
+            next_ops.push(str(existing));
+        }
+        if not found {
+            next_ops.push(str(op_name));
+        }
+        setManualOps(next_ops);
+    }
+
+    def selectAllManualOps -> None {
+        setManualOps(op_names_from_rows(ops));
+    }
+
+    def clearManualOps -> None {
+        setManualOps([]);
     }
 
     async def startForge -> None {
@@ -338,75 +340,78 @@ def:pub Dashboard -> Any {
             } elif "skipped" in data and data["skipped"] {
                 reason = data["reason"] if "reason" in data else "";
                 if reason == "already_profiled" {
-                    if forgeMode == "auto" {
-                        ops_resp = await __jacSpawn(
-                            "GetProjectOps", "", {"projectName": name}
-                        );
-                        ops_data = ops_resp.reports[0]
-                        if ops_resp and ops_resp.reports
-                        else {};
-                        ops_list = to_list(
-                            ops_data["ops"] if ops_data and "ops" in ops_data else []
-                        );
-                        focusOp = pick_focus_from_ops(ops_list, focusPolicy);
-                        if not focusOp {
-                            focusOp = pick_focus_op(focusPolicy);
+                    ops_resp = await __jacSpawn(
+                        "GetProjectOps", "", {"projectName": name}
+                    );
+                    ops_data = ops_resp.reports[0]
+                    if ops_resp and ops_resp.reports
+                    else {};
+                    ops_list = to_list(
+                        ops_data["ops"] if ops_data and "ops" in ops_data else []
+                    );
+                    op_names = op_names_from_rows(ops_list);
+                    run_ops = [];
+                    if forgeMode == "manual" {
+                        selected = [];
+                        selected_map = {};
+                        for op_name in manualOps {
+                            selected_map[str(op_name)] = True;
                         }
-                        if not focusOp {
+                        for op_name in op_names {
+                            if op_name in selected_map {
+                                selected.push(op_name);
+                            }
+                        }
+                        run_ops = selected;
+                    } else {
+                        run_ops = op_names;
+                    }
+
+                    if list_len(run_ops) == 0 {
+                        if forgeMode == "manual" {
+                            setForgeError("Manual mode requires at least one operator selection.");
+                        } else {
                             setForgeNotice(
                                 "Profile ready, but no operators were found to forge."
                             );
-                        } else {
-                            preferredTarget = "cuda";
-                            if (
-                                hardwareInfo
-                                and "preferred_target" in hardwareInfo
-                                and hardwareInfo["preferred_target"]
-                            ) {
-                                preferredTarget = hardwareInfo["preferred_target"];
-                            }
-                            gen_payload = {
-                                "projectName": name,
-                                "ops": [focusOp],
-                                "optimize": True,
-                                "benchmark": True,
-                                "iterations": 5,
-                                "patience": 2,
-                                "genAttempts": 8,
-                                "minImproveMs": 0.0,
-                                "minSpeedupPct": 0.0,
-                                "generator_config": {
-                                    "target_device": preferredTarget,
-                                    "use_baseline_kernels": True,
-                                    "use_baseline_as_template": True,
-                                    "extra_validation_cases": 0
-                                }
-                            };
-                            gen_resp = await __jacSpawn(
-                                "StartGenerate", "", gen_payload
-                            );
-                            gen_data = gen_resp.reports[0]
-                            if gen_resp and gen_resp.reports
-                            else {};
-                            if gen_data
-                            and "success" in gen_data
-                            and gen_data["success"] {
-                                setForgeNotice(
-                                    f"Kernel forge queued for {focusOp}: generate + optimize."
-                                );
-                            } else {
-                                err = gen_data["error"]
-                                if gen_data
-                                and "error" in gen_data
-                                and gen_data["error"]
-                                else "Failed to queue kernel generation.";
-                                setForgeError(err);
-                            }
                         }
                     } else {
-                        setForgeNotice(
-                            "Profile + baseline already ready. Open Workbench to generate kernels."
+                        preferredTarget = "cuda";
+                        if (
+                            hardwareInfo
+                            and "preferred_target" in hardwareInfo
+                            and hardwareInfo["preferred_target"]
+                        ) {
+                            preferredTarget = hardwareInfo["preferred_target"];
+                        }
+                        gen_payload = {
+                            "projectName": name,
+                            "ops": run_ops,
+                            "benchmark": True,
+                            "iterations": 5,
+                            "targetDevice": preferredTarget
+                        };
+                        gen_resp = await __jacSpawn(
+                            "StartGenerate", "", gen_payload
                         );
+                        gen_data = gen_resp.reports[0]
+                        if gen_resp and gen_resp.reports
+                        else {};
+                        if gen_data
+                        and "success" in gen_data
+                        and gen_data["success"] {
+                            setForgeNotice(
+                                f"Kernel forge queued for {list_len(run_ops)} operator(s): generate + benchmark."
+                            );
+                            openWorkbench();
+                        } else {
+                            err = gen_data["error"]
+                            if gen_data
+                            and "error" in gen_data
+                            and gen_data["error"]
+                            else "Failed to queue kernel generation.";
+                            setForgeError(err);
+                        }
                     }
                 } elif reason == "in_progress" {
                     setForgeNotice("Forge is already running.");
@@ -501,12 +506,12 @@ def:pub Dashboard -> Any {
             lambda -> None { __jacSpawn("GetProjectStatus", "", {"projectName": name}).then(
                 lambda resp: any  -> None { data = resp.reports[0]
                 if resp and resp.reports
-                else {};status = data or {};__jacSpawn(
-                    "GetDashboardCharts", "", {"projectName": name}
-                ).then(
+                else {};status = data or {};
+                __jacSpawn("GetDashboardCharts", "", {"projectName": name}).then(
                     lambda c_resp: any  -> None { c_data = c_resp.reports[0]
                     if c_resp and c_resp.reports
-                    else {};if c_data {
+                    else {};
+                    if c_data {
                         if "operator_usage" in c_data {
                             ops = to_list(c_data["operator_usage"]);
                         }
@@ -517,6 +522,16 @@ def:pub Dashboard -> Any {
                 ).catch(
                     lambda e: any  -> None {
                     # console.error("Failed to poll dashboard charts:", e);
+                    }
+                );
+                __jacSpawn("GetProjectMctsSummary", "", {"projectName": name}).then(
+                    lambda m_resp: any  -> None { m_data = m_resp.reports[0]
+                    if m_resp and m_resp.reports
+                    else {};
+                    mctsSummary = m_data or {};}
+                ).catch(
+                    lambda e: any  -> None {
+                    # console.error("Failed to poll mcts summary:", e);
                     }
                 );}
             ).catch(
@@ -799,7 +814,7 @@ def:pub Dashboard -> Any {
     }
     bench_bar_width = f"{bar_pct}%";
 
-    gen_job = status["generate_adv"] if status and "generate_adv" in status else {};
+    gen_job = status["generate"] if status and "generate" in status else {};
     gen_raw = (gen_job["status"] or "").toLowerCase()
     if gen_job and "status" in gen_job
     else "";
@@ -823,7 +838,7 @@ def:pub Dashboard -> Any {
         }
     }
 
-    opt_job = status["optimize_adv"] if status and "optimize_adv" in status else {};
+    opt_job = status["optimize"] if status and "optimize" in status else {};
     opt_raw = (opt_job["status"] or "").toLowerCase()
     if opt_job and "status" in opt_job
     else "";
@@ -874,12 +889,12 @@ def:pub Dashboard -> Any {
     jobs = [
         {"key": "profile", "label": "Analysis", "status": profile_norm},
         {
-            "key": "generate_adv",
+            "key": "generate",
             "label": "Generation",
             "status": generation_step_status
         },
         {
-            "key": "optimize_adv",
+            "key": "optimize",
             "label": "Optimization",
             "status": optimization_step_status
         },
@@ -974,7 +989,6 @@ def:pub Dashboard -> Any {
         step_idx += 1;
     }
 
-    forgeFocusOp = pick_focus_op(focusPolicy);
     current_phase = "idle";
     current_message = "Waiting to start forge.";
     current_progress_pct = 0;
@@ -1045,7 +1059,19 @@ def:pub Dashboard -> Any {
     or optimization_step_status == "failed"
     or benchmark_step_status == "failed" {
         current_phase = "failed";
-        current_message = "Forge run failed. See logs for details.";
+        failure_detail = "";
+        if generation_step_status == "failed" and gen_message {
+            failure_detail = gen_message;
+        } elif optimization_step_status == "failed" and opt_message {
+            failure_detail = opt_message;
+        } elif benchmark_step_status == "failed" and bench_message {
+            failure_detail = bench_message;
+        } elif profile_norm == "failed" and profile_message {
+            failure_detail = profile_message;
+        }
+        current_message = (
+            failure_detail if failure_detail else "Forge run failed. See logs for details."
+        );
     } elif profile_norm == "completed" {
         current_phase = "ready";
         current_message = "Profile ready. Start kernel generation from dashboard or workbench.";
@@ -1123,6 +1149,41 @@ def:pub Dashboard -> Any {
         charts_empty_message = "No benchmark data available.";
     }
 
+    manualSelectedMap = {};
+    for op_name in manualOps {
+        manualSelectedMap[str(op_name)] = True;
+    }
+    manualOpItems = [];
+    for op in to_list(ops) {
+        if not op or not ("name" in op) or not op["name"] {
+            continue;
+        }
+        op_name = str(op["name"]);
+        checked = op_name in manualSelectedMap;
+        manualOpItems.push(
+            <label
+                key={op_name}
+                className="flex items-center gap-2 text-xs text-zinc-300 py-0.5"
+            >
+                <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={lambda e: any  -> None { toggleManualOp(op_name);}}
+                    className="w-3.5 h-3.5 rounded border-zinc-700 bg-zinc-900 text-amber-500 focus:ring-amber-500/50"
+                />
+                <span className="truncate">
+                    {format_op_short(op_name)}
+                </span>
+            </label>
+        );
+    }
+    manualSelectedCount = 0;
+    for op_name in manualOps {
+        if str(op_name) in manualSelectedMap {
+            manualSelectedCount += 1;
+        }
+    }
+
     return
         <div className="p-8 max-w-7xl mx-auto space-y-8">
             <div>
@@ -1166,7 +1227,7 @@ def:pub Dashboard -> Any {
                             />
                             <button
                                 className="px-3 py-2 rounded-lg border border-orange-400/40 bg-orange-500/10 text-orange-200 text-xs font-semibold hover:bg-orange-500/20 transition-colors inline-flex items-center gap-1"
-                                onClick={lambda -> None { openWorkbench(forgeFocusOp);}}
+                                onClick={lambda -> None { openWorkbench();}}
                             >
                                 Open Workbench
                                 <ArrowRightIcon className="w-3 h-3"/>
@@ -1210,33 +1271,48 @@ def:pub Dashboard -> Any {
                                 Manual
                             </button>
                         </div>
-                        <div
-                            className="text-xs uppercase tracking-wider font-bold text-zinc-400"
-                        >
-                            Focus Operator
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <button
-                                className={"px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors " + (
-                                    "border-orange-400 bg-orange-500/20 text-orange-100"
-                                    if focusPolicy == "hottest"
-                                    else "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800"
-                                )}
-                                onClick={lambda -> None { setFocusPolicy("hottest");}}
+                        {<div className="space-y-2">
+                            <div
+                                className="text-xs uppercase tracking-wider font-bold text-zinc-400"
                             >
-                                Hottest op
-                            </button>
-                            <button
-                                className={"px-3 py-1.5 rounded-md text-xs font-semibold border transition-colors " + (
-                                    "border-orange-400 bg-orange-500/20 text-orange-100"
-                                    if focusPolicy == "first"
-                                    else "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800"
-                                )}
-                                onClick={lambda -> None { setFocusPolicy("first");}}
-                            >
-                                First op
-                            </button>
+                                Manual Operators
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    className="px-2 py-1 rounded-md text-[11px] font-semibold border border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800 transition-colors"
+                                    onClick={lambda -> None { selectAllManualOps();}}
+                                >
+                                    Select all
+                                </button>
+                                <button
+                                    className="px-2 py-1 rounded-md text-[11px] font-semibold border border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:bg-zinc-800 transition-colors"
+                                    onClick={lambda -> None { clearManualOps();}}
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                            <div className="max-h-28 overflow-y-auto rounded-md border border-zinc-700 bg-zinc-900/60 p-2 space-y-1">
+                                {manualOpItems
+                                if list_len(manualOpItems) > 0
+                                else <div className="text-xs text-zinc-500">
+                                    No operators discovered yet.
+                                </div>}
+                            </div>
+                            <div className="text-[11px] text-zinc-400">
+                                Selected: {manualSelectedCount}
+                            </div>
                         </div>
+                        if forgeMode == "manual"
+                        else <div className="space-y-1">
+                            <div
+                                className="text-xs uppercase tracking-wider font-bold text-zinc-400"
+                            >
+                                Automatic Scope
+                            </div>
+                            <div className="text-xs text-zinc-300">
+                                Generates and benchmarks all discovered operators.
+                            </div>
+                        </div>}
                     </div>
                     <div className="space-y-3">
                         <div
@@ -1372,16 +1448,19 @@ def:pub Dashboard -> Any {
                                     />
                                     <Legend/>
                                     <Bar
-                                        dataKey="optimized"
-                                        name="Optimized"
-                                        fill="#1062b9ff"
+                                        dataKey="forged"
+                                        name="Kernel Forge"
+                                        fill="#06b6d4"
+                                        stroke="#06b6d4"
+                                        fillOpacity={1}
+                                        minPointSize={3}
                                         radius={[4, 4, 0, 0]}
-                                        hide={not hasOptimized}
                                     />
                                     <Bar
                                         dataKey="pytorch"
                                         name="PyTorch"
                                         fill="#EE4C2C"
+                                        minPointSize={3}
                                         radius={[4, 4, 0, 0]}
                                     />
                                 </BarChart>
