@@ -1,6 +1,6 @@
 """Kernel Workbench Component"""
 
-import from react { useState, useEffect, useCallback }
+import from react { useState, useEffect, useCallback, useRef }
 import from "react-router-dom" { useNavigate, useParams }
 import from "reactflow" {
     ReactFlow,
@@ -62,6 +62,13 @@ def:pub OperatorWorkbenchView -> Any {
     view_mode_state = useState("graph");  # "graph" or "list"
     viewMode = view_mode_state[0];
     setViewMode = view_mode_state[1];
+
+    live_updates_state = useState(False);
+    liveUpdates = live_updates_state[0];
+    setLiveUpdates = live_updates_state[1];
+
+    tree_signature_ref = useRef("");
+    selected_node_ref = useRef(None);
 
     # --- Helpers ---
     def get_layouted_elements(nodes_data: list, edges_data: list) -> dict {
@@ -184,12 +191,44 @@ def:pub OperatorWorkbenchView -> Any {
         return {"nodes": layouted_nodes, "edges": rf_edges};
     }
 
-    async def fetchData -> None {
+    def make_tree_signature(nodes_data: list, edges_data: list) -> str {
+        node_parts = [];
+        for n in nodes_data {
+            if not n {
+                continue;
+            }
+            nid = str(n["id"]) if "id" in n else "";
+            nval = Number(n["value"]) if "value" in n else 0;
+            nts = str(n["timestamp"]) if "timestamp" in n and n["timestamp"] else "";
+            ncode = str(n["code"]) if "code" in n and n["code"] else "";
+            node_parts.push(f"{nid}:{nval}:{nts}:{ncode.length}");
+        }
+        node_parts.sort();
+
+        edge_parts = [];
+        for e in edges_data {
+            if not e {
+                continue;
+            }
+            pid = str(e["parent_id"]) if "parent_id" in e else "";
+            cid = str(e["child_id"]) if "child_id" in e else "";
+            edge_parts.push(f"{pid}->{cid}");
+        }
+        edge_parts.sort();
+
+        return node_parts.join("|") + "||" + edge_parts.join("|");
+    }
+
+    async def fetchData(showLoader: bool = False) -> None {
         if not resolvedProjectName or not resolvedOpName {
-            setLoading(False);
+            if showLoader {
+                setLoading(False);
+            }
             return;
         }
-        setLoading(True);
+        if showLoader {
+            setLoading(True);
+        }
         try {
             tree_resp = await __jacSpawn(
                 "GetMctsTree",
@@ -200,6 +239,15 @@ def:pub OperatorWorkbenchView -> Any {
 
             m_nodes = tree_data["nodes"] if tree_data and "nodes" in tree_data else [];
             m_edges = tree_data["edges"] if tree_data and "edges" in tree_data else [];
+            next_signature = make_tree_signature(m_nodes, m_edges);
+            if (
+                (not showLoader)
+                and tree_signature_ref.current
+                and tree_signature_ref.current == next_signature
+            ) {
+                return;
+            }
+            tree_signature_ref.current = next_signature;
 
             layout = get_layouted_elements(m_nodes, m_edges);
 
@@ -220,25 +268,41 @@ def:pub OperatorWorkbenchView -> Any {
             }
             setRawNodes(r_map);
 
+            current_selected = selected_node_ref.current;
             if best_node_id {
-                setSelectedNodeId(best_node_id);
+                if not current_selected or not (current_selected in r_map) {
+                    setSelectedNodeId(best_node_id);
+                }
             } else {
-                setSelectedNodeId(None);
+                if current_selected {
+                    setSelectedNodeId(None);
+                }
             }
         } except Exception as e {
             console.error("Failed to fetch operator workbench data:", e);
         } finally {
-            setLoading(False);
+            if showLoader {
+                setLoading(False);
+            }
         }
     }
 
-    useEffect(lambda -> None { fetchData();}, [resolvedProjectName, resolvedOpName]);
+    useEffect(
+        lambda -> None { fetchData(True);}, [resolvedProjectName, resolvedOpName]
+    );
 
     useEffect(
-        lambda -> Any { timer = setInterval(lambda -> None { fetchData();}, 3000);return lambda -> None { clearInterval(
+        lambda -> None { selected_node_ref.current = selectedNodeId;},
+        [selectedNodeId]
+    );
+
+    useEffect(
+        lambda -> Any { if not liveUpdates {
+            return lambda -> None {};
+        }timer = setInterval(lambda -> None { fetchData(False);}, 8000);return lambda -> None { clearInterval(
             timer
         );}; },
-        [resolvedProjectName, resolvedOpName]
+        [resolvedProjectName, resolvedOpName, liveUpdates]
     );
 
     onNodeClick = useCallback(
@@ -484,6 +548,22 @@ def:pub OperatorWorkbenchView -> Any {
                             onClick={lambda : setViewMode("list")}
                         >
                             List
+                        </button>
+                        <button
+                            className="px-3 py-1.5 text-xs font-bold rounded transition-all text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
+                            onClick={lambda -> None { fetchData(False);}}
+                        >
+                            Refresh
+                        </button>
+                        <button
+                            className={"px-3 py-1.5 text-xs font-bold rounded transition-all " + (
+                                "bg-emerald-700/80 text-white shadow-sm"
+                                if liveUpdates
+                                else "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+                            )}
+                            onClick={lambda -> None { setLiveUpdates(not liveUpdates);}}
+                        >
+                            {"Live On" if liveUpdates else "Live Off"}
                         </button>
                     </div>
                     {<ReactFlow
