@@ -63,6 +63,10 @@ def:pub OperatorWorkbenchView -> Any {
     viewMode = view_mode_state[0];
     setViewMode = view_mode_state[1];
 
+    log_collapsed_state = useState(False);
+    logCollapsed = log_collapsed_state[0];
+    setLogCollapsed = log_collapsed_state[1];
+
     live_updates_state = useState(False);
     liveUpdates = live_updates_state[0];
     setLiveUpdates = live_updates_state[1];
@@ -504,9 +508,15 @@ def:pub OperatorWorkbenchView -> Any {
                         />
                     </div>
                 </div>
-                <div className="h-[40%] flex flex-col bg-zinc-900/20">
+                <div
+                    className={"flex flex-col bg-zinc-900/20 " + (
+                        "h-10" if logCollapsed else "h-[40%]"
+                    )}
+                >
                     <div
-                        className="h-10 bg-zinc-900/50 border-b border-zinc-800 flex items-center px-4"
+                        className={"h-10 bg-zinc-900/50 flex items-center px-4 justify-between " + (
+                            "border-b border-zinc-800" if not logCollapsed else ""
+                        )}
                     >
                         <span
                             className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2"
@@ -514,12 +524,20 @@ def:pub OperatorWorkbenchView -> Any {
                             <ActivityIcon className="w-4 h-4"/>
                             Iteration Log
                         </span>
+                        <button
+                            className="text-[11px] text-zinc-400 hover:text-zinc-200 px-2 py-1 rounded border border-zinc-700 bg-zinc-900/50"
+                            onClick={lambda -> None { setLogCollapsed(not logCollapsed);}}
+                        >
+                            {"Expand" if logCollapsed else "Collapse"}
+                        </button>
                     </div>
-                    <div
+                    {<div
                         className="flex-1 overflow-y-auto p-4 space-y-2 flex flex-col-reverse"
                     >
                         {logViewItems}
                     </div>
+                    if not logCollapsed
+                    else <span></span>}
                 </div>
             </div>
             <div className="w-1/2 flex flex-col bg-zinc-950">
