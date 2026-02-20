@@ -1754,47 +1754,61 @@ def:pub Dashboard -> Any {
                             </div>
                         </div>
                     </div>
-                    <div
-                        className="p-4 flex-1 flex items-center justify-center min-h-[220px]"
-                    >
-                        {<div className="w-full h-[220px] min-h-[220px]">
-                            <ResponsiveContainer
-                                width="100%"
-                                height="100%"
-                                minWidth={0}
-                                minHeight={0}
-                            >
-                                <PieChart>
-                                    <Pie
-                                        data={pieData}
-                                        innerRadius={55}
-                                        outerRadius={80}
-                                        paddingAngle={4}
-                                        dataKey="value"
-                                    />
-                                    <Tooltip
-                                        cursor={{"fill": 'rgba(15, 23, 32, 0.6)'}}
-                                        contentStyle={{
-                                            "backgroundColor": '#0b1218',
-                                            "borderColor": '#1f2a36',
-                                            "borderRadius": '10px'
-                                        }}
-                                        itemStyle={{"color": '#e6f2ff'}}
-                                        labelStyle={{"color": '#9fb1c7'}}
-                                        formatter={format_tick_ms}
-                                    />
-                                    <Legend
-                                        layout="vertical"
-                                        verticalAlign="middle"
-                                        align="right"
-                                        wrapperStyle={{
-                                            color: '#dbe7f3',
-                                            fontSize: '12px',
-                                            paddingLeft: '10px'
-                                        }}
-                                    />
-                                </PieChart>
-                            </ResponsiveContainer>
+                    <div className="p-4 flex-1 min-h-[220px]">
+                        {<div className="w-full h-full flex flex-col gap-3">
+                            <div className="w-full h-[220px] min-h-[220px]">
+                                <ResponsiveContainer
+                                    width="100%"
+                                    height="100%"
+                                    minWidth={0}
+                                    minHeight={0}
+                                >
+                                    <PieChart>
+                                        <Pie
+                                            data={pieData}
+                                            innerRadius={55}
+                                            outerRadius={80}
+                                            paddingAngle={4}
+                                            dataKey="value"
+                                            isAnimationActive={True}
+                                            animationDuration={420}
+                                            animationEasing="ease-in-out"
+                                        />
+                                        <Tooltip
+                                            cursor={{"fill": 'rgba(15, 23, 32, 0.6)'}}
+                                            contentStyle={{
+                                                "backgroundColor": '#0b1218',
+                                                "borderColor": '#1f2a36',
+                                                "borderRadius": '10px'
+                                            }}
+                                            itemStyle={{"color": '#e6f2ff'}}
+                                            labelStyle={{"color": '#9fb1c7'}}
+                                            formatter={format_tick_ms}
+                                        />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                            <div className="grid grid-cols-1 gap-1 max-h-[180px] overflow-y-auto pr-1">
+                                {to_list(pieData).map(
+                                    lambda item: dict  -> Any { return <div
+                                        key={f"{item['name']}"}
+                                        className="flex items-center justify-between rounded border border-zinc-800 bg-zinc-950/40 px-2 py-1 text-[11px] text-zinc-300 transition-all duration-200"
+                                    >
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <span
+                                                className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+                                                style={{"backgroundColor": item["fill"] if item and "fill" in item else "#64748b"}}
+                                            ></span>
+                                            <span className="truncate">
+                                                {item["name"] if item and "name" in item else ""}
+                                            </span>
+                                        </div>
+                                        <span className="font-mono text-zinc-400 ml-2">
+                                            {format_tick_ms(item["value"] if item and "value" in item else 0)}
+                                        </span>
+                                    </div>; }
+                                )}
+                            </div>
                         </div>
                         if hasPie
                         else <div className="text-zinc-500 text-sm italic">
