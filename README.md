@@ -1,4 +1,4 @@
-# Kernel Forge: CUDA Ghost in the Shell
+# Kernel Forge:
 
 Kernel Forge is an operator-level kernel generation and optimization system for PyTorch workloads.
 It profiles model operators, generates correct kernels, optimizes them, and benchmarks results against PyTorch baselines.
