@@ -297,7 +297,7 @@ def:pub OperatorWorkbenchView -> Any {
                     "target": f"{e['child_id']}",
                     "type": "smoothstep",
                     "animated": True,
-                    "style": {"stroke": "#6366f1"}
+                    "style": {"stroke": "#e17055"}
                 }
             );
         }
@@ -554,9 +554,9 @@ def:pub OperatorWorkbenchView -> Any {
                     "textAlign": "center"
                 };
                 if n.id == selectedNodeId {
-                    new_style["border"] = "2px solid #6366f1";
-                    new_style["background"] = "rgba(99, 102, 241, 0.1)";
-                    new_style["boxShadow"] = "0 0 10px rgba(99, 102, 241, 0.3)";
+                    new_style["border"] = "2px solid #e17055";
+                    new_style["background"] = "rgba(225, 112, 85, 0.12)";
+                    new_style["boxShadow"] = "0 0 10px rgba(225, 112, 85, 0.28)";
                 }
                 new_nodes.push(
                     {
@@ -611,7 +611,7 @@ def:pub OperatorWorkbenchView -> Any {
                 <div
                     key={n["id"]}
                     className={"p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-4 group " + (
-                        "border-indigo-500 bg-indigo-500/10 shadow-[0_0_15px_rgba(99,102,241,0.15)]"
+                        "border-orange-500/80 bg-orange-500/10 shadow-[0_0_15px_rgba(225,112,85,0.18)]"
                         if f"{n['id']}" == selectedNodeId
                         else "border-zinc-800 bg-zinc-900/30 hover:border-zinc-700 hover:bg-zinc-900/80"
                     )}
@@ -622,7 +622,7 @@ def:pub OperatorWorkbenchView -> Any {
                     </div>
                     <div
                         className={"font-mono text-sm font-bold " + (
-                            "text-indigo-300"
+                            "text-orange-300"
                             if f"{n['id']}" == selectedNodeId
                             else "text-zinc-300"
                         )}
@@ -630,7 +630,7 @@ def:pub OperatorWorkbenchView -> Any {
                         Kernel_{n["id"]}:
                     </div>
                     <div
-                        className="font-mono text-emerald-400 text-sm font-bold flex-1"
+                        className="font-mono text-teal-300 text-sm font-bold flex-1"
                     >
                         <span>
                             {Number(n["value"] or 0).toFixed(6)}
@@ -671,7 +671,7 @@ def:pub OperatorWorkbenchView -> Any {
             <div
                 key={item["id"]}
                 className={"p-3 rounded border text-xs " + (
-                    "border-indigo-500/50 bg-indigo-500/10"
+                    "border-orange-500/50 bg-orange-500/10"
                     if f"{item['id']}" == selectedNodeId
                     else "border-zinc-800 bg-zinc-900/50"
                 )}
@@ -681,10 +681,10 @@ def:pub OperatorWorkbenchView -> Any {
                 }}}
             >
                 <div className="flex justify-between mb-1">
-                    <span className="font-mono font-bold text-indigo-300">
+                    <span className="font-mono font-bold text-orange-300">
                         kernel_{item["id"]}
                     </span>
-                    <span className="text-emerald-400 font-mono">
+                    <span className="text-teal-300 font-mono">
                         {Number(item["value"] or 0).toFixed(4)}
                     </span>
                 </div>
@@ -728,7 +728,7 @@ def:pub OperatorWorkbenchView -> Any {
                             <CodeIcon className="w-4 h-4"/>
                             Kernel Code
                         </span>
-                        <span className="text-xs font-mono text-indigo-400">
+                        <span className="text-xs font-mono text-orange-300">
                             Node{selectedNodeId or "?"}
                         </span>
                     </div>
@@ -775,7 +775,7 @@ def:pub OperatorWorkbenchView -> Any {
             </div>
             <div className="w-1/2 flex flex-col bg-zinc-950">
                 <div
-                    className="h-[50%] border-b border-zinc-800 relative bg-[#09090b]"
+                    className="h-[50%] border-b border-zinc-800 relative bg-[radial-gradient(circle_at_18%_14%,rgba(225,112,85,0.12),transparent_42%),radial-gradient(circle_at_84%_78%,rgba(20,184,166,0.10),transparent_45%),#09090b]"
                 >
                     <div
                         className="absolute top-2 left-2 z-10 bg-zinc-900/90 rounded-lg border border-zinc-800 p-1 flex gap-1 shadow-lg"
@@ -808,7 +808,7 @@ def:pub OperatorWorkbenchView -> Any {
                         </button>
                         <button
                             className={"px-3 py-1.5 text-xs font-bold rounded transition-all " + (
-                                "bg-emerald-700/80 text-white shadow-sm"
+                                "bg-teal-700/80 text-white shadow-sm"
                                 if liveUpdates
                                 else "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
                             )}
@@ -828,7 +828,19 @@ def:pub OperatorWorkbenchView -> Any {
                         nodesDraggable={False}
                         proOptions={{"hideAttribution": True}}
                     >
-                        <Background color="#27272a" gap={20}/>
+                        <Background
+                            id="compute-grid"
+                            variant="lines"
+                            color="rgba(20, 184, 166, 0.18)"
+                            gap={32}
+                        />
+                        <Background
+                            id="compute-dust"
+                            variant="dots"
+                            color="rgba(225, 112, 85, 0.16)"
+                            gap={22}
+                            size={1}
+                        />
                     </ReactFlow>
                     if viewMode == "graph" and hasTree
                     else <div
@@ -861,7 +873,7 @@ def:pub OperatorWorkbenchView -> Any {
                         <h3
                             className="text-lg font-bold text-white flex items-center gap-2"
                         >
-                            <ShieldCheckIcon className="w-5 h-5 text-emerald-500"/>
+                            <ShieldCheckIcon className="w-5 h-5 text-teal-400"/>
                             Node Details
                         </h3>
                         <span className="font-mono text-zinc-400 text-xs">
@@ -878,6 +890,7 @@ def:pub OperatorWorkbenchView -> Any {
                                 Node ID
                             </span>
                             <span className="font-mono text-indigo-400">
+                            <span className="font-mono text-orange-300">
                                 {selectedNodeData["id"]}
                             </span>
                         </div>
@@ -893,7 +906,7 @@ def:pub OperatorWorkbenchView -> Any {
                             <span className="text-zinc-500 text-sm">
                                 Reward
                             </span>
-                            <span className="font-mono text-emerald-400">
+                            <span className="font-mono text-teal-300">
                                 {Number(selectedNodeData["value"] or 0).toFixed(6)}
                             </span>
                         </div>
@@ -901,7 +914,7 @@ def:pub OperatorWorkbenchView -> Any {
                             <span className="text-zinc-500 text-sm">
                                 Best Subtree
                             </span>
-                            <span className="font-mono text-purple-400">
+                            <span className="font-mono text-teal-300">
                                 {Number(selectedNodeData["best_subtree_value"] or 0).toFixed(
                                     6
                                 )}
@@ -911,7 +924,7 @@ def:pub OperatorWorkbenchView -> Any {
                             <span className="text-zinc-500 text-sm">
                                 PyTorch Op Time
                             </span>
-                            <span className="font-mono text-orange-300">
+                            <span className="font-mono text-teal-300">
                                 {torch_display_text}
                             </span>
                         </div>

@@ -99,10 +99,10 @@ def:pub NewKernel -> Any {
     return
         <div className="relative" ref={menu_ref}>
             <button
-                className={"w-full text-white font-bold py-3 px-4 rounded-lg transition-all shadow-lg flex items-center justify-center gap-2 " + (
-                    "bg-zinc-700 cursor-not-allowed opacity-70"
+                className={"w-full font-bold py-3 px-4 rounded-lg transition-all shadow-lg flex items-center justify-center gap-2 " + (
+                    "bg-zinc-700 text-zinc-300 cursor-not-allowed opacity-70"
                     if missingProject
-                    else "bg-indigo-600 hover:bg-indigo-500 hover:shadow-indigo-500/20"
+                    else "bg-[var(--accent-orange)] hover:bg-[var(--molten-gold-dark)] text-zinc-950 shadow-[0_10px_24px_rgba(225,112,85,0.28)] hover:shadow-[0_12px_28px_rgba(232,168,56,0.26)]"
                 )}
                 onClick={toggle_menu}
                 disabled={missingProject}
