@@ -53,7 +53,7 @@ Rules:
 
 
 def _target_device() -> str:
-    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    value = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
     if value in {"gpu", "cuda"}:
         return "cuda"
     if value in {"triton"}:

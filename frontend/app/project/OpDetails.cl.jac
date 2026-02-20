@@ -1,14 +1,11 @@
 """Op Details Component"""
 
 import from react { useEffect }
-import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate, useParams }
-import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
-    GameOfLifeBackground
-}
-import from "../../components/ui/Icons.cl.jac" { CGinSLogo }
+import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from ...components.ui.Icons { KernelForgeLogo }
 
-def:pub OpDetails {
+def:pub OpDetails -> Any {
     navigate = useNavigate();
     params = useParams();
     projectName: str = params.projectName or "";
@@ -29,7 +26,7 @@ def:pub OpDetails {
             return;
         }
         try {
-            resp = await jacSpawn(
+            resp = await __jacSpawn(
                 "GetOpDetails", "", {"projectName": projectName, "opName": opName}
             );
             data = resp.reports[0]
@@ -40,8 +37,8 @@ def:pub OpDetails {
             } else {
                 errorMsg = "No data returned.";
             }
-        } except (error) {
-            console.error("Failed to load op details:", error);
+        } except Exception as e {
+            console.error("Failed to load op details:", e);
             errorMsg = "Failed to load op details.";
         } finally {
             loading = False;
@@ -59,7 +56,7 @@ def:pub OpDetails {
             return;
         }
         try {
-            resp = await jacSpawn(
+            resp = await __jacSpawn(
                 "ReadRepoFile",
                 "",
                 {"projectName": projectName, "relPath": file["path"]}
@@ -72,8 +69,8 @@ def:pub OpDetails {
             } else {
                 fileContent = data["error"] if data else "Failed to read file.";
             }
-        } except (error) {
-            console.error("Failed to read file:", error);
+        } except Exception as e {
+            console.error("Failed to read file:", e);
             fileContent = "Failed to read file.";
         }
     }
@@ -85,7 +82,7 @@ def:pub OpDetails {
     }
 
     useEffect(
-        lambda -> None { window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
+        lambda -> Any { window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
             "keydown", handleKeyDown
         );}; },
         [projectName]
@@ -175,7 +172,7 @@ def:pub OpDetails {
     if loading {
         return
             <div className="app-shell">
-                <GameOfLifeBackground />
+                <GameOfLifeBackground/>
                 <div className="app-backdrop"></div>
                 <div className="app-layout app-content-layer">
                     <aside className="sidebar">
@@ -209,7 +206,7 @@ def:pub OpDetails {
     if errorMsg {
         return
             <div className="app-shell">
-                <GameOfLifeBackground />
+                <GameOfLifeBackground/>
                 <div className="app-backdrop"></div>
                 <div className="app-layout app-content-layer">
                     <main className="content">
@@ -240,13 +237,13 @@ def:pub OpDetails {
 
     return
         <div className="app-shell">
-            <GameOfLifeBackground />
+            <GameOfLifeBackground/>
             <div className="app-backdrop"></div>
             <div className="app-layout app-content-layer">
                 <aside className="sidebar">
                     <div className="sidebar-header">
                         <div className="brand">
-                            <CGinSLogo className="mascot mascot--logo" />
+                            <KernelForgeLogoclassName="mascot mascot--logo"/>
                             <div className="brand-meta">
                                 <span>
                                     Op Details
@@ -279,7 +276,7 @@ def:pub OpDetails {
                                 Profile summary
                             </span>
                             <span className="table-muted">
-                                Calls: {profile["count"]
+                                Calls:{profile["count"]
                                 if profile and "count" in profile
                                 else 0}
                             </span>
@@ -355,14 +352,14 @@ def:pub OpDetails {
                             </h1>
                             <div className="badge-row">
                                 <span className="badge">
-                                    Project: {projectName}
+                                    Project:{projectName}
                                 </span>
                                 <span className="badge">
-                                    Files: {files_label}
+                                    Files:{files_label}
                                 </span>
                             </div>
                         </div>
-                        <CGinSLogo className="mascot mascot--cta" />
+                        <KernelForgeLogoclassName="mascot mascot--cta"/>
                     </div>
                     <div className="panel">
                         <div className="panel-header">

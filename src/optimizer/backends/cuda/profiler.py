@@ -34,6 +34,7 @@ from torch.utils.cpp_extension import load_inline
 
 from src.optimizer.config.settings import settings
 from src.optimizer.core.types import GPUSpecs
+from src.optimizer.profiling import get_device_specs as get_profiled_device_specs
 
 # ******************
 #  HELPER FUNCTIONS
@@ -57,102 +58,13 @@ def _to_str(x):
 
 
 def get_gpu_specs(device_index: int = 0) -> GPUSpecs:
-    """Retrieves GPU architecture information as context for LLM interpretation
+    """Retrieve GPU specs via the unified profiling orchestrator."""
+    gpu_spec = get_profiled_device_specs(device_index=device_index, mode="deep")
 
-    Args:
-        device_index (int, optional): Chooses connected NVIDIA GPU via index. Defaults to 0.
-
-    Returns:
-        GPUSpecs: Pydantic model containing GPU specs
-    """
-    # -------------------------
-    # NVML: Physical hardware
-    # -------------------------
-    if cuda is None or not NVML_AVAILABLE:
-        return {
-            "gpu_name": "Unknown",
-            "compute_capability": "unknown",
-            "cuda_available": False,
-            "notes": "CUDA/NVML not available (likely non-CUDA device)",
-        }
-
-    nvmlInit()
-    handle = nvmlDeviceGetHandleByIndex(device_index)
-
-    power_limit_mw = _nvml_safe(
-        lambda: nvmlDeviceGetPowerManagementLimit(handle),
-        default=None
-    )
-
-    nvml_info = {
-        "gpu_name": _to_str(nvmlDeviceGetName(handle)),
-        # enum, map below
-        "nvml_architecture": nvmlDeviceGetArchitecture(handle),
-        "total_memory_gb": nvmlDeviceGetMemoryInfo(handle).total / (1024 ** 3),
-        "sm_clock_mhz": nvmlDeviceGetClockInfo(handle, NVML_CLOCK_SM),
-        "mem_clock_mhz": nvmlDeviceGetClockInfo(handle, NVML_CLOCK_MEM),
-        "power_limit_watts": None if power_limit_mw is None else power_limit_mw / 1000,
-    }
-
-    nvmlShutdown()
-
-    # -------------------------
-    # CUDA Runtime: Execution limits
-    # -------------------------
-    dev = cuda.Device(device_index)
-    attrs = dev.get_attributes()
-    cc_major, cc_minor = dev.compute_capability()
-
-    cuda_info = {
-        "compute_capability": f"{cc_major}.{cc_minor}",
-        "num_sms": attrs[cuda.device_attribute.MULTIPROCESSOR_COUNT],
-        "warp_size": attrs[cuda.device_attribute.WARP_SIZE],
-        "max_threads_per_block": attrs[cuda.device_attribute.MAX_THREADS_PER_BLOCK],
-        "max_threads_per_sm": attrs[cuda.device_attribute.MAX_THREADS_PER_MULTIPROCESSOR],
-        "max_blocks_per_sm": attrs.get(
-            getattr(cuda.device_attribute,
-                    'MAX_BLOCKS_PER_MULTIPROCESSOR', None),
-            "unknown"
-        ) if hasattr(cuda.device_attribute, 'MAX_BLOCKS_PER_MULTIPROCESSOR') else "unknown",
-        "registers_per_sm": attrs[cuda.device_attribute.MAX_REGISTERS_PER_MULTIPROCESSOR],
-        "registers_per_block": attrs[cuda.device_attribute.MAX_REGISTERS_PER_BLOCK],
-        "shared_mem_per_sm_kb": attrs[
-            cuda.device_attribute.MAX_SHARED_MEMORY_PER_MULTIPROCESSOR
-        ] // 1024,
-        "shared_mem_per_block_kb": attrs[
-            cuda.device_attribute.MAX_SHARED_MEMORY_PER_BLOCK
-        ] // 1024,
-        "l2_cache_kb": attrs[cuda.device_attribute.L2_CACHE_SIZE] // 1024,
-        "memory_bus_width_bits": attrs[cuda.device_attribute.GLOBAL_MEMORY_BUS_WIDTH],
-    }
-
-    # -------------------------
-    # Derived metrics
-    # -------------------------
-    memory_bandwidth_gbps = (
-        nvml_info["mem_clock_mhz"] * 1e6 *
-        cuda_info["memory_bus_width_bits"] / 8 * 2
-    ) / 1e9
-
-    derived = {
-        "peak_memory_bandwidth_gbps": memory_bandwidth_gbps,
-        "warps_per_sm": cuda_info["max_threads_per_sm"] // cuda_info["warp_size"],
-        "tensor_cores_available": cc_major >= 7,
-    }
-
-    # -------------------------
-    # Unified output
-    # -------------------------
-    gpu_spec_data = {
-        **nvml_info,
-        **cuda_info,
-        **derived,
-    }
-    
-    gpu_spec = GPUSpecs(**gpu_spec_data)
-
-    # Optimization: Set the CUDA Architecture to the specific device to speed up JIT compilation
-    os.environ["TORCH_CUDA_ARCH_LIST"] = gpu_spec.compute_capability
+    # Optimization: Set specific CUDA arch when we have a numeric capability.
+    cc = str(gpu_spec.compute_capability or "").strip().lower()
+    if cc and cc not in {"unknown", "rocm", "metal", "xpu", "0", "0.0"}:
+        os.environ["TORCH_CUDA_ARCH_LIST"] = gpu_spec.compute_capability
 
     return gpu_spec
 
@@ -197,7 +109,7 @@ def get_module(kernel_path: Path, baseline: bool):
         # Already compiled case: load existing module
         module_name = so_files[0].stem
 
-    target_device = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    target_device = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
     if target_device in {"gpu", "cuda"} or target_device == "":
         module = load_inline(
             name=module_name,
@@ -250,7 +162,7 @@ def get_input_files(io_dir: Path) -> list:
 
 
 def _target_device() -> str:
-    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    value = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
     if value in {"gpu", "cuda"}:
         return "cuda"
     if value == "mps":
@@ -453,7 +365,7 @@ def profile_remote_kernel(ssh_config: dict, paths: dict[str, Path], baseline: bo
         io_files = sorted(list(io_dir.glob("*.pt")))
         file_map = {str(f): f.name for f in io_files}
         
-        remote_io_dir = "cgins_workspace/io_cache/" + io_dir.name
+        remote_io_dir = "kforge_workspace/io_cache/" + io_dir.name
         upload_files(worker.client, file_map, remote_io_dir)
         
         # 3. Send profile task

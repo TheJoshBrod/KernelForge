@@ -1,29 +1,41 @@
 """Home Page Component"""
 
 import from react { useEffect }
-import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
-import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
-    GameOfLifeBackground
-}
-import from "../../components/ui/GlowButton.cl.jac" { GlowButton }
-import from "../../components/ui/Icons.cl.jac" { CGinSLogo }
-import from "../../components/SplashScreen.cl.jac" { SplashScreen }
+import from ...components.backdrops.EmberBackground { EmberBackground }
+import from ...components.ui.GlowButton { GlowButton }
+import from ...components.ui.Icons { KernelForgeLogo, SettingsIcon, ArrowRightIcon, GithubIcon, DiscordIcon, TrashIcon }
+import from ...components.SplashScreen { SplashScreen }
 
-def:pub Home {
+def:pub Home -> Any {
     navigate = useNavigate();
     has projects: list = [],
         loading: bool = True,
         splashDone: bool = (sessionStorage.getItem("splash_shown") == "true"),
-        searchQuery: str = "";
+        searchQuery: str = "",
+        projectToDelete: str = "";
+
+    async def confirmDelete -> None {
+        if not projectToDelete { return; }
+        try {
+            await __jacSpawn("DeleteProject", "", {"projectName": projectToDelete});
+            await fetchProjects();
+        } except Exception as e {
+            console.error("Failed to delete project:", e);
+        } finally {
+            projectToDelete = "";
+        }
+    }
 
     async def fetchProjects -> None {
         start: float = Date.now();
         try {
-            resp = await jacSpawn("GetProjects", "", {});
+            resp = await __jacSpawn("GetProjects", "", {});
+
             data = resp.reports[0]
             if resp and resp.reports and resp.reports.length > 0
             else None;
+
             if data and data["projects"] {
                 projects = data["projects"];
             } else {
@@ -45,128 +57,203 @@ def:pub Home {
         }
     }
 
-    useEffect(lambda -> None { fetchProjects();}, []);
+    useEffect(lambda -> None { 
+        fetchProjects();
+        document.title = "Kernel Forge";
+    }, []);
 
-    def handleProjectSelect(e: any) -> None {
-        projectId = e.target.value;
-        if projectId {
-            navigate("/project/" + projectId);
+    # Filter Projects
+    filteredProjects = [];
+    for p in projects {
+        try {
+            if searchQuery == ""
+            or p["name"].toLowerCase().includes(searchQuery.toLowerCase()) {
+                filteredProjects.append(p);
+            }
+        } except Exception as e {
+            console.error("Error filtering project:", p, e);
         }
     }
 
-    recentProjects = [];
-    recentLinks = [];
-    projectOptions = [];
-    hasRecent = False;
-    hasRecent = False;
-    for project in projects {
-        projectOptions = projectOptions.concat(
-            [
-                <option key={project["name"]} value={project["name"]}>
-                    {project["name"]}
-                </option>
-            ]
+    # Generate Project List Items
+    projectList = [];
+    if loading {
+        projectList.append(
+            <div className="text-zinc-500 text-center py-4 italic font-mono">
+                INITIALIZING...
+            </div>
         );
-        if not searchQuery
-        or project["name"].toLowerCase().includes(searchQuery.toLowerCase()) {
-            recentProjects = recentProjects.concat([project]);
-            hasRecent = True;
+    } elif filteredProjects.length == 0 {
+        projectList.append(
+            <div
+                className="text-zinc-500 text-center py-4 font-mono uppercase tracking-widest text-xs"
+            >
+                {"NO PROJECTS FOUND"
+                if projects.length == 0
+                else "NO MATCHING PROJECTS"}
+            </div>
+        );
+    } else {
+        for innerProj in filteredProjects {
+            if innerProj {
+                projName = innerProj["name"];
+                clickHandler = lambda ignore: any  -> None { navigate(
+                    "/project/" + projName
+                );};
+                deleteHandler = lambda e: any -> None {
+                    e.stopPropagation();
+                    projectToDelete = projName;
+                };
+
+                projectList.append(
+                    <div key={projName} className="flex w-full mb-2 bg-[var(--surface)] border-l-2 border-transparent hover:border-[var(--accent)] transition-all clip-anvil overflow-hidden">
+                        <button
+                            onClick={clickHandler}
+                            className="group flex-1 text-left p-4 flex items-center justify-between gap-4 hover:bg-[var(--surface-0)] transition-colors"
+                        >
+                            <span
+                                className="font-medium text-[var(--text-light)] group-hover:text-white text-lg truncate min-w-0 flex-1 font-sans"
+                            >
+                                {projName}
+                            </span>
+                            <span
+                                className="text-[var(--text-muted)] group-hover:text-[var(--accent)] text-sm shrink-0 flex items-center gap-1 transition-transform group-hover:translate-x-1 font-mono uppercase tracking-wider text-xs"
+                            >
+                                Load
+                                <ArrowRightIcon className="w-3 h-3"/>
+                            </span>
+                        </button>
+                        <button
+                            onClick={deleteHandler}
+                            className="p-4 px-6 bg-red-500/10 hover:bg-red-500/20 text-red-500/70 hover:text-red-500 transition-all border-l border-red-500/20"
+                            title="Delete Project"
+                        >
+                            <TrashIcon className="w-5 h-5"/>
+                        </button>
+                    </div>
+                );
+            }
         }
     }
-    for project in recentProjects {
-        recentLinks = recentLinks.concat(
-            [
-                <button
-                    key={project["name"]}
-                    onClick={lambda -> None { navigate("/project/" + project["name"]);}}
-                    className="launcher-link"
-                >
-                    {project["name"]}
-                </button>
-            ]
+
+    deleteModal = None;
+    if projectToDelete != "" {
+        deleteModal = (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animation-fade-in">
+                <div className="bg-[var(--bg-panel)] border border-[var(--border)] p-8 max-w-md w-full relative overflow-hidden clip-anvil">
+                    <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-red-600 to-orange-500"></div>
+                    <h2 className="text-xl font-bold text-white mb-4 industrial-font-display uppercase tracking-wider">
+                        Delete Project
+                    </h2>
+                    <p className="text-[var(--text-light)] mb-8 font-sans">
+                        Are you sure you want to delete <span className="text-white font-mono break-all">{projectToDelete}</span>? This action cannot be undone and will destroy all generated kernels and benchmarks.
+                    </p>
+                    <div className="flex justify-end gap-4">
+                        <button
+                            onClick={lambda -> None { projectToDelete = ""; }}
+                            className="px-4 py-2 border border-[var(--border)] text-[var(--text-muted)] hover:text-white hover:border-[var(--text-muted)] transition-colors font-mono uppercase tracking-widest text-sm"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={confirmDelete}
+                            className="px-4 py-2 bg-red-600/20 border border-red-500/50 text-red-500 hover:bg-red-600 hover:text-white hover:border-red-600 transition-colors font-mono uppercase tracking-widest text-sm clip-anvil"
+                        >
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            </div>
         );
     }
 
     return
-        <main className="app-shell launcher-shell">
-            <SplashScreen exiting={splashDone} />
-            <GameOfLifeBackground className="app-life-canvas--subtle" />
-            <div className="app-backdrop app-backdrop--natural"></div>
-            <div className="launcher-container app-content-layer">
-                <header className="launcher-header">
-                    <div className="launcher-brand">
-                        <CGinSLogo className="mascot mascot--logo launcher-logo" />
-                        <div>
-                            <div className="launcher-title">
-                                CGinS
-                            </div>
-                            <div className="launcher-subtitle">
-                                Project Console
-                            </div>
-                        </div>
+        <main
+            className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex flex-col items-center justify-center font-sans text-white"
+        >
+            <SplashScreen exiting={splashDone}/>
+            <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
+            <div className="noise-overlay opacity-30"></div>
+            <EmberBackground className="absolute inset-0 z-0"/>
+            <div
+                className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/50 z-10 pointer-events-none"
+            ></div>
+            {(
+                <div className="absolute top-6 right-8 z-50 flex items-center gap-6">
+                    <a
+                        href="https://discord.gg/"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-white/50 hover:text-[#5865F2] transition-all duration-300 hover:scale-110 hover:-translate-y-1 hover:drop-shadow-[0_0_12px_rgba(88,101,242,0.6)]"
+                        title="Discord Server"
+                    >
+                        <DiscordIcon className="w-7 h-7"/>
+                    </a>
+                    <a
+                        href="https://github.com/TheJoshBrod/KernelForge"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-white/50 hover:text-white transition-all duration-300 hover:scale-110 hover:-translate-y-1 hover:drop-shadow-[0_0_12px_rgba(255,255,255,0.6)]"
+                        title="GitHub Repository"
+                    >
+                        <GithubIcon className="w-7 h-7"/>
+                    </a>
+                </div>
+            ) if splashDone else None}
+            <div className="relative z-20 flex flex-col items-center justify-center mb-8 animation-fade-in-up">
+                <div className="flex items-center gap-6 mb-2">
+                    <img src="/KernelForge.svg" alt="Kernel Forge Logo" className="w-16 h-16" />
+                    <div className="flex flex-col">
+                        <h1 className="text-5xl font-bold text-white tracking-wider uppercase industrial-font-display" style={{"textShadow": "0 0 20px rgba(225, 112, 85, 0.4)"}}>
+                            Kernel Forge
+                        </h1>
                     </div>
-                </header>
-                <section className="launcher-grid">
-                    <div className="panel launcher-panel">
-                        <span className="launcher-section-title">
-                            Actions
-                        </span>
-                        <button
-                            className="app-button app-button--primary app-button--full"
-                            onClick={lambda -> None { navigate("/new-project");}}
-                        >
-                            New Project
-                        </button>
-                        <div className="form-field">
-                            <label className="input-label">
-                                Load Existing Project
-                            </label>
-                            <select
-                                defaultValue=""
-                                onChange={handleProjectSelect}
-                                className="launcher-select"
-                            >
-                                <option value="" disabled>
-                                    Select a project...
-                                </option>
-                                {projectOptions}
-                            </select>
-                        </div>
-                        <button
-                            className="app-button app-button--ghost app-button--full"
-                            onClick={lambda -> None { navigate("/settings");}}
-                        >
-                            Settings
-                        </button>
-                    </div>
-                    <div className="panel launcher-panel">
-                        <div className="launcher-meta-row">
-                            <span className="panel-title">
-                                Recent Projects
-                            </span>
-                            <span className="table-muted">
-                                {f"{projects.length} total"}
-                            </span>
-                        </div>
+                </div>
+            </div>
+            <div
+                className="relative z-10 w-full max-w-4xl h-[70vh] bg-[var(--bg-panel)]/90 backdrop-blur-md border border-[var(--border)] rounded-sm shadow-2xl flex flex-col animation-fade-in-up delay-1 clip-hex"
+            >
+                <div
+                    className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden"
+                >
+                    <div
+                        className="absolute top-0 left-0 right-0 heat-divider"
+                    ></div>
+                    <div className="relative flex items-center gap-4">
                         <input
                             type="text"
+                            placeholder="SEARCH PROJECTS..."
                             value={searchQuery}
                             onChange={lambda e: any  -> None { searchQuery = e.target.value;}}
-                            placeholder="Search projects..."
-                            className="input"
-                            style={{"marginBottom": "1rem"}}
+                            className="w-full bg-[var(--bg-darker)] border border-[var(--border)] rounded-sm px-4 py-2 text-sm text-[var(--text-light)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/20 transition-all font-mono uppercase"
                         />
-                        <div className="launcher-list">
-                            {recentLinks
-                            if hasRecent
-                            else <span className="launcher-muted">
-                                {"Loading projects..."
-                                if loading
-                                else "No recent projects yet."}
-                            </span>}
-                        </div>
+                        <button
+                            onClick={lambda -> None { navigate(
+                                "/settings", {"state": {"return_to": "/"}}
+                            );}}
+                            className="p-2 rounded-sm bg-[var(--bg-darker)] border border-[var(--border)] hover:border-[var(--accent)] text-[var(--text-muted)] hover:text-[var(--accent)] transition-all shrink-0"
+                            title="Settings"
+                        >
+                            <SettingsIcon className="w-5 h-5"/>
+                        </button>
                     </div>
-                </section>
+                </div>
+                <div
+                    className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0 charcoal-scrollbar bg-[var(--bg-darker)]/30"
+                >
+                    {projectList}
+                </div>
+                <div
+                    className="p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0"
+                >
+                    <GlowButton
+                        label="+ INITIATE NEW PROJECT"
+                        onClick={lambda -> None { navigate("/new-project");}}
+                        className="w-full py-3 text-base justify-center font-bold tracking-widest clip-anvil"
+                    />
+                </div>
             </div>
+
+            {deleteModal}
         </main>;
 }

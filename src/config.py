@@ -2,9 +2,11 @@ import json
 import os
 from pathlib import Path
 
+from src.llm.runtime_config import resolve_runtime_env
+
 
 def _find_config_path() -> Path | None:
-    override = os.environ.get("CGINS_CONFIG_PATH")
+    override = os.environ.get("KFORGE_CONFIG_PATH")
     if override:
         candidate = Path(override)
         if candidate.exists():
@@ -42,47 +44,37 @@ def load_project_config(project_dir: Path | None) -> dict:
 
 def apply_llm_config() -> bool:
     config_path = _find_config_path()
-    if not config_path:
-        return False
-    
-    # config_path is the file path, so we pass its parent or handle it
-    # _find_config_path returns the FILE path.
-    # load_project_config expects a DIR (or we adjust it).
-    # Let's just manually load here to avoid circular logic or path confusion, 
-    # OR make load_project_config smarter.
+    global_cfg: dict = {}
     try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
+        if config_path and config_path.exists():
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                global_cfg = data
     except Exception:
+        global_cfg = {}
+
+    project_cfg: dict = {}
+    project_cfg_override = os.environ.get("KFORGE_PROJECT_CONFIG_PATH")
+    if project_cfg_override:
+        try:
+            project_path = Path(project_cfg_override)
+            if project_path.exists():
+                loaded = json.loads(project_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    project_cfg = loaded
+        except Exception:
+            project_cfg = {}
+
+    env_map = resolve_runtime_env(
+        global_config=global_cfg,
+        project_config=project_cfg,
+    )
+    if not env_map:
         return False
 
-    llm_info = data.get("llm_info")
-    if not isinstance(llm_info, dict):
-        return False
-
-    provider = str(llm_info.get("provider", "")).strip().lower()
-    model = str(llm_info.get("model", "")).strip()
-    apikey = str(llm_info.get("apikey", "")).strip()
-
-    if provider:
-        os.environ["LLM_PROVIDER"] = provider
-
-    if provider == "openai":
-        if apikey:
-            os.environ["OPENAI_API_KEY"] = apikey
-        if model:
-            os.environ["OPENAI_MODEL"] = model
-    elif provider == "anthropic":
-        if apikey:
-            os.environ["ANTHROPIC_API_KEY"] = apikey
-        if model:
-            os.environ["ANTHROPIC_MODEL"] = model
-    elif provider == "gemini":
-        if apikey:
-            os.environ["GOOGLE_API_KEY"] = apikey
-            os.environ["GEMINI_API_KEY"] = apikey
-        if model:
-            os.environ["GEMINI_MODEL"] = model
-
+    for key, value in env_map.items():
+        if value is not None:
+            os.environ[str(key)] = str(value)
     return True
 
 
@@ -91,6 +83,9 @@ def ensure_llm_config() -> str:
     apply_llm_config()
 
     provider = str(os.environ.get("LLM_PROVIDER", "")).strip().lower()
+    if provider == "gemini":
+        provider = "google"
+        os.environ["LLM_PROVIDER"] = "google"
     if provider:
         return provider
 
@@ -98,11 +93,11 @@ def ensure_llm_config() -> str:
     if os.environ.get("OPENAI_API_KEY"):
         os.environ["LLM_PROVIDER"] = "openai"
         return "openai"
-    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
-        os.environ["LLM_PROVIDER"] = "gemini"
-        return "gemini"
     if os.environ.get("ANTHROPIC_API_KEY"):
         os.environ["LLM_PROVIDER"] = "anthropic"
         return "anthropic"
+    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+        os.environ["LLM_PROVIDER"] = "google"
+        return "google"
 
     return ""

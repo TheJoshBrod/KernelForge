@@ -22,21 +22,51 @@ from src.optimizer.backends.metal import MetalBackend
 from src.optimizer.backends.triton import TritonBackend
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _projects_base_dir() -> Path:
+    base = _repo_root() / "kernels" / "projects"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _generated_kernels_root(optional_proj_name: str | None = None) -> Path:
+    if optional_proj_name:
+        per_project = (
+            _projects_base_dir()
+            / optional_proj_name
+            / "kernels"
+            / "generated"
+            / "individual_op_kernels"
+        )
+        if per_project.exists():
+            return per_project
+    return _repo_root() / "kernels" / "generated" / "individual_op_kernels"
+
+
+def _compact_reason(reason: str, limit: int = 320) -> str:
+    text = str(reason or "").replace("\n", " ").replace("\r", " ").strip()
+    if not text:
+        return ""
+    if len(text) > limit:
+        return text[:limit] + "..."
+    return text
+
+
 def get_project_dir(gpu_name: str, optional_name: str = None, backend_name: str = "cuda"):
     letters = string.ascii_letters + string.digits
     proj_name = ''.join(random.choices(letters, k=10))
+    clean_gpu_name = gpu_name.replace(" ", "_").replace(":", "").replace("-", "_")
     if optional_name:
-        proj_name = optional_name
-    
-    # Sanitize GPU name
-    clean_gpu_name = gpu_name.replace(
-        " ", "_").replace(":", "").replace("-", "_")
-
-    full_name = f"{clean_gpu_name}_{proj_name}-{backend_name}/trees"
+        full_name = f"{optional_name}/trees"
+    else:
+        full_name = f"{clean_gpu_name}_{proj_name}-{backend_name}/trees"
 
     print(f"Beginning optimizing on project {full_name}...")
 
-    proj_dir = Path(f"projects/{full_name}")
+    proj_dir = _projects_base_dir() / full_name
     try:
         proj_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
@@ -86,7 +116,13 @@ def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, impro
     return log_entry, node_obj
 
 
-def optimize(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path], parent_node: KernelNode, ssh_config: dict = None):
+def optimize(
+    backend: Backend,
+    gpu_specs: GPUSpecs,
+    paths: dict[str, Path],
+    parent_node: KernelNode,
+    ssh_config: dict = None
+) -> tuple[KernelNode | None, str]:
     """Optimizes target kernel
     """
 
@@ -112,11 +148,11 @@ def optimize(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path], pare
             kernel_code = kernel_code_path.read_text()
         else:
             print(f"\t\tError: Kernel code file not found: {kernel_code_path}")
-            return None
+            return None, f"Kernel code file not found: {kernel_code_path}"
 
         # Kernel Generation
         print(f"\tBeginning generation (history: {len(improvement_log)} entries)...")
-        improvement_description, is_valid = generator.generate(
+        improvement_description, is_valid, failure_reason = generator.generate(
             backend, kernel_code, gpu_specs, improvement_log, paths, ancestor_codes=ancestor_codes, ssh_config=ssh_config)
         print("\tFinished generation.")
         print(f"\t\t- Status: {is_valid}")
@@ -126,9 +162,11 @@ def optimize(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path], pare
             log_entry, new_node = save_iteration(
                 backend, paths, parent_node, improvement_description, str(paths["proj_dir"] / "kernels" / f"kernel_{parent_node.id}{backend.kernel_extension}"), ssh_config=ssh_config)
             
-            return new_node
+            return new_node, ""
     
-    return None
+    if not failure_reason:
+        failure_reason = "No valid candidate generated."
+    return None, str(failure_reason)
 
 
 def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path]) -> KernelNode:
@@ -293,7 +331,8 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
     proj_dir = get_project_dir(gpu_specs.gpu_name, optional_proj_name, backend_name=bk_name)
 
     # Directory containing initial wave of correct, but unoptimized kernels
-    op_dirs = list(Path("kernels/generated/individual_op_kernels").glob("*"))
+    generated_root = _generated_kernels_root(optional_proj_name)
+    op_dirs = list(generated_root.glob("*"))
 
     # Profile each kernel in op_dirs and save results as a *.json node in their respective directories
     for op_dir in op_dirs:
@@ -552,16 +591,16 @@ def main():
         epilog="""
 Examples:
   # Normal optimization run
-  python3 -m src.optimizer.pipeline benchmarks/profiler/individual_ops project_name
+  python3 -m src.optimizer.pipeline kernels/projects/<project>/io/individual_ops project_name
   
   # Create a new independent root for a specific operator
-  python3 -m src.optimizer.pipeline benchmarks/profiler/individual_ops project_name --new-root torch_nn_functional_embedding
+  python3 -m src.optimizer.pipeline kernels/projects/<project>/io/individual_ops project_name --new-root torch_nn_functional_embedding
 
   # Run using remote SSH configuration
-  python3 -m src.optimizer.pipeline benchmarks/profiler/individual_ops project_name --remote config.json
+  python3 -m src.optimizer.pipeline kernels/projects/<project>/io/individual_ops project_name --remote config.json
   
   # Use a different backend
-  python3 -m src.optimizer.pipeline benchmarks/profiler/individual_ops project_name --backend metal
+  python3 -m src.optimizer.pipeline kernels/projects/<project>/io/individual_ops project_name --backend metal
 """
     )
 
@@ -642,7 +681,7 @@ Examples:
     
     if project_config_path:
         print(f"Loading project config from: {project_config_path}")
-        os.environ["CGINS_CONFIG_PATH"] = str(project_config_path)
+        os.environ["KFORGE_PROJECT_CONFIG_PATH"] = str(project_config_path)
     
     # Initialize LLM config from environment/file
     ensure_llm_config()
@@ -655,7 +694,7 @@ Examples:
         model_name = os.environ.get("OPENAI_MODEL", "")
     elif provider == "anthropic":
         model_name = os.environ.get("ANTHROPIC_MODEL", "")
-    elif provider == "gemini":
+    elif provider == "google" or provider == "gemini":
         model_name = os.environ.get("GEMINI_MODEL", "")
     
     if model_name:
@@ -730,7 +769,7 @@ Examples:
         paths = {
             "proj_dir": op_dir_path,
             "io_dir": io_dir,
-            "op_dir": Path("kernels/generated/individual_op_kernels") / op_name,
+            "op_dir": _generated_kernels_root(optional_proj_name) / op_name,
         }
         
         print(f"Creating new root for {op_name}...")
@@ -772,14 +811,19 @@ Examples:
         # Check if IO exists
         io_dir = io_parent_dir / op_name
         if not io_dir.exists():
-            print(f"  Skipping {op_name}: IO directory not found at {io_dir}")
+            reason = f"IO directory not found at {io_dir}"
+            print(f"  Skipping {op_name}: {reason}")
+            print(
+                f"[optimize-result] op={op_name} status=hard_error "
+                f"new_nodes=0 last_reason={json.dumps(_compact_reason(reason))}"
+            )
             continue
 
         # Paths for optimization
         paths = {
             "proj_dir": op_dir_path,
             "io_dir": io_dir,
-            "op_dir": Path("kernels/generated/individual_op_kernels") / op_name,
+            "op_dir": _generated_kernels_root(optional_proj_name) / op_name,
         }
 
         mcts._NODE_CACHE.clear()
@@ -793,19 +837,44 @@ Examples:
                 n_workers=args.workers,
                 max_iterations=args.max_iterations
             )
+            print(
+                f"[optimize-result] op={op_name} status=unknown "
+                "new_nodes=0 last_reason="
+                f"{json.dumps('parallel_mode_result_not_tracked')}"
+            )
         else:
             # === SEQUENTIAL MODE (original) ===
+            op_new_nodes = 0
+            op_last_reason = ""
             for i in range(args.max_iterations):
                 # Select parent node then optimize off of it
                 parent_node = mcts.choose_optimization(paths)
-                new_node = optimize(backend, gpu_specs, paths, parent_node, ssh_config)
+                new_node, failure_reason = optimize(
+                    backend, gpu_specs, paths, parent_node, ssh_config
+                )
                 
                 # Update tree with the new node (if optimization succeeded)
                 if new_node:
                     mcts.update_tree(paths, new_node)
+                    op_new_nodes += 1
+                    op_last_reason = ""
+                elif failure_reason:
+                    op_last_reason = str(failure_reason)
                 
                 if (i + 1) % 10 == 0:
                     print(f"  Progress: {i+1}/{args.max_iterations} iterations")
+            if op_new_nodes > 0:
+                print(
+                    f"[optimize-result] op={op_name} status=improved "
+                    f"new_nodes={op_new_nodes} last_reason={json.dumps('')}"
+                )
+            else:
+                if not op_last_reason:
+                    op_last_reason = "No valid candidates were produced."
+                print(
+                    f"[optimize-result] op={op_name} status=no_improvement "
+                    f"new_nodes=0 last_reason={json.dumps(_compact_reason(op_last_reason))}"
+                )
     
 if __name__ == "__main__":
     main()

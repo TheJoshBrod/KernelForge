@@ -2,13 +2,11 @@
 
 import from react { useState, useEffect }
 import from "react-router-dom" { useNavigate }
-import from "@jac/runtime" { jacSpawn }
-import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
-    GameOfLifeBackground
-}
-import from "../../context/ConfigContext.cl.jac" { useConfig }
+import from ...components.backdrops.EmberBackground { EmberBackground }
+import from ...components.ui.LoadingScreen { LoadingScreen }
+import from ...context.ConfigContext { useConfig }
 
-def:pub GpuPage {
+def:pub GpuPage -> Any {
     navigate = useNavigate();
     config_ctx = useConfig();
     config = config_ctx.config;
@@ -22,8 +20,6 @@ def:pub GpuPage {
 
     system_info_state = useState({});  # Contains 'gpus' list
     systemInfo = system_info_state[0];
-    setSystemInfo = system_info_state[1];
-
     setSystemInfo = system_info_state[1];
 
     gpus = systemInfo["gpus"] if systemInfo and "gpus" in systemInfo else [];
@@ -54,7 +50,7 @@ def:pub GpuPage {
                 };
             }
 
-            resp = await jacSpawn("GetSystemInfo", "", payload);
+            resp = await __jacSpawn("GetSystemInfo", "", payload);
 
             data = resp.reports[0]
             if resp and resp.reports and resp.reports.length > 0
@@ -63,9 +59,9 @@ def:pub GpuPage {
             if data {
                 setSystemInfo(data);
             }
-        } except (error) {
-            console.error("Failed to fetch system info:", error);
-            console.error("Error stack:", error.stack);
+        } except Exception as e {
+            console.error("Failed to fetch system info:", e);
+            console.error("Error stack:", e.stack);
         }
     }
 
@@ -74,7 +70,11 @@ def:pub GpuPage {
     gpu_options = [];
     idx = 0;
     for g in gpus {
-        gpu_name = g["name"] if "name" in g else f"GPU {idx}";
+        base_name = g["name"] if "name" in g else f"GPU {idx}";
+        conn = g["connection"] if "connection" in g else "local";
+        gpu_name = f"{base_name} ({conn})"
+        if conn != "local"
+        else f"{base_name} (Local)";
         gpu_options.push(
             <option value={f"{idx}"} key={idx}>
                 {gpu_name}
@@ -91,6 +91,11 @@ def:pub GpuPage {
         new_config = {** config};
         idx_int = parseInt(index);
         new_config["selected_gpu_index"] = idx_int;
+        if idx_int != -1 and idx_int < gpus.length {
+            new_config["selected_gpu_info"] = gpus[idx_int];
+        } else {
+            new_config["selected_gpu_info"] = None;
+        }
         setConfig(new_config);
     }
 
@@ -105,38 +110,38 @@ def:pub GpuPage {
     }
 
     if loading {
-        return
-            <div className="app-shell app-shell--center settings-shell">
-                <GameOfLifeBackground />
-                <div className="app-backdrop"></div>
-                <div className="app-content-layer">
-                    <p>
-                        Loading...
-                    </p>
-                </div>
-            </div>;
+        return <LoadingScreen/>;
     }
 
     return
-        <main className="app-shell app-shell--center settings-shell">
-            <GameOfLifeBackground />
-            <div className="app-backdrop"></div>
-            <div className="settings-card panel app-content-layer">
-                <div className="settings-header">
-                    <h1 className="settings-title">
+        <main className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex flex-col items-center justify-center font-sans text-white">
+            <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
+            <div className="noise-overlay opacity-30"></div>
+            <EmberBackground className="absolute inset-0 z-0"/>
+            <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/50 z-10 pointer-events-none"></div>
+
+            <div className="relative z-20 flex flex-col items-center justify-center mb-4 animation-fade-in-up">
+                <div className="flex items-center gap-4 mb-2">
+                    <img src="/KernelForge.svg" alt="Kernel Forge Logo" className="w-12 h-12" />
+                    <h1 className="text-3xl font-bold text-white tracking-wider uppercase industrial-font-display" style={{"textShadow": "0 0 20px rgba(225, 112, 85, 0.4)"}}>
+                        Kernel Forge
+                    </h1>
+                </div>
+            </div>
+
+            <div className="relative z-10 w-full max-w-4xl h-[70vh] bg-[var(--bg-panel)]/90 backdrop-blur-md border border-[var(--border)] rounded-sm shadow-2xl flex flex-col animation-fade-in-up delay-1 clip-hex">
+                <div className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 right-0 heat-divider"></div>
+                    <h1 className="text-2xl font-bold text-white tracking-wide uppercase industrial-font-display">
                         GPU Settings
                     </h1>
-                    <p className="settings-subtitle">
+                    <p className="text-xs text-[var(--accent)] font-mono uppercase tracking-widest">
                         Select your active GPU
                     </p>
                 </div>
-                <div className="space-y-4">
+                
+                <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0 charcoal-scrollbar bg-[var(--bg-darker)]/30">
                     <div className="space-y-2">
-                        <div className="text-sm font-semibold text-zinc-300">
-                            Available GPUs {(
-                                "(local + connected SSH)" if gpus.length > 0 else ""
-                            )}
-                        </div>
                         <select
                             className="w-full h-10 bg-zinc-900 border border-zinc-800 rounded px-3 text-zinc-200"
                             value={f"{selected_idx}"}
@@ -166,21 +171,21 @@ def:pub GpuPage {
                             </div>
                             <div className="text-xs text-zinc-400 space-y-1">
                                 <div>
-                                    Memory: {gpus[selected_idx]["memory"]
+                                    Memory:{gpus[selected_idx]["memory"]
                                     if selected_idx != -1
                                     and selected_idx < gpus.length
                                     and "memory" in gpus[selected_idx]
                                     else "N/A"}
                                 </div>
                                 <div>
-                                    Compute: {gpus[selected_idx]["compute_capability"]
+                                    Compute:{gpus[selected_idx]["compute_capability"]
                                     if selected_idx != -1
                                     and selected_idx < gpus.length
                                     and "compute_capability" in gpus[selected_idx]
                                     else "N/A"}
                                 </div>
                                 <div>
-                                    SMs: {gpus[selected_idx]["sm_count"]
+                                    SMs:{gpus[selected_idx]["sm_count"]
                                     if selected_idx != -1
                                     and selected_idx < gpus.length
                                     and "sm_count" in gpus[selected_idx]
@@ -195,29 +200,28 @@ def:pub GpuPage {
                             Select a GPU to see stats.
                         </div>
                     )}
-                    <div className="flex gap-3">
+                </div>
+                
+                <div className="p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0 flex items-center justify-between gap-4">
+                    <button
+                        onClick={fetchSystemInfo}
+                        className="px-6 h-10 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg transition-all border border-zinc-700"
+                    >
+                        Refresh
+                    </button>
+                    <div className="flex gap-4">
                         <button
-                            onClick={fetchSystemInfo}
-                            className="flex-1 h-10 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg transition-all border border-zinc-700"
+                            onClick={handleReturn}
+                            className="app-button"
                         >
-                            Refresh
+                            Back
                         </button>
                         <button
                             onClick={handleSave}
                             disabled={saving}
-                            className="flex-1 h-10 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="app-button"
                         >
-                            {"Saving..." if saving else "Save"}
-                        </button>
-                    </div>
-                </div>
-                <div className="settings-actions-block">
-                    <div className="settings-actions">
-                        <button
-                            onClick={handleReturn}
-                            className="app-button app-button--ghost app-button--wide"
-                        >
-                            Back
+                            {("Saving..." if saving else "Save")}
                         </button>
                     </div>
                 </div>

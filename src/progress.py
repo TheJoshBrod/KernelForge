@@ -19,8 +19,8 @@ def _save_state(state_path: Path, state: dict) -> None:
 
 
 def update_job_progress(current: int, total: int, message: str | None = None) -> None:
-    state_path = os.environ.get("CGINS_STATE_PATH")
-    job_key = os.environ.get("CGINS_JOB_KEY")
+    state_path = os.environ.get("KFORGE_STATE_PATH")
+    job_key = os.environ.get("KFORGE_JOB_KEY")
     if not state_path or not job_key:
         return
 
@@ -44,8 +44,8 @@ def update_job_progress(current: int, total: int, message: str | None = None) ->
 
 
 def update_job_usage(usage: dict) -> None:
-    state_path = os.environ.get("CGINS_STATE_PATH")
-    job_key = os.environ.get("CGINS_JOB_KEY")
+    state_path = os.environ.get("KFORGE_STATE_PATH")
+    job_key = os.environ.get("KFORGE_JOB_KEY")
     if not state_path or not job_key:
         return
 
@@ -61,8 +61,8 @@ def update_job_usage(usage: dict) -> None:
 
 
 def _get_job_state() -> dict:
-    state_path = os.environ.get("CGINS_STATE_PATH")
-    job_key = os.environ.get("CGINS_JOB_KEY")
+    state_path = os.environ.get("KFORGE_STATE_PATH")
+    job_key = os.environ.get("KFORGE_JOB_KEY")
     if not state_path or not job_key:
         return {}
     try:

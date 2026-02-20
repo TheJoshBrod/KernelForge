@@ -27,7 +27,7 @@ def ensure_cuda_env() -> None:
 
 
 def target_device() -> str:
-    value = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    value = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
     if value in {"gpu", "cuda"}:
         return "cuda"
     if value == "mps":
@@ -46,11 +46,11 @@ def load_kernel(kernel_dir: Path, name: str | None = None, build_dir: Path | Non
     code = kernel_path.read_text(encoding="utf-8")
     signature = _extract_signature(code)
 
-    module_name = name or f"cgins_{kernel_dir.name}"
+    module_name = name or f"kforge_{kernel_dir.name}"
     build_dir = build_dir or (kernel_dir / ".build")
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    target_device = os.environ.get("CGINS_TARGET_DEVICE", "").strip().lower()
+    target_device = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
     if target_device in {"gpu", "cuda"} or target_device == "":
         _ensure_cuda_env()
         module = load_inline(
@@ -115,7 +115,7 @@ def load_export(export_path: str | Path, extract_dir: str | Path | None = None) 
             extract_root = Path(extract_dir)
             extract_root.mkdir(parents=True, exist_ok=True)
         else:
-            temp_dir = tempfile.TemporaryDirectory(prefix="cgins_export_")
+            temp_dir = tempfile.TemporaryDirectory(prefix="kforge_export_")
             extract_root = Path(temp_dir.name)
         with zipfile.ZipFile(export_path, "r") as zipf:
             zipf.extractall(extract_root)
@@ -130,7 +130,7 @@ def load_export(export_path: str | Path, extract_dir: str | Path | None = None) 
     for kernel_path in kernels_root.rglob("kernel.cu"):
         op_dir = kernel_path.parent
         op_name = op_dir.name
-        modules[op_name] = load_kernel(op_dir, name=f"cgins_{op_name}")
+        modules[op_name] = load_kernel(op_dir, name=f"kforge_{op_name}")
 
     if temp_dir:
         temp_dir.cleanup()

@@ -2,38 +2,39 @@
 
 import from react { useEffect }
 import from sonner { toast }
-import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate }
-import from "../../components/ui/Icons.cl.jac" {
-    SettingsIcon,
-    BackIcon,
-    UploadIcon,
-    FolderIcon,
-    GhostIcon
-}
+import from ...components.ui.Icons { SettingsIcon, BackIcon, UploadIcon, FolderIcon }
+import from ...components.editor.ForgePythonEditor { ForgePythonEditor }
+import from "@jac-client/assets/KernelForge.svg" { default as loadingLogo }
 
 # Client-side helper for reading file as base64
-def fileToBase64(file: any) -> any {
-    def executor(resolve: any, reject: any) -> None {
+def fileToBase64(file: Any) -> Any {
+    def executor(resolve: Any, reject: Any) -> None {
         reader = Reflect.construct(FileReader, []);
         reader.readAsDataURL(file);
-        reader.onload = lambda -> None { resolve(reader.result.split(",")[1]);};
-        reader.onerror = lambda -> None { return; };
+        reader.onload = lambda -> None { resolve.call(
+            None, reader.result.split(",")[1]
+        );};
+        reader.onerror = lambda -> None { reject.call(
+            None, "Failed to read file as base64"
+        );};
     }
     return Reflect.construct(Promise, [executor]);
 }
 
-def fileToText(file: any) -> any {
-    def executor(resolve: any, reject: any) -> None {
+def fileToText(file: Any) -> Any {
+    def executor(resolve: Any, reject: Any) -> None {
         reader = Reflect.construct(FileReader, []);
         reader.readAsText(file);
-        reader.onload = lambda -> None { resolve(reader.result);};
-        reader.onerror = lambda -> None { return; };
+        reader.onload = lambda -> None { resolve.call(None, reader.result);};
+        reader.onerror = lambda -> None { reject.call(
+            None, "Failed to read file as text"
+        );};
     }
     return Reflect.construct(Promise, [executor]);
 }
 
-def:pub NewProject {
+def:pub NewProject -> Any {
     navigate = useNavigate();
     has code: str = "",
         formData: dict = {
@@ -43,9 +44,19 @@ def:pub NewProject {
             "validationZip": None
         },
         isSubmitting: bool = False,
-        submitStage: str = "";
+        submitStage: str = "",
+        stageIndex: int = 0,
+        stageCycle: list = [
+            "Heating up the coals",
+            "Stoking the bellows",
+            "Preparing the forge",
+            "Tempering model steel",
+            "Shaping kernels on the anvil",
+            "Quenching fresh optimizations",
+            "Cleaning the workspace"
+        ];
 
-    def handleInputChange(field: str, value: any) -> None {
+    def handleInputChange(field: str, value: Any) -> None {
         newFormData = {
             "projectName": formData["projectName"],
             "modelFile": formData["modelFile"],
@@ -56,33 +67,47 @@ def:pub NewProject {
         formData = newFormData;
     }
 
-    async def handleModelFile(file: any) -> None {
+    def previewModelFile(file: Any) -> None {
         if not file {
             return;
         }
-        try {
-            text = await fileToText(file);
-            code = text;
-            handleInputChange("modelFile", file);
-        } except Exception as e {
-            console.error(e);
-            toast.error("Failed to read model file");
-        }
+        handleInputChange("modelFile", file);
+        reader = Reflect.construct(FileReader, []);
+        reader.onload = lambda -> None { text_value = reader.result
+        if reader.result
+        else "";if text_value and text_value.trim() {
+            code = text_value;
+        } else {
+            toast.error("Selected model file is empty");
+        } };
+        reader.onerror = lambda -> None { toast.error(
+            "Failed to read model file for preview"
+        );};
+        reader.readAsText(file);
     }
 
-    # Handle Escape key to navigate back
-    # Handle Escape key to navigate back
-    def handleKeyDown(event: any) -> None {
+    def handleKeyDown(event: Any) -> None {
         if event.key == "Escape" {
             navigate("/");
         }
     }
 
     useEffect(
-        lambda -> None { window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
+        lambda -> Any { window.addEventListener("keydown", handleKeyDown);return lambda -> None { window.removeEventListener(
             "keydown", handleKeyDown
         );}; },
         []
+    );
+
+    useEffect(
+        lambda -> Any { if not isSubmitting {
+            stageIndex = 0;
+            return;
+        }stageIndex = Math.floor(Date.now() / 1300) % stageCycle.length;timer = setInterval(
+            lambda -> None { stageIndex = Math.floor(Date.now() / 1300) % stageCycle.length;},
+            650
+        );return lambda -> None { clearInterval(timer);}; },
+        [isSubmitting]
     );
 
     async def handleCreate -> None {
@@ -90,8 +115,8 @@ def:pub NewProject {
             toast.error("Project name is required");
             return;
         }
-        if not code.trim() {
-            toast.error("Model code is required");
+        if (not code or not code.trim()) and not formData["modelFile"] {
+            toast.error("Model code or model file is required");
             return;
         }
 
@@ -99,6 +124,27 @@ def:pub NewProject {
         submitStage = "Preparing project files";
 
         try {
+            model_code = code;
+            model_file_b64 = "";
+            if formData["modelFile"] {
+                submitStage = "Encoding model file";
+                model_file_b64 = await fileToBase64(formData["modelFile"]);
+                if not model_code or not model_code.trim() {
+                    try {
+                        model_code = await fileToText(formData["modelFile"]);
+                        code = model_code;
+                    } except Exception as e {
+                        console.error(e);
+                    }
+                }
+            }
+            if (not model_code or not model_code.trim()) and not model_file_b64 {
+                toast.error("Failed to load model code from file");
+                isSubmitting = False;
+                submitStage = "";
+                return;
+            }
+
             weights_b64 = "";
             if formData["weightsFile"] {
                 submitStage = "Encoding weights";
@@ -113,18 +159,26 @@ def:pub NewProject {
                 validation_name = formData["validationZip"].name;
             }
 
-            # Call the walker passed from parent
-            # Call the walker passed from parent
-            # Call the walker passed from parent
-            # Call the walker passed from parent
             submitStage = "Creating project";
-            resp = await jacSpawn(
+            resp = await __jacSpawn(
                 "CreateProject",
                 "",
                 {
                     "projectName": formData["projectName"].trim(),
-                    "code": code,
+                    "code": model_code,
+                    "modelFileB64": model_file_b64,
+                    "modelFileName": (
+                        formData["modelFile"].name
+                        if formData["modelFile"] and "name" in formData["modelFile"]
+                        else "model.py"
+                    ),
                     "weightsFileB64": weights_b64,
+                    "weightsFileName": (
+                        formData["weightsFile"].name
+                        if formData["weightsFile"]
+                        and "name" in formData["weightsFile"]
+                        else "weights.pt"
+                    ),
                     "validationSetPath": "",
                     "validationZipB64": validation_b64,
                     "validationZipName": validation_name
@@ -137,7 +191,7 @@ def:pub NewProject {
             if result and result["success"] {
                 submitStage = "Finalizing";
                 toast.success("Project created successfully");
-                navigate("/project/" + result["name"]);
+                navigate("/project/" + result["name"], {"replace": True});
             } else {
                 error_msg = result["error"] if result else "Failed to create project";
                 toast.error(error_msg);
@@ -156,190 +210,228 @@ def:pub NewProject {
     if isSubmitting {
         loadingOverlay = <div className="project-loading">
             <div className="project-loading-card">
-                <GhostIcon className="project-loading-ghost" />
+                <img
+                    src={loadingLogo}
+                    alt="Kernal Forge Logo"
+                    className="project-loading-logo"
+                />
                 <div className="project-loading-title">
                     Creating Project
                 </div>
                 <div className="project-loading-stage">
-                    {submitStage or "Working on it..."}
+                    {stageCycle[stageIndex]}
                 </div>
                 <div className="project-loading-bar">
                     <span className="project-loading-bar-fill"></span>
                 </div>
                 <div className="project-loading-foot">
-                    Large weights or validation zips may take a moment.
+                    Status:{submitStage or "Working on it..."} | Large weights or validation zips may take a moment.
                 </div>
             </div>
         </div>;
     }
 
     return
-        <main
-            className="flex h-screen bg-zinc-950 text-zinc-100 overflow-hidden relative"
-        >
+        <main className="app-shell">
             {loadingOverlay}
-            <div className="absolute top-2 right-6">
-                <a
-                    onClick={lambda -> None { navigate("/settings");}}
-                    className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white cursor-pointer"
-                    aria-label="Settings"
-                >
-                    <SettingsIcon />
-                </a>
+            <div className="app-backdrop app-backdrop--forge"></div>
+            <div className="app-backdrop-embers">
+                <span className="ember-particle"></span>
+                <span className="ember-particle"></span>
+                <span className="ember-particle"></span>
+                <span className="ember-particle"></span>
+                <span className="ember-particle"></span>
+                <span className="ember-particle"></span>
             </div>
-            <div className="absolute top-2 right-16 z-10">
-                <a
-                    onClick={lambda -> None { navigate("/");}}
-                    className="flex items-center justify-center p-2 rounded-full hover:bg-zinc-800 transition-colors text-zinc-400 hover:text-white bg-zinc-950/50 backdrop-blur-sm cursor-pointer"
-                    aria-label="Go Back"
-                >
-                    <BackIcon />
-                </a>
-            </div>
-            <div className="w-1/2 flex flex-col border-r border-zinc-900">
+            <div className="app-content-layer h-screen w-full p-4 md:p-6">
                 <div
-                    className="h-14 flex items-center px-6 border-b border-zinc-900 bg-zinc-950"
+                    className="h-full w-full border border-[var(--border)] bg-[var(--surface-0)] clip-anvil shadow-[0_22px_48px_rgba(0,0,0,0.45)] overflow-hidden"
                 >
-                    <h2
-                        className="text-sm font-bold uppercase tracking-wider text-zinc-400"
+                    <div
+                        className="h-14 flex items-center justify-between px-6 border-b border-[var(--border)] bg-[var(--surface-1)] relative"
                     >
-                        Model Code
-                    </h2>
-                </div>
-                <div
-                    className="flex-1 overflow-auto bg-[#1d1f21] relative custom-scrollbar"
-                >
-                    <textarea
-                        value={code}
-                        onChange={lambda e: any  -> None { code = e.target.value;}}
-                        placeholder="# Paste your model code here or upload model.py"
-                        className="min-h-full w-full resize-none bg-[#1d1f21] text-zinc-100 font-mono text-sm p-6 focus:outline-none placeholder:text-zinc-500"
-                    />
-                </div>
-            </div>
-            <div className="w-1/2 flex flex-col bg-zinc-950">
-                <div
-                    className="h-14 flex items-center justify-between px-6 border-b border-zinc-900"
-                >
-                    <h2
-                        className="text-sm font-bold uppercase tracking-wider text-zinc-400"
-                    >
-                        Project Details
-                    </h2>
-                </div>
-                <div className="p-8 space-y-8 max-w-xl mx-auto w-full mt-10">
-                    <div className="space-y-2">
-                        <label
-                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
-                        >
-                            Project Name
-                        </label>
-                        <input
-                            type="text"
-                            value={formData["projectName"]}
-                            onChange={lambda e: any  -> None { handleInputChange(
-                                "projectName", e.target.value
-                            );}}
-                            placeholder="e.g. ResNet-50 Fine-tune"
-                            className="w-full h-12 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-lg px-4 text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
-                        />
-                    </div>
-                    <div className="space-y-2">
-                        <label
-                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
-                        >
-                            Model Code (.py)
-                        </label>
-                        <div className="relative group">
-                            <input
-                                type="file"
-                                accept=".py,.txt"
-                                onChange={lambda e: any  -> None { handleModelFile(
-                                    e.target.files[0]
-                                );}}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                            />
-                            <div
-                                className="w-full h-20 bg-zinc-900/50 border-2 border-dashed border-zinc-800 group-hover:border-zinc-600 rounded-xl flex flex-col items-center justify-center transition-all"
+                        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent"></div>
+                        <div>
+                            <h1 className="text-sm font-bold uppercase tracking-[0.18em] text-[var(--text-strong)]">
+                                Create Project
+                            </h1>
+                            <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-muted)]">
+                                Kernel Forge Onboarding
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <a
+                                onClick={lambda -> None { navigate("/");}}
+                                className="flex items-center justify-center p-2 rounded-full border border-[var(--border)] hover:border-[var(--border-strong)] bg-[var(--surface-0)] transition-colors text-zinc-400 hover:text-white cursor-pointer"
+                                aria-label="Go Back"
                             >
-                                <p className="text-sm text-zinc-400 font-medium">
-                                    {formData["modelFile"].name
-                                    if formData["modelFile"]
-                                    else "Click to select model.py"}
-                                </p>
-                                <p className="text-xs text-zinc-600 mt-1">
-                                    Uploading will replace the editor content
-                                </p>
-                            </div>
+                                <BackIcon/>
+                            </a>
+                            <a
+                                onClick={lambda -> None { navigate(
+                                    "/settings", {"state": {"return_to": "/new-project"}}
+                                );}}
+                                className="flex items-center justify-center p-2 rounded-full border border-[var(--border)] hover:border-[var(--border-strong)] bg-[var(--surface-0)] transition-colors text-zinc-400 hover:text-white cursor-pointer"
+                                aria-label="Settings"
+                            >
+                                <SettingsIcon/>
+                            </a>
                         </div>
                     </div>
-                    <div className="space-y-2">
-                        <label
-                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
-                        >
-                            Upload Weights (.pt)
-                        </label>
-                        <div className="relative group">
-                            <input
-                                type="file"
-                                accept=".pt"
-                                onChange={lambda e: any  -> None { handleInputChange(
-                                    "weightsFile", e.target.files[0]
-                                );}}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                            />
+                    <div className="h-[calc(100%-3.5rem)] flex">
+                        <div className="w-1/2 min-w-0 flex flex-col border-r border-[var(--border)]">
                             <div
-                                className="w-full h-32 bg-zinc-900/50 border-2 border-dashed border-zinc-800 group-hover:border-zinc-600 rounded-xl flex flex-col items-center justify-center transition-all"
+                                className="h-14 flex items-center px-6 border-b border-[var(--border)] bg-[var(--surface-0)] relative"
                             >
-                                <div className="p-3 rounded-full bg-zinc-900 mb-2">
-                                    <UploadIcon className="text-zinc-400" />
+                                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
+                                <h2
+                                    className="text-sm font-bold uppercase tracking-wider text-zinc-400"
+                                >
+                                    Model Code
+                                </h2>
+                            </div>
+                            <div className="flex-1 relative">
+                                <ForgePythonEditor
+                                    value={code}
+                                    onChange={lambda next_code: Any  -> None { code = str(
+                                        next_code
+                                    )
+                                    if next_code
+                                    else "";}}
+                                    readOnly={isSubmitting}
+                                    placeholder="# Paste your model code here or upload model.py"
+                                />
+                            </div>
+                        </div>
+                        <div className="w-1/2 min-w-0 flex flex-col bg-[var(--surface-0)]">
+                            <div
+                                className="h-14 flex items-center justify-between px-6 border-b border-[var(--border)] bg-[var(--surface-0)] relative"
+                            >
+                                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
+                                <h2
+                                    className="text-sm font-bold uppercase tracking-wider text-zinc-400"
+                                >
+                                    Project Details
+                                </h2>
+                            </div>
+                            <div className="flex-1 overflow-y-auto">
+                                <div className="p-8 space-y-8 max-w-xl mx-auto w-full">
+                                    <div className="space-y-2">
+                                        <label
+                                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
+                                        >
+                                            Project Name
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={formData["projectName"]}
+                                            onChange={lambda e: any  -> None { handleInputChange(
+                                                "projectName", e.target.value
+                                            );}}
+                                            placeholder="e.g. ResNet-50 Fine-tune"
+                                            className="w-full h-12 bg-[var(--surface-2)] border border-[var(--border)] hover:border-[var(--border-strong)] rounded-lg px-4 text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-orange-400/30 transition-all"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label
+                                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
+                                        >
+                                            Model Code (.py)
+                                        </label>
+                                        <div className="relative group">
+                                            <input
+                                                type="file"
+                                                accept=".py,.txt"
+                                                onChange={lambda e: any  -> None { previewModelFile(
+                                                    e.target.files[0]
+                                                );}}
+                                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                            />
+                                            <div
+                                                className="w-full h-20 bg-[var(--surface-2)] border border-[var(--border)] group-hover:border-[var(--border-strong)] clip-anvil flex flex-col items-center justify-center transition-colors px-4"
+                                            >
+                                                <p className="text-sm text-zinc-300 font-medium truncate w-full text-center">
+                                                    {formData["modelFile"].name
+                                                    if formData["modelFile"]
+                                                    else "Click to select model.py"}
+                                                </p>
+                                                <p className="text-xs text-zinc-500 mt-1">
+                                                    Uploading will replace the editor content
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label
+                                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
+                                        >
+                                            Upload Weights (.pt or .pth)
+                                        </label>
+                                        <div className="relative group">
+                                            <input
+                                                type="file"
+                                                accept=".pt,.pth"
+                                                onChange={lambda e: any  -> None { handleInputChange(
+                                                    "weightsFile", e.target.files[0]
+                                                );}}
+                                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                            />
+                                            <div
+                                                className="w-full h-32 bg-[var(--surface-2)] border border-[var(--border)] group-hover:border-[var(--border-strong)] clip-anvil flex flex-col items-center justify-center transition-colors px-4"
+                                            >
+                                                <div className="p-3 rounded-full bg-[var(--surface-1)] mb-2">
+                                                    <UploadIcon className="text-zinc-400"/>
+                                                </div>
+                                                <p className="text-sm text-zinc-300 font-medium truncate w-full text-center">
+                                                    {formData["weightsFile"].name
+                                                    if formData["weightsFile"]
+                                                    else "Click to select or drag file"}
+                                                </p>
+                                                <p className="text-xs text-zinc-500 mt-1">
+                                                    PyTorch checkpoint file
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label
+                                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
+                                        >
+                                            Validation Set (.zip)
+                                        </label>
+                                        <div className="relative group">
+                                            <input
+                                                type="file"
+                                                accept=".zip"
+                                                onChange={lambda e: any  -> None { handleInputChange(
+                                                    "validationZip", e.target.files[0]
+                                                );}}
+                                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                            />
+                                            <div
+                                                className="w-full h-12 bg-[var(--surface-2)] border border-[var(--border)] group-hover:border-[var(--border-strong)] clip-anvil px-4 flex items-center text-zinc-300 transition-colors"
+                                            >
+                                                <FolderIcon className="mr-3 text-zinc-400"/>
+                                                <span className="truncate">
+                                                    {formData["validationZip"].name
+                                                    if formData["validationZip"]
+                                                    else "Select .zip file..."}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="pt-6">
+                                        <button
+                                            onClick={lambda e: any  -> None { handleCreate();}}
+                                            disabled={isSubmitting}
+                                            className="w-full h-12 bg-[var(--accent-orange)] hover:bg-[var(--molten-gold-dark)] text-zinc-950 font-bold rounded-lg transition-all shadow-[0_10px_24px_rgba(225,112,85,0.28)] hover:shadow-[0_12px_28px_rgba(232,168,56,0.26)] disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            {"Creating..." if isSubmitting else "Create Project"}
+                                        </button>
+                                    </div>
                                 </div>
-                                <p className="text-sm text-zinc-400 font-medium">
-                                    {formData["weightsFile"].name
-                                    if formData["weightsFile"]
-                                    else "Click to select or drag file"}
-                                </p>
-                                <p className="text-xs text-zinc-600 mt-1">
-                                    PyTorch weights only
-                                </p>
                             </div>
                         </div>
-                    </div>
-                    <div className="space-y-2">
-                        <label
-                            className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
-                        >
-                            Validation Set (.zip)
-                        </label>
-                        <div className="relative group">
-                            <input
-                                type="file"
-                                accept=".zip"
-                                onChange={lambda e: any  -> None { handleInputChange(
-                                    "validationZip", e.target.files[0]
-                                );}}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                            />
-                            <div
-                                className="w-full h-12 bg-zinc-900 border border-zinc-800 group-hover:border-zinc-600 rounded-lg px-4 flex items-center text-zinc-400 transition-all"
-                            >
-                                <FolderIcon className="mr-3" />
-                                <span className="truncate">
-                                    {formData["validationZip"].name
-                                    if formData["validationZip"]
-                                    else "Select .zip file..."}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                    <div className="pt-6">
-                        <button
-                            onClick={lambda e: any  -> None { handleCreate();}}
-                            disabled={isSubmitting}
-                            className="w-full h-12 bg-zinc-100 hover:bg-white text-zinc-950 font-bold rounded-lg transition-all shadow-lg hover:shadow-zinc-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {"Creating..." if isSubmitting else "Create Project"}
-                        </button>
                     </div>
                 </div>
             </div>

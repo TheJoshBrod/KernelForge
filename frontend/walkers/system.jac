@@ -12,52 +12,97 @@ import torch;
 import from .globals { repo_root, config_path, config_store }
 import from json { load }
 
-def _run_llm_test(provider: str, model: str, apikey: str) -> dict {
-    if not provider {
-        return {"success": False, "error": "Missing provider"};
+glob _hw_cache: dict = {};
+glob _sys_info_cache: dict = {};
+glob _sys_info_ts: float = 0.0;
+
+def _normalize_provider(provider: str) -> str {
+    value = provider.lower().strip() if provider else "";
+    if value == "gemini" or value == "google-genai" {
+        return "google";
     }
-    if not model {
-        return {"success": False, "error": "Missing model"};
+    return value;
+}
+
+def _extract_api_keys(cfg: dict) -> dict {
+    out = {"openai": "", "anthropic": "", "google": ""};
+    if not cfg {
+        return out;
     }
-    if not apikey {
-        return {"success": False, "error": "Missing API key"};
+    raw_keys = cfg["api_keys"] if cfg and "api_keys" in cfg else {};
+    for provider in out {
+        if raw_keys and provider in raw_keys and raw_keys[provider] {
+            out[provider] = str(raw_keys[provider]).strip();
+        }
     }
-    test_script = path.join(repo_root, "scripts", "test_llm_connection.py");
-    cmd = [
-        sys.executable,
-        test_script,
-        "--provider",
-        provider,
-        "--model",
-        model,
-        "--apikey",
-        apikey
-    ];
+    llm = cfg["llm_info"] if cfg and "llm_info" in cfg else {};
+    legacy_provider = _normalize_provider(
+        llm["provider"] if llm and "provider" in llm else ""
+    );
+    legacy_key = str(llm["apikey"]).strip() if llm and "apikey" in llm else "";
+    if legacy_provider in out and legacy_key and not out[legacy_provider] {
+        out[legacy_provider] = legacy_key;
+    }
+    return out;
+}
+
+def _default_model_for_provider(provider: str) -> str {
+    if provider == "openai" {
+        return "gpt-4o-mini";
+    } elif provider == "anthropic" {
+        return "claude-haiku-4-5-20251001";
+    } elif provider == "google" {
+        return "gemini-2.0-flash";
+    }
+    return "";
+}
+
+def _run_api_key_test(provider: str, apikey: str) -> dict {
+    provider_norm = _normalize_provider(provider);
     try {
-        result = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True);
-        stdout = result.stdout.strip();
-        stderr = result.stderr.strip();
-        if stdout {
-            try {
-                data = loads(stdout);
-            } except Exception as e {
-                data = {
-                    "success": False,
-                    "error": "Failed to parse response",
-                    "raw": stdout,
-                    "exception": str(e)
-                };
-            }
-        } else {
-            data = {"success": False, "error": "No output from test"};
+        code = (
+            "import json, sys;"
+            "from src.llm.key_test import test_api_key;"
+            "print(json.dumps(test_api_key(sys.argv[1], sys.argv[2], timeout_seconds=4.0)))"
+        );
+        out = subprocess.check_output(
+            [sys.executable, "-c", code, provider_norm, apikey if apikey else ""],
+            cwd=repo_root,
+            timeout=10
+        );
+        text = out.decode("utf-8").strip();
+        if text {
+            return loads(text);
         }
-        if stderr and "stderr" not in data {
-            data["stderr"] = stderr;
-        }
-        data["return_code"] = result.returncode;
-        return data;
+        return {"success": False, "error": "No output from key test"};
     } except Exception as e {
         return {"success": False, "error": str(e)};
+    }
+}
+
+def _run_all_api_key_tests(keys: dict) -> dict {
+    openai_key = keys["openai"] if keys and "openai" in keys else "";
+    anthropic_key = keys["anthropic"] if keys and "anthropic" in keys else "";
+    google_key = keys["google"] if keys and "google" in keys else "";
+    try {
+        code = (
+            "import json, sys;"
+            "from src.llm.key_test import test_all_api_keys;"
+            "keys = {'openai': sys.argv[1], 'anthropic': sys.argv[2], 'google': sys.argv[3]};"
+            "print(json.dumps(test_all_api_keys(keys, timeout_seconds=4.0)))"
+        );
+        out = subprocess.check_output(
+            [sys.executable, "-c", code, openai_key, anthropic_key, google_key],
+            cwd=repo_root,
+            timeout=12
+        );
+        text = out.decode("utf-8").strip();
+        if text {
+            return loads(text);
+        }
+        return {"success": False, "results": {}, "error": "No output from key tests"};
+    } except Exception as e {
+        return {"success": False, "results": {}, "error": str(e)};
     }
 }
 
@@ -67,41 +112,38 @@ walker:pub GetSystemInfo {
     has password: str = "";
     has key_path: str = "";
 
-    can return_info with `root entry {
+    can return_info with entry {
+        global _sys_info_cache;
+        global _sys_info_ts;
         try {
+            # Check cache (1 minute TTL)
+            now_ts = datetime.now().timestamp();
+            if _sys_info_cache and (now_ts - _sys_info_ts) < 60 {
+                report _sys_info_cache;
+                disengage;
+            }
+
             all_gpus = [];
+            local_profile = {"available": False, "gpus": [], "source": "local"};
 
             try {
-                import torch;
-
-                if torch.cuda.is_available() {
-                    count = torch.cuda.device_count();
-                    for i in range(count) {
-                        device_name = torch.cuda.get_device_name(i);
-                        props = torch.cuda.get_device_properties(i);
-                        total_memory = props.total_memory / (1024 ** 3);
-
-                        arch_name = "Unknown";
-                        if props.major == 7 {
-                            arch_name = "Volta/Turing";
-                        } elif props.major == 8 {
-                            arch_name = "Ampere";
-                        } elif props.major == 9 {
-                            arch_name = "Hopper";
-                        }
-
-                        all_gpus.append(
-                            {
-                                "name": f"{device_name} (Local)",
-                                "memory": f"{total_memory:.1f} GB",
-                                "compute_capability": f"v{props.major}.{props.minor} {arch_name}",
-                                "sm_count": props.multi_processor_count
-                            }
-                        );
-                    }
+                code = "import json; from src.optimizer.profiling import get_frontend_payload; print(json.dumps(get_frontend_payload(mode='deep')))";
+                out = subprocess.check_output(
+                    [sys.executable, "-c", code], cwd=repo_root, timeout=8
+                );
+                text = out.decode("utf-8").strip();
+                if text {
+                    local_profile = loads(text);
                 }
             } except Exception as e {
                 print(f"Local GPU check failed: {e}");
+            }
+
+            if local_profile and "gpus" in local_profile {
+                for l_gpu in local_profile["gpus"] {
+                    l_gpu["connection"] = "local";
+                    all_gpus.append(l_gpu);
+                }
             }
 
             if self.host and self.user {
@@ -223,7 +265,7 @@ print(json.dumps(get_gpu_info()))
                         out_json = stdout.read().decode().strip();
                         remote_gpus = loads(out_json);
                         for r_gpu in remote_gpus {
-                            r_gpu["name"] = f"{r_gpu['name']} (Remote: {self.host})";
+                            r_gpu["connection"] = self.host;
                             all_gpus.append(r_gpu);
                         }
                     } else {
@@ -236,11 +278,38 @@ print(json.dumps(get_gpu_info()))
                 }
             }
 
-            report {
+            source = "local";
+            if self.host and self.user {
+                source = "mixed"
+                if (
+                    local_profile and "gpus" in local_profile and local_profile["gpus"]
+                )
+                else "remote";
+            }
+
+            result_payload = {
                 "available": True if all_gpus else False,
                 "gpus": all_gpus,
-                "source": "mixed"
+                "source": source,
+                "cuda_available": local_profile["cuda_available"]
+                if local_profile and "cuda_available" in local_profile
+                else False,
+                "mps_available": local_profile["mps_available"]
+                if local_profile and "mps_available" in local_profile
+                else False,
+                "xpu_available": local_profile["xpu_available"]
+                if local_profile and "xpu_available" in local_profile
+                else False,
+                "preferred_target": local_profile["preferred_target"]
+                if local_profile and "preferred_target" in local_profile
+                else "cpu"
             };
+
+            # Update cache
+            _sys_info_cache = result_payload;
+            _sys_info_ts = datetime.now().timestamp();
+
+            report result_payload;
         } except Exception as e {
             report {"available": False, "error": str(e)};
         }
@@ -253,7 +322,7 @@ walker:pub CheckSshConnection {
         password: str,
         key_path: str;
 
-    can return_status with `root entry {
+    can return_status with entry {
         try {
             client = paramiko.SSHClient();
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy());
@@ -393,7 +462,7 @@ print(json.dumps(get_gpu_info()))
 walker:pub TestLLMConnection {
     has cfg: dict = {};
 
-    can run with `root entry {
+    can run with entry {
         cfg = self.cfg;
         if not cfg {
             try {
@@ -405,13 +474,119 @@ walker:pub TestLLMConnection {
                 cfg = config_store;
             }
         }
-        llm = cfg["llm_info"]
-        if cfg and "llm_info" in cfg
-        else config_store["llm_info"];
-        provider = llm["provider"] if llm and "provider" in llm else "";
-        model = llm["model"] if llm and "model" in llm else "";
-        apikey = llm["apikey"] if llm and "apikey" in llm else "";
-        result = _run_llm_test(provider, model, apikey);
+        keys = _extract_api_keys(cfg if cfg else config_store);
+        llm = cfg["llm_info"] if cfg and "llm_info" in cfg else {};
+        provider = _normalize_provider(
+            llm["provider"] if llm and "provider" in llm else ""
+        );
+        if not provider {
+            for p in ["openai", "anthropic", "google"] {
+                if keys[p] {
+                    provider = p;
+                    break;
+                }
+            }
+        }
+        provider_value = str(provider) if provider else "";
+        apikey = str(keys[provider_value])
+        if provider_value in keys and keys[provider_value]
+        else "";
+        result = _run_api_key_test(provider_value, apikey);
         report result;
+    }
+}
+
+walker:pub TestApiKey {
+    has provider: str = "",
+        api_key: str = "",
+        cfg: dict = {};
+
+    can run with entry {
+        cfg = self.cfg;
+        if not cfg {
+            try {
+                with open(config_path, "r") as f {
+                    cfg = load(f);
+                }
+            } except Exception as e {
+                print(f"Error loading config: {e}");
+                cfg = config_store;
+            }
+        }
+        keys = _extract_api_keys(cfg if cfg else config_store);
+        provider_norm = _normalize_provider(self.provider);
+        provider_value = str(provider_norm) if provider_norm else "";
+        key_value = str(self.api_key)
+        if self.api_key
+        else (
+            str(keys[provider_value])
+            if provider_value in keys and keys[provider_value]
+            else ""
+        );
+        result = _run_api_key_test(provider_value, key_value);
+        report result;
+    }
+}
+
+walker:pub TestAllApiKeys {
+    has cfg: dict = {};
+
+    can run with entry {
+        cfg = self.cfg;
+        if not cfg {
+            try {
+                with open(config_path, "r") as f {
+                    cfg = load(f);
+                }
+            } except Exception as e {
+                print(f"Error loading config: {e}");
+                cfg = config_store;
+            }
+        }
+        keys = _extract_api_keys(cfg if cfg else config_store);
+        result = _run_all_api_key_tests(keys);
+        report result;
+    }
+}
+
+walker:pub DetectHardware {
+    can detect with entry {
+        global _hw_cache;
+        if _hw_cache {
+            report _hw_cache;
+        } else {
+            try {
+                code = "import json; from src.optimizer.profiling import get_frontend_payload; print(json.dumps(get_frontend_payload(mode='fast')))";
+                out = subprocess.check_output(
+                    [sys.executable, "-c", code], cwd=repo_root, timeout=5
+                );
+                text = out.decode("utf-8").strip();
+                if text {
+                    _hw_cache = loads(text);
+                    report _hw_cache;
+                } else {
+                    report {
+                        "available": False,
+                        "gpus": [],
+                        "source": "local",
+                        "cuda_available": False,
+                        "mps_available": False,
+                        "xpu_available": False,
+                        "preferred_target": "cpu"
+                    };
+                }
+            } except Exception as e {
+                report {
+                    "available": False,
+                    "gpus": [],
+                    "source": "local",
+                    "cuda_available": False,
+                    "mps_available": False,
+                    "xpu_available": False,
+                    "preferred_target": "cpu",
+                    "error": str(e)
+                };
+            }
+        }
     }
 }

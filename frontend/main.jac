@@ -1,7 +1,15 @@
 """Main entry point for frontend."""
 import from walkers.globals { repo_root, config_path, config_store }
 import from walkers.config { GetConfig, SaveConfig }
-import from walkers.system { GetSystemInfo, CheckSshConnection, TestLLMConnection }
+import from walkers.system {
+    GetSystemInfo,
+    CheckSshConnection,
+    TestApiKey,
+    TestAllApiKeys,
+    TestLLMConnection,
+    DetectHardware
+}
+import from walkers.llm { GetOpenLLMModels }
 import from walkers.project {
     CreateProject,
     GetProjects,
@@ -10,29 +18,36 @@ import from walkers.project {
     SetJobControl,
     StartProfile,
     StartGenerate,
-    StartGenerateAdvanced,
     StartOptimize,
-    StartOptimizeAdvanced,
+    GetDashboardCharts,
     StartBenchmark,
     ExportProject,
     GetOpDetails,
     ReadRepoFile,
     DownloadExport,
-    GetProjectBenchmarks
+    GetProjectBenchmarks,
+    GetMctsTree,
+    ImportKernel,
+    GetProjectMctsSummary,
+    GetProjectMetrics,
+    GetOperatorMetrics,
+    DeleteProject
 }
 
 cl import from react { useEffect }
 cl import from sonner { Toaster }
-cl import from "react-router-dom" { BrowserRouter as Router, Routes, Route }
-cl import from "./context/ConfigContext.cl.jac" { ConfigProvider }
-cl import from "./app/home/Home.cl.jac" { Home }
-cl import from "./app/project/Project.cl.jac" { Project }
-cl import from "./app/settings/SettingsPage.cl.jac" { SettingsPage }
-cl import from "./app/settings/ApiKeysPage.cl.jac" { ApiKeysPage }
-cl import from "./app/settings/GpuPage.cl.jac" { GpuPage }
-cl import from "./app/settings/SshPage.cl.jac" { SshPage }
-cl import from "./app/create/NewProject.cl.jac" { NewProject }
-cl import from "./app/project/OpDetails.cl.jac" { OpDetails }
+cl import from "react-router-dom" { BrowserRouter as Router, Routes, Route, Navigate }
+cl import from .context.ConfigContext { ConfigProvider }
+cl import from .app.home.Home { Home }
+cl import from .app.settings.SettingsPage { SettingsPage }
+cl import from .app.settings.ApiKeysPage { ApiKeysPage }
+cl import from .app.settings.GpuPage { GpuPage }
+cl import from .app.settings.SshPage { SshPage }
+cl import from .app.settings.AboutSettings { AboutSettings }
+cl import from .app.create.NewProject { NewProject }
+cl import from .app.project.ProjectLayout { ProjectLayout }
+cl import from .app.project.Dashboard { Dashboard }
+cl import from .app.project.operator_workbench.OperatorWorkbench { OperatorWorkbench }
 cl import "./styles.css";
 
 cl {
@@ -49,32 +64,54 @@ cl {
     }
 
     def:pub app {
-        useEffect(lambda -> None { document.title = "CGinS";}, []);
+        useEffect(
+            lambda -> None {
+                window.Exception = Error;
+                document.title = "Kernel Forge";
+                
+                # Dynamic Favicon
+                link = document.querySelector("link[rel~='icon']");
+                if not link {
+                    link = document.createElement("link");
+                    link.rel = "icon";
+                    document.head.appendChild(link);
+                }
+                link.href = "/KernelForge.svg";
+            }, []
+        );
         return
             <Router>
                 <ConfigProvider>
                     <div className="min-h-screen font-sans antialiased">
                         <Routes>
-                            <Route path="/" element={<Home />} />
-                            <Route path="/settings" element={<SettingsPage />} />
-                            <Route
-                                path="/settings/api-keys"
-                                element={<ApiKeysPage />}
-                            />
-                            <Route path="/settings/gpu" element={<GpuPage />} />
-                            <Route path="/settings/ssh" element={<SshPage />} />
-                            <Route path="/new-project" element={<NewProject />} />
+                            <Route path="/" element={<Home/>}/>
+                            <Route path="/settings" element={<SettingsPage/>}/>
+                            <Route path="/settings/api-keys" element={<ApiKeysPage/>}/>
+                            <Route path="/settings/gpu" element={<GpuPage/>}/>
+                            <Route path="/settings/ssh" element={<SshPage/>}/>
+                            <Route path="/settings/about" element={<AboutSettings/>}/>
+                            <Route path="/new-project" element={<NewProject/>}/>
                             <Route
                                 path="/project/:projectName"
-                                element={<Project />}
-                            />
-                            <Route
-                                path="/project/:projectName/:opName"
-                                element={<OpDetails />}
-                            />
-                            <Route path="*" element={<NotFound />} />
+                                element={<ProjectLayout/>}
+                            >
+                                <Route index element={<Dashboard/>}/>
+                                <Route
+                                    path="settings/*"
+                                    element={<Navigate to="/settings" replace={True}/>}
+                                />
+                                <Route
+                                    path="operator-workbench"
+                                    element={<OperatorWorkbench/>}
+                                />
+                                <Route
+                                    path="operator-workbench/:opName"
+                                    element={<OperatorWorkbench/>}
+                                />
+                            </Route>
+                            <Route path="*" element={<NotFound/>}/>
                         </Routes>
-                        <Toaster richColors={True} theme="dark" />
+                        <Toaster richColors={True} theme="dark"/>
                     </div>
                 </ConfigProvider>
             </Router>;

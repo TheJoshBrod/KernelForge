@@ -1,6 +1,6 @@
 # System Architecture
 
-The CGinS system operates in two distinct, sequential phases to produce high-performance custom CUDA kernels for PyTorch models.
+The Kernel Forge system operates in two distinct, sequential phases to produce high-performance custom CUDA kernels for PyTorch models.
 
 ## 1. Generator (Correctness Pipeline)
 **Goal:** Produce a functionally correct CUDA kernel that exactly matches the behavior of a target PyTorch operator.

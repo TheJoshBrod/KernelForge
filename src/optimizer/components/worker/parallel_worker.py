@@ -61,10 +61,11 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
             
             # io_dir logic (same as original, ensure it exists or derive it)
             if "io_dir" not in paths:
-                proj_dir = paths["proj_dir"]
-                op_name = proj_dir.name
-                io_dir = Path("benchmarks/profiler/individual_ops") / op_name / "io"
-                paths["io_dir"] = io_dir
+                proj_dir = Path(paths["proj_dir"])
+                if (proj_dir / "io").exists():
+                    paths["io_dir"] = proj_dir / "io"
+                else:
+                    paths["io_dir"] = proj_dir
             
             gpu_specs = context.get("gpu_specs")
             history = context.get("history", [])

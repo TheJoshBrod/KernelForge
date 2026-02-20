@@ -8,6 +8,7 @@ import os
 import re
 import multiprocessing
 import queue
+import traceback
 from pathlib import Path
 
 import torch
@@ -15,6 +16,7 @@ import torch
 from byllm.lib import by, Model
 from torch.utils.cpp_extension import load_inline
 from src.optimizer.config.settings import settings
+from src.optimizer.backends.error_utils import format_verifier_output
 import src.optimizer.backends.cuda.loader as loader
 
 llm = Model(model_name=settings.llm_model_name)
@@ -49,6 +51,17 @@ def summarize_issue_with_traceback(
         Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
         Only CUDA-side fixes are relevant.
         """
+
+
+def handle_output(traceback_error: str, cu_code: str, log_file_path: Path, input_and_output: dict) -> str:
+    summarizer = summarize_issue_with_traceback if settings.llm_model_name else None
+    return format_verifier_output(
+        traceback_error=traceback_error,
+        kernel_code=cu_code,
+        log_file_path=log_file_path,
+        input_and_output=input_and_output,
+        summarizer=summarizer,
+    )
 
 
 def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:
@@ -201,7 +214,6 @@ def _validate_worker_loop(q_in, q_out):
     """
     # Set environment variables ONCE
     import sys
-    import traceback
     
     # Delegate environment setup to loader
     if loader.target_device() == "cuda":
@@ -267,31 +279,43 @@ def _validate_worker_loop(q_in, q_out):
                         elif loader.target_device() == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
                             torch.mps.synchronize()
 
-                        if loader.target_device() == "cuda" and not output_generated.is_cuda:
+                        if loader.target_device() == "cuda" and torch.is_tensor(output_generated) and not output_generated.is_cuda:
                             output_generated = output_generated.cuda()
                         elif loader.target_device() == "mps" and torch.is_tensor(output_generated):
                             output_generated = output_generated.to("mps")
-                        ground_truth = entry["output"]
-                        if torch.is_tensor(ground_truth):
-                            ground_truth = ground_truth.to(
-                                output_generated.device)
 
-                        if torch.is_tensor(ground_truth) and not ground_truth.is_floating_point():
-                            is_correct = torch.equal(output_generated, ground_truth)
+                        ground_truth = entry["output"]
+
+                        if torch.is_tensor(output_generated) and torch.is_tensor(ground_truth):
+                            ground_truth = ground_truth.to(output_generated.device)
+                            if not ground_truth.is_floating_point():
+                                is_correct = torch.equal(output_generated, ground_truth)
+                            else:
+                                is_correct = torch.allclose(
+                                    output_generated, ground_truth, atol=1e-2, rtol=1e-1
+                                )
+                        elif torch.is_tensor(output_generated) and output_generated.numel() == 1 and not torch.is_tensor(ground_truth):
+                            is_correct = output_generated.detach().cpu().item() == ground_truth
+                        elif (not torch.is_tensor(output_generated)) and torch.is_tensor(ground_truth) and ground_truth.numel() == 1:
+                            is_correct = output_generated == ground_truth.detach().cpu().item()
                         else:
-                            is_correct = torch.allclose(
-                                output_generated, ground_truth, atol=1e-2, rtol=1e-1)
+                            is_correct = output_generated == ground_truth
 
                         if not is_correct:
                             all_valid = False
-                            diff = torch.abs(output_generated - ground_truth)
-                            
-                            # Generate Mismatch Analysis via LLM
-                            analysis_msg = (
-                                f"[Output Mismatch {entry_file.name}]\n"
-                                f"Max diff: {diff.max().item():.6f}\n"
-                                f"Mean diff: {diff.mean().item():.6f}\n"
-                            )
+                            if torch.is_tensor(output_generated) and torch.is_tensor(ground_truth):
+                                diff = torch.abs(output_generated - ground_truth)
+                                analysis_msg = (
+                                    f"[Output Mismatch {entry_file.name}]\n"
+                                    f"Max diff: {diff.max().item():.6f}\n"
+                                    f"Mean diff: {diff.mean().item():.6f}\n"
+                                )
+                            else:
+                                analysis_msg = (
+                                    f"[Output Mismatch {entry_file.name}]\n"
+                                    f"Generated: {output_generated}\n"
+                                    f"Expected: {ground_truth}\n"
+                                )
                             
                             if llm_analysis_count < MAX_LLM_ANALYSIS:
                                 entry["generated-incorrect-output"] = output_generated
@@ -415,7 +439,7 @@ def validate_remote_kernel(ssh_config: dict, generated_cu_code: str, paths: dict
         io_files = list(io_dir.glob("*.pt"))
         file_map = {str(f): f.name for f in io_files}
         
-        remote_io_dir = "cgins_workspace/io_cache/" + io_dir.name
+        remote_io_dir = "kforge_workspace/io_cache/" + io_dir.name
         upload_files(worker.client, file_map, remote_io_dir)
         
         # Send verify task

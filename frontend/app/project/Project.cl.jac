@@ -1,7 +1,6 @@
 """Project Page Component"""
 
 import from react { useEffect }
-import from "@jac/runtime" { jacSpawn }
 import from "react-router-dom" { useNavigate, useParams }
 import from recharts {
     PieChart,
@@ -15,13 +14,12 @@ import from recharts {
     Legend,
     ResponsiveContainer
 }
-import from "../../components/backdrops/GameOfLifeBackground.cl.jac" {
-    GameOfLifeBackground
-}
-import from "../../components/ui/GlowButton.cl.jac" { GlowButton }
-import from "../../components/ui/Icons.cl.jac" { CGinSLogo }
+import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from ...components.ui.GlowButton { GlowButton }
+import from ...components.ui.Icons { KernelForgeLogo }
+import from ...components.ui.Modal { Modal }
 
-def:pub Project {
+def:pub Project -> Any {
     navigate = useNavigate();
     params = useParams();
     raw_name = params.projectName;
@@ -37,24 +35,27 @@ def:pub Project {
         benchResults: list = [],
         benchLoading: bool = False,
         selectedOps: list = [],
-        advOptimize: bool = True,
         advBenchmark: bool = True,
         advIterations: int = 3,
         advPatience: int = 2,
         advMinImprove: float = 0.0,
         advSpeedupPct: float = 5.0,
         advGenAttempts: int = 4,
-        advImage: str = "cgins-codex:latest",
+        advImage: str = "kernel-forge-codex:latest",
         targetDevice: str = "cuda",
         hardwareInfo: dict = {},
         hardwareLoading: bool = False,
         advLog: str = "",
-        advLogLoading: bool = False;
+        advLogLoading: bool = False,
+        benchLogOpen: bool = False,
+        benchLogLoading: bool = False,
+        benchLogCopied: bool = False,
+        benchLog: str = "";
 
     def format_op(raw: str) -> str {
         raw_text = raw or "";
         prefix = "torch_nn_functional_";
-        if raw_text.startswith(prefix) {
+        if raw_text.startsWith(prefix) {
             return "torch.nn.functional." + raw_text.replace(prefix, "");
         }
         return raw_text.replace("_", ".");
@@ -64,7 +65,7 @@ def:pub Project {
         loading = True;
         try {
             if name {
-                resp = await jacSpawn("GetProjectOps", "", {"projectName": name});
+                resp = await __jacSpawn("GetProjectOps", "", {"projectName": name});
                 data = resp.reports[0]
                 if resp and resp.reports and resp.reports.length > 0
                 else None;
@@ -76,8 +77,8 @@ def:pub Project {
             } else {
                 ops = [];
             }
-        } except (error) {
-            console.error("Failed to fetch ops:", error);
+        } except Exception as e {
+            console.error("Failed to fetch ops:", e);
             ops = [];
         } finally {
             loading = False;
@@ -87,13 +88,13 @@ def:pub Project {
     async def refreshStatus -> None {
         try {
             if name {
-                resp = await jacSpawn("GetProjectStatus", "", {"projectName": name});
+                resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name});
                 data = resp.reports[0]
                 if resp and resp.reports and resp.reports.length > 0
                 else {};
                 status = data or {};
-                adv_job = data["generate_adv"]
-                if data and "generate_adv" in data
+                adv_job = data["generate"]
+                if data and "generate" in data
                 else {};
                 if adv_job and adv_job["status"] {
                     await refreshAdvLog();
@@ -101,8 +102,8 @@ def:pub Project {
             } else {
                 status = {};
             }
-        } except (error) {
-            console.error("Failed to fetch status:", error);
+        } except Exception as e {
+            console.error("Failed to fetch status:", e);
             status = {};
         }
     }
@@ -113,8 +114,8 @@ def:pub Project {
         }
         advLogLoading = True;
         try {
-            rel_path = f"projects/{name}/logs/generate_adv.log";
-            resp = await jacSpawn(
+            rel_path = f"kernels/projects/{name}/logs/generate.log";
+            resp = await __jacSpawn(
                 "ReadRepoFile", "", {"projectName": name, "relPath": rel_path}
             );
             data = resp.reports[0]
@@ -131,11 +132,60 @@ def:pub Project {
             } else {
                 advLog = "";
             }
-        } except (error) {
-            console.error("Failed to fetch advanced log:", error);
+        } except Exception as e {
+            console.error("Failed to fetch generation log:", e);
             advLog = "";
         } finally {
             advLogLoading = False;
+        }
+    }
+
+    async def refreshBenchLog -> None {
+        if not name {
+            benchLog = "";
+            return;
+        }
+        benchLogLoading = True;
+        try {
+            rel_path = f"projects/{name}/logs/benchmark.log";
+            resp = await __jacSpawn(
+                "ReadRepoFile", "", {"projectName": name, "relPath": rel_path}
+            );
+            data = resp.reports[0]
+            if resp and resp.reports and resp.reports.length > 0
+            else {};
+            if data and "success" in data and data["success"] {
+                content = data["content"] if data and "content" in data else "";
+                max_len = 8000;
+                if content and content.length > max_len {
+                    benchLog = content.slice(content.length - max_len);
+                } else {
+                    benchLog = content or "";
+                }
+            } else {
+                benchLog = "";
+            }
+        } except Exception as e {
+            console.error("Failed to fetch benchmark log:", e);
+            benchLog = "";
+        } finally {
+            benchLogLoading = False;
+        }
+    }
+
+    async def openBenchLog -> None {
+        benchLogOpen = True;
+        await refreshBenchLog();
+    }
+
+    async def copyBenchLog -> None {
+        try {
+            await navigator.clipboard.writeText(benchLog or "");
+            benchLogCopied = True;
+            setTimeout(lambda -> None { benchLogCopied = False;}, 1200);
+        } except Exception as e {
+            console.error("Failed to copy log:", e);
+            alert("Failed to copy log to clipboard.");
         }
     }
 
@@ -143,7 +193,7 @@ def:pub Project {
         benchLoading = True;
         try {
             if name {
-                resp = await jacSpawn(
+                resp = await __jacSpawn(
                     "GetProjectBenchmarks", "", {"projectName": name}
                 );
                 data = resp.reports[0]
@@ -160,8 +210,8 @@ def:pub Project {
             } else {
                 benchResults = [];
             }
-        } except (error) {
-            console.error("Failed to fetch benchmarks:", error);
+        } except Exception as e {
+            console.error("Failed to fetch benchmarks:", e);
             benchResults = [];
         } finally {
             benchLoading = False;
@@ -177,7 +227,7 @@ def:pub Project {
     async def detectHardware -> None {
         hardwareLoading = True;
         try {
-            resp = await jacSpawn("DetectHardware", "", {});
+            resp = await __jacSpawn("DetectHardware", "", {});
             data = resp.reports[0]
             if resp and resp.reports and resp.reports.length > 0
             else {};
@@ -193,8 +243,8 @@ def:pub Project {
                     targetDevice = "cuda";
                 }
             }
-        } except (error) {
-            console.error("Failed to detect hardware:", error);
+        } except Exception as e {
+            console.error("Failed to detect hardware:", e);
             hardwareInfo = {};
         } finally {
             hardwareLoading = False;
@@ -203,7 +253,7 @@ def:pub Project {
 
     useEffect(lambda -> None { refreshAll();detectHardware();}, [name]);
     useEffect(
-        lambda -> None { timer = setInterval(lambda -> None { refreshStatus();}, 4000);return lambda -> None { clearInterval(
+        lambda -> Any { timer = setInterval(lambda -> None { refreshStatus();}, 4000);return lambda -> None { clearInterval(
             timer
         );}; },
         [name]
@@ -211,14 +261,14 @@ def:pub Project {
 
     async def handleProfile -> None {
         if name {
-            await jacSpawn("StartProfile", "", {"projectName": name});
+            await __jacSpawn("StartProfile", "", {"projectName": name});
             await refreshStatus();
         }
     }
 
     async def handleGenerate -> None {
         if name {
-            await jacSpawn("StartGenerate", "", {"projectName": name});
+            await __jacSpawn("StartGenerate", "", {"projectName": name});
             await refreshStatus();
         }
     }
@@ -236,20 +286,14 @@ def:pub Project {
                 }
             }
             advLog = "";
-            await jacSpawn(
-                "StartGenerateAdvanced",
+            await __jacSpawn(
+                "StartGenerate",
                 "",
                 {
                     "projectName": name,
                     "ops": ops_to_use,
-                    "optimize": advOptimize,
                     "benchmark": advBenchmark,
                     "iterations": advIterations,
-                    "patience": advPatience,
-                    "minImproveMs": advMinImprove,
-                    "minSpeedupPct": advSpeedupPct,
-                    "genAttempts": advGenAttempts,
-                    "image": advImage,
                     "targetDevice": targetDevice
                 }
             );
@@ -269,8 +313,8 @@ def:pub Project {
                     }
                 }
             }
-            await jacSpawn(
-                "StartOptimizeAdvanced",
+            await __jacSpawn(
+                "StartOptimize",
                 "",
                 {
                     "projectName": name,
@@ -289,14 +333,14 @@ def:pub Project {
 
     async def handleOptimize -> None {
         if name {
-            await jacSpawn("StartOptimize", "", {"projectName": name});
+            await __jacSpawn("StartOptimize", "", {"projectName": name});
             await refreshStatus();
         }
     }
 
     async def handleBenchmark -> None {
         if name {
-            await jacSpawn("StartBenchmark", "", {"projectName": name});
+            await __jacSpawn("StartBenchmark", "", {"projectName": name});
             await refreshStatus();
             await refreshBench();
         }
@@ -304,7 +348,7 @@ def:pub Project {
 
     async def setJobControl(jobKey: str, action: str) -> None {
         if name {
-            await jacSpawn(
+            await __jacSpawn(
                 "SetJobControl",
                 "",
                 {"projectName": name, "jobKey": jobKey, "action": action}
@@ -325,7 +369,7 @@ def:pub Project {
                 }
                 export_ops = winners;
             }
-            resp = await jacSpawn(
+            resp = await __jacSpawn(
                 "ExportProject", "", {"projectName": name, "ops": export_ops}
             );
             result = resp.reports[0]
@@ -351,14 +395,14 @@ def:pub Project {
                     }
                     export_ops = winners;
                 }
-                resp = await jacSpawn(
+                resp = await __jacSpawn(
                     "DownloadExport", "", {"projectName": name, "ops": export_ops}
                 );
                 data = resp.reports[0]
                 if resp and resp.reports and resp.reports.length > 0
                 else None;
                 if data and data["success"] {
-                    file_name = data["name"] if data["name"] else f"{name}.cgins.zip";
+                    file_name = data["name"] if data["name"] else f"{name}.kforge.zip";
                     data_uri = f"data:application/zip;base64,{data['data']}";
                     blob_resp = await fetch(data_uri);
                     blob = await blob_resp.blob();
@@ -369,8 +413,8 @@ def:pub Project {
                     link.click();
                     URL.revokeObjectURL(url);
                 }
-            } except (error) {
-                console.error("Failed to download export:", error);
+            } except Exception as e {
+                console.error("Failed to download export:", e);
             } finally {
                 downloading = False;
             }
@@ -412,8 +456,6 @@ def:pub Project {
         {"key": "profile", "label": "Profile"},
         {"key": "prepare", "label": "Prepare"},
         {"key": "generate", "label": "Generate"},
-        {"key": "generate_adv", "label": "Adv Generate"},
-        {"key": "optimize_adv", "label": "Adv Optimize"},
         {"key": "optimize", "label": "Optimize"},
         {"key": "benchmark", "label": "Benchmark"}
     ];
@@ -437,8 +479,6 @@ def:pub Project {
         show_progress = (
             (
                 item["key"] == "generate"
-                or item["key"] == "generate_adv"
-                or item["key"] == "optimize_adv"
                 or item["key"] == "optimize"
                 or item["key"] == "benchmark"
             )
@@ -450,8 +490,6 @@ def:pub Project {
         controls = <span></span>;
         if (
             item["key"] == "generate"
-            or item["key"] == "generate_adv"
-            or item["key"] == "optimize_adv"
             or item["key"] == "optimize"
         ) {
             if job and job["status"] == "running" {
@@ -555,11 +593,11 @@ def:pub Project {
     }
 
     def _usage_label(key: str) -> str {
-        if key == "optimize_adv" {
-            return "Adv Optimize";
+        if key == "optimize" {
+            return "Optimize";
         }
-        if key == "generate_adv" {
-            return "Adv Generate";
+        if key == "generate" {
+            return "Generate";
         }
         return key;
     }
@@ -567,7 +605,7 @@ def:pub Project {
     usageData = {};
     usageJob = "";
     usageTime = 0.0;
-    for key in ["optimize_adv", "generate_adv"] {
+    for key in ["optimize", "generate"] {
         job = status[key] if status and key in status else {};
         usage = job["usage"] if job and "usage" in job else {};
         if _usage_available(usage) {
@@ -593,7 +631,15 @@ def:pub Project {
     bench_pct = bench_progress["percent"] * 100
     if bench_progress and "percent" in bench_progress
     else 0;
-    bench_bar_width = f"{bench_pct}%" if bench_pct > 2 else "8%";
+    # Keep a small visible fill while progress is initializing, without shrinking.
+    bar_pct = bench_pct;
+    if bar_pct > 100 {
+        bar_pct = 100;
+    }
+    if bar_pct < 4 {
+        bar_pct = 4;
+    }
+    bench_bar_width = f"{bar_pct}%";
     bench_message = bench_job["message"]
     if bench_job and "message" in bench_job
     else "";
@@ -803,13 +849,13 @@ def:pub Project {
 
     return
         <div className="app-shell">
-            <GameOfLifeBackground />
+            <GameOfLifeBackground/>
             <div className="app-backdrop"></div>
             <div className="app-layout app-content-layer">
                 <aside className="sidebar">
                     <div className="sidebar-header">
                         <div className="brand">
-                            <CGinSLogo className="mascot mascot--logo" />
+                            <KernelForgeLogoclassName="mascot mascot--logo"/>
                             <div className="brand-meta">
                                 <span>
                                     Project
@@ -918,18 +964,8 @@ def:pub Project {
                                     Benchmark after generate
                                 </span>
                             </label>
-                            <label className="checkbox-row">
-                                <input
-                                    type="checkbox"
-                                    checked={advOptimize}
-                                    onChange={lambda e: any  -> None { advOptimize = not advOptimize;}}
-                                />
-                                <span>
-                                    Optimize with Codex loop
-                                </span>
-                            </label>
                             <label className="input-label">
-                                Optimize iterations
+                                Benchmark iterations
                             </label>
                             <input
                                 type="number"
@@ -1055,7 +1091,7 @@ def:pub Project {
                                 variant="primary"
                             />
                             <GlowButton
-                                label="Advanced Optimize"
+                                label="Optimize"
                                 onClick={lambda -> None { handleOptimizeAdvanced();}}
                                 variant="secondary"
                             />
@@ -1098,7 +1134,7 @@ def:pub Project {
                                 onClick={lambda -> None { handleExport();}}
                                 className="ghost-button"
                             >
-                                Export .cgins
+                                Export .kforge
                             </button>
                             {<button
                                 onClick={lambda -> None { handleDownloadExport();}}
@@ -1121,18 +1157,18 @@ def:pub Project {
                     <div className="page-header">
                         <div>
                             <h1 className="page-title">
-                                Project: {name}
+                                Project:{name}
                             </h1>
                             <div className="badge-row">
                                 <span className="badge">
-                                    Ops: {ops.length}
+                                    Ops:{ops.length}
                                 </span>
                                 <span className="badge">
-                                    Benchmarks: {benchResults.length}
+                                    Benchmarks:{benchResults.length}
                                 </span>
                             </div>
                         </div>
-                        <CGinSLogo className="mascot mascot--cta" />
+                        <KernelForgeLogoclassName="mascot mascot--cta"/>
                     </div>
                     <div className="panel-grid">
                         <div className="panel">
@@ -1286,12 +1322,20 @@ def:pub Project {
                             <span className="panel-title">
                                 Benchmark results
                             </span>
-                            <button
-                                onClick={lambda -> None { refreshBench();}}
-                                className="chip-button"
-                            >
-                                Refresh
-                            </button>
+                            <div className="button-row">
+                                <button
+                                    onClick={lambda -> None { openBenchLog();}}
+                                    className="chip-button"
+                                >
+                                    View log
+                                </button>
+                                <button
+                                    onClick={lambda -> None { refreshBench();}}
+                                    className="chip-button"
+                                >
+                                    Refresh
+                                </button>
+                            </div>
                         </div>
                         <div className="panel-body">
                             {<div className="skeleton skeleton-block"></div>
@@ -1358,7 +1402,7 @@ def:pub Project {
                         <div className="panel">
                             <div className="panel-header">
                                 <span className="panel-title">
-                                    Advanced generate log
+                                    Generation log
                                 </span>
                                 <button
                                     onClick={lambda -> None { refreshAdvLog();}}
@@ -1442,5 +1486,43 @@ def:pub Project {
                     </div>
                 </main>
             </div>
+            <Modal
+                isOpen={benchLogOpen}
+                onClose={lambda -> None { benchLogOpen = False;}}
+                title="Benchmark log"
+            >
+                <div className="p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                        <div
+                            className="text-[10px] uppercase tracking-wider font-bold text-zinc-500"
+                        >
+                            projects/{name}/logs/benchmark.log
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={lambda -> None { refreshBenchLog();}}
+                                className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded-md text-xs text-zinc-300 border border-zinc-700 transition-colors"
+                            >
+                                Refresh
+                            </button>
+                            <button
+                                onClick={lambda -> None { copyBenchLog();}}
+                                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-md text-xs text-white border border-indigo-500/40 transition-colors"
+                            >
+                                {"Copied" if benchLogCopied else "Copy"}
+                            </button>
+                        </div>
+                    </div>
+                    {<div className="text-xs text-zinc-400">
+                        Loading...
+                    </div>
+                    if benchLogLoading
+                    else <pre
+                        className="text-xs font-mono text-zinc-200 whitespace-pre-wrap break-words bg-zinc-950 border border-zinc-800 rounded-lg p-3"
+                    >
+                        {benchLog or "No log yet."}
+                    </pre>}
+                </div>
+            </Modal>
         </div>;
 }

@@ -208,12 +208,31 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
     """
 
     # 1. Determine Architecture Family & Specific Advice
-    cc = float(gpu_info.get('compute_capability', 0.0))
+    cc_raw = str(gpu_info.get('compute_capability', "0.0"))
+    cc = 0.0
+    try:
+        cc = float(cc_raw)
+    except (TypeError, ValueError):
+        cc_digits = "".join(ch for ch in cc_raw if ch.isdigit() or ch == ".")
+        if cc_digits:
+            try:
+                cc = float(cc_digits)
+            except (TypeError, ValueError):
+                cc = 0.0
     gpu_name = gpu_info.get('gpu_name', 'GPU')
+    is_amd_arch = "gfx" in cc_raw.lower()
     arch_name = "Unknown"
     specific_tips = ""
 
-    if cc >= 8.0:
+    if is_amd_arch:
+        # AMD ROCm GPU
+        arch_name = f"AMD ROCm ({gpu_info.get('compute_capability', 'unknown')})"
+        specific_tips = (
+            "- **Wavefront Size:** AMD uses 64-wide wavefronts (vs NVIDIA's 32-wide warps).\n"
+            "- **`num_warps`:** Adjust for wavefront size — `num_warps=2` = 128 threads on AMD.\n"
+            "- **LDS (Shared Memory):** AMD GPUs have different LDS bank layout."
+        )
+    elif cc >= 8.0:
         arch_name = "Ampere / Ada Lovelace / Hopper (SM 8.0+)"
         specific_tips = (
             "- **Software Pipelining:** Increase `num_stages` (3-5) to overlap loads with compute.\n"
@@ -232,14 +251,6 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
         specific_tips = (
             "- **No Tensor Cores:** Focus on memory coalescing and occupancy.\n"
             "- **Shared Memory:** Triton handles shared mem automatically; tune BLOCK_SIZE carefully."
-        )
-    elif 'gfx' in str(gpu_info.get('compute_capability', '')):
-        # AMD ROCm GPU
-        arch_name = f"AMD ROCm ({gpu_info.get('compute_capability', 'unknown')})"
-        specific_tips = (
-            "- **Wavefront Size:** AMD uses 64-wide wavefronts (vs NVIDIA's 32-wide warps).\n"
-            "- **`num_warps`:** Adjust for wavefront size — `num_warps=2` = 128 threads on AMD.\n"
-            "- **LDS (Shared Memory):** AMD GPUs have different LDS bank layout."
         )
     else:
         arch_name = "Unknown Architecture"

@@ -61,10 +61,13 @@ Icon
 
 # Jac
 .jaccache/*
-.jac/*
+.jac/
 jac.md
 
 
 # Local secrets / runtime data
 frontend/config.json
 projects/
+!src/projects/
+!src/projects/**/
+!src/projects/**/*.py

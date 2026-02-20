@@ -16,6 +16,7 @@ import torch
 
 from byllm.lib import by, Model
 from src.optimizer.config.settings import settings
+from src.optimizer.backends.error_utils import format_verifier_output
 
 llm = Model(model_name=settings.llm_model_name)
 
@@ -53,51 +54,15 @@ def summarize_issue_with_traceback(
         """
 
 
-def _short_error(msg: str, limit: int = 2000) -> str:
-    if not msg:
-        return ""
-    if len(msg) <= limit:
-        return msg
-    return msg[: limit - 3] + "..."
-
-
 def handle_output(traceback_error: str, triton_code: str, log_file_path: Path, input_and_output: dict) -> str:
-    """
-    Format error with simplified traceback and optional LLM feedback.
-    """
-    disable_summary = os.environ.get("CGINS_DISABLE_SUMMARY", "").lower() in {"1", "true", "yes"}
-    model_configured = bool(settings.llm_model_name)
-
-    raw_error = _short_error(traceback_error)
-    feedback = raw_error
-
-    if not disable_summary and model_configured:
-        try:
-            # Clone input to avoid modifying original
-            io_copy = input_and_output.copy()
-            if "correct-output" not in io_copy and "output" in io_copy:
-                io_copy["correct-output"] = io_copy["output"]
-                del io_copy["output"]
-            
-            feedback = summarize_issue_with_traceback(
-                traceback_error, triton_code, io_copy
-            )
-        except Exception as e:
-            feedback = f"{raw_error}\n[LLM Feedback Error: {str(e)}]"
-
-    output = (
-        f"[Raw Error]:\n{raw_error}\n\n"
-        f"[LLM Generated Feedback]:\n{feedback}"
+    summarizer = summarize_issue_with_traceback if settings.llm_model_name else None
+    return format_verifier_output(
+        traceback_error=traceback_error,
+        kernel_code=triton_code,
+        log_file_path=log_file_path,
+        input_and_output=input_and_output,
+        summarizer=summarizer,
     )
-    
-    if log_file_path:
-        try:
-            with open(log_file_path, "w") as f:
-                f.write(output)
-        except Exception:
-            pass
-
-    return output
 def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:
     """
     Normalize args and kwargs into a complete positional argument list.
@@ -213,23 +178,37 @@ def validate_kernel(generated_py_code: str, paths: dict[str, Path]) -> tuple[boo
                     output_generated = output_generated.cuda()
 
                 ground_truth = entry["output"]
-                if torch.is_tensor(ground_truth):
+                if torch.is_tensor(output_generated) and torch.is_tensor(ground_truth):
                     ground_truth = ground_truth.to(output_generated.device)
 
-                if torch.is_tensor(ground_truth) and not ground_truth.is_floating_point():
-                    is_correct = torch.equal(output_generated, ground_truth)
+                if torch.is_tensor(output_generated) and torch.is_tensor(ground_truth):
+                    if not ground_truth.is_floating_point():
+                        is_correct = torch.equal(output_generated, ground_truth)
+                    else:
+                        is_correct = torch.allclose(
+                            output_generated, ground_truth, atol=1e-2, rtol=1e-1)
+                elif torch.is_tensor(output_generated) and output_generated.numel() == 1 and not torch.is_tensor(ground_truth):
+                    is_correct = output_generated.detach().cpu().item() == ground_truth
+                elif (not torch.is_tensor(output_generated)) and torch.is_tensor(ground_truth) and ground_truth.numel() == 1:
+                    is_correct = output_generated == ground_truth.detach().cpu().item()
                 else:
-                    is_correct = torch.allclose(
-                        output_generated, ground_truth, atol=1e-2, rtol=1e-1)
+                    is_correct = output_generated == ground_truth
 
                 if not is_correct:
                     all_valid = False
-                    diff = torch.abs(output_generated - ground_truth)
-                    analysis_msg = (
-                        f"[Output Mismatch {entry_file.name}]\n"
-                        f"Max diff: {diff.max().item():.6f}\n"
-                        f"Mean diff: {diff.mean().item():.6f}\n"
-                    )
+                    if torch.is_tensor(output_generated) and torch.is_tensor(ground_truth):
+                        diff = torch.abs(output_generated - ground_truth)
+                        analysis_msg = (
+                            f"[Output Mismatch {entry_file.name}]\n"
+                            f"Max diff: {diff.max().item():.6f}\n"
+                            f"Mean diff: {diff.mean().item():.6f}\n"
+                        )
+                    else:
+                        analysis_msg = (
+                            f"[Output Mismatch {entry_file.name}]\n"
+                            f"Generated: {output_generated}\n"
+                            f"Expected: {ground_truth}\n"
+                        )
                     
                     # Generate detailed analysis only for the first few failures
                     if llm_analysis_count < MAX_LLM_ANALYSIS:
@@ -274,7 +253,7 @@ def validate_remote_kernel(ssh_config: dict, generated_py_code: str, paths: dict
         io_files = list(io_dir.glob("*.pt"))
         file_map = {str(f): f.name for f in io_files}
 
-        remote_io_dir = "cgins_workspace/io_cache/" + io_dir.name
+        remote_io_dir = "kforge_workspace/io_cache/" + io_dir.name
         upload_files(worker.client, file_map, remote_io_dir)
 
         # Send verify task

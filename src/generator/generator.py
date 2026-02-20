@@ -51,8 +51,20 @@ def generate(gen_model: GenModel, msg: str, model: str) -> str:
     print(f"Generating code with {model}...")
     
     response = gen_model.chat(msg, model)
+    if not response:
+        raise RuntimeError("LLM returned empty response.")
+    response_text = str(response).strip()
+    if response_text.startswith("Error calling Claude API:"):
+        raise RuntimeError(response_text)
+    if response_text.startswith("Error calling OpenAI API:"):
+        raise RuntimeError(response_text)
+    if response_text.startswith("Error calling Gemini API:"):
+        raise RuntimeError(response_text)
+    if response_text.startswith("Unsupported llm model/provider"):
+        raise RuntimeError(response_text)
     
     code = cleanup_mkdown(response)
+    if not code:
+        raise RuntimeError("LLM response did not contain kernel code.")
     print("Code generated...")
     return code
-

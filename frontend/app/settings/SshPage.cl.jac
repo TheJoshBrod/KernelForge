@@ -2,12 +2,13 @@
 
 import from react { useState }
 import from "react-router-dom" { useNavigate }
-import from "@jac/runtime" { jacSpawn }
-import from "../../backdrops/GameOfLifeBackground.cl.jac" { GameOfLifeBackground }
-import from "./SSHSettings.cl.jac" { SSHSettings }
-import from "../../context/ConfigContext.cl.jac" { useConfig }
+import from ...components.backdrops.EmberBackground { EmberBackground }
+import from ...components.ui.LoadingScreen { LoadingScreen }
 
-def:pub SshPage {
+import from .SSHSettings { SSHSettings }
+import from ...context.ConfigContext { useConfig }
+
+def:pub SshPage -> Any {
     navigate = useNavigate();
     config_ctx = useConfig();
     config = config_ctx.config;
@@ -17,6 +18,10 @@ def:pub SshPage {
 
     has saving: bool = False;
 
+    view_state = useState("list");
+    view = view_state[0];
+    setView = view_state[1];
+
     def handleReturn -> None {
         navigate("/settings");
     }
@@ -25,7 +30,7 @@ def:pub SshPage {
         new_connections = config["ssh_connections"]
         if "ssh_connections" in config
         else [];
-       
+
         new_connections.push(connection);
 
         new_config = {** config};
@@ -85,7 +90,7 @@ def:pub SshPage {
         host: str, user: str, password: str, key_path: str
     ) -> dict {
         try {
-            resp = await jacSpawn(
+            resp = await __jacSpawn(
                 "CheckSshConnection",
                 "",
                 {
@@ -103,38 +108,44 @@ def:pub SshPage {
                 return data;
             }
             return {"success": False, "error": "No response"};
-        } except (error) {
-            console.error("SSH Check failed", error);
-            return {"success": False, "error": str(error)};
+        } except Exception as e {
+            console.error("SSH Check failed", e);
+            return {"success": False, "error": str(e)};
         }
     }
 
     if loading {
-        return
-            <div className="app-shell app-shell--center settings-shell">
-                <GameOfLifeBackground />
-                <div className="app-backdrop"></div>
-                <div className="app-content-layer">
-                    <p>
-                        Loading...
-                    </p>
-                </div>
-            </div>;
+        return <LoadingScreen/>;
     }
 
     return
-        <main className="app-shell app-shell--center settings-shell">
-            <GameOfLifeBackground />
-            <div className="app-backdrop"></div>
-            <div className="settings-card panel app-content-layer !max-w-7xl w-full">
-                <div className="settings-header">
-                    <h1 className="settings-title">
+        <main className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex flex-col items-center justify-center font-sans text-white">
+            <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
+            <div className="noise-overlay opacity-30"></div>
+            <EmberBackground className="absolute inset-0 z-0"/>
+            <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/50 z-10 pointer-events-none"></div>
+
+            <div className="relative z-20 flex flex-col items-center justify-center mb-4 animation-fade-in-up">
+                <div className="flex items-center gap-4 mb-2">
+                    <img src="/KernelForge.svg" alt="Kernel Forge Logo" className="w-12 h-12" />
+                    <h1 className="text-3xl font-bold text-white tracking-wider uppercase industrial-font-display" style={{"textShadow": "0 0 20px rgba(225, 112, 85, 0.4)"}}>
+                        Kernel Forge
+                    </h1>
+                </div>
+            </div>
+
+            <div className="relative z-10 w-full max-w-4xl h-[70vh] bg-[var(--bg-panel)]/90 backdrop-blur-md border border-[var(--border)] rounded-sm shadow-2xl flex flex-col animation-fade-in-up delay-1 clip-hex">
+                <div className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 right-0 heat-divider"></div>
+                    <h1 className="text-2xl font-bold text-white tracking-wide uppercase industrial-font-display">
                         SSH Settings
                     </h1>
-                    <p className="settings-subtitle">
+                    <p className="text-xs text-[var(--accent)] font-mono uppercase tracking-widest">
                         Manage remote connections
                     </p>
                 </div>
+                
+                <div className="flex-1 overflow-hidden min-h-0 bg-[var(--bg-darker)]/30 flex flex-col">
                 <SSHSettings
                     config={config}
                     handleSaveSshConnection={handleSaveSshConnection}
@@ -143,12 +154,22 @@ def:pub SshPage {
                     handleUpdateSshConnection={handleUpdateSshConnection}
                     saving={saving}
                     checkSshConnectionWalker={checkSshConnectionWalker}
+                    view={view}
+                    setView={setView}
                 />
-                <div className="settings-actions-block">
-                    <div className="settings-actions">
+                </div>
+                
+                <div className={"p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0 flex items-center justify-between gap-4" + (" hidden" if view != "list" else "")}>
+                    <button
+                        onClick={lambda -> None { setView("add"); }}
+                        className="px-6 h-10 w-full sm:w-auto flex justify-center items-center bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg transition-all border border-zinc-700"
+                    >
+                        + NEW SSH LINK
+                    </button>
+                    <div className="flex gap-4">
                         <button
                             onClick={handleReturn}
-                            className="app-button app-button--ghost app-button--wide"
+                            className="app-button"
                         >
                             Back
                         </button>
