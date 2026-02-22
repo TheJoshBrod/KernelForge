@@ -2,7 +2,7 @@
 
 import from react { useState, useEffect }
 import from "react-router-dom" { Outlet, Link, useLocation, useParams }
-import from ...components.ui.Icons { HomeIcon, ArrowRightIcon, CodeIcon, SettingsIcon, MenuIcon, ChevronLeftIcon, ChevronRightIcon }
+import from ...components.ui.Icons { HomeIcon, ArrowRightIcon, CodeIcon, UploadIcon, SettingsIcon, MenuIcon, ChevronLeftIcon, ChevronRightIcon }
 
 def:pub ProjectLayout -> Any {
     location = useLocation();
@@ -34,6 +34,12 @@ def:pub ProjectLayout -> Any {
             "name": "Operator Workbench",
             "href": f"/project/{projectName}/operator-workbench",
             "icon": CodeIcon,
+            "exact": False
+        },
+        {
+            "name": "Export",
+            "href": f"/project/{projectName}/export",
+            "icon": UploadIcon,
             "exact": False
         }
     ];

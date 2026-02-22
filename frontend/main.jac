@@ -48,6 +48,7 @@ cl import from .app.create.NewProject { NewProject }
 cl import from .app.project.ProjectLayout { ProjectLayout }
 cl import from .app.project.Dashboard { Dashboard }
 cl import from .app.project.operator_workbench.OperatorWorkbench { OperatorWorkbench }
+cl import from .app.project.Export { Export }
 cl import "./styles.css";
 
 cl {
@@ -108,6 +109,7 @@ cl {
                                     path="operator-workbench/:opName"
                                     element={<OperatorWorkbench/>}
                                 />
+                                <Route path="export" element={<Export/>}/>
                             </Route>
                             <Route path="*" element={<NotFound/>}/>
                         </Routes>
