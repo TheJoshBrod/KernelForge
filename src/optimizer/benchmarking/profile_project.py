@@ -26,6 +26,14 @@ SKIP_FUNCTIONS = {
     "get_default_dtype",
 }
 
+# Only wrap functions that originate from these modules — anything else
+# (dispatch guards from torch._C, JIT helpers, typing annotations, etc.) is skipped.
+_COMPUTE_MODULES = frozenset({
+    "torch",
+    "torch.nn.functional",
+    "torch._C._nn",
+})
+
 DEFAULT_SKIP_OPS = {
     "dropout",
     "dropout_",
@@ -218,8 +226,11 @@ def wrap_torch_nn_functional() -> None:
         if name in SKIP_FUNCTIONS:
             continue
         obj = getattr(F, name)
-        if callable(obj):
-            wrap_function(F, name)
+        if not callable(obj):
+            continue
+        if (getattr(obj, "__module__", "") or "") not in _COMPUTE_MODULES:
+            continue
+        wrap_function(F, name)
 
 
 def save_entries(func_name: str, entries: list[dict[str, Any]], base_dir: str, max_per_op: int = 200) -> None:
