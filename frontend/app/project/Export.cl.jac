@@ -1,12 +1,18 @@
 """Export Page"""
 
+import from react { useState }
 import from ...components.ui.Icons { UploadIcon, ZapIcon }
 import from ...components.ui.GlowButton { GlowButton }
 import from "react-router-dom" { useParams }
+import from .CastExportModal { CastExportModal }
 
 def:pub Export -> Any {
     params = useParams();
     name = params.projectName;
+
+    cast_modal_state = useState(False);
+    castModalOpen = cast_modal_state[0];
+    setCastModalOpen = cast_modal_state[1];
 
     return
         <div
@@ -62,10 +68,15 @@ def:pub Export -> Any {
                     </p>
                     <GlowButton
                         label="Download Cast"
-                        onClick={lambda -> None {}}
+                        onClick={lambda -> None { setCastModalOpen(True);}}
                         className="w-full"
                     />
                 </div>
             </div>
+            <CastExportModal
+                isOpen={castModalOpen}
+                onClose={lambda -> None { setCastModalOpen(False);}}
+                projectName={name}
+            />
         </div>;
 }

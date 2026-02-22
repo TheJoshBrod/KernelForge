@@ -3902,6 +3902,239 @@ walker:pub GetOperatorMetrics {
     }
 }
 
+walker:pub DownloadCast {
+    has projectName: str,
+        backend: str = "CUDA",
+        selectedKernels: dict = {};
+
+    can run with entry {
+        project_dir = _project_dir(self.projectName);
+        if not path.exists(project_dir) {
+            report {"success": False, "error": f"Project '{self.projectName}' not found."};
+            disengage;
+        }
+
+        # ── Resolve kernel files ──────────────────────────────────────
+        kernel_map = {};
+
+        if self.selectedKernels {
+            for op_name in self.selectedKernels {
+                rel = str(self.selectedKernels[op_name]);
+                full = path.join(repo_root, rel);
+                if path.exists(full) {
+                    kernel_map[op_name] = full;
+                }
+            }
+        }
+
+        if not kernel_map {
+            opt_base = _find_optimized_dir(self.projectName);
+            if opt_base and path.exists(opt_base) {
+                for op_name in listdir(opt_base) {
+                    op_dir = path.join(opt_base, op_name);
+                    if not path.isdir(op_dir) {
+                        continue;
+                    }
+                    best = path.join(op_dir, "kernel.cu");
+                    if path.exists(best) {
+                        kernel_map[op_name] = best;
+                        continue;
+                    }
+                    kernel_dir = path.join(op_dir, "kernels");
+                    if path.exists(kernel_dir) {
+                        for kf in listdir(kernel_dir) {
+                            if kf.endswith(".cu") {
+                                kernel_map[op_name] = path.join(kernel_dir, kf);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if not kernel_map {
+            report {
+                "success": False,
+                "error": "No optimized kernels found. Run Generate or Optimize first."
+            };
+            disengage;
+        }
+
+        # ── Resolve weight file ───────────────────────────────────────
+        weight_archive_path = "";
+        weight_size = 0;
+        cfg_path = path.join(project_dir, "config.json");
+        if path.exists(cfg_path) {
+            try {
+                with open(cfg_path, "r") as f {
+                    cfg = load(f);
+                }
+                arts = (
+                    cfg["artifacts"]["weights"]
+                    if cfg and "artifacts" in cfg
+                        and cfg["artifacts"]
+                        and "weights" in cfg["artifacts"]
+                    else []
+                );
+                for art in arts {
+                    rel = art["relpath"] if art and "relpath" in art else "";
+                    if rel {
+                        wp = path.join(project_dir, rel);
+                        if not path.exists(wp) {
+                            wp = path.join(project_dir, "weights.pt");
+                        }
+                        if path.exists(wp) {
+                            with open(wp, "rb") as f {
+                                wdata = f.read();
+                            }
+                            sha = hashlib.sha256(wdata).hexdigest();
+                            weight_archive_path = f"weights/{sha}.pt";
+                            weight_size = len(wdata);
+                            break;
+                        }
+                    }
+                }
+            } except Exception as e {
+                print(f"Error reading project config for weights: {e}");
+            }
+        }
+
+        if not weight_archive_path {
+            for wname in ["weights.pt", "model.pt"] {
+                wp = path.join(project_dir, wname);
+                if path.exists(wp) {
+                    with open(wp, "rb") as f {
+                        wdata = f.read();
+                    }
+                    sha = hashlib.sha256(wdata).hexdigest();
+                    weight_archive_path = f"weights/{sha}.pt";
+                    weight_size = len(wdata);
+                    break;
+                }
+            }
+        }
+
+        # ── Build file map {archive_path -> bytes} ────────────────────
+        file_map = {};
+
+        model_py = path.join(project_dir, "model.py");
+        if path.exists(model_py) {
+            with open(model_py, "rb") as f {
+                file_map["model.py"] = f.read();
+            }
+        }
+
+        # Pack model_config.json for HuggingFace models so the cast runner can
+        # instantiate the model without needing to infer the architecture.
+        model_cfg_src = path.join(project_dir, "model_config.json");
+        if path.exists(model_cfg_src) {
+            with open(model_cfg_src, "rb") as f {
+                file_map["model_config.json"] = f.read();
+            }
+        }
+
+        if weight_archive_path {
+            file_map[weight_archive_path] = wdata;
+        }
+
+        ops_manifest = [];
+        for op_name in kernel_map {
+            kf = kernel_map[op_name];
+            with open(kf, "rb") as f {
+                kdata = f.read();
+            }
+            cu_path = f"kernels/{op_name}/kernel.cu";
+            wrapper_path = f"kernels/{op_name}/wrapper.py";
+            file_map[cu_path] = kdata;
+            wrapper_src = f"# Cast dispatch wrapper for {op_name}\n# Generated by KernelForge\n";
+            file_map[wrapper_path] = wrapper_src.encode("utf-8");
+            ops_manifest.append(
+                {
+                    "name": op_name,
+                    "kernel_dir": f"kernels/{op_name}/",
+                    "cuda_source": cu_path,
+                    "wrapper": wrapper_path,
+                    "precompiled": {}
+                }
+            );
+        }
+
+        loader_stub = b"# Cast vendored runtime loader\n# pip install cast for the full runtime\n";
+        file_map["loader.py"] = loader_stub;
+
+        manifest_obj = {
+            "project_name": self.projectName,
+            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "model_class": "",
+            "model_init_args": {},
+            "weight_file": weight_archive_path,
+            "ops": ops_manifest
+        };
+        file_map["manifest.json"] = dumps(manifest_obj, indent=2).encode("utf-8");
+
+        # ── Checksums ─────────────────────────────────────────────────
+        checksum_lines = [];
+        for fpath in file_map {
+            hexhash = hashlib.sha256(file_map[fpath]).hexdigest();
+            checksum_lines.append(f"{hexhash}  {fpath}");
+        }
+        checksums_bytes = "\n".join(checksum_lines).encode("utf-8");
+        archive_checksum = hashlib.sha256(checksums_bytes).hexdigest();
+        file_map["checksums.sha256"] = checksums_bytes;
+
+        # ── HEADER.json ───────────────────────────────────────────────
+        header_obj = {
+            "format_version": "1.0",
+            "file_type": "kernelforge_inference",
+            "project_name": self.projectName,
+            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "kernelforge_version": "0.1.0",
+            "runtime": {
+                "min_cast_version": "0.1",
+                "min_torch_version": "2.1.0",
+                "min_cuda_version": "12.0",
+                "target_sm_versions": []
+            },
+            "contents": {
+                "optimized_op_count": len(ops_manifest),
+                "total_op_count": len(ops_manifest),
+                "has_precompiled": False,
+                "precompiled_sm_versions": [],
+                "weight_size_bytes": weight_size
+            },
+            "archive_checksum": archive_checksum
+        };
+        header_bytes = dumps(header_obj, indent=2).encode("utf-8");
+
+        # ── Write ZIP (HEADER.json must be first entry) ───────────────
+        export_dir = path.join(project_dir, "exports");
+        _ensure_dir(export_dir);
+        cast_path = path.join(export_dir, self.projectName + ".cast");
+
+        try {
+            with ZipFile(cast_path, "w") as zipf {
+                zipf.writestr("HEADER.json", header_bytes);
+                for fpath in file_map {
+                    zipf.writestr(fpath, file_map[fpath]);
+                }
+            }
+            with open(cast_path, "rb") as f {
+                zip_bytes = f.read();
+            }
+            b64 = b64encode(zip_bytes).decode("utf-8");
+            report {
+                "success": True,
+                "name": self.projectName + ".cast",
+                "data": b64
+            };
+        } except Exception as e {
+            print(f"DownloadCast error: {e}");
+            report {"success": False, "error": f"Failed to build cast file: {e}"};
+        }
+    }
+}
+
 walker:pub DeleteProject {
     has projectName: str;
 
