@@ -34,6 +34,28 @@ def:pub Export -> Any {
                         <div
                             className="p-2 bg-[var(--surface-0)] rounded-lg border border-[var(--border)]"
                         >
+                            <ZapIcon className="w-5 h-5 text-[var(--accent)]"/>
+                        </div>
+                        <h3 className="text-base font-semibold text-[var(--text-light)]">
+                            Export Model as Cast File
+                        </h3>
+                    </div>
+                    <p className="text-zinc-400 text-sm leading-relaxed flex-1">
+                        Bundle your model weights and the KernelForge-optimized CUDA kernels into a self-contained {" "} <span className="font-mono text-xs bg-zinc-800 px-1 py-0.5 rounded">.cast</span> inference package. Anyone with the {" "} <span className="text-[var(--text-light)] font-medium">cast runtime</span> can load it and run inference immediately. No Kernel Forge installation required.
+                    </p>
+                    <GlowButton
+                        label="Download Cast"
+                        onClick={lambda -> None { setCastModalOpen(True);}}
+                        className="w-full"
+                    />
+                </div>
+                <div
+                    className="flex flex-col gap-4 bg-[var(--bg-panel)] border border-[var(--border)] rounded-xl p-6 w-80 shadow-sm"
+                >
+                    <div className="flex items-center gap-3">
+                        <div
+                            className="p-2 bg-[var(--surface-0)] rounded-lg border border-[var(--border)]"
+                        >
                             <UploadIcon className="w-5 h-5 text-[var(--text-muted)]"/>
                         </div>
                         <h3 className="text-base font-semibold text-[var(--text-light)]">
@@ -47,28 +69,6 @@ def:pub Export -> Any {
                         label="Coming soon..."
                         onClick={lambda -> None {}}
                         disabled={True}
-                        className="w-full"
-                    />
-                </div>
-                <div
-                    className="flex flex-col gap-4 bg-[var(--bg-panel)] border border-[var(--border)] rounded-xl p-6 w-80 shadow-sm"
-                >
-                    <div className="flex items-center gap-3">
-                        <div
-                            className="p-2 bg-[var(--surface-0)] rounded-lg border border-[var(--border)]"
-                        >
-                            <ZapIcon className="w-5 h-5 text-[var(--accent)]"/>
-                        </div>
-                        <h3 className="text-base font-semibold text-[var(--text-light)]">
-                            Export Model as Cast File
-                        </h3>
-                    </div>
-                    <p className="text-zinc-400 text-sm leading-relaxed flex-1">
-                        Bundle your model weights and the KernelForge-optimized CUDA kernels into a self-contained {" "} <span className="font-mono text-xs bg-zinc-800 px-1 py-0.5 rounded">.cast</span> inference package. Anyone with the {" "} <span className="text-[var(--text-light)] font-medium">cast runtime</span> can load it and run inference immediately. No Kernel Forge installation required.
-                    </p>
-                    <GlowButton
-                        label="Download Cast"
-                        onClick={lambda -> None { setCastModalOpen(True);}}
                         className="w-full"
                     />
                 </div>
