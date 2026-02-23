@@ -2422,9 +2422,47 @@ walker:pub GetProjectOps {
                 }
             }
 
+            # Read per-call pytorch_ms from op_benchmarks.json
+            profile_ms_map = {};
+            bench_path = path.join(
+                _project_dir(self.projectName), "benchmarks", "op_benchmarks.json"
+            );
+            if path.exists(bench_path) {
+                try {
+                    with open(bench_path, "r") as bf {
+                        bench_data = load(bf);
+                    }
+                    bench_results = (
+                        bench_data["results"]
+                        if bench_data and "results" in bench_data
+                        else []
+                    );
+                    for r in bench_results {
+                        if not r {
+                            continue;
+                        }
+                        op_name = r["op"] if "op" in r and r["op"] else "";
+                        if not op_name {
+                            continue;
+                        }
+                        ms_val = r["pytorch_ms"] if "pytorch_ms" in r and r["pytorch_ms"] is not None else None;
+                        if ms_val is not None {
+                            try {
+                                profile_ms_map[op_name] = float(ms_val);
+                            } except Exception {
+                                # no-op
+                            }
+                        }
+                    }
+                } except Exception as e {
+                    print(f"Error reading op_benchmarks.json: {e}");
+                }
+            }
+
             ops = [];
             for name in ops_map {
-                ops.append({"name": name, "count": ops_map[name]});
+                ms = profile_ms_map[name] if name in profile_ms_map else 0.0;
+                ops.append({"name": name, "count": ops_map[name], "profile_ms": ms});
             }
 
             report {"ops": ops};
