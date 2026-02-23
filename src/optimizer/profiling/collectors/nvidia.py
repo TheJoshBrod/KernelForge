@@ -64,6 +64,13 @@ def collect(mode: str = "fast") -> Tuple[List[GPURecord], List[str]]:
             except Exception:
                 pass
 
+            # Extract additional hardware specs from device properties
+            # Available in PyTorch 2.6: L2_cache_size, regs_per_multiprocessor,
+            # max_threads_per_multi_processor. Others not available.
+            regs_per_sm = int(getattr(props, "regs_per_multiprocessor", 0) or 0)
+            l2_cache_bytes = int(getattr(props, "L2_cache_size", 0) or 0)
+            max_threads_per_sm = int(getattr(props, "max_threads_per_multi_processor", 0) or 0)
+
             records.append(
                 GPURecord(
                     vendor="nvidia",
@@ -76,6 +83,9 @@ def collect(mode: str = "fast") -> Tuple[List[GPURecord], List[str]]:
                     memory_used_mb=used_mb,
                     num_sms=num_sms,
                     warp_size=warp_size,
+                    max_threads_per_sm=max_threads_per_sm,
+                    regs_per_sm=regs_per_sm,
+                    l2_cache_bytes=l2_cache_bytes,
                 )
             )
         except Exception as exc:

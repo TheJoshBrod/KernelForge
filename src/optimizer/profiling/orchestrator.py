@@ -199,10 +199,24 @@ def get_device_specs(device_index: int = 0, mode: str = "fast") -> GPUSpecs:
         cc_l = compute_capability.lower()
         tensor_cores_available = ("gfx9" in cc_l) or ("gfx11" in cc_l) or ("cdna" in cc_l)
 
-    max_threads_per_sm = num_sms * 2048 if num_sms else 0
-    max_threads_per_block = 1024
+    max_threads_per_block = int(gpu.get("max_threads_per_block") or 1024)
+    max_threads_per_sm = int(gpu.get("max_threads_per_sm") or (num_sms * 2048 if num_sms else 0))
     if vendor == "intel":
-        max_threads_per_block = 512
+        max_threads_per_block = min(max_threads_per_block, 512)
+
+    # Hardware detail fields (from collector or fallback to 0)
+    regs_per_block = int(gpu.get("regs_per_block") or 0)
+    regs_per_sm = int(gpu.get("regs_per_sm") or 0)
+    shared_mem_per_block_bytes = int(gpu.get("shared_mem_per_block_bytes") or 0)
+    shared_mem_per_sm_bytes = int(gpu.get("shared_mem_per_sm_bytes") or 0)
+    l2_cache_bytes = int(gpu.get("l2_cache_bytes") or 0)
+    mem_bus_width_bits = int(gpu.get("mem_bus_width_bits") or 0)
+    mem_clock_mhz = int(gpu.get("mem_clock_mhz") or gpu.get("clock_mhz") or 0)
+
+    # Compute peak memory bandwidth: 2 * mem_clock_MHz * bus_width_bits / 8 / 1000 = GB/s
+    peak_bw = 0.0
+    if mem_clock_mhz and mem_bus_width_bits:
+        peak_bw = 2.0 * mem_clock_mhz * mem_bus_width_bits / 8.0 / 1000.0
 
     return GPUSpecs(
         gpu_name=str(gpu.get("name", "Unknown GPU")),
@@ -214,20 +228,20 @@ def get_device_specs(device_index: int = 0, mode: str = "fast") -> GPUSpecs:
         compute_capability=compute_capability,
         total_memory_gb=total_gb,
         sm_clock_mhz=int(gpu.get("clock_mhz") or 0),
-        mem_clock_mhz=int(gpu.get("clock_mhz") or 0),
+        mem_clock_mhz=mem_clock_mhz,
         power_limit_watts=gpu.get("power_watts"),
         num_sms=num_sms,
         warp_size=warp_size,
         max_threads_per_block=max_threads_per_block,
         max_threads_per_sm=max_threads_per_sm,
         max_blocks_per_sm="unknown",
-        registers_per_sm=0,
-        registers_per_block=0,
-        shared_mem_per_sm_kb=0,
-        shared_mem_per_block_kb=0,
-        l2_cache_kb=0,
-        memory_bus_width_bits=0,
-        peak_memory_bandwidth_gbps=0.0,
+        registers_per_sm=regs_per_sm,
+        registers_per_block=regs_per_block,
+        shared_mem_per_sm_kb=shared_mem_per_sm_bytes // 1024 if shared_mem_per_sm_bytes else 0,
+        shared_mem_per_block_kb=shared_mem_per_block_bytes // 1024 if shared_mem_per_block_bytes else 0,
+        l2_cache_kb=l2_cache_bytes // 1024 if l2_cache_bytes else 0,
+        memory_bus_width_bits=mem_bus_width_bits,
+        peak_memory_bandwidth_gbps=round(peak_bw, 1),
         warps_per_sm=(max_threads_per_sm // warp_size) if warp_size and max_threads_per_sm else 0,
         tensor_cores_available=tensor_cores_available,
         memory_total_mb=gpu.get("memory_total_mb"),

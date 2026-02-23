@@ -63,7 +63,13 @@ def is_rocm_runtime() -> bool:
     try:
         cfg = torch.__config__.show()
         cfg_l = cfg.lower()
-        return ("rocm" in cfg_l) or ("hip" in cfg_l)
+        # Check for USE_ROCM=ON (not just "rocm" which matches USE_ROCM=OFF)
+        if "use_rocm=on" in cfg_l.replace(" ", ""):
+            return True
+        # Check for HIP compiler or runtime indicators
+        if "hip" in cfg_l:
+            return True
+        return False
     except Exception:
         return False
 
