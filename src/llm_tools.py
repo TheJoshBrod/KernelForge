@@ -29,11 +29,6 @@ class GenModel:
     def chat(self, user_msg: str, model: str) -> str:
         if not user_msg or not model:
             return ""
-        # Strip provider prefixes (e.g. "anthropic/claude-..." → "claude-...")
-        for prefix in ("anthropic/", "openai/", "google/"):
-            if model.lower().startswith(prefix):
-                model = model[len(prefix):]
-                break
         self.__user(user_msg)
 
         response = ""
