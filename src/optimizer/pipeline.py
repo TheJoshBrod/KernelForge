@@ -1,6 +1,7 @@
 import sys
 import json
 import random
+import shutil
 import string
 import argparse
 import tempfile
@@ -158,16 +159,36 @@ def optimize(
         print("\tFinished generation.")
         print(f"\t\t- Status: {is_valid}")
 
-        # If its valid, log it and return the new node
+        # If valid, profile and save normally
         if is_valid:
             log_entry, new_node = save_iteration(
                 backend, paths, parent_node, improvement_description, str(paths["proj_dir"] / "kernels" / f"kernel_{parent_node.id}{backend.kernel_extension}"), ssh_config=ssh_config)
-            
             return new_node, ""
-    
-    if not failure_reason:
-        failure_reason = "No valid candidate generated."
-    return None, str(failure_reason)
+
+        # Failed/invalid kernel — still save to tree so MCTS can track it.
+        # value=None is treated as inf by choose_optimization(), keeping UCT
+        # from revisiting this branch while still recording the attempt.
+        next_id = mcts.get_next_node_id(paths)
+        (paths["proj_dir"] / "kernels").mkdir(parents=True, exist_ok=True)
+        kernel_tmp = paths["tmp_dir"] / f"kernel{backend.kernel_extension}"
+        if kernel_tmp.exists():
+            dest = paths["proj_dir"] / "kernels" / f"kernel_{next_id}{backend.kernel_extension}"
+            shutil.copy(str(kernel_tmp), str(dest))
+            code_path = str(Path(paths["proj_dir"].name) / "kernels" / f"kernel_{next_id}{backend.kernel_extension}")
+        else:
+            code_path = parent_node.code
+        node_val = {
+            "id": next_id,
+            "value": None,
+            "speedup_vs_parent": 0.0,
+            "improvement_description": f"[FAILED] {failure_reason or 'validation failed'}",
+            "parent": parent_node.id,
+            "code": code_path,
+            "visits": 1,
+        }
+        node_obj = KernelNode.model_validate(node_val)
+        mcts.save_node(paths, node_obj)
+        return node_obj, ""
 
 
 def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path], model: str = None) -> KernelNode:
@@ -854,13 +875,13 @@ Examples:
                     backend, gpu_specs, paths, parent_node, ssh_config, model=model_name
                 )
                 
-                # Update tree with the new node (if optimization succeeded)
+                # Update tree with the new node (always saved now)
                 if new_node:
                     mcts.update_tree(paths, new_node)
-                    op_new_nodes += 1
-                    op_last_reason = ""
-                elif failure_reason:
-                    op_last_reason = str(failure_reason)
+                    # Only count as an improvement if the kernel was valid/profiled
+                    if new_node.value is not None:
+                        op_new_nodes += 1
+                        op_last_reason = ""
                 
                 if (i + 1) % 10 == 0:
                     print(f"  Progress: {i+1}/{args.max_iterations} iterations")

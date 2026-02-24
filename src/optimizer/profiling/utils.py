@@ -62,8 +62,11 @@ def is_rocm_runtime() -> bool:
 
     try:
         cfg = torch.__config__.show()
-        cfg_l = cfg.lower()
-        return ("rocm" in cfg_l) or ("hip" in cfg_l)
+        # Check for USE_ROCM=ON specifically to avoid false positives from strings like LIBKINETO_NOROCTRACER or USE_ROCM=OFF that contain "rocm" but mean ROCm is disabled.
+        if "USE_ROCM=ON" in cfg:
+            return True
     except Exception:
-        return False
+        pass
+
+    return False
 

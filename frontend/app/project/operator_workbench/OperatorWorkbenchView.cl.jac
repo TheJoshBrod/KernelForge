@@ -85,6 +85,10 @@ def:pub OperatorWorkbenchView -> Any {
     tree_signature_ref = useRef("");
     selected_node_ref = useRef(None);
 
+    is_optimizing_state = useState(False);
+    isOptimizing = is_optimizing_state[0];
+    setIsOptimizing = is_optimizing_state[1];
+
     # --- Helpers ---
     def decode_param(value: Any) -> str {
         text = str(value or "");
@@ -424,6 +428,50 @@ def:pub OperatorWorkbenchView -> Any {
         [resolvedProjectName, resolvedOpName, liveUpdates]
     );
 
+    # Inject CSS keyframe animation for the pending node blink (once on mount)
+    useEffect(
+        lambda -> Any {
+            style = document.createElement("style");
+            style.id = "kforge-pending-anim";
+            style.textContent = "@keyframes kf-pending { 0%, 100% { opacity: 0.85; } 50% { opacity: 0.08; } } .pending-kernel-node { animation: kf-pending 1.4s ease-in-out infinite; }";
+            document.head.appendChild(style);
+            return lambda -> None {
+                el = document.getElementById("kforge-pending-anim");
+                if el { el.remove(); }
+            };
+        },
+        []
+    );
+
+    # Poll optimize job status every 3 s to drive the pending-node overlay
+    useEffect(
+        lambda -> Any {
+            async def pollStatus -> None {
+                try {
+                    resp = await __jacSpawn(
+                        "GetProjectStatus", "",
+                        {"projectName": decode_param(resolvedProjectName)}
+                    );
+                    data = resp.reports[0] if resp and resp.reports else {};
+                    opt_job = data["optimize"] if data and "optimize" in data else {};
+                    is_active = bool(opt_job["active"])
+                        if opt_job and "active" in opt_job and opt_job["active"]
+                        else False;
+                    status_raw = str(opt_job["status"] or "").toLowerCase()
+                        if opt_job and "status" in opt_job
+                        else "";
+                    setIsOptimizing(is_active or status_raw == "running");
+                } except Exception {
+                    setIsOptimizing(False);
+                }
+            }
+            pollStatus();
+            timer = setInterval(lambda -> None { pollStatus();}, 3000);
+            return lambda -> None { clearInterval(timer);};
+        },
+        [resolvedProjectName]
+    );
+
     onNodeClick = useCallback(
         lambda event: any , node: any  -> None { setSelectedNodeId(node.id);}, []
     );
@@ -594,6 +642,73 @@ def:pub OperatorWorkbenchView -> Any {
     }
 
     hasTree = nodes.length > 0;
+
+    # Build display arrays — real nodes/edges plus a blinking pending node when optimizing
+    displayNodes = [];
+    for n in nodes { displayNodes.push(n); }
+    displayEdges = [];
+    for e in edges { displayEdges.push(e); }
+
+    pending_style = {
+        "background": "#0f0e1a",
+        "color": "#818cf8",
+        "border": "1px dashed #6366f1",
+        "borderRadius": "8px",
+        "padding": "10px",
+        "fontSize": "11px",
+        "fontFamily": "monospace",
+        "width": 100,
+        "textAlign": "center"
+    };
+
+    if isOptimizing and hasTree {
+        # Find the best (lowest value) real node to parent the pending node under
+        pending_parent_id = None;
+        pending_parent_x = 0;
+        pending_parent_y = 0;
+        best_val = None;
+        for n in nodes {
+            raw = rawNodes[n.id] if n.id in rawNodes else None;
+            if raw {
+                v = Number(raw["value"]) if "value" in raw and raw["value"] else 0;
+                if v > 0 and (best_val is None or v < best_val) {
+                    best_val = v;
+                    pending_parent_id = n.id;
+                    pending_parent_x = n.position.x;
+                    pending_parent_y = n.position.y;
+                }
+            }
+        }
+        if pending_parent_id {
+            displayNodes.push({
+                "id": "pending-node",
+                "position": {"x": pending_parent_x, "y": pending_parent_y + 150},
+                "data": {"label": "Generating..."},
+                "className": "pending-kernel-node",
+                "style": pending_style,
+                "type": "default"
+            });
+            displayEdges.push({
+                "id": "e-pending",
+                "source": pending_parent_id,
+                "target": "pending-node",
+                "type": "smoothstep",
+                "animated": True,
+                "style": {"stroke": "#6366f1", "strokeDasharray": "5,5"}
+            });
+        }
+    } elif isOptimizing {
+        # No tree yet — standalone pending root node
+        displayNodes.push({
+            "id": "pending-node",
+            "position": {"x": 0, "y": 0},
+            "data": {"label": "Generating..."},
+            "className": "pending-kernel-node",
+            "style": pending_style,
+            "type": "default"
+        });
+    }
+
     torch_display_ms = to_num(torchOpMs);
     torch_display_text = "--";
     if torch_display_ms and torch_display_ms > 0 {
@@ -707,8 +822,8 @@ def:pub OperatorWorkbenchView -> Any {
                         </button>
                     </div>
                     {<ReactFlow
-                        nodes={nodes}
-                        edges={edges}
+                        nodes={displayNodes}
+                        edges={displayEdges}
                         onNodesChange={onNodesChange}
                         onEdgesChange={onEdgesChange}
                         onNodeClick={onNodeClick}
@@ -731,7 +846,7 @@ def:pub OperatorWorkbenchView -> Any {
                             size={1}
                         />
                     </ReactFlow>
-                    if viewMode == "graph" and hasTree
+                    if viewMode == "graph" and (hasTree or isOptimizing)
                     else <div
                         className="h-full w-full flex items-center justify-center p-6 text-center"
                     >

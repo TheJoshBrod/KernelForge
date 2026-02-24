@@ -37,19 +37,11 @@ You will be provided with:
 -----------------------------------------------
  OUTPUT RULES (CRITICAL)
 -----------------------------------------------
-1. Output **exactly ONE code block** with the optimized kernel
-2. The code block must start with:
-```cpp
-// [START kernel.cu]
-```
-   and end with:
-```cpp
-// [END kernel.cu]
-```
-
+1. Output a `// [START FEEDBACK] ... // [END FEEDBACK]` block first, then the kernel block
+2. The kernel block must start with `// [START kernel.cu]` and end with `// [END kernel.cu]`
 3. **Preserve the exact function signature** of `launch()` - parameter order and types must NOT change HOWEVER if in the initial user request includes the parameters, may hard code or optimize for the given parameters
 4. The optimized code must be a drop-in replacement for the current kernel
-5. Include a brief comment at the top explaining your optimization strategy (2-3 lines max)
+5. Do NOT put optimization comments inside the kernel code itself — all reasoning goes in the FEEDBACK block
 
 -----------------------------------------------------------------------------------------------
 STARTING IDEAS FOR OPTIMIZATION STRATEGIES TO CONSIDER (but also be creative AND MAKE YOUR OWN
