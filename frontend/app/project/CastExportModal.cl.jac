@@ -243,14 +243,33 @@ def:pub CastExportModal(props: any) -> Any {
                 alert(err);
                 return;
             }
-            b64 = data["data"];
             file_name = data["name"];
-            bytes_str = atob(b64);
-            byte_arr = Uint8Array.from(
-                Array.from(bytes_str).map(lambda c: any -> Any { return c.charCodeAt(0); })
-            );
+            total_size = data["size"] * 1;
+            export_path = data["export_path"];
+            buffer = Reflect.construct(Uint8Array, [total_size]);
+            offset = 0;
+            chunk_size = 5242880;
+            while offset < total_size {
+                chunk_resp = await __jacSpawn(
+                    "GetCastChunk",
+                    "",
+                    {"export_path": export_path, "offset": offset, "chunkSize": chunk_size}
+                );
+                chunk_data = chunk_resp.reports[0] if chunk_resp and chunk_resp.reports else {};
+                if not chunk_data or not ("success" in chunk_data) or not chunk_data["success"] {
+                    err = chunk_data["error"] if chunk_data and "error" in chunk_data else "Transfer failed.";
+                    alert(err);
+                    return;
+                }
+                bytes_str = atob(chunk_data["data"]);
+                chunk_arr = Uint8Array.from(
+                    Array.from(bytes_str).map(lambda c: any -> Any { return c.charCodeAt(0); })
+                );
+                buffer.set(chunk_arr, offset);
+                offset = offset + chunk_arr.length;
+            }
             blob = Reflect.construct(
-                Blob, [[byte_arr], {"type": "application/octet-stream"}]
+                Blob, [[buffer], {"type": "application/octet-stream"}]
             );
             url = URL.createObjectURL(blob);
             a = document.createElement("a");

@@ -4247,18 +4247,54 @@ walker:pub DownloadCast {
                     zipf.writestr(fpath, file_map[fpath]);
                 }
             }
-            with open(cast_path, "rb") as f {
-                zip_bytes = f.read();
-            }
-            b64 = b64encode(zip_bytes).decode("utf-8");
+            file_size = path.getsize(cast_path);
             report {
                 "success": True,
                 "name": self.projectName + ".cast",
-                "data": b64
+                "size": file_size,
+                "export_path": cast_path
             };
         } except Exception as e {
             print(f"DownloadCast error: {e}");
             report {"success": False, "error": f"Failed to build cast file: {e}"};
+        }
+    }
+}
+
+walker:pub GetCastChunk {
+    has export_path: str,
+        offset: int = 0,
+        chunkSize: int = 5242880;
+
+    can run with entry {
+        base = path.realpath(_projects_base_dir());
+        real = path.realpath(self.export_path);
+        if not (real.startswith(base + os.sep) or real == base) {
+            report {"success": False, "error": "Access denied."};
+            disengage;
+        }
+        if not path.exists(real) {
+            report {"success": False, "error": "Export file not found."};
+            disengage;
+        }
+        total_size = path.getsize(real);
+        try {
+            with open(real, "rb") as f {
+                f.seek(self.offset);
+                chunk = f.read(self.chunkSize);
+            }
+            b64 = b64encode(chunk).decode("utf-8");
+            report {
+                "success": True,
+                "data": b64,
+                "offset": self.offset,
+                "size": len(chunk),
+                "total_size": total_size,
+                "done": (self.offset + len(chunk)) >= total_size
+            };
+        } except Exception as e {
+            print(f"GetCastChunk error: {e}");
+            report {"success": False, "error": f"Failed to read chunk: {e}"};
         }
     }
 }
