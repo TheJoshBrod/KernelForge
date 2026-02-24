@@ -2532,7 +2532,9 @@ walker:pub StartGenerate {
         ops: list = [],
         benchmark: bool = False,
         iterations: int = 0,
-        targetDevice: str = "cuda";
+        targetDevice: str = "cuda",
+        ssh_connections: list = [],
+        active_ssh_index: int = -1;
 
     can run with entry {
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
@@ -2602,6 +2604,25 @@ walker:pub StartGenerate {
         if self.iterations > 0 {
             cmd.append("--iterations");
             cmd.append(str(self.iterations));
+        }
+        if self.active_ssh_index >= 0
+        and len(self.ssh_connections) > self.active_ssh_index {
+            try {
+                remote_cfg = {
+                    "ssh_connections": self.ssh_connections,
+                    "active_ssh_index": self.active_ssh_index
+                };
+                remote_cfg_path = path.join(
+                    _project_dir(self.projectName), "ssh_config.json"
+                );
+                with open(remote_cfg_path, "w") as f {
+                    dump(remote_cfg, f);
+                }
+                cmd.append("--remote");
+                cmd.append(remote_cfg_path);
+            } except Exception as e {
+                print(f"Failed to write SSH config for remote generation: {e}");
+            }
         }
         result = _start_job(self.projectName, "generate", cmd, "generate.log");
         report result;

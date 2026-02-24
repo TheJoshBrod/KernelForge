@@ -85,6 +85,13 @@ def:pub OperatorWorkbenchView -> Any {
     tree_signature_ref = useRef("");
     selected_node_ref = useRef(None);
 
+    # Resizable split panel
+    panel_width_state = useState(50.0);
+    panelWidth = panel_width_state[0];
+    setPanelWidth = panel_width_state[1];
+    is_dragging_ref = useRef(False);
+    container_ref = useRef(None);
+
     is_optimizing_state = useState(False);
     isOptimizing = is_optimizing_state[0];
     setIsOptimizing = is_optimizing_state[1];
@@ -717,11 +724,42 @@ def:pub OperatorWorkbenchView -> Any {
     resolvedProjectNameClean = decode_param(resolvedProjectName);
     resolvedOpNameClean = canonical_op_param(resolvedOpName);
 
+    def handleDividerMouseDown(e: any) -> None {
+        e.preventDefault();
+        is_dragging_ref.current = True;
+    }
+
+    def handleMouseMove(e: any) -> None {
+        if not is_dragging_ref.current {
+            return;
+        }
+        container = container_ref.current;
+        if not container {
+            return;
+        }
+        rect = container.getBoundingClientRect();
+        new_width = ((e.clientX - rect.left) / rect.width) * 100;
+        if new_width < 20 {
+            new_width = 20;
+        }
+        if new_width > 80 {
+            new_width = 80;
+        }
+        setPanelWidth(new_width);
+    }
+
+    def handleMouseUp(e: any) -> None {
+        is_dragging_ref.current = False;
+    }
+
     return
         <div
+            ref={container_ref}
             className="flex h-screen w-full bg-zinc-950 text-zinc-100 overflow-hidden"
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
         >
-            <div className="w-1/2 flex flex-col border-r border-zinc-800">
+            <div style={{"width": panelWidth + "%"}} className="flex flex-col min-w-0">
                 <div className="flex-1 flex flex-col min-h-0 border-b border-zinc-800">
                     <div
                         className="h-10 bg-zinc-900/50 border-b border-zinc-800 flex items-center px-4 justify-between"
@@ -742,6 +780,7 @@ def:pub OperatorWorkbenchView -> Any {
                             readOnly={True}
                             language="cpp"
                             placeholder="// Select a node to view code"
+                            fontSize={12}
                         />
                     </div>
                 </div>
@@ -777,7 +816,11 @@ def:pub OperatorWorkbenchView -> Any {
                     else <span></span>}
                 </div>
             </div>
-            <div className="w-1/2 flex flex-col bg-zinc-950">
+            <div
+                className="w-1 bg-zinc-800 hover:bg-indigo-500/50 cursor-col-resize flex-shrink-0 transition-colors select-none"
+                onMouseDown={handleDividerMouseDown}
+            />
+            <div style={{"width": (100 - panelWidth) + "%"}} className="flex flex-col bg-zinc-950 min-w-0">
                 <div
                     className="h-[50%] border-b border-zinc-800 relative bg-[radial-gradient(circle_at_18%_14%,rgba(225,112,85,0.12),transparent_42%),radial-gradient(circle_at_84%_78%,rgba(20,184,166,0.10),transparent_45%),#09090b]"
                 >

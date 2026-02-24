@@ -54,7 +54,7 @@ def _success_filename() -> str:
     return f"success.{device}"
 
 
-def _validate_kernel(cu_code, entry_file, log_file_loc, tmpdir):
+def _validate_kernel(cu_code, entry_file, log_file_loc, tmpdir, ssh_config=None):
     """Route to the unified backend verifier."""
     # Derive io_dir from entry_file path
     io_dir = Path(entry_file).parent
@@ -70,7 +70,7 @@ def _validate_kernel(cu_code, entry_file, log_file_loc, tmpdir):
         backend = CUDABackend()
 
     # Backend validates all files in io_dir
-    success, log_msg = backend.validate_kernel(cu_code, paths)
+    success, log_msg = backend.validate_kernel(cu_code, paths, ssh_config=ssh_config)
 
     # Decode success flags from log message for compatibility with generator logic
     # Generator expects: (call_success, exec_success, feedback)
@@ -224,7 +224,7 @@ def _write_failure_report(
 
 
 def _validate_static_kernel(
-    cu_code: str, entry_files: list[str], op_dir: Path, tag: str
+    cu_code: str, entry_files: list[str], op_dir: Path, tag: str, ssh_config=None
 ) -> tuple[bool, str]:
     kernel_dir = op_dir / "kernel"
     kernel_dir.mkdir(parents=True, exist_ok=True)
@@ -240,7 +240,7 @@ def _validate_static_kernel(
         os.makedirs(log_file_loc.parent, exist_ok=True)
 
         call_success, exec_success, feedback = _validate_kernel(
-            cu_code, entry_file, log_file_loc, tmpdir
+            cu_code, entry_file, log_file_loc, tmpdir, ssh_config=ssh_config
         )
 
         if os.path.exists(tmpdir):
@@ -271,6 +271,7 @@ def validate_with_retries(
     op_key: str,
     project_dir: Path | None,
     template: str | None,
+    ssh_config=None,
 ) -> tuple[bool, str, str]:
     """
     Attempt to validate and fix kernel code up to MAX_ATTEMPTS times.
@@ -354,7 +355,7 @@ def validate_with_retries(
                     log_file_loc = output_dir / "attempts" / f"log-repair-{attempt_idx}-{j}.txt"
                     os.makedirs(log_file_loc.parent, exist_ok=True)
                     call_success, exec_success, repair_feedback = _validate_kernel(
-                        repaired, entry_file, log_file_loc, repair_tmpdir
+                        repaired, entry_file, log_file_loc, repair_tmpdir, ssh_config=ssh_config
                     )
                     repaired_ok = repaired_ok and call_success and exec_success
                     if not repaired_ok:
@@ -468,7 +469,7 @@ def validate_with_retries(
 
         # Validate all inputs at once using backend
         call_success, exec_success, feedback = _validate_kernel(
-            cu_code, entry_files[0], log_file_loc, tmpdir
+            cu_code, entry_files[0], log_file_loc, tmpdir, ssh_config=ssh_config
         )
 
         print(feedback)
@@ -525,6 +526,7 @@ def process_function(
     use_baseline: bool = True,
     baseline_as_template: bool = True,
     project_dir: Path | None = None,
+    ssh_config=None,
 ):
     """
     Process all profiled calls for a given function.
@@ -603,6 +605,7 @@ def process_function(
         op_key=op_key,
         project_dir=project_dir,
         template=template,
+        ssh_config=ssh_config,
     )
 
     # Track performance
@@ -639,12 +642,32 @@ def main():
         default=None,
         help="Comma-separated op names to skip (extends config skip_ops)",
     )
+    parser.add_argument(
+        "--remote",
+        default="",
+        help="Path to SSH config JSON for remote validation/profiling",
+    )
     args = parser.parse_args()
 
     io_dir = args.io_dir_opt or args.io_dir
     if not io_dir:
         print("Usage: python -m src.generator.main <io_dir> [--out-dir <dir>]")
         sys.exit(1)
+
+    ssh_config = None
+    if args.remote:
+        try:
+            with open(args.remote, "r") as f:
+                remote_cfg = json.load(f)
+            connections = remote_cfg.get("ssh_connections", [])
+            active_idx = remote_cfg.get("active_ssh_index", -1)
+            if 0 <= active_idx < len(connections):
+                ssh_config = connections[active_idx]
+                print(f"Remote mode: Using SSH connection to {ssh_config.get('host')}")
+            else:
+                print(f"Warning: invalid active_ssh_index {active_idx} in {args.remote}")
+        except Exception as e:
+            print(f"Warning: failed to load SSH config from {args.remote}: {e}")
 
     global OUTPUT_BASE_DIR
     if args.out_dir:
@@ -792,7 +815,7 @@ def main():
                 baseline_code = templates.load_baseline_kernel(function_name)
                 if baseline_code:
                     baseline_ok, baseline_error = _validate_static_kernel(
-                        baseline_code, entry_files, op_dir, "baseline"
+                        baseline_code, entry_files, op_dir, "baseline", ssh_config=ssh_config
                     )
                     if not baseline_ok:
                         _write_failure_report(
@@ -821,6 +844,7 @@ def main():
             use_baseline=use_baseline,
             baseline_as_template=baseline_as_template,
             project_dir=project_dir,
+            ssh_config=ssh_config,
         )
         if not success and baseline_ok:
             if baseline_code:

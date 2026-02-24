@@ -312,6 +312,8 @@ def run_generate(args: argparse.Namespace) -> int:
                 "--only-ops",
                 op_name,
             ]
+            if args.remote:
+                gen_cmd += ["--remote", args.remote]
             rc = _run(gen_cmd, root, subprocess_env)
             if rc != 0:
                 op_failure = f"generation command failed (exit {rc})"
@@ -349,6 +351,8 @@ def run_generate(args: argparse.Namespace) -> int:
             ]
             if args.iterations and args.iterations > 0:
                 opt_cmd += ["--max-iterations", str(args.iterations)]
+            if args.remote:
+                opt_cmd += ["--remote", args.remote]
             rc = _run(opt_cmd, root, subprocess_env)
             if rc != 0:
                 failure_msg = f"optimization failed (exit {rc})"
@@ -525,6 +529,7 @@ def main() -> int:
     generate.add_argument("--benchmark", action="store_true")
     generate.add_argument("--iterations", type=int, default=0)
     generate.add_argument("--target-device", default="cuda")
+    generate.add_argument("--remote", default="")
 
     optimize = sub.add_parser("optimize")
     optimize.add_argument("--project", required=True)

@@ -192,11 +192,22 @@ def:pub GenerateModal(props: any) -> Any {
 
     # Determine available devices
     hwInfo = config_ctx.hwInfo if "hwInfo" in config_ctx else {};
-    available_devices = [{"label": "Triton", "value": "triton"}];
+    selected_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
 
-    if hwInfo and "cuda_available" in hwInfo and hwInfo["cuda_available"] {
+    cuda_ok = False;
+    mps_ok = False;
+    if selected_gpu_info {
+        hint = selected_gpu_info["backend_hint"] if "backend_hint" in selected_gpu_info else "cuda";
+        cuda_ok = hint == "cuda" or hint == "rocm";
+        mps_ok = hint == "metal";
+    } else {
+        cuda_ok = hwInfo and "cuda_available" in hwInfo and hwInfo["cuda_available"];
+        mps_ok = hwInfo and "mps_available" in hwInfo and hwInfo["mps_available"];
+    }
+    available_devices = [{"label": "Triton", "value": "triton"}];
+    if cuda_ok {
         available_devices.splice(0, 0, {"label": "CUDA", "value": "cuda"});
-    } elif hwInfo and "mps_available" in hwInfo and hwInfo["mps_available"] {
+    } elif mps_ok {
         available_devices.splice(0, 0, {"label": "MPS", "value": "mps"});
     }
 
@@ -243,11 +254,15 @@ def:pub GenerateModal(props: any) -> Any {
 
         setIsWorking(True);
         try {
+            ssh_conns = config["ssh_connections"] if config and "ssh_connections" in config else [];
+            active_ssh = config["active_ssh_index"] if config and "active_ssh_index" in config else -1;
             payload = {
                 "projectName": resolvedProjectName,
                 "ops": [selectedOp],
                 "benchmark": True,
-                "targetDevice": targetDevice
+                "targetDevice": targetDevice,
+                "ssh_connections": ssh_conns,
+                "active_ssh_index": active_ssh
             };
 
             resp = await __jacSpawn("StartGenerate", "", payload);
