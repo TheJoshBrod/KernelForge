@@ -199,10 +199,34 @@ def get_device_specs(device_index: int = 0, mode: str = "fast") -> GPUSpecs:
         cc_l = compute_capability.lower()
         tensor_cores_available = ("gfx9" in cc_l) or ("gfx11" in cc_l) or ("cdna" in cc_l)
 
-    max_threads_per_sm = num_sms * 2048 if num_sms else 0
+    # Collected directly from torch device properties
+    regs_per_sm = int(gpu.get("regs_per_sm") or 0)
+    max_threads_per_sm = int(gpu.get("max_threads_per_sm") or 0)
+    l2_cache_kb = int(gpu.get("l2_cache_kb") or 0)
+
+    # Fallback: derive max_threads_per_sm from SM count if not collected
+    if not max_threads_per_sm and num_sms:
+        max_threads_per_sm = num_sms * 2048
+
     max_threads_per_block = 1024
     if vendor == "intel":
         max_threads_per_block = 512
+
+    # Registers per block == registers per SM on all current NVIDIA architectures
+    registers_per_block = regs_per_sm
+
+    # Shared memory per SM and per block by compute capability.
+    # These are the hardware defaults (not the configurable maximum).
+    # Sources: CUDA Programming Guide, Appendix G.
+    _smem_per_sm_kb = {
+        "9.0": 228, "8.9": 100, "8.7": 100, "8.6": 100, "8.0": 164,
+        "7.5": 64,  "7.0": 96,  "6.1": 96,  "6.0": 64,
+        "5.3": 64,  "5.2": 96,  "5.0": 64,
+    }
+    shared_mem_per_sm_kb = _smem_per_sm_kb.get(compute_capability, 48)
+    # Default max per block is 48 KB across all CUDA archs (48 KB is the safe default;
+    # higher values require cudaFuncSetAttribute at runtime).
+    shared_mem_per_block_kb = min(shared_mem_per_sm_kb, 48)
 
     return GPUSpecs(
         gpu_name=str(gpu.get("name", "Unknown GPU")),
@@ -221,11 +245,11 @@ def get_device_specs(device_index: int = 0, mode: str = "fast") -> GPUSpecs:
         max_threads_per_block=max_threads_per_block,
         max_threads_per_sm=max_threads_per_sm,
         max_blocks_per_sm="unknown",
-        registers_per_sm=0,
-        registers_per_block=0,
-        shared_mem_per_sm_kb=0,
-        shared_mem_per_block_kb=0,
-        l2_cache_kb=0,
+        registers_per_sm=regs_per_sm,
+        registers_per_block=registers_per_block,
+        shared_mem_per_sm_kb=shared_mem_per_sm_kb,
+        shared_mem_per_block_kb=shared_mem_per_block_kb,
+        l2_cache_kb=l2_cache_kb,
         memory_bus_width_bits=0,
         peak_memory_bandwidth_gbps=0.0,
         warps_per_sm=(max_threads_per_sm // warp_size) if warp_size and max_threads_per_sm else 0,

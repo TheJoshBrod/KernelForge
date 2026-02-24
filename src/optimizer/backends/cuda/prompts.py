@@ -227,13 +227,15 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
     else:
         arch_name = "Legacy (Pre-Maxwell)"
         specific_tips = "- Focus on basic memory coalescing."
+    bw = gpu_info.get('peak_memory_bandwidth_gbps') or 0.0
+    bw_line = f"\n- **Memory Bandwidth:** {bw} GB/s" if bw > 0 else ""
     constraints = (
         f"- **Max Threads per Block:** {gpu_info.get('max_threads_per_block', 'N/A')}\n"
         f"- **Max Registers per Block:** {gpu_info.get('registers_per_block', 'N/A')} "
         f"(High register usage will limit occupancy)\n"
         f"- **Shared Memory per Block:** {gpu_info.get('shared_mem_per_block_kb', 'N/A')} KB\n"
-        f"- **Warp Size:** {gpu_info.get('warp_size', 32)}\n"
-        f"- **Memory Bandwidth:** {gpu_info.get('peak_memory_bandwidth_gbps', 'N/A')} GB/s"
+        f"- **Warp Size:** {gpu_info.get('warp_size', 32)}"
+        f"{bw_line}"
     )
 
 # 2. Process the Improvement Log with SLIDING WINDOW PRUNING
