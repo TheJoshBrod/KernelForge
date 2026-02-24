@@ -2482,6 +2482,31 @@ walker:pub GetProjectStatus {
     }
 }
 
+walker:pub GetJobLog {
+    has projectName: str,
+        jobKey: str,
+        lines: int = 15;
+
+    can run with entry {
+        try {
+            state = _read_state(self.projectName);
+            job = state.get(self.jobKey, {}) if state else {};
+            log_path = job.get("log", "") if job else "";
+            if not log_path or not path.exists(log_path) {
+                report {"lines": [], "path": ""};
+                disengage;
+            }
+            text = _read_log_excerpt(log_path, 8192);
+            all_lines = [l for l in text.splitlines() if l.strip()];
+            n = self.lines if self.lines > 0 else 15;
+            tail = all_lines[-n:] if len(all_lines) > n else all_lines;
+            report {"lines": tail, "path": log_path};
+        } except Exception as e {
+            report {"lines": [], "path": "", "error": str(e)};
+        }
+    }
+}
+
 walker:pub SetJobControl {
     has projectName: str,
         jobKey: str,

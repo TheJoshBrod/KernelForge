@@ -314,7 +314,9 @@ def run_generate(args: argparse.Namespace) -> int:
             ]
             if args.remote:
                 gen_cmd += ["--remote", args.remote]
-            rc = _run(gen_cmd, root, subprocess_env)
+            # Pass KFORGE state env through so attempt-level progress messages
+            # from generator/main.py reach the dashboard.
+            rc = _run(gen_cmd, root, env)
             if rc != 0:
                 op_failure = f"generation command failed (exit {rc})"
             elif not _has_success_marker(generated_op_dir):

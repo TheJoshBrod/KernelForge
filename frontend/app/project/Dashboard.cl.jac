@@ -50,7 +50,9 @@ def:pub Dashboard -> Any {
         benchLogOpen: bool = False,
         benchLogLoading: bool = False,
         benchLogCopied: bool = False,
-        benchLog: str = "";
+        benchLog: str = "",
+        logTail: list = [],
+        activeLogKey: str = "";
 
     # Speed Comparison Data State
     speedData_state = useState([]);
@@ -587,7 +589,29 @@ def:pub Dashboard -> Any {
                     lambda e: any  -> None {
                     # console.error("Failed to poll mcts summary:", e);
                     }
-                );}
+                );
+                log_job_key = "";
+                if data and "generate" in data and data["generate"] and "active" in data["generate"] and data["generate"]["active"] {
+                    log_job_key = "generate";
+                } elif data and "optimize" in data and data["optimize"] and "active" in data["optimize"] and data["optimize"]["active"] {
+                    log_job_key = "optimize";
+                } elif data and "profile" in data and data["profile"] and "active" in data["profile"] and data["profile"]["active"] {
+                    log_job_key = "profile";
+                } elif data and "benchmark" in data and data["benchmark"] and "active" in data["benchmark"] and data["benchmark"]["active"] {
+                    log_job_key = "benchmark";
+                }
+                if log_job_key {
+                    activeLogKey = log_job_key;
+                    __jacSpawn("GetJobLog", "", {"projectName": name, "jobKey": log_job_key, "lines": 12}).then(
+                        lambda l_resp: any -> None { l_data = l_resp.reports[0]
+                        if l_resp and l_resp.reports
+                        else {};
+                        logTail = l_data["lines"] if l_data and "lines" in l_data else [];}
+                    ).catch(lambda e: any -> None {});
+                } else {
+                    logTail = [];
+                    activeLogKey = "";
+                }}
             ).catch(
                 lambda e: any  -> None {
                 # console.error("Failed to poll project status:", e);
@@ -785,6 +809,14 @@ def:pub Dashboard -> Any {
         f" ({bench_current}/{bench_total})" if bench_total and bench_total > 0 else ""
     );
     gen_job = status["generate"] if status and "generate" in status else {};
+
+    gen_progress = gen_job["progress"] if gen_job and "progress" in gen_job else {};
+    gen_current = parseInt(f"{gen_progress['current']}")
+    if gen_progress and "current" in gen_progress
+    else 0;
+    gen_total = parseInt(f"{gen_progress['total']}")
+    if gen_progress and "total" in gen_progress
+    else 0;
     gen_raw = (gen_job["status"] or "").toLowerCase()
     if gen_job and "status" in gen_job
     else "";
@@ -795,6 +827,12 @@ def:pub Dashboard -> Any {
     gen_phase = (gen_job["phase"] or "").toLowerCase()
     if gen_job and "phase" in gen_job
     else "";
+    gen_has_attempt_msg = gen_message and gen_message.includes("attempt");
+    gen_progress_text = (
+        f" — {gen_current}/{gen_total} done"
+        if (gen_total and gen_total > 1 and not gen_has_attempt_msg)
+        else ""
+    );
     gen_norm = normalize_job_status(gen_raw);
     gen_cmd = to_list(gen_job["command"] if gen_job and "command" in gen_job else []);
     gen_has_optimize = False;
@@ -817,6 +855,16 @@ def:pub Dashboard -> Any {
     if opt_job and "message" in opt_job and opt_job["message"]
     else "";
     opt_norm = normalize_job_status(opt_raw);
+    opt_progress = opt_job["progress"] if opt_job and "progress" in opt_job else {};
+    opt_current = parseInt(f"{opt_progress['current']}")
+    if opt_progress and "current" in opt_progress
+    else 0;
+    opt_total = parseInt(f"{opt_progress['total']}")
+    if opt_progress and "total" in opt_progress
+    else 0;
+    opt_progress_text = (
+        f" — {opt_current}/{opt_total} done" if opt_total and opt_total > 1 else ""
+    );
 
     active_poll = forgeBusy
     or profile_active
@@ -870,7 +918,7 @@ def:pub Dashboard -> Any {
         current_message = "Queuing forge pipeline.";
     } elif gen_active {
         current_phase = gen_phase if gen_phase else "generating";
-        current_message = gen_message if gen_message else "Generating kernels.";
+        current_message = (gen_message + gen_progress_text) if gen_message else ("Generating kernels." + gen_progress_text);
         current_progress_pct = parseInt(f"{gen_job['progress_percent'] * 100}")
         if gen_job and "progress_percent" in gen_job
         else 0;
@@ -882,7 +930,7 @@ def:pub Dashboard -> Any {
         else "";
     } elif opt_active {
         current_phase = "optimizing";
-        current_message = opt_message if opt_message else "Optimizing kernels.";
+        current_message = (opt_message + opt_progress_text) if opt_message else ("Optimizing kernels." + opt_progress_text);
         current_progress_pct = parseInt(f"{opt_job['progress_percent'] * 100}")
         if opt_job and "progress_percent" in opt_job
         else 0;
@@ -919,8 +967,20 @@ def:pub Dashboard -> Any {
         if profile_job and "updated_at" in profile_job and profile_job["updated_at"]
         else "";
     } elif benchmark_step_status == "completed" {
-        current_phase = "completed";
-        current_message = "Kernel generation and benchmark completed.";
+        gen_had_failures = (
+            bench_norm == "idle"
+            and gen_norm == "completed"
+            and gen_has_benchmark
+            and gen_message
+            and gen_message.includes("Unable to forge")
+        );
+        if gen_had_failures {
+            current_phase = "completed_with_failures";
+            current_message = gen_message;
+        } else {
+            current_phase = "completed";
+            current_message = gen_message if gen_message else "Kernel generation and benchmark completed.";
+        }
     } elif profile_norm == "failed"
     or generation_step_status == "failed"
     or optimization_step_status == "failed"
@@ -955,6 +1015,23 @@ def:pub Dashboard -> Any {
         current_progress_bar = 4;
     }
 
+    log_line_nodes = [];
+    for log_line in to_list(logTail) {
+        ls = str(log_line);
+        lsl = ls.toLowerCase();
+        lc = "truncate ";
+        if lsl.includes("error") or lsl.includes("failed") or lsl.includes("exception") {
+            lc = lc + "text-red-400";
+        } elif lsl.includes("warning") {
+            lc = lc + "text-yellow-400/80";
+        } elif lsl.includes("success") or lsl.includes("passed") or lsl.includes("completed") {
+            lc = lc + "text-emerald-400/80";
+        } elif ls.startsWith("[workflow]") or ls.startsWith("[Remote]") or ls.startsWith("DEBUG:") {
+            lc = lc + "text-zinc-300";
+        }
+        log_line_nodes.push(<div key={ls} className={lc}>{ls}</div>);
+    }
+
     forge_status = "Idle";
     if current_phase == "queued" {
         forge_status = "Heating up the forge";
@@ -972,6 +1049,8 @@ def:pub Dashboard -> Any {
         forge_status = "Benchmarking kernels";
     } elif current_phase == "completed" {
         forge_status = "Forge completed";
+    } elif current_phase == "completed_with_failures" {
+        forge_status = "Forge completed (partial)";
     } elif current_phase == "failed" {
         forge_status = "Forge run failed";
     } elif current_phase == "ready" {
@@ -996,6 +1075,8 @@ def:pub Dashboard -> Any {
     forgeStateToneClass = "border-[var(--border)] bg-[var(--surface-0)] text-zinc-300";
     if current_phase == "completed" {
         forgeStateToneClass = "border-emerald-500/45 bg-emerald-500/10 text-emerald-200";
+    } elif current_phase == "completed_with_failures" {
+        forgeStateToneClass = "border-yellow-500/45 bg-yellow-500/10 text-yellow-200";
     } elif current_phase == "failed" {
         forgeStateToneClass = "border-red-500/45 bg-red-500/10 text-red-200";
     } elif active_poll or current_phase == "queued" {
@@ -1287,6 +1368,14 @@ def:pub Dashboard -> Any {
                         ></div>
                     </div>
                     if active_poll
+                    else <span></span>}
+                    {<div className="mt-1 rounded border border-[var(--border)] bg-zinc-950/60 p-2 font-mono text-[10px] text-zinc-400 leading-[1.6] overflow-hidden">
+                        <div className="text-[9px] uppercase tracking-[0.14em] text-zinc-600 mb-1">
+                            {activeLogKey + ".log — live tail"}
+                        </div>
+                        {log_line_nodes}
+                    </div>
+                    if active_poll and logTail.length > 0
                     else <span></span>}
                     <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
                         Auto-refresh: {poll_label}

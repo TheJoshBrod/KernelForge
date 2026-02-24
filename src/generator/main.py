@@ -467,6 +467,8 @@ def validate_with_retries(
         if not entry_files:
              return False, "No entry files", "setup"
 
+        update_job_progress(attempt, max_attempts, f"Validating {op_key} (attempt {attempt + 1}/{max_attempts}){' — remote' if ssh_config else ''}")
+
         # Validate all inputs at once using backend
         call_success, exec_success, feedback = _validate_kernel(
             cu_code, entry_files[0], log_file_loc, tmpdir, ssh_config=ssh_config
@@ -496,6 +498,7 @@ def validate_with_retries(
                 except NameError:
                     pass
 
+            update_job_progress(attempt, max_attempts, f"Repairing {op_key} (attempt {attempt + 1}/{max_attempts})")
             last_repair_prompt = prompts.get_repair_prompt(
                 function_name=function_name,
                 attempt=attempt,

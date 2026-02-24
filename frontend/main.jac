@@ -15,6 +15,7 @@ import from walkers.project {
     GetProjects,
     GetProjectOps,
     GetProjectStatus,
+    GetJobLog,
     SetJobControl,
     StartProfile,
     StartGenerate,
