@@ -3,8 +3,10 @@
 
 import argparse
 import hashlib
+import inspect
 import json
 import os
+import re
 import time
 import zipfile
 
@@ -94,7 +96,7 @@ def load_cast(cast_path: str, model_args: dict | None = None, no_kernels: bool =
     build_dir = os.path.join(cache_dir, "build")
     os.makedirs(build_dir, exist_ok=True)
 
-    original_linear = F.linear
+    _F_PREFIX = "torch_nn_functional_"
 
     for op in manifest["ops"]:
         op_name = op["name"]
@@ -130,19 +132,68 @@ def load_cast(cast_path: str, model_args: dict | None = None, no_kernels: bool =
                 os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
             ext = compile_kernel(kernel_cu, op_name, build_dir, opt_level=opt_level)
 
-        if op_name == "torch_nn_functional_linear":
-            def _make_patched(ext=ext, orig=original_linear):
-                def patched_linear(input, weight, bias=None):
-                    try:
-                        inp = input.cuda().contiguous()
-                        w = weight.cuda().contiguous()
-                        b = bias.cuda().contiguous() if bias is not None else None
-                        return ext.launch(inp, w, b)
-                    except Exception:
-                        return orig(input, weight, bias)
-                return patched_linear
-            F.linear = _make_patched()
-            print(f"  Patched torch.nn.functional.linear → {op_name}")
+        # Generic patch: decode torch.nn.functional.<attr> from the op_name convention.
+        if not op_name.startswith(_F_PREFIX):
+            print(f"  [WARN] '{op_name}' does not follow torch_nn_functional_* convention, skipping patch")
+            continue
+
+        fn_attr = op_name[len(_F_PREFIX):]
+        orig_fn = getattr(F, fn_attr, None)
+        if orig_fn is None:
+            print(f"  [WARN] torch.nn.functional.{fn_attr} not found, skipping patch")
+            continue
+
+        # Determine how many args launch() expects by parsing the kernel source.
+        # This is more reliable than inspect.signature on C extensions.
+        n_launch = None
+        if os.path.exists(kernel_cu):
+            try:
+                with open(kernel_cu) as _f:
+                    _cu_src = _f.read()
+                _m = re.search(r"torch::Tensor\s+launch\s*\(([^)]*)\)", _cu_src)
+                if _m:
+                    _params = [p.strip() for p in _m.group(1).split(",") if p.strip()]
+                    n_launch = len(_params)
+            except Exception:
+                pass
+        if n_launch is None:
+            try:
+                n_launch = len(inspect.signature(ext.launch).parameters)
+            except Exception:
+                pass
+
+        # Resolve the original function's parameter names so we can handle
+        # both positional and keyword call sites correctly.
+        try:
+            orig_params = list(inspect.signature(orig_fn).parameters.keys())
+        except Exception:
+            orig_params = None
+
+        def _make_patch(ext=ext, orig=orig_fn, n=n_launch, params=orig_params):
+            def patched(*args, **kwargs):
+                try:
+                    # Resolve all argument values by name, handling mixed positional/keyword callers.
+                    if params is not None:
+                        resolved = {params[i]: v for i, v in enumerate(args) if i < len(params)}
+                        resolved.update(kwargs)
+                        ordered = [resolved.get(p) for p in params]
+                    else:
+                        ordered = list(args)
+                    # Truncate to what launch() expects, move tensors to CUDA.
+                    limit = n if n is not None else len(ordered)
+                    call_args = []
+                    for val in ordered[:limit]:
+                        if isinstance(val, torch.Tensor):
+                            call_args.append(val.cuda().contiguous())
+                        else:
+                            call_args.append(val)
+                    return ext.launch(*call_args)
+                except Exception:
+                    return orig(*args, **kwargs)
+            return patched
+
+        setattr(F, fn_attr, _make_patch())
+        print(f"  Patched torch.nn.functional.{fn_attr} → {op_name}")
 
     # 5. Load model class from model.py
     import importlib.util
