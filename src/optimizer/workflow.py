@@ -475,6 +475,8 @@ def run_optimize(args: argparse.Namespace) -> int:
         ]
         if args.iterations and args.iterations > 0:
             opt_cmd += ["--max-iterations", str(args.iterations)]
+        if args.remote:
+            opt_cmd += ["--remote", args.remote]
         rc = _run(opt_cmd, root, env)
         if rc != 0:
             reason = f"pipeline_exit_{rc}"
@@ -530,6 +532,7 @@ def main() -> int:
     optimize.add_argument("--iterations", type=int, default=0)
     optimize.add_argument("--benchmark", action="store_true")
     optimize.add_argument("--target-device", default="cuda")
+    optimize.add_argument("--remote", default="")
 
     args = parser.parse_args()
 
