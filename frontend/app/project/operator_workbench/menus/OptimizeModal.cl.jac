@@ -184,7 +184,7 @@ def:pub OptimizeModal(props: any) -> Any {
                     data = resp.reports[0] if resp and resp.reports else {};
                     op_list = to_list(data["ops"] if data and "ops" in data else []);
                     setOps(op_list);
-                    if (not selectedOp) and list_len(op_list) > 0 {
+                    if (not opName) and (not routeOpName) and list_len(op_list) > 0 {
                         setSelectedOp(op_list[0]["name"]);
                     }
                 } except Exception as e {

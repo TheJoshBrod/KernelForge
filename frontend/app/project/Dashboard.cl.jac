@@ -358,7 +358,8 @@ def:pub Dashboard -> Any {
         return 15000;
     }
 
-    def openActionModal(opName: str, action: str) -> None {
+    def openActionModal(e: any, opName: str, action: str) -> None {
+        e.stopPropagation();
         setModalOpName(opName);
         if action == "Optimize" {
             setOptimizeModalOpen(True);
@@ -376,6 +377,14 @@ def:pub Dashboard -> Any {
             return;
         }
         navigate(f"/project/{name}/operator-workbench");
+    }
+
+    async def handleModalStarted -> None {
+        setGenerateModalOpen(False);
+        setOptimizeModalOpen(False);
+        await refreshData();
+        setTimeout(lambda -> None { refreshData();}, 1500);
+        setTimeout(lambda -> None { refreshData();}, 3500);
     }
 
     def op_names_from_rows(op_rows: list) -> list {
@@ -1353,7 +1362,9 @@ def:pub Dashboard -> Any {
                 <td className="py-2 px-4 font-mono text-xs flex items-center justify-between">
                     <span className={row_status_color}>{r_stat}</span>
                     <button
-                        onClick={lambda e: any -> None { e.stopPropagation(); openActionModal(r_name, action_text); }}
+                        data-opname={r_name}
+                        data-action={action_text}
+                        onClick={lambda e: any -> None { openActionModal(e, e.currentTarget.getAttribute("data-opname"), e.currentTarget.getAttribute("data-action")); }}
                         className={action_btn_class}
                     >
                         {action_text}
@@ -1465,7 +1476,7 @@ def:pub Dashboard -> Any {
                 isOpen={generateModalOpen}
                 onClose={lambda -> None { setGenerateModalOpen(False);}}
                 onComplete={lambda -> None { setGenerateModalOpen(False);}}
-                onStarted={lambda -> None { setGenerateModalOpen(False);}}
+                onStarted={handleModalStarted}
                 projectName={name}
                 opName={modalOpName}
             />
@@ -1473,7 +1484,7 @@ def:pub Dashboard -> Any {
                 isOpen={optimizeModalOpen}
                 onClose={lambda -> None { setOptimizeModalOpen(False);}}
                 onComplete={lambda -> None { setOptimizeModalOpen(False);}}
-                onStarted={lambda -> None { setOptimizeModalOpen(False);}}
+                onStarted={handleModalStarted}
                 projectName={name}
                 opName={modalOpName}
             />
