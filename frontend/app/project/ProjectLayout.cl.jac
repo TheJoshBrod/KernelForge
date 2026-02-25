@@ -96,7 +96,7 @@ def:pub ProjectLayout -> Any {
                 )}
             >
                 <div className={"p-6 border-b border-[var(--border)] relative bg-[var(--bg-darker)] " + ("flex justify-center px-2 py-4" if isCollapsed else "")}>
-                    <div className="absolute top-0 left-0 right-0 heat-divider"></div>
+                    <div className="absolute top-0 left-0 right-0 h-[2px] bg-[var(--accent-orange)]"></div>
 
                     <div className={"flex items-center justify-between mb-1 " + ("hidden" if isCollapsed else "flex")}>
                         <Link to="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
