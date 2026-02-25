@@ -52,7 +52,8 @@ def:pub Dashboard -> Any {
         benchLogCopied: bool = False,
         benchLog: str = "",
         logTail: list = [],
-        activeLogKey: str = "";
+        activeLogKey: str = "",
+        logModalOpen: bool = False;
 
     # Speed Comparison Data State
     speedData_state = useState([]);
@@ -1361,19 +1362,29 @@ def:pub Dashboard -> Any {
                     <div className="text-sm text-zinc-200 leading-relaxed">
                         {forge_detail}
                     </div>
-                    {<div className="w-full h-1.5 rounded-full bg-zinc-900 overflow-hidden border border-[var(--border)]">
+                    {<div className="w-full h-1.5 rounded-sm bg-zinc-900/80 overflow-hidden border border-[var(--border)]">
                         <div
-                            className="h-full bg-gradient-to-r from-[var(--accent-orange)] via-[var(--molten-gold)] to-[#f3c567] transition-all duration-500"
+                            className="forge-progress-fill"
                             style={{"width": f"{current_progress_bar}%"}}
                         ></div>
                     </div>
                     if active_poll
                     else <span></span>}
-                    {<div className="mt-1 rounded border border-[var(--border)] bg-zinc-950/60 p-2 font-mono text-[10px] text-zinc-400 leading-[1.6] overflow-hidden">
-                        <div className="text-[9px] uppercase tracking-[0.14em] text-zinc-600 mb-1">
-                            {activeLogKey + ".log — live tail"}
+                    {<div
+                        className="mt-1 relative rounded border border-[var(--border)] bg-zinc-950/60 overflow-hidden cursor-pointer group"
+                        onClick={lambda -> None { logModalOpen = True;}}
+                    >
+                        <div className="p-2 font-mono text-[10px] text-zinc-400 leading-[1.6] max-h-[4.5rem] overflow-hidden">
+                            <div className="text-[9px] uppercase tracking-[0.14em] text-zinc-600 mb-1">
+                                {activeLogKey + ".log — live tail"}
+                            </div>
+                            {log_line_nodes}
                         </div>
-                        {log_line_nodes}
+                        <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/75 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-100">
+                                View more details →
+                            </span>
+                        </div>
                     </div>
                     if active_poll and logTail.length > 0
                     else <span></span>}
@@ -1580,6 +1591,19 @@ def:pub Dashboard -> Any {
                     >
                         {benchLog or "No log yet."}
                     </pre>}
+                </div>
+            </Modal>
+            <Modal
+                isOpen={logModalOpen}
+                onClose={lambda -> None { logModalOpen = False;}}
+                title={f"{activeLogKey}.log — Live Tail"}
+            >
+                <div className="p-4 font-mono text-[11px] leading-[1.75] space-y-px">
+                    {log_line_nodes
+                    if list_len(log_line_nodes) > 0
+                    else <div className="text-zinc-500 text-xs">
+                        No log output captured yet.
+                    </div>}
                 </div>
             </Modal>
         </div>;

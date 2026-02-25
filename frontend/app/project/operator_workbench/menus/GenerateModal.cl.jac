@@ -256,6 +256,14 @@ def:pub GenerateModal(props: any) -> Any {
         try {
             ssh_conns = config["ssh_connections"] if config and "ssh_connections" in config else [];
             active_ssh = config["active_ssh_index"] if config and "active_ssh_index" in config else -1;
+            # If the selected GPU is local, do not forward SSH credentials
+            # even when active_ssh_index is still set from a previous remote session.
+            if selected_gpu_info {
+                gpu_conn = selected_gpu_info["connection"] if "connection" in selected_gpu_info else "local";
+                if not gpu_conn or gpu_conn == "local" {
+                    active_ssh = -1;
+                }
+            }
             payload = {
                 "projectName": resolvedProjectName,
                 "ops": [selectedOp],
