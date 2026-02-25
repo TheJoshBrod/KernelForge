@@ -312,7 +312,11 @@ def run_generate(args: argparse.Namespace) -> int:
                 "--only-ops",
                 op_name,
             ]
-            rc = _run(gen_cmd, root, subprocess_env)
+            if args.remote:
+                gen_cmd += ["--remote", args.remote]
+            # Pass KFORGE state env through so attempt-level progress messages
+            # from generator/main.py reach the dashboard.
+            rc = _run(gen_cmd, root, env)
             if rc != 0:
                 op_failure = f"generation command failed (exit {rc})"
             elif not _has_success_marker(generated_op_dir):
@@ -349,6 +353,8 @@ def run_generate(args: argparse.Namespace) -> int:
             ]
             if args.iterations and args.iterations > 0:
                 opt_cmd += ["--max-iterations", str(args.iterations)]
+            if args.remote:
+                opt_cmd += ["--remote", args.remote]
             rc = _run(opt_cmd, root, subprocess_env)
             if rc != 0:
                 failure_msg = f"optimization failed (exit {rc})"
@@ -463,7 +469,21 @@ def run_optimize(args: argparse.Namespace) -> int:
     if not ops:
         ops = _discover_ops(io_dir)
 
-    for op_name in ops:
+    total = len(ops)
+    update_job_progress(0, total or 1, "Starting kernel optimization.")
+
+    for idx, op_name in enumerate(ops):
+        if not wait_if_paused():
+            return 130
+        if check_cancelled():
+            return 130
+
+        update_job_progress(
+            idx,
+            total,
+            f"Optimizing {op_name} ({idx + 1}/{total})",
+        )
+
         opt_cmd = [
             sys.executable,
             "-m",
@@ -475,6 +495,8 @@ def run_optimize(args: argparse.Namespace) -> int:
         ]
         if args.iterations and args.iterations > 0:
             opt_cmd += ["--max-iterations", str(args.iterations)]
+        if args.remote:
+            opt_cmd += ["--remote", args.remote]
         rc = _run(opt_cmd, root, env)
         if rc != 0:
             reason = f"pipeline_exit_{rc}"
@@ -482,13 +504,24 @@ def run_optimize(args: argparse.Namespace) -> int:
                 f"[workflow-optimize-result] op={op_name} status=hard_error "
                 f"new_nodes=0 last_reason={json.dumps(reason)}"
             )
+            update_job_progress(
+                idx + 1,
+                total,
+                f"Optimization failed for {op_name} (exit {rc}).",
+            )
             return rc
         print(
             f"[workflow-optimize-result] op={op_name} status=completed "
             f"pipeline_exit={rc}"
         )
+        update_job_progress(
+            idx + 1,
+            total,
+            f"Optimized {idx + 1}/{total} operators.",
+        )
 
     if args.benchmark:
+        update_job_progress(total, total, "Benchmarking optimized kernels.")
         bench_cmd = [
             sys.executable,
             "-m",
@@ -500,6 +533,7 @@ def run_optimize(args: argparse.Namespace) -> int:
         if rc != 0:
             return rc
 
+    update_job_progress(total, total, "Kernel optimization completed.")
     return 0
 
 
@@ -523,6 +557,7 @@ def main() -> int:
     generate.add_argument("--benchmark", action="store_true")
     generate.add_argument("--iterations", type=int, default=0)
     generate.add_argument("--target-device", default="cuda")
+    generate.add_argument("--remote", default="")
 
     optimize = sub.add_parser("optimize")
     optimize.add_argument("--project", required=True)
@@ -530,6 +565,7 @@ def main() -> int:
     optimize.add_argument("--iterations", type=int, default=0)
     optimize.add_argument("--benchmark", action="store_true")
     optimize.add_argument("--target-device", default="cuda")
+    optimize.add_argument("--remote", default="")
 
     args = parser.parse_args()
 

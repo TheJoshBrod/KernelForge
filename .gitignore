@@ -71,3 +71,8 @@ projects/
 !src/projects/
 !src/projects/**/
 !src/projects/**/*.py
+
+
+# KernelForge files
+*.cast
+*.anvil 

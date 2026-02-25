@@ -55,6 +55,10 @@ def collect(mode: str = "fast") -> Tuple[List[GPURecord], List[str]]:
             total_mb = int(total_bytes / (1024 * 1024)) if total_bytes else None
             num_sms = int(getattr(props, "multi_processor_count", 0) or 0)
             warp_size = int(getattr(props, "warp_size", 32) or 32)
+            regs_per_sm = int(getattr(props, "regs_per_multiprocessor", 0) or 0) or None
+            max_threads_per_sm = int(getattr(props, "max_threads_per_multi_processor", 0) or 0) or None
+            l2_bytes = int(getattr(props, "L2_cache_size", 0) or 0)
+            l2_cache_kb = int(l2_bytes / 1024) if l2_bytes else None
 
             used_mb = None
             try:
@@ -76,6 +80,9 @@ def collect(mode: str = "fast") -> Tuple[List[GPURecord], List[str]]:
                     memory_used_mb=used_mb,
                     num_sms=num_sms,
                     warp_size=warp_size,
+                    regs_per_sm=regs_per_sm,
+                    max_threads_per_sm=max_threads_per_sm,
+                    l2_cache_kb=l2_cache_kb,
                 )
             )
         except Exception as exc:

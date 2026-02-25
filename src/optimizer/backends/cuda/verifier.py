@@ -426,6 +426,11 @@ def validate_remote_kernel(ssh_config: dict, generated_cu_code: str, paths: dict
     """
     Validates a kernel on a remote server using the persistent worker.
     """
+    if "tmp_dir" in paths:
+        cu_path = os.path.join(paths["tmp_dir"], "kernel.cu")
+        with open(cu_path, "w", encoding="utf-8") as f:
+            f.write(generated_cu_code)
+
     from src.optimizer.core.ssh_client import RemoteWorkerClient, upload_files
     
     try:

@@ -2,7 +2,6 @@
 src/optimizer/components/llm/generator.py
 Uses LLM to generate CUDA kernels that is model-agnostic.
 """
-import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -69,6 +68,30 @@ def _dump_failed_llm_response(paths: dict[Path], response: str, tag: str) -> Non
         print(f"\t\t- Failed to save LLM response dump: {e}")
 
 
+def _extract_header_comments(code: str) -> Optional[str]:
+    """
+    Extract a leading block of // or # comment lines from kernel code.
+    Returns the text if it contains optimization/rationale keywords, else None.
+    """
+    if not code:
+        return None
+    keywords = {"optimization", "rationale", "fix", "change", "improve", "note", "perf"}
+    lines = code.splitlines()
+    comment_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("//") or stripped.startswith("#"):
+            comment_lines.append(stripped.lstrip("/").lstrip("#").strip())
+        else:
+            break
+    if not comment_lines:
+        return None
+    block = "\n".join(comment_lines).lower()
+    if any(kw in block for kw in keywords):
+        return "\n".join(comment_lines)
+    return None
+
+
 def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str]]:
     """
     Extract feedback and code sections from a formatted string.
@@ -84,8 +107,7 @@ def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str
     feedback_pattern = r'(?://|#)\s*\[START FEEDBACK\](.*?)(?://|#)\s*\[END FEEDBACK\]'
     feedback_match = re.search(
         feedback_pattern, content, re.DOTALL | re.IGNORECASE)
-    feedback = feedback_match.group(1).strip(
-    ) if feedback_match else "No feedback provided"
+    feedback = feedback_match.group(1).strip() if feedback_match else None
 
     # Extract code section (tolerant to spacing)
     # 1. Try strict tags
@@ -101,6 +123,11 @@ def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str
         fallback_match = re.search(
             fallback_pattern, content, re.DOTALL | re.IGNORECASE)
         code = fallback_match.group(1).strip() if fallback_match else None
+
+    # If no explicit feedback block was found, try extracting the leading
+    # // OPTIMIZATION: / // RATIONALE: comment header from the kernel itself.
+    if feedback is None:
+        feedback = _extract_header_comments(code) or "No feedback provided"
 
     return feedback, code
 
@@ -180,7 +207,7 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
     """
     if not model:
         ensure_llm_config()
-        model = settings.llm_model_name
+        model = model or settings.llm_model_name
 
     # Attempt initial CUDA code generation
     sys_prompt = backend.get_sys_prompt()

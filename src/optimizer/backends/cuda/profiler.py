@@ -59,12 +59,16 @@ def _to_str(x):
 
 def get_gpu_specs(device_index: int = 0) -> GPUSpecs:
     """Retrieve GPU specs via the unified profiling orchestrator."""
+    import re as _re
     gpu_spec = get_profiled_device_specs(device_index=device_index, mode="deep")
 
-    # Optimization: Set specific CUDA arch when we have a numeric capability.
-    cc = str(gpu_spec.compute_capability or "").strip().lower()
-    if cc and cc not in {"unknown", "rocm", "metal", "xpu", "0", "0.0"}:
-        os.environ["TORCH_CUDA_ARCH_LIST"] = gpu_spec.compute_capability
+    # Only set TORCH_CUDA_ARCH_LIST when compute_capability is a valid numeric
+    # version string like "7.5" or "9.0".  Guard against strings such as
+    # "NVIDIA GeForce GTX 1660 Ti" that can leak in when the ROCm-runtime
+    # detection misfires.
+    cc = str(gpu_spec.compute_capability or "").strip()
+    if cc and _re.match(r"^\d+\.\d+$", cc):
+        os.environ["TORCH_CUDA_ARCH_LIST"] = cc
 
     return gpu_spec
 

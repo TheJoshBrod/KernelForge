@@ -10,7 +10,7 @@ from typing import Tuple, Optional
 from src.optimizer.core.types import KernelNode
 
 
-def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_template: dict, backend_type: str = "cuda"):
+def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_template: dict, backend_type: str = "cuda", model: str = None):
     """Persistent worker process for parallel optimization.
     
     Pulls tasks from task_queue, generates/compiles/validates kernels,
@@ -122,6 +122,8 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
             sys_prompt = backend.get_sys_prompt()
             llm = GenModel(sys_prompt)
             
+            result_queue.put((node_id, {"step": "Generating", "attempt": 1}, "status_update"))
+            
             # Retry loop variables
             current_prompt = prompt
             is_valid = False
@@ -136,7 +138,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                 # For retries, current_prompt is the error message (GenModel keeps history)
                 
                 try:
-                    response = llm.chat(current_prompt, settings.llm_model_name)
+                    response = llm.chat(current_prompt, model or settings.llm_model_name)
                 except Exception as e:
                     result_queue.put((node_id, None, f"llm_error: {e}"))
                     break
@@ -156,6 +158,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                 (paths["tmp_dir"] / f"kernel{backend.kernel_extension}").write_text(code)
 
                 # 4. Validate
+                result_queue.put((node_id, {"step": "Verifying", "attempt": attempt + 1}, "status_update"))
                 is_valid, validation_error = backend.validate_kernel(code, paths)
                 
                 if is_valid:
@@ -173,6 +176,8 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
 
             # 5. Profile (Exclusive GPU access)
             runtime_ms = float('inf')
+            
+            result_queue.put((node_id, {"step": "Benchmarking", "attempt": attempt + 1 if 'attempt' in locals() else 1}, "status_update"))
             
             # Use lock if provided (for strict serialization of GPU kernels)
             if gpu_lock:

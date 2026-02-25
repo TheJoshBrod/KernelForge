@@ -79,15 +79,26 @@ def resolve_runtime_env(
         if api_key:
             env["OPENAI_API_KEY"] = api_key
         env["OPENAI_MODEL"] = model
+        # LiteLLM recognises OpenAI models by name; no prefix needed.
+        litellm_model = model
     elif provider == "anthropic":
         if api_key:
             env["ANTHROPIC_API_KEY"] = api_key
         env["ANTHROPIC_MODEL"] = model
+        # LiteLLM requires lowercase "anthropic/<model>" for newer models.
+        litellm_model = model if model.startswith("anthropic/") else f"anthropic/{model}"
     elif provider == "google":
         if api_key:
             env["GOOGLE_API_KEY"] = api_key
             env["GEMINI_API_KEY"] = api_key
         env["GEMINI_MODEL"] = model
+        litellm_model = model if model.startswith("gemini/") else f"gemini/{model}"
+    else:
+        litellm_model = model
+
+    # OPTIMIZER_LLM_MODEL_NAME is read by byllm via pydantic-settings at subprocess
+    # import time.  Supply the LiteLLM-formatted name so the provider is unambiguous.
+    env["OPTIMIZER_LLM_MODEL_NAME"] = litellm_model
 
     return env
 

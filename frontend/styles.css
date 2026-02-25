@@ -2552,6 +2552,16 @@ video {
   }
 }
 
+/* === Forge State Progress Bar === */
+.forge-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, transparent, var(--accent-orange), var(--molten-gold), var(--accent-orange), transparent);
+  background-size: 200% 100%;
+  animation: loadingBarFlow 2s ease-in-out infinite;
+  box-shadow: 0 0 8px var(--accent-glow);
+  transition: width 0.5s ease;
+}
+
 /* === Syntax Highlighting === */
 .hl-kw {
   color: var(--accent-orange);

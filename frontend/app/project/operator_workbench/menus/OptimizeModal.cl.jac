@@ -28,6 +28,17 @@ def:pub OptimizeModal(props: any) -> Any {
     config_ctx = useConfig();
     config = config_ctx.config;
 
+    ssh_connections = config["ssh_connections"] if config and "ssh_connections" in config else [];
+    active_ssh_index = config["active_ssh_index"] if config and "active_ssh_index" in config else -1;
+    
+    selected_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
+    is_remote_gpu = selected_gpu_info and "connection" in selected_gpu_info and selected_gpu_info["connection"] != "local";
+    
+    active_ssh = None;
+    if is_remote_gpu and active_ssh_index >= 0 and ssh_connections.length > active_ssh_index {
+        active_ssh = ssh_connections[active_ssh_index];
+    }
+
     is_working_state = useState(False);
     isWorking = is_working_state[0];
     setIsWorking = is_working_state[1];
@@ -180,7 +191,7 @@ def:pub OptimizeModal(props: any) -> Any {
                     data = resp.reports[0] if resp and resp.reports else {};
                     op_list = to_list(data["ops"] if data and "ops" in data else []);
                     setOps(op_list);
-                    if (not selectedOp) and list_len(op_list) > 0 {
+                    if (not opName) and (not routeOpName) and list_len(op_list) > 0 {
                         setSelectedOp(op_list[0]["name"]);
                     }
                 } except Exception as e {
@@ -240,6 +251,10 @@ def:pub OptimizeModal(props: any) -> Any {
             }
             if llmProvider {
                 payload["llm_provider"] = llmProvider;
+            }
+            if active_ssh {
+                payload["ssh_connections"] = ssh_connections;
+                payload["active_ssh_index"] = active_ssh_index;
             }
 
             resp = await __jacSpawn("StartOptimize", "", payload);
@@ -390,6 +405,12 @@ def:pub OptimizeModal(props: any) -> Any {
                         </div>
                     </div>
                 </div>
+                {<div className="flex items-center gap-2 px-3 py-2 bg-emerald-950/40 border border-emerald-800/40 rounded-lg text-xs text-emerald-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"/>
+                    {"Remote: " + str(active_ssh["user"]) + "@" + str(active_ssh["host"]) if active_ssh and "user" in active_ssh and "host" in active_ssh else "Remote GPU"}
+                </div>
+                if active_ssh
+                else <span/>}
                 <div className="pt-6 flex justify-end gap-3 border-t border-zinc-800">
                     <button
                         onClick={onClose}

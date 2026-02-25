@@ -182,7 +182,22 @@ import sys
 import subprocess
 
 def get_gpu_info():
-    # Try torch first
+    is_rocm = False
+    try:
+        import torch
+        if getattr(torch.version, 'hip', None):
+            is_rocm = True
+        else:
+            try:
+                cfg = torch.__config__.show()
+                if 'USE_ROCM=ON' in cfg:
+                    is_rocm = True
+            except Exception:
+                pass
+    except ImportError:
+        pass
+
+    # CUDA / ROCm path
     try:
         import torch
         if torch.cuda.is_available():
@@ -190,27 +205,61 @@ def get_gpu_info():
             for i in range(torch.cuda.device_count()):
                 props = torch.cuda.get_device_properties(i)
                 mem_gb = props.total_memory / (1024**3)
-
                 arch_name = "Unknown"
                 if props.major == 7: arch_name = "Volta/Turing"
                 elif props.major == 8: arch_name = "Ampere"
                 elif props.major == 9: arch_name = "Hopper"
-
-                gpus.append({
-                    'name': torch.cuda.get_device_name(i),
-                    'memory': f"{mem_gb:.1f} GB",
-                    'compute_capability': f"v{props.major}.{props.minor} {arch_name}",
-                    'sm_count': props.multi_processor_count
-                })
+                if is_rocm:
+                    arch = getattr(props, 'gcnArchName', None) or f"{props.major}.{props.minor}"
+                    gpus.append({
+                        'name': torch.cuda.get_device_name(i),
+                        'memory': f"{mem_gb:.1f} GB",
+                        'compute_capability': str(arch),
+                        'sm_count': props.multi_processor_count,
+                        'vendor': 'amd',
+                        'backend_hint': 'rocm',
+                    })
+                else:
+                    gpus.append({
+                        'name': torch.cuda.get_device_name(i),
+                        'memory': f"{mem_gb:.1f} GB",
+                        'compute_capability': f"v{props.major}.{props.minor} {arch_name}",
+                        'sm_count': props.multi_processor_count,
+                        'vendor': 'nvidia',
+                        'backend_hint': 'cuda',
+                    })
             return gpus
-    except ImportError as e:
-        sys.stderr.write(f"DEBUG: Torch import failed: {e}\\n")
-    except Exception as e:
-        sys.stderr.write(f"DEBUG: Torch check failed: {e}\\n")
+    except Exception:
+        pass
 
-    # Fallback to nvidia-smi
+    # MPS path
     try:
-        sys.stderr.write("DEBUG: Falling back to nvidia-smi\\n")
+        import torch
+        mps = getattr(torch.backends, 'mps', None)
+        if mps and mps.is_available():
+            return [{'name': 'Apple Silicon GPU', 'memory': 'N/A',
+                     'compute_capability': 'N/A', 'sm_count': 'N/A',
+                     'vendor': 'apple', 'backend_hint': 'metal'}]
+    except Exception:
+        pass
+
+    # Intel XPU path
+    try:
+        import torch
+        xpu = getattr(torch, 'xpu', None)
+        if xpu and xpu.is_available():
+            gpus = []
+            for i in range(xpu.device_count()):
+                name = xpu.get_device_name(i) if hasattr(xpu, 'get_device_name') else f"Intel XPU {i}"
+                gpus.append({'name': name, 'memory': 'N/A',
+                             'compute_capability': 'N/A', 'sm_count': 'N/A',
+                             'vendor': 'intel', 'backend_hint': 'xpu'})
+            return gpus
+    except Exception:
+        pass
+
+    # nvidia-smi fallback (no torch)
+    try:
         cmd = ["nvidia-smi", "--query-gpu=name,memory.total,compute_cap", "--format=csv,noheader"]
         output = subprocess.check_output(cmd).decode('utf-8').strip()
         gpus = []
@@ -218,32 +267,20 @@ def get_gpu_info():
             if not line.strip(): continue
             parts = [x.strip() for x in line.split(',')]
             if len(parts) >= 3:
-                name = parts[0]
-                mem_str = parts[1] # e.g. "24576 MiB"
-                cc = parts[2] # e.g. "8.6"
-
-                # Convert memory to GB
+                name, mem_str, cc = parts[0], parts[1], parts[2]
                 try:
-                    mem_val = float(mem_str.split()[0])
-                    mem_gb = f"{mem_val / 1024:.1f} GB"
-                except:
+                    mem_gb = f"{float(mem_str.split()[0]) / 1024:.1f} GB"
+                except Exception:
                     mem_gb = mem_str
-
-                # Arch name from CC
-                arch_name = "Unknown"
-                try:
-                    major = int(str(cc).split('.')[0])
-                    if major == 7: arch_name = "Volta/Turing"
-                    elif major == 8: arch_name = "Ampere"
-                    elif major == 9: arch_name = "Hopper"
-                except:
-                    pass
-
+                major = 0
+                try: major = int(str(cc).split('.')[0])
+                except Exception: pass
+                arch_name = {7: "Volta/Turing", 8: "Ampere", 9: "Hopper"}.get(major, "Unknown")
                 gpus.append({
-                    "name": name,
-                    "memory": mem_gb,
+                    "name": name, "memory": mem_gb,
                     "compute_capability": f"v{cc} {arch_name}",
-                    "sm_count": "N/A (No Torch)"
+                    "sm_count": "N/A (No Torch)",
+                    "vendor": "nvidia", "backend_hint": "cuda",
                 })
         return gpus
     except Exception:
@@ -287,22 +324,27 @@ print(json.dumps(get_gpu_info()))
                 else "remote";
             }
 
+            cuda_available = (
+                (local_profile["cuda_available"] if local_profile and "cuda_available" in local_profile else False)
+                or any(g.get("backend_hint") in ("cuda", "rocm") for g in all_gpus if g.get("connection") != "local")
+            );
+            mps_available = (
+                (local_profile["mps_available"] if local_profile and "mps_available" in local_profile else False)
+                or any(g.get("backend_hint") == "metal" for g in all_gpus if g.get("connection") != "local")
+            );
+            xpu_available = (
+                (local_profile["xpu_available"] if local_profile and "xpu_available" in local_profile else False)
+                or any(g.get("backend_hint") == "xpu" for g in all_gpus if g.get("connection") != "local")
+            );
+            preferred_target = local_profile["preferred_target"] if local_profile and "preferred_target" in local_profile else "cpu";
             result_payload = {
                 "available": True if all_gpus else False,
                 "gpus": all_gpus,
                 "source": source,
-                "cuda_available": local_profile["cuda_available"]
-                if local_profile and "cuda_available" in local_profile
-                else False,
-                "mps_available": local_profile["mps_available"]
-                if local_profile and "mps_available" in local_profile
-                else False,
-                "xpu_available": local_profile["xpu_available"]
-                if local_profile and "xpu_available" in local_profile
-                else False,
-                "preferred_target": local_profile["preferred_target"]
-                if local_profile and "preferred_target" in local_profile
-                else "cpu"
+                "cuda_available": cuda_available,
+                "mps_available": mps_available,
+                "xpu_available": xpu_available,
+                "preferred_target": preferred_target
             };
 
             # Update cache
@@ -358,7 +400,22 @@ import sys
 import subprocess
 
 def get_gpu_info():
-    # Try torch first
+    is_rocm = False
+    try:
+        import torch
+        if getattr(torch.version, 'hip', None):
+            is_rocm = True
+        else:
+            try:
+                cfg = torch.__config__.show()
+                if 'USE_ROCM=ON' in cfg:
+                    is_rocm = True
+            except Exception:
+                pass
+    except ImportError:
+        pass
+
+    # CUDA / ROCm path
     try:
         import torch
         if torch.cuda.is_available():
@@ -366,27 +423,61 @@ def get_gpu_info():
             for i in range(torch.cuda.device_count()):
                 props = torch.cuda.get_device_properties(i)
                 mem_gb = props.total_memory / (1024**3)
-
                 arch_name = "Unknown"
                 if props.major == 7: arch_name = "Volta/Turing"
                 elif props.major == 8: arch_name = "Ampere"
                 elif props.major == 9: arch_name = "Hopper"
-
-                gpus.append({
-                    'name': torch.cuda.get_device_name(i),
-                    'memory': f"{mem_gb:.1f} GB",
-                    'compute_capability': f"v{props.major}.{props.minor} {arch_name}",
-                    'sm_count': props.multi_processor_count
-                })
+                if is_rocm:
+                    arch = getattr(props, 'gcnArchName', None) or f"{props.major}.{props.minor}"
+                    gpus.append({
+                        'name': torch.cuda.get_device_name(i),
+                        'memory': f"{mem_gb:.1f} GB",
+                        'compute_capability': str(arch),
+                        'sm_count': props.multi_processor_count,
+                        'vendor': 'amd',
+                        'backend_hint': 'rocm',
+                    })
+                else:
+                    gpus.append({
+                        'name': torch.cuda.get_device_name(i),
+                        'memory': f"{mem_gb:.1f} GB",
+                        'compute_capability': f"v{props.major}.{props.minor} {arch_name}",
+                        'sm_count': props.multi_processor_count,
+                        'vendor': 'nvidia',
+                        'backend_hint': 'cuda',
+                    })
             return gpus
-    except ImportError as e:
-        sys.stderr.write(f"DEBUG: Torch import failed: {e}\\n")
-    except Exception as e:
-        sys.stderr.write(f"DEBUG: Torch check failed: {e}\\n")
+    except Exception:
+        pass
 
-    # Fallback to nvidia-smi
+    # MPS path
     try:
-        sys.stderr.write("DEBUG: Falling back to nvidia-smi\\n")
+        import torch
+        mps = getattr(torch.backends, 'mps', None)
+        if mps and mps.is_available():
+            return [{'name': 'Apple Silicon GPU', 'memory': 'N/A',
+                     'compute_capability': 'N/A', 'sm_count': 'N/A',
+                     'vendor': 'apple', 'backend_hint': 'metal'}]
+    except Exception:
+        pass
+
+    # Intel XPU path
+    try:
+        import torch
+        xpu = getattr(torch, 'xpu', None)
+        if xpu and xpu.is_available():
+            gpus = []
+            for i in range(xpu.device_count()):
+                name = xpu.get_device_name(i) if hasattr(xpu, 'get_device_name') else f"Intel XPU {i}"
+                gpus.append({'name': name, 'memory': 'N/A',
+                             'compute_capability': 'N/A', 'sm_count': 'N/A',
+                             'vendor': 'intel', 'backend_hint': 'xpu'})
+            return gpus
+    except Exception:
+        pass
+
+    # nvidia-smi fallback (no torch)
+    try:
         cmd = ["nvidia-smi", "--query-gpu=name,memory.total,compute_cap", "--format=csv,noheader"]
         output = subprocess.check_output(cmd).decode('utf-8').strip()
         gpus = []
@@ -394,32 +485,20 @@ def get_gpu_info():
             if not line.strip(): continue
             parts = [x.strip() for x in line.split(',')]
             if len(parts) >= 3:
-                name = parts[0]
-                mem_str = parts[1] # e.g. "24576 MiB"
-                cc = parts[2] # e.g. "8.6"
-
-                # Convert memory to GB
+                name, mem_str, cc = parts[0], parts[1], parts[2]
                 try:
-                    mem_val = float(mem_str.split()[0])
-                    mem_gb = f"{mem_val / 1024:.1f} GB"
-                except:
+                    mem_gb = f"{float(mem_str.split()[0]) / 1024:.1f} GB"
+                except Exception:
                     mem_gb = mem_str
-
-                # Arch name from CC
-                arch_name = "Unknown"
-                try:
-                    major = int(str(cc).split('.')[0])
-                    if major == 7: arch_name = "Volta/Turing"
-                    elif major == 8: arch_name = "Ampere"
-                    elif major == 9: arch_name = "Hopper"
-                except:
-                    pass
-
+                major = 0
+                try: major = int(str(cc).split('.')[0])
+                except Exception: pass
+                arch_name = {7: "Volta/Turing", 8: "Ampere", 9: "Hopper"}.get(major, "Unknown")
                 gpus.append({
-                    "name": name,
-                    "memory": mem_gb,
+                    "name": name, "memory": mem_gb,
                     "compute_capability": f"v{cc} {arch_name}",
-                    "sm_count": "N/A (No Torch)"
+                    "sm_count": "N/A (No Torch)",
+                    "vendor": "nvidia", "backend_hint": "cuda",
                 })
         return gpus
     except Exception:

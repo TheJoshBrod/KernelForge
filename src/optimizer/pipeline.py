@@ -1,6 +1,7 @@
 import sys
 import json
 import random
+import shutil
 import string
 import argparse
 import tempfile
@@ -24,6 +25,37 @@ from src.optimizer.backends.triton import TritonBackend
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+def update_queue_state(proj_base_dir: Path, updates: dict):
+    from src.optimizer.benchmarking.locks import file_lock
+    queue_path = proj_base_dir / "queue.json"
+    lock_path = queue_path.with_suffix(".json.lock")
+    with file_lock(lock_path):
+        if queue_path.exists():
+            try:
+                state = json.loads(queue_path.read_text())
+            except:
+                state = {"active_tasks": {}, "benchmark_slot": {"now": None, "pending": []}, "pending_operators": [], "current_operator": ""}
+        else:
+            state = {"active_tasks": {}, "benchmark_slot": {"now": None, "pending": []}, "pending_operators": [], "current_operator": ""}
+        
+        if "active_tasks" in updates:
+            for k, v in updates["active_tasks"].items():
+                if k not in state["active_tasks"]:
+                    state["active_tasks"][k] = {}
+                state["active_tasks"][k].update(v)
+        if "remove_tasks" in updates:
+            for k in updates["remove_tasks"]:
+                state["active_tasks"].pop(str(k), None)
+        if "benchmark_slot" in updates:
+            state["benchmark_slot"].update(updates["benchmark_slot"])
+        if "pending_operators" in updates:
+            state["pending_operators"] = updates["pending_operators"]
+        if "current_operator" in updates:
+            state["current_operator"] = updates["current_operator"]
+        
+        queue_path.write_text(json.dumps(state, indent=2))
+
 
 
 def _projects_base_dir() -> Path:
@@ -121,7 +153,10 @@ def optimize(
     gpu_specs: GPUSpecs,
     paths: dict[str, Path],
     parent_node: KernelNode,
-    ssh_config: dict = None
+    ssh_config: dict = None,
+    model: str = None,
+    _proj_base_dir: Path = None,
+    _task_key: str = None,
 ) -> tuple[KernelNode | None, str]:
     """Optimizes target kernel
     """
@@ -153,23 +188,45 @@ def optimize(
         # Kernel Generation
         print(f"\tBeginning generation (history: {len(improvement_log)} entries)...")
         improvement_description, is_valid, failure_reason = generator.generate(
-            backend, kernel_code, gpu_specs, improvement_log, paths, ancestor_codes=ancestor_codes, ssh_config=ssh_config)
+            backend, kernel_code, gpu_specs, improvement_log, paths, model=model, ancestor_codes=ancestor_codes, ssh_config=ssh_config)
         print("\tFinished generation.")
         print(f"\t\t- Status: {is_valid}")
 
-        # If its valid, log it and return the new node
+        # If valid, profile and save normally
         if is_valid:
+            if _proj_base_dir and _task_key:
+                update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {"current_step": "Profiling"}}})
             log_entry, new_node = save_iteration(
                 backend, paths, parent_node, improvement_description, str(paths["proj_dir"] / "kernels" / f"kernel_{parent_node.id}{backend.kernel_extension}"), ssh_config=ssh_config)
-            
             return new_node, ""
-    
-    if not failure_reason:
-        failure_reason = "No valid candidate generated."
-    return None, str(failure_reason)
+
+        # Failed/invalid kernel — still save to tree so MCTS can track it.
+        # value=None is treated as inf by choose_optimization(), keeping UCT
+        # from revisiting this branch while still recording the attempt.
+        next_id = mcts.get_next_node_id(paths)
+        (paths["proj_dir"] / "kernels").mkdir(parents=True, exist_ok=True)
+        kernel_tmp = paths["tmp_dir"] / f"kernel{backend.kernel_extension}"
+        if kernel_tmp.exists():
+            dest = paths["proj_dir"] / "kernels" / f"kernel_{next_id}{backend.kernel_extension}"
+            shutil.copy(str(kernel_tmp), str(dest))
+            code_path = str(Path(paths["proj_dir"].name) / "kernels" / f"kernel_{next_id}{backend.kernel_extension}")
+        else:
+            code_path = parent_node.code
+        node_val = {
+            "id": next_id,
+            "value": None,
+            "speedup_vs_parent": 0.0,
+            "improvement_description": f"[FAILED] {failure_reason or 'validation failed'}",
+            "parent": parent_node.id,
+            "code": code_path,
+            "visits": 1,
+        }
+        node_obj = KernelNode.model_validate(node_val)
+        mcts.save_node(paths, node_obj)
+        return node_obj, ""
 
 
-def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path]) -> KernelNode:
+def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path], model: str = None) -> KernelNode:
     """Generate a fresh kernel as an independent root node.
     
     Creates a new optimization tree separate from existing ones by generating
@@ -251,7 +308,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         
         # Initial attempt
         feedback, code = generator.extract_feedback_and_code(
-            llm.chat(prompt, settings.llm_model_name)
+            llm.chat(prompt, model or settings.llm_model_name)
         )
         
         if code is None:
@@ -277,7 +334,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
             
             # Send error back to LLM for correction
             feedback, code = generator.extract_feedback_and_code(
-                llm.chat(error, settings.llm_model_name)
+                llm.chat(error, model or settings.llm_model_name)
             )
             
             if code is None:
@@ -406,7 +463,7 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
 
     return proj_dir
 
-def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict, n_workers: int = 4, max_iterations: int = 100, ssh_config: dict = None):
+def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict, n_workers: int = 4, max_iterations: int = 100, ssh_config: dict = None, model: str = None):
     """Run parallel MCTS optimization using multiprocessing.
     
     Dispatches nodes to workers as they become available, stops after max_iterations.
@@ -464,7 +521,7 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
         backend_type = "metal"
 
     for i in range(n_workers):
-        p = Process(target=worker_routine, args=(task_queue, result_queue, gpu_lock, node_counter, paths, backend_type))
+        p = Process(target=worker_routine, args=(task_queue, result_queue, gpu_lock, node_counter, paths, backend_type, model))
         p.start()
         workers.append(p)
     
@@ -512,6 +569,18 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
             dispatched_this_round = True
             dispatch_blocked = False
             
+            proj_base_dir = paths["proj_dir"].parent.parent
+            queue_entry = {
+                "tag": "[OPT]" if node.id > 0 else "[GEN]",
+                "op_name": paths["io_dir"].name,
+                "current_step": "Monitoring" if node.id == 0 else "Generating",
+                "attempt_current": 1,
+                "attempt_max": settings.retry_limit if hasattr(settings, 'retry_limit') else 3,
+                "parent_ref": f"kernel_{node.id}" if node.id > 0 else "",
+                "status": "In Progress"
+            }
+            update_queue_state(proj_base_dir, {"active_tasks": {str(node.id): queue_entry}})
+            
             elapsed = time.time() - start_time
             print(f"[DISPATCH] Node {node.id} ({nodes_dispatched}/{max_iterations}) | In-flight: {len(in_flight_ids)} | {elapsed:.0f}s")
         
@@ -530,13 +599,16 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
             results_collected = True
             dispatch_blocked = False
             
+            proj_base_dir = paths["proj_dir"].parent.parent
             if status == "success" and result_data is not None:
                 nodes_completed += 1
                 runtime_ms = result_data["runtime_ms"]
                 kernel_id = result_data["kernel_id"]
                 
                 parent_node = mcts._NODE_CACHE.get(node_id)
+                speedup = 1.0
                 if parent_node:
+                    speedup = parent_node.value / runtime_ms if runtime_ms > 0 else 1.0
                     new_node = KernelNode(
                         id=kernel_id,
                         parent_id=node_id,
@@ -544,16 +616,31 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                         visits=1,
                         value=runtime_ms,
                         best_subtree_value=runtime_ms,
-                        speedup_vs_parent=parent_node.value / runtime_ms if runtime_ms > 0 else 1.0,
+                        speedup_vs_parent=speedup,
                         improvement_description=result_data.get("feedback", "Parallel optimization"),
                         code=result_data["code_path"]
                     )
                     mcts.update_tree(paths, new_node)
-                    
-                    speedup = parent_node.value / runtime_ms if runtime_ms > 0 else 1.0
                     print(f"[SUCCESS] Node {node_id} -> {kernel_id} | {runtime_ms:.4f}ms | {speedup:.2f}x | Done: {nodes_completed}")
+                
+                update_queue_state(proj_base_dir, {
+                    "active_tasks": {str(node_id): {"current_step": "Done", "result": f"{speedup:.2f}x", "status": "Done"}},
+                    "benchmark_slot": {"now": None, "pending": []}
+                })
+            elif status == "status_update":
+                step_name = result_data.get("step")
+                update_dict = {"current_step": step_name, "attempt_current": result_data.get("attempt", 1)}
+                bm_slot = {}
+                if step_name == "Benchmarking":
+                    bm_slot = {"benchmark_slot": {"now": f"{paths['io_dir'].name} · kernel_{node_id}", "pending": []}}
+                update_queue_state(proj_base_dir, {"active_tasks": {str(node_id): update_dict}, **bm_slot})
             else:
                 nodes_failed += 1
+                error_label = status[:50] if isinstance(status, str) else "Failed"
+                update_queue_state(proj_base_dir, {
+                    "active_tasks": {str(node_id): {"current_step": "Failed", "result": error_label, "status": "Failed"}},
+                    "benchmark_slot": {"now": None, "pending": []}
+                })
                 print(f"[FAILED] Node {node_id}: {status}")
         
         # If nothing happened this round and we have in-flight work, wait
@@ -699,7 +786,6 @@ Examples:
     
     if model_name:
         print(f"Using LLM Model: {model_name} (Provider: {provider})")
-        os.environ["OPTIMIZER_LLM_MODEL_NAME"] = model_name
 
     ssh_config = None
     
@@ -773,7 +859,7 @@ Examples:
         }
         
         print(f"Creating new root for {op_name}...")
-        new_root = create_new_root(backend, gpu_specs, paths)
+        new_root = create_new_root(backend, gpu_specs, paths, model=model_name)
         
         if new_root:
             print(f"\nSuccess! Created new root: Node {new_root.id}")
@@ -801,6 +887,15 @@ Examples:
         operators_to_process = [d for d in proj_dir.iterdir() if d.is_dir()]
         print(f"Processing all operators ({len(operators_to_process)} found)")
 
+    # Initialize queue status
+    proj_base_dir = proj_dir.parent
+    update_queue_state(proj_base_dir, {
+        "pending_operators": [d.name for d in operators_to_process],
+        "active_tasks": {},
+        "benchmark_slot": {"now": None, "pending": []},
+        "current_operator": ""
+    })
+
     # Process each operator
     for op_dir_path in operators_to_process:
         op_name = op_dir_path.name
@@ -818,6 +913,10 @@ Examples:
                 f"new_nodes=0 last_reason={json.dumps(_compact_reason(reason))}"
             )
             continue
+            
+        update_queue_state(proj_base_dir, {
+            "current_operator": op_name
+        })
 
         # Paths for optimization
         paths = {
@@ -835,7 +934,8 @@ Examples:
                 paths=paths,
                 ssh_config=ssh_config,
                 n_workers=args.workers,
-                max_iterations=args.max_iterations
+                max_iterations=args.max_iterations,
+                model=model_name
             )
             print(
                 f"[optimize-result] op={op_name} status=unknown "
@@ -846,21 +946,53 @@ Examples:
             # === SEQUENTIAL MODE (original) ===
             op_new_nodes = 0
             op_last_reason = ""
+            task_key = "seq_opt"
+            retry_limit = getattr(settings, 'retry_limit', 3)
             for i in range(args.max_iterations):
                 # Select parent node then optimize off of it
                 parent_node = mcts.choose_optimization(paths)
+                update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
+                    "tag": "[OPT]",
+                    "op_name": op_name,
+                    "current_step": "Generating",
+                    "attempt_current": 1,
+                    "attempt_max": retry_limit,
+                    "parent_ref": f"kernel_{parent_node.id}",
+                    "status": "In Progress",
+                    "iter_current": i + 1,
+                    "iter_max": args.max_iterations,
+                }}})
                 new_node, failure_reason = optimize(
-                    backend, gpu_specs, paths, parent_node, ssh_config
+                    backend, gpu_specs, paths, parent_node, ssh_config, model=model_name,
+                    _proj_base_dir=proj_base_dir, _task_key=task_key,
                 )
-                
-                # Update tree with the new node (if optimization succeeded)
+
+                # Update tree with the new node (always saved now)
                 if new_node:
                     mcts.update_tree(paths, new_node)
-                    op_new_nodes += 1
-                    op_last_reason = ""
-                elif failure_reason:
-                    op_last_reason = str(failure_reason)
-                
+                    # Only count as an improvement if the kernel was valid/profiled
+                    if new_node.value is not None:
+                        op_new_nodes += 1
+                        op_last_reason = ""
+                        speedup = parent_node.value / new_node.value if new_node.value > 0 else 1.0
+                        update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
+                            "current_step": "Done",
+                            "result": f"{speedup:.2f}x",
+                            "status": "Done",
+                        }}})
+                    else:
+                        update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
+                            "current_step": "Failed",
+                            "result": "validation failed",
+                            "status": "Failed",
+                        }}})
+                else:
+                    update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
+                        "current_step": "Failed",
+                        "result": "no kernel produced",
+                        "status": "Failed",
+                    }}})
+
                 if (i + 1) % 10 == 0:
                     print(f"  Progress: {i+1}/{args.max_iterations} iterations")
             if op_new_nodes > 0:

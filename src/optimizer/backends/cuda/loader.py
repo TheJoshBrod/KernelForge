@@ -37,6 +37,13 @@ def target_device() -> str:
     return "cuda"
 
 
+_CUDA_FLAGS = [
+    "-O3",
+    "-use_fast_math",
+    "--expt-relaxed-constexpr",
+]
+
+
 def load_kernel(kernel_dir: Path, name: str | None = None, build_dir: Path | None = None) -> Any:
     kernel_dir = Path(kernel_dir)
     kernel_path = kernel_dir / "kernel.cu"
@@ -61,6 +68,7 @@ def load_kernel(kernel_dir: Path, name: str | None = None, build_dir: Path | Non
             build_directory=str(build_dir),
             verbose=False,
             with_cuda=True,
+            extra_cuda_cflags=_CUDA_FLAGS,
         )
     else:
         module = load_inline(
@@ -92,6 +100,7 @@ def compile_code_string(code: str, name: str, build_dir: str, verbose: bool = Fa
             build_directory=build_dir,
             verbose=verbose,
             with_cuda=True,
+            extra_cuda_cflags=_CUDA_FLAGS,
         )
     else:
         return load_inline(

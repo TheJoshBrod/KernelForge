@@ -28,6 +28,9 @@ class GPURecord(BaseModel):
 
     num_sms: Optional[int] = None
     warp_size: Optional[int] = None
+    regs_per_sm: Optional[int] = None
+    max_threads_per_sm: Optional[int] = None
+    l2_cache_kb: Optional[int] = None
 
     error: Optional[str] = None
 

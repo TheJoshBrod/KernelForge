@@ -1185,6 +1185,7 @@ def _start_job(project_name: str, job_key: str, cmd: list, log_name: str) -> dic
     child_env = os.environ.copy();
     child_env["KFORGE_STATE_PATH"] = path.join(_project_dir(project_name), "state.json");
     child_env["KFORGE_JOB_KEY"] = job_key;
+    child_env["PYTHONUNBUFFERED"] = "1";
     log_file = open(log_path, "a");
     proc = subprocess.Popen(
         cmd,
@@ -1196,6 +1197,48 @@ def _start_job(project_name: str, job_key: str, cmd: list, log_name: str) -> dic
     log_file.close();
     _update_job_state(project_name, job_key, {"pid": proc.pid});
     return {"success": True, "pid": proc.pid, "log": log_path};
+}
+
+def _write_initial_queue_state(project_name: str, ops_list: list, tag: str) -> None {
+    queue_path = path.join(_project_dir(project_name), "queue.json");
+    active_tasks = {};
+    if tag == "[OPT]" {
+        # Sequential optimize mode uses "seq_opt" as the task key — match it
+        if len(ops_list) > 0 {
+            active_tasks["seq_opt"] = {
+                "tag": "[OPT]",
+                "op_name": str(ops_list[0]),
+                "current_step": "Starting",
+                "attempt_current": 1,
+                "attempt_max": 3,
+                "status": "Starting"
+            };
+        }
+    } else {
+        for op in ops_list {
+            active_tasks["gen_" + str(op)] = {
+                "tag": "[GEN]",
+                "op_name": str(op),
+                "current_step": "Monitoring",
+                "attempt_current": 1,
+                "attempt_max": 1,
+                "status": "Starting"
+            };
+        }
+    }
+    queue_data = {
+        "pending_operators": [str(o) for o in ops_list],
+        "active_tasks": active_tasks,
+        "benchmark_slot": {"now": None, "pending": []},
+        "current_operator": str(ops_list[0]) if len(ops_list) > 0 else ""
+    };
+    try {
+        with open(queue_path, "w") as f {
+            dump(queue_data, f);
+        }
+    } except Exception as e {
+        print(f"Failed to write initial queue state: {e}");
+    }
 }
 
 def _start_job_container(
@@ -2422,9 +2465,47 @@ walker:pub GetProjectOps {
                 }
             }
 
+            # Read per-call pytorch_ms from op_benchmarks.json
+            profile_ms_map = {};
+            bench_path = path.join(
+                _project_dir(self.projectName), "benchmarks", "op_benchmarks.json"
+            );
+            if path.exists(bench_path) {
+                try {
+                    with open(bench_path, "r") as bf {
+                        bench_data = load(bf);
+                    }
+                    bench_results = (
+                        bench_data["results"]
+                        if bench_data and "results" in bench_data
+                        else []
+                    );
+                    for r in bench_results {
+                        if not r {
+                            continue;
+                        }
+                        op_name = r["op"] if "op" in r and r["op"] else "";
+                        if not op_name {
+                            continue;
+                        }
+                        ms_val = r["pytorch_ms"] if "pytorch_ms" in r and r["pytorch_ms"] is not None else None;
+                        if ms_val is not None {
+                            try {
+                                profile_ms_map[op_name] = float(ms_val);
+                            } except Exception {
+                                # no-op
+                            }
+                        }
+                    }
+                } except Exception as e {
+                    print(f"Error reading op_benchmarks.json: {e}");
+                }
+            }
+
             ops = [];
             for name in ops_map {
-                ops.append({"name": name, "count": ops_map[name]});
+                ms = profile_ms_map[name] if name in profile_ms_map else 0.0;
+                ops.append({"name": name, "count": ops_map[name], "profile_ms": ms});
             }
 
             report {"ops": ops};
@@ -2440,7 +2521,44 @@ walker:pub GetProjectStatus {
 
     can return_status with entry {
         state = _read_state(self.projectName);
+        queue_path = path.join(_project_dir(self.projectName), "queue.json");
+        queue_state = {};
+        if path.exists(queue_path) {
+            try {
+                with open(queue_path, "r") as f {
+                    queue_state = load(f);
+                }
+            } except Exception as e {
+                print(f"Failed to read queue state: {e}");
+            }
+        }
+        state["queue"] = queue_state;
         report state;
+    }
+}
+
+walker:pub GetJobLog {
+    has projectName: str,
+        jobKey: str,
+        lines: int = 15;
+
+    can run with entry {
+        try {
+            state = _read_state(self.projectName);
+            job = state.get(self.jobKey, {}) if state else {};
+            log_path = job.get("log", "") if job else "";
+            if not log_path or not path.exists(log_path) {
+                report {"lines": [], "path": ""};
+                disengage;
+            }
+            text = _read_log_excerpt(log_path, 8192);
+            all_lines = [l for l in text.splitlines() if l.strip()];
+            n = self.lines if self.lines > 0 else 15;
+            tail = all_lines[-n:] if len(all_lines) > n else all_lines;
+            report {"lines": tail, "path": log_path};
+        } except Exception as e {
+            report {"lines": [], "path": "", "error": str(e)};
+        }
     }
 }
 
@@ -2494,7 +2612,9 @@ walker:pub StartGenerate {
         ops: list = [],
         benchmark: bool = False,
         iterations: int = 0,
-        targetDevice: str = "cuda";
+        targetDevice: str = "cuda",
+        ssh_connections: list = [],
+        active_ssh_index: int = -1;
 
     can run with entry {
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
@@ -2565,7 +2685,29 @@ walker:pub StartGenerate {
             cmd.append("--iterations");
             cmd.append(str(self.iterations));
         }
+        if self.active_ssh_index >= 0
+        and len(self.ssh_connections) > self.active_ssh_index {
+            try {
+                remote_cfg = {
+                    "ssh_connections": self.ssh_connections,
+                    "active_ssh_index": self.active_ssh_index
+                };
+                remote_cfg_path = path.join(
+                    _project_dir(self.projectName), "ssh_config.json"
+                );
+                with open(remote_cfg_path, "w") as f {
+                    dump(remote_cfg, f);
+                }
+                cmd.append("--remote");
+                cmd.append(remote_cfg_path);
+            } except Exception as e {
+                print(f"Failed to write SSH config for remote generation: {e}");
+            }
+        }
         result = _start_job(self.projectName, "generate", cmd, "generate.log");
+        if result and "success" in result and result["success"] {
+            _write_initial_queue_state(self.projectName, ops_list, "[GEN]");
+        }
         report result;
     }
 }
@@ -2574,7 +2716,9 @@ walker:pub StartOptimize {
     has projectName: str,
         ops: list = [],
         iterations: int = 3,
-        benchmark: bool = False;
+        benchmark: bool = False,
+        ssh_connections: list = [],
+        active_ssh_index: int = -1;
 
     can run with entry {
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
@@ -2627,7 +2771,29 @@ walker:pub StartOptimize {
         if self.benchmark {
             cmd.append("--benchmark");
         }
+        if self.active_ssh_index >= 0
+        and len(self.ssh_connections) > self.active_ssh_index {
+            try {
+                remote_cfg = {
+                    "ssh_connections": self.ssh_connections,
+                    "active_ssh_index": self.active_ssh_index
+                };
+                remote_cfg_path = path.join(
+                    _project_dir(self.projectName), "ssh_config.json"
+                );
+                with open(remote_cfg_path, "w") as f {
+                    dump(remote_cfg, f);
+                }
+                cmd.append("--remote");
+                cmd.append(remote_cfg_path);
+            } except Exception as e {
+                print(f"Failed to write SSH config for remote optimization: {e}");
+            }
+        }
         result = _start_job(self.projectName, "optimize", cmd, "optimize.log");
+        if result and "success" in result and result["success"] {
+            _write_initial_queue_state(self.projectName, ops_list, "[OPT]");
+        }
         report result;
     }
 }
@@ -3899,6 +4065,365 @@ walker:pub GetOperatorMetrics {
                 payload["metrics_version"] if payload and "metrics_version" in payload else 0
             )
         };
+    }
+}
+
+walker:pub DownloadCast {
+    has projectName: str,
+        backend: str = "CUDA",
+        selectedKernels: dict = {};
+
+    can run with entry {
+        project_dir = _project_dir(self.projectName);
+        if not path.exists(project_dir) {
+            report {"success": False, "error": f"Project '{self.projectName}' not found."};
+            disengage;
+        }
+
+        # ── Resolve kernel files ──────────────────────────────────────
+        kernel_map = {};
+
+        if self.selectedKernels {
+            for op_name in self.selectedKernels {
+                rel = str(self.selectedKernels[op_name]);
+                full = path.join(repo_root, rel);
+                if path.exists(full) {
+                    kernel_map[op_name] = full;
+                }
+            }
+        }
+
+        if not kernel_map {
+            opt_base = _find_optimized_dir(self.projectName);
+            if opt_base and path.exists(opt_base) {
+                for op_name in listdir(opt_base) {
+                    op_dir = path.join(opt_base, op_name);
+                    if not path.isdir(op_dir) {
+                        continue;
+                    }
+                    best = path.join(op_dir, "kernel.cu");
+                    if path.exists(best) {
+                        kernel_map[op_name] = best;
+                        continue;
+                    }
+                    kernel_dir = path.join(op_dir, "kernels");
+                    if path.exists(kernel_dir) {
+                        for kf in listdir(kernel_dir) {
+                            if kf.endswith(".cu") {
+                                kernel_map[op_name] = path.join(kernel_dir, kf);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if not kernel_map {
+            report {
+                "success": False,
+                "error": "No optimized kernels found. Run Generate or Optimize first."
+            };
+            disengage;
+        }
+
+        # ── Resolve weight file ───────────────────────────────────────
+        weight_archive_path = "";
+        weight_size = 0;
+        cfg_path = path.join(project_dir, "config.json");
+        if path.exists(cfg_path) {
+            try {
+                with open(cfg_path, "r") as f {
+                    cfg = load(f);
+                }
+                arts = (
+                    cfg["artifacts"]["weights"]
+                    if cfg and "artifacts" in cfg
+                        and cfg["artifacts"]
+                        and "weights" in cfg["artifacts"]
+                    else []
+                );
+                for art in arts {
+                    rel = art["relpath"] if art and "relpath" in art else "";
+                    if rel {
+                        wp = path.join(project_dir, rel);
+                        if not path.exists(wp) {
+                            wp = path.join(project_dir, "weights.pt");
+                        }
+                        if path.exists(wp) {
+                            with open(wp, "rb") as f {
+                                wdata = f.read();
+                            }
+                            sha = hashlib.sha256(wdata).hexdigest();
+                            weight_archive_path = f"weights/{sha}.pt";
+                            weight_size = len(wdata);
+                            break;
+                        }
+                    }
+                }
+            } except Exception as e {
+                print(f"Error reading project config for weights: {e}");
+            }
+        }
+
+        if not weight_archive_path {
+            for wname in ["weights.pt", "model.pt"] {
+                wp = path.join(project_dir, wname);
+                if path.exists(wp) {
+                    with open(wp, "rb") as f {
+                        wdata = f.read();
+                    }
+                    sha = hashlib.sha256(wdata).hexdigest();
+                    weight_archive_path = f"weights/{sha}.pt";
+                    weight_size = len(wdata);
+                    break;
+                }
+            }
+        }
+
+        # ── Build file map {archive_path -> bytes} ────────────────────
+        file_map = {};
+
+        model_py = path.join(project_dir, "model.py");
+        model_class_name = "";
+        if path.exists(model_py) {
+            with open(model_py, "rb") as f {
+                model_py_bytes = f.read();
+            }
+            file_map["model.py"] = model_py_bytes;
+            # Extract the first class name defined in model.py so the cast
+            # runner can instantiate it without guessing.
+            import ast as _ast;
+            try {
+                _tree = _ast.parse(model_py_bytes.decode("utf-8"));
+                for _node in _ast.walk(_tree) {
+                    if isinstance(_node, _ast.ClassDef) {
+                        model_class_name = _node.name;
+                        break;
+                    }
+                }
+            } except Exception {
+                model_class_name = "";
+            }
+        }
+
+        # Pack model_config.json for HuggingFace models so the cast runner can
+        # instantiate the model without needing to infer the architecture.
+        # Priority: explicit file in project dir > auto-generated from config_class.
+        model_cfg_src = path.join(project_dir, "model_config.json");
+        if path.exists(model_cfg_src) {
+            with open(model_cfg_src, "rb") as f {
+                file_map["model_config.json"] = f.read();
+            }
+        } elif model_class_name and "model.py" in file_map {
+            # Auto-generate: import the model class and call config_class() for defaults.
+            import importlib.util as _ilu;
+            import sys as _sys;
+            import json as _json;
+            import tempfile as _tmp;
+            import os as _os;
+            try {
+                _tf = _tmp.NamedTemporaryFile(suffix=".py", delete=False, mode="wb");
+                _tf.write(file_map["model.py"]);
+                _tf.close();
+                _spec = _ilu.spec_from_file_location("_kf_export_model", _tf.name);
+                _mod = _ilu.module_from_spec(_spec);
+                _sys.modules["_kf_export_model"] = _mod;
+                _spec.loader.exec_module(_mod);
+                _ModelCls = getattr(_mod, model_class_name, None);
+                if _ModelCls and hasattr(_ModelCls, "config_class") {
+                    _cfg = _ModelCls.config_class();
+                    _cfg_dict = _cfg.to_dict();
+
+                    # Patch shape-dependent fields from the actual state dict so the
+                    # config matches the weights (e.g. num_labels for classifiers).
+                    if wdata {
+                        import io as _io;
+                        import torch as _tw;
+                        _sd = _tw.load(_io.BytesIO(wdata), map_location="cpu", weights_only=True);
+                        # Common head weight key patterns, checked in priority order.
+                        _HEAD_KEYS = [
+                            "classifier.1.weight",   # HF ResNet
+                            "classifier.weight",      # HF ViT, BERT, etc.
+                            "fc.weight",              # torchvision ResNet
+                            "head.weight",            # DeiT
+                            "heads.head.weight",      # ViT-B
+                        ];
+                        for _hk in _HEAD_KEYS {
+                            if _hk in _sd and len(_sd[_hk].shape) == 2 {
+                                _cfg_dict["num_labels"] = int(_sd[_hk].shape[0]);
+                                break;
+                            }
+                        }
+                    }
+
+                    file_map["model_config.json"] = _json.dumps(_cfg_dict, indent=2).encode("utf-8");
+                }
+                _sys.modules.pop("_kf_export_model", None);
+                _os.unlink(_tf.name);
+            } except Exception as _e {
+                print(f"[WARN] Could not auto-generate model_config.json: {_e}");
+                _sys.modules.pop("_kf_export_model", None);
+            }
+        }
+
+        if weight_archive_path {
+            file_map[weight_archive_path] = wdata;
+        }
+
+        ops_manifest = [];
+        # Detect the current GPU's SM version for tagging precompiled binaries.
+        import torch as _torch;
+        sm_version = "";
+        if _torch.cuda.is_available() {
+            _cap = _torch.cuda.get_device_capability();
+            sm_version = f"sm_{_cap[0]}{_cap[1]}";
+        }
+
+        for op_name in kernel_map {
+            kf = kernel_map[op_name];
+            with open(kf, "rb") as f {
+                kdata = f.read();
+            }
+            cu_path = f"kernels/{op_name}/kernel.cu";
+            wrapper_path = f"kernels/{op_name}/wrapper.py";
+            file_map[cu_path] = kdata;
+            wrapper_src = f"# Cast dispatch wrapper for {op_name}\n# Generated by KernelForge\n";
+            file_map[wrapper_path] = wrapper_src.encode("utf-8");
+
+            # Bundle the precompiled .so if it exists alongside kernel.cu.
+            op_precompiled = {};
+            if sm_version {
+                so_file = path.join(path.dirname(kf), f"{op_name}.so");
+                if path.exists(so_file) {
+                    with open(so_file, "rb") as f {
+                        file_map[f"compiled/{sm_version}/{op_name}.so"] = f.read();
+                    }
+                    op_precompiled[sm_version] = f"compiled/{sm_version}/{op_name}.so";
+                }
+            }
+
+            ops_manifest.append(
+                {
+                    "name": op_name,
+                    "kernel_dir": f"kernels/{op_name}/",
+                    "cuda_source": cu_path,
+                    "wrapper": wrapper_path,
+                    "precompiled": op_precompiled
+                }
+            );
+        }
+
+        all_precompiled_sms = list({sm for op in ops_manifest for sm in op["precompiled"].keys()});
+
+        loader_stub = b"# Cast vendored runtime loader\n# pip install cast for the full runtime\n";
+        file_map["loader.py"] = loader_stub;
+
+        manifest_obj = {
+            "project_name": self.projectName,
+            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "model_class": model_class_name,
+            "model_init_args": {},
+            "weight_file": weight_archive_path,
+            "ops": ops_manifest
+        };
+        file_map["manifest.json"] = dumps(manifest_obj, indent=2).encode("utf-8");
+
+        # ── Checksums ─────────────────────────────────────────────────
+        checksum_lines = [];
+        for fpath in file_map {
+            hexhash = hashlib.sha256(file_map[fpath]).hexdigest();
+            checksum_lines.append(f"{hexhash}  {fpath}");
+        }
+        checksums_bytes = "\n".join(checksum_lines).encode("utf-8");
+        archive_checksum = hashlib.sha256(checksums_bytes).hexdigest();
+        file_map["checksums.sha256"] = checksums_bytes;
+
+        # ── HEADER.json ───────────────────────────────────────────────
+        header_obj = {
+            "format_version": "1.0",
+            "file_type": "kernelforge_inference",
+            "project_name": self.projectName,
+            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "kernelforge_version": "0.1.0",
+            "runtime": {
+                "min_cast_version": "0.1",
+                "min_torch_version": "2.1.0",
+                "min_cuda_version": "12.0",
+                "target_sm_versions": []
+            },
+            "contents": {
+                "optimized_op_count": len(ops_manifest),
+                "total_op_count": len(ops_manifest),
+                "has_precompiled": len(all_precompiled_sms) > 0,
+                "precompiled_sm_versions": all_precompiled_sms,
+                "weight_size_bytes": weight_size
+            },
+            "archive_checksum": archive_checksum
+        };
+        header_bytes = dumps(header_obj, indent=2).encode("utf-8");
+
+        # ── Write ZIP (HEADER.json must be first entry) ───────────────
+        export_dir = path.join(project_dir, "exports");
+        _ensure_dir(export_dir);
+        cast_path = path.join(export_dir, self.projectName + ".cast");
+
+        try {
+            with ZipFile(cast_path, "w") as zipf {
+                zipf.writestr("HEADER.json", header_bytes);
+                for fpath in file_map {
+                    zipf.writestr(fpath, file_map[fpath]);
+                }
+            }
+            file_size = path.getsize(cast_path);
+            report {
+                "success": True,
+                "name": self.projectName + ".cast",
+                "size": file_size,
+                "export_path": cast_path
+            };
+        } except Exception as e {
+            print(f"DownloadCast error: {e}");
+            report {"success": False, "error": f"Failed to build cast file: {e}"};
+        }
+    }
+}
+
+walker:pub GetCastChunk {
+    has export_path: str,
+        offset: int = 0,
+        chunkSize: int = 5242880;
+
+    can run with entry {
+        base = path.realpath(_projects_base_dir());
+        real = path.realpath(self.export_path);
+        if not (real.startswith(base + os.sep) or real == base) {
+            report {"success": False, "error": "Access denied."};
+            disengage;
+        }
+        if not path.exists(real) {
+            report {"success": False, "error": "Export file not found."};
+            disengage;
+        }
+        total_size = path.getsize(real);
+        try {
+            with open(real, "rb") as f {
+                f.seek(self.offset);
+                chunk = f.read(self.chunkSize);
+            }
+            b64 = b64encode(chunk).decode("utf-8");
+            report {
+                "success": True,
+                "data": b64,
+                "offset": self.offset,
+                "size": len(chunk),
+                "total_size": total_size,
+                "done": (self.offset + len(chunk)) >= total_size
+            };
+        } except Exception as e {
+            print(f"GetCastChunk error: {e}");
+            report {"success": False, "error": f"Failed to read chunk: {e}"};
+        }
     }
 }
 

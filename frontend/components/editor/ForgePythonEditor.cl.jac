@@ -319,8 +319,8 @@ def _configure_forge_theme(monaco: Any) -> None {
                 "editorLineNumber.background": panel,
                 "editorGutter.background": panel,
                 "editorWhitespace.foreground": "ffffff22",
-                "editorIndentGuide.background1": "ffffff1a",
-                "editorIndentGuide.activeBackground1": accent_orange
+                "editorIndentGuide.background1": "ffffff12",
+                "editorIndentGuide.activeBackground1": "e1705545"
             }
         }
     );
@@ -397,6 +397,7 @@ def:pub ForgePythonEditor(props: Any) -> Any {
         else "# Paste your model code here or upload model.py"
     );
     onChange = props.onChange if "onChange" in props else None;
+    font_size = int(props.fontSize) if "fontSize" in props and props.fontSize else 14;
 
     container_ref = useRef(None);
     editor_ref = useRef(None);
@@ -462,7 +463,7 @@ def:pub ForgePythonEditor(props: Any) -> Any {
                     "automaticLayout": True,
                     "minimap": {"enabled": False},
                     "fontFamily": "JetBrains Mono, Source Code Pro, Menlo, Monaco, Consolas, monospace",
-                    "fontSize": 14,
+                    "fontSize": font_size,
                     "lineHeight": 24,
                     "renderWhitespace": "selection",
                     "scrollBeyondLastLine": False,
@@ -474,7 +475,8 @@ def:pub ForgePythonEditor(props: Any) -> Any {
                     "smoothScrolling": True,
                     "renderLineHighlight": "line",
                     "renderLineHighlightOnlyWhenFocus": False,
-                    "selectionHighlight": False
+                    "selectionHighlight": False,
+                    "guides": {"highlightActiveIndentation": False, "indentation": True, "bracketPairs": False}
                 }
             );
 
