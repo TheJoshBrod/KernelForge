@@ -20,6 +20,8 @@ import from recharts {
     ResponsiveContainer
 }
 import from ...context.ConfigContext { useConfig }
+import from .operator_workbench.menus.GenerateModal { GenerateModal }
+import from .operator_workbench.menus.OptimizeModal { OptimizeModal }
 import from .shared.MetricsAdapter {
     to_num,
     to_list,
@@ -41,19 +43,65 @@ def:pub Dashboard -> Any {
     systemInfo = system_info_state[0];
     setSystemInfo = system_info_state[1];
 
-    has ops: list = [],
-        loading: bool = True,
-        status: dict = {},
-        hardwareInfo: dict = {},
-        hardwareLoading: bool = False,
-        mctsSummary: dict = {},
-        benchLogOpen: bool = False,
-        benchLogLoading: bool = False,
-        benchLogCopied: bool = False,
-        benchLog: str = "",
-        logTail: list = [],
-        activeLogKey: str = "",
-        logModalOpen: bool = False;
+    ops_state = useState([]);
+    ops = ops_state[0];
+    setOps = ops_state[1];
+
+    loading_state = useState(True);
+    loading = loading_state[0];
+    setLoading = loading_state[1];
+
+    status_state = useState({});
+    status = status_state[0];
+    setStatus = status_state[1];
+
+    hardware_info_state = useState({});
+    hardwareInfo = hardware_info_state[0];
+    setHardwareInfo = hardware_info_state[1];
+
+    mcts_summary_state = useState({});
+    mctsSummary = mcts_summary_state[0];
+    setMctsSummary = mcts_summary_state[1];
+
+    bench_log_open_state = useState(False);
+    benchLogOpen = bench_log_open_state[0];
+    setBenchLogOpen = bench_log_open_state[1];
+
+    generate_modal_open_state = useState(False);
+    generateModalOpen = generate_modal_open_state[0];
+    setGenerateModalOpen = generate_modal_open_state[1];
+
+    optimize_modal_open_state = useState(False);
+    optimizeModalOpen = optimize_modal_open_state[0];
+    setOptimizeModalOpen = optimize_modal_open_state[1];
+
+    modal_op_name_state = useState("");
+    modalOpName = modal_op_name_state[0];
+    setModalOpName = modal_op_name_state[1];
+
+    bench_log_loading_state = useState(False);
+    benchLogLoading = bench_log_loading_state[0];
+    setBenchLogLoading = bench_log_loading_state[1];
+
+    bench_log_copied_state = useState(False);
+    benchLogCopied = bench_log_copied_state[0];
+    setBenchLogCopied = bench_log_copied_state[1];
+
+    bench_log_state = useState("");
+    benchLog = bench_log_state[0];
+    setBenchLog = bench_log_state[1];
+
+    log_tail_state = useState([]);
+    logTail = log_tail_state[0];
+    setLogTail = log_tail_state[1];
+
+    active_log_key_state = useState("");
+    activeLogKey = active_log_key_state[0];
+    setActiveLogKey = active_log_key_state[1];
+
+    log_modal_open_state = useState(False);
+    logModalOpen = log_modal_open_state[0];
+    setLogModalOpen = log_modal_open_state[1];
 
     # Speed Comparison Data State
     speedData_state = useState([]);
@@ -310,6 +358,15 @@ def:pub Dashboard -> Any {
         return 15000;
     }
 
+    def openActionModal(opName: str, action: str) -> None {
+        setModalOpName(opName);
+        if action == "Optimize" {
+            setOptimizeModalOpen(True);
+        } else {
+            setGenerateModalOpen(True);
+        }
+    }
+
     def openWorkbench(opName: str = "") -> None {
         if not name {
             return;
@@ -472,7 +529,7 @@ def:pub Dashboard -> Any {
     }
 
     async def refreshData -> None {
-        loading = True;
+        setLoading(True);
         try {
             if name {
                 # Spawn all requests concurrently
@@ -495,16 +552,17 @@ def:pub Dashboard -> Any {
                 ops_data = ops_resp.reports[0]
                 if ops_resp and ops_resp.reports
                 else None;
-                ops = to_list(ops_data["ops"])
+                ops_list = to_list(ops_data["ops"])
                 if ops_data and "ops" in ops_data
                 else [];
+                setOps(ops_list);
                 # Process Metrics (same source used by Operator Workbench)
                 metrics_data = metrics_resp.reports[0]
                 if metrics_resp and metrics_resp.reports
                 else {};
                 if metrics_data {
                     if "operator_usage" in metrics_data {
-                        ops = to_list(metrics_data["operator_usage"]);
+                        setOps(to_list(metrics_data["operator_usage"]));
                     }
                     setSpeedData(get_metrics_speed_source(metrics_data));
                 }
@@ -512,21 +570,21 @@ def:pub Dashboard -> Any {
                 status_data = status_resp.reports[0]
                 if status_resp and status_resp.reports
                 else {};
-                status = status_data or {};
+                setStatus(status_data or {});
                 # Process Hardware
                 hw_data = hw_resp.reports[0] if hw_resp and hw_resp.reports else {};
-                hardwareInfo = hw_data or {};
+                setHardwareInfo(hw_data or {});
                 # Process MCTS
                 mcts_data = mcts_resp.reports[0]
                 if mcts_resp and mcts_resp.reports
                 else {};
-                mctsSummary = mcts_data or {};
+                setMctsSummary(mcts_data or {});
                 persist_dashboard_cache(name);
             }
         } except Exception as e {
             console.error("Failed to fetch dashboard data:", e);
         } finally {
-            loading = False;
+            setLoading(False);
         }
     }
 
@@ -535,21 +593,21 @@ def:pub Dashboard -> Any {
             cached = read_dashboard_cache(name);
             if cached {
                 if "operator_usage" in cached {
-                    ops = to_list(cached["operator_usage"]);
+                    setOps(to_list(cached["operator_usage"]));
                 }
                 if "speed_comparison" in cached {
                     setSpeedData(to_list(cached["speed_comparison"]));
                 }
                 if "status" in cached and cached["status"] {
-                    status = cached["status"];
+                    setStatus(cached["status"]);
                 }
                 if "hardware_info" in cached and cached["hardware_info"] {
-                    hardwareInfo = cached["hardware_info"];
+                    setHardwareInfo(cached["hardware_info"]);
                 }
                 if "mcts_summary" in cached and cached["mcts_summary"] {
-                    mctsSummary = cached["mcts_summary"];
+                    setMctsSummary(cached["mcts_summary"]);
                 }
-                loading = False;
+                setLoading(False);
             }
         }},
         [name]
@@ -563,14 +621,15 @@ def:pub Dashboard -> Any {
             lambda -> None { __jacSpawn("GetProjectStatus", "", {"projectName": name}).then(
                 lambda resp: any  -> None { data = resp.reports[0]
                 if resp and resp.reports
-                else {};status = data or {};
+                else {};
+                setStatus(data or {});
                 __jacSpawn("GetProjectMetrics", "", {"projectName": name}).then(
                     lambda c_resp: any  -> None { c_data = c_resp.reports[0]
                     if c_resp and c_resp.reports
                     else {};
                     if c_data {
                         if "operator_usage" in c_data {
-                            ops = to_list(c_data["operator_usage"]);
+                            setOps(to_list(c_data["operator_usage"]));
                         }
                         setSpeedData(get_metrics_speed_source(c_data));
                         persist_dashboard_cache(name);
@@ -584,7 +643,7 @@ def:pub Dashboard -> Any {
                     lambda m_resp: any  -> None { m_data = m_resp.reports[0]
                     if m_resp and m_resp.reports
                     else {};
-                    mctsSummary = m_data or {};
+                    setMctsSummary(m_data or {});
                     persist_dashboard_cache(name);}
                 ).catch(
                     lambda e: any  -> None {
@@ -602,16 +661,16 @@ def:pub Dashboard -> Any {
                     log_job_key = "benchmark";
                 }
                 if log_job_key {
-                    activeLogKey = log_job_key;
+                    setActiveLogKey(log_job_key);
                     __jacSpawn("GetJobLog", "", {"projectName": name, "jobKey": log_job_key, "lines": 12}).then(
                         lambda l_resp: any -> None { l_data = l_resp.reports[0]
                         if l_resp and l_resp.reports
                         else {};
-                        logTail = l_data["lines"] if l_data and "lines" in l_data else [];}
+                        setLogTail(l_data["lines"] if l_data and "lines" in l_data else []);}
                     ).catch(lambda e: any -> None {});
                 } else {
-                    logTail = [];
-                    activeLogKey = "";
+                    setLogTail([]);
+                    setActiveLogKey("");
                 }}
             ).catch(
                 lambda e: any  -> None {
@@ -670,8 +729,8 @@ def:pub Dashboard -> Any {
         if not name {
             return;
         }
-        benchLogLoading = True;
-        benchLogCopied = False;
+        setBenchLogLoading(True);
+        setBenchLogCopied(False);
         try {
             rel_path = f"kernels/projects/{name}/logs/benchmark.log";
             resp = await __jacSpawn(
@@ -679,14 +738,14 @@ def:pub Dashboard -> Any {
             );
             data = resp.reports[0] if resp and resp.reports else {};
             if data and "success" in data and data["success"] {
-                benchLog = data["content"] if "content" in data else "";
+                setBenchLog(data["content"] if "content" in data else "");
             } else {
-                benchLog = data["error"] if data and "error" in data else "No log yet.";
+                setBenchLog(data["error"] if data and "error" in data else "No log yet.");
             }
         } except Exception as e {
-            benchLog = f"Failed to load benchmark log: {e}";
+            setBenchLog(f"Failed to load benchmark log: {e}");
         } finally {
-            benchLogLoading = False;
+            setBenchLogLoading(False);
         }
     }
 
@@ -695,8 +754,8 @@ def:pub Dashboard -> Any {
             return;
         }
         navigator.clipboard.writeText(benchLog).then(
-            lambda -> None { benchLogCopied = True;setTimeout(
-                lambda -> None { benchLogCopied = False;}, 1500
+            lambda -> None { setBenchLogCopied(True);setTimeout(
+                lambda -> None { setBenchLogCopied(False);}, 1500
             );}
         ).catch(
             lambda e: any  -> None { console.error("Failed to copy benchmark log:", e);}
@@ -1066,501 +1125,361 @@ def:pub Dashboard -> Any {
         forge_detail = "Idle";
     }
 
-    current_state_meta = "";
-    if current_started_at and current_updated_at {
-        current_state_meta = f"Started: {current_started_at}  |  Updated: {current_updated_at}";
-    } elif current_started_at {
-        current_state_meta = f"Started: {current_started_at}";
+    queue_data = status["queue"] if status and "queue" in status else {};
+    active_tasks_dict = queue_data["active_tasks"] if "active_tasks" in queue_data else {};
+    active_tasks = [];
+    for k in Object.keys(active_tasks_dict) {
+        t = active_tasks_dict[k];
+        t["id"] = k;
+        active_tasks.push(t);
     }
+    benchmark_slot = queue_data["benchmark_slot"] if "benchmark_slot" in queue_data else {"now": None, "pending": []};
+    pending_operators = queue_data["pending_operators"] if "pending_operators" in queue_data else [];
+    current_operator = queue_data["current_operator"] if "current_operator" in queue_data else "";
 
-    forgeStateToneClass = "border-[var(--border)] bg-[var(--surface-0)] text-zinc-300";
-    if current_phase == "completed" {
-        forgeStateToneClass = "border-emerald-500/45 bg-emerald-500/10 text-emerald-200";
-    } elif current_phase == "completed_with_failures" {
-        forgeStateToneClass = "border-yellow-500/45 bg-yellow-500/10 text-yellow-200";
-    } elif current_phase == "failed" {
-        forgeStateToneClass = "border-red-500/45 bg-red-500/10 text-red-200";
-    } elif active_poll or current_phase == "queued" {
-        forgeStateToneClass = "border-[var(--accent-orange)]/45 bg-[var(--accent-orange)]/10 text-orange-100";
-    }
-
-    nodesExplored = 0;
-    if mctsSummary and "total_nodes" in mctsSummary and mctsSummary["total_nodes"] != None {
-        nodesExplored = parseInt(f"{mctsSummary['total_nodes']}");
-    } elif mctsSummary and "ops" in mctsSummary {
-        nodesExplored = list_len(to_list(mctsSummary["ops"]));
-    } else {
-        nodesExplored = list_len(ops);
-    }
-    if nodesExplored != nodesExplored or nodesExplored < 0 {
-        nodesExplored = 0;
-    }
-    if nodesExplored == 0 and list_len(speedData) > 0 {
-        nodesExplored = list_len(speedData);
-    }
-
-    kpis = compute_speed_kpis(speedData, ops);
-    bestSpeedup = to_num(kpis["best_speedup"] if kpis and "best_speedup" in kpis else 1);
-    if bestSpeedup is None or bestSpeedup <= 0 {
-        bestSpeedup = 1;
-    }
-    hasBestSpeedup = (
-        True
-        if kpis and "has_best_speedup" in kpis and kpis["has_best_speedup"]
-        else False
-    );
-    totalSavedMs = to_num(kpis["total_saved_ms"] if kpis and "total_saved_ms" in kpis else 0);
-    if totalSavedMs is None or totalSavedMs < 0 {
-        totalSavedMs = 0;
-    }
-    bestSpeedupText = f"{bestSpeedup.toFixed(2)}x" if hasBestSpeedup else "--";
-    totalSavedText = f"{totalSavedMs.toFixed(2)} ms" if totalSavedMs > 0 else "0.00 ms";
-
-    metricCardClass = "relative clip-anvil border border-[var(--border)] bg-[color:rgba(15,18,24,0.76)] backdrop-blur-md p-4 shadow-[0_14px_30px_rgba(0,0,0,0.38)] overflow-hidden";
-
-    status_cards = [];
-    status_cards.push(
-        <div key="metric-nodes" className={metricCardClass}>
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent-orange)]/65 to-transparent"></div>
-            <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                    Nodes Explored
-                </span>
-                <ShieldCheckIcon className="w-4 h-4 text-[var(--accent-orange)]/90"/>
+    active_tasks_nodes = [];
+    for task in active_tasks {
+        c_step = task["current_step"];
+        tag = task["tag"];
+        
+        track_nodes = [];
+        steps = ["Monitoring", "Generating", "Verifying", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Verifying", "Benchmarking"];
+        
+        c_idx = -1;
+        for i in range(list_len(steps)) {
+            if steps[i] == c_step {
+                c_idx = i;
+            }
+        }
+        
+        for i in range(list_len(steps)) {
+            s = steps[i];
+            is_active = (i == c_idx);
+            is_done = (c_step == "Done" or c_step == "Failed" or (c_idx > -1 and i < c_idx));
+            
+            s_label = s;
+            if is_active {
+                s_label = f"[{s}]";
+                track_nodes.push(<span key={s} className="text-[var(--accent-orange)] font-semibold">{s_label}</span>);
+            } elif is_done {
+                s_label = s + (" ✓" if c_step != "Failed" else "");
+                track_nodes.push(<span key={s} className="text-zinc-500">{s_label}</span>);
+            } else {
+                track_nodes.push(<span key={s} className="text-zinc-600">{s_label}</span>);
+            }
+            if i < list_len(steps) - 1 {
+                track_nodes.push(<span key={s + "sep"} className="text-zinc-700 mx-1.5">→</span>);
+            }
+        }
+        
+        status_label = c_step;
+        if c_step == "Done" {
+            status_label = "Done " + (task["result"] if "result" in task else "");
+        } elif c_step == "Failed" {
+            status_label = "Failed";
+        }
+        
+        bar_w = "0%";
+        if c_step == "Generating" { bar_w = "40%"; }
+        elif c_step == "Verifying" { bar_w = "70%"; }
+        elif c_step == "Benchmarking" { bar_w = "90%"; }
+        elif c_step == "Done" { bar_w = "100%"; }
+        
+        sub_info = "";
+        if tag == "[OPT]" and task["parent_ref"] {
+            sub_info = sub_info + "from parent: " + task["parent_ref"] + " · ";
+        }
+        if c_step == "Failed" {
+            sub_info = sub_info + (task["result"] if "result" in task else "verification failed");
+        } else {
+            atmpt = str(task["attempt_current"]);
+            max_atmpt = str(task["attempt_max"]);
+            sub_info = sub_info + f"attempt {atmpt} / {max_atmpt}";
+        }
+        
+        active_tasks_nodes.push(
+            <div key={task["id"]} className="p-4 bg-[var(--surface-0)] hover:bg-[var(--surface-1)] transition-colors group">
+                <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-3 font-mono text-xs">
+                        <span className={"font-semibold " + ("text-emerald-400" if tag == "[GEN]" else "text-blue-400")}>{tag}</span>
+                        <span className="text-zinc-200">{task["op_name"]} · node {task["id"]}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        {<div className="w-24 h-1.5 bg-zinc-900 rounded overflow-hidden">
+                            <div className={"h-full transition-all duration-300 " + ("bg-emerald-500" if c_step == "Done" else ("bg-red-500" if c_step == "Failed" else "bg-[var(--accent-orange)]"))} style={{"width": bar_w}}></div>
+                        </div> if c_step != "Failed" and c_step != "Done" else <span></span>}
+                        <span className={"font-mono text-xs text-right " + ("text-red-400" if c_step == "Failed" else ("text-emerald-400" if c_step == "Done" else "text-zinc-400"))}>{status_label}</span>
+                    </div>
+                </div>
+                <div className="flex items-center justify-between font-mono text-[10px] text-zinc-500 pl-11">
+                    <div className="flex items-center">
+                        {track_nodes}
+                    </div>
+                    <div className="text-zinc-600 truncate max-w-[200px]" title={sub_info}>
+                        {sub_info}
+                    </div>
+                </div>
             </div>
-            <div className="text-2xl font-semibold text-[var(--text-strong)]">
-                {nodesExplored}
-            </div>
-            <div className="mt-1 text-[11px] text-zinc-500">
-                MCTS operator tree nodes
-            </div>
-        </div>
-    );
-
-    status_cards.push(
-        <div key="metric-speedup" className={metricCardClass}>
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent-orange)]/65 to-transparent"></div>
-            <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                    Best Speedup
-                </span>
-                <ArrowRightIcon className="w-4 h-4 text-[var(--accent-orange)]/90"/>
-            </div>
-            <div className="text-2xl font-semibold text-[var(--accent-orange)]">
-                {bestSpeedupText}
-            </div>
-            <div className="mt-1 text-[11px] text-zinc-500">
-                Kernel Forge vs PyTorch
-            </div>
-        </div>
-    );
-    status_cards.push(
-        <div key="metric-saved" className={metricCardClass}>
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent-orange)]/65 to-transparent"></div>
-            <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                    Total Time Saved
-                </span>
-                <CheckIcon className="w-4 h-4 text-[var(--accent-orange)]/90"/>
-            </div>
-            <div className="text-xl font-semibold text-[var(--text-strong)]">
-                {totalSavedText}
-            </div>
-            <div className="mt-1 text-[11px] text-zinc-500">
-                Estimated using operator counts
-            </div>
-        </div>
-    );
-
-    charts_empty_message = "No benchmark results yet. Run Benchmark to see PyTorch timings.";
-    if profile_active {
-        charts_empty_message = "Profiling model...";
-    } elif gen_active and gen_phase == "benchmarking" {
-        charts_empty_message = "Benchmarking generated kernels...";
-    } elif gen_active {
-        charts_empty_message = "Generating kernels...";
-    } elif opt_active {
-        charts_empty_message = "Optimizing kernels...";
-    } elif bench_raw == "queued" {
-        charts_empty_message = "Benchmark queued...";
-    } elif bench_raw == "running" {
-        charts_empty_message = (
-            f"{bench_message}{bench_progress_text}"
-            if bench_message
-            else f"Benchmarking PyTorch baseline...{bench_progress_text}"
         );
-    } elif bench_raw == "error" or bench_raw == "failed" {
-        charts_empty_message = "Benchmark failed (see benchmark.log).";
-    } elif bench_raw == "success" or bench_raw == "completed" {
-        charts_empty_message = "No benchmark data available.";
     }
 
-    manualSelectedMap = {};
-    for op_name in manualOps {
-        manualSelectedMap[str(op_name)] = True;
-    }
-    manualOpItems = [];
+    forgedCount = 0;
+    bestSpeedupVal = 1.0;
+    operatorRows = [];
+    
     for op in to_list(ops) {
         if not op or not ("name" in op) or not op["name"] {
             continue;
         }
         op_name = str(op["name"]);
-        checked = op_name in manualSelectedMap;
-        manualOpItems.push(
-            <label
-                key={op_name}
-                className="flex items-center gap-2 text-xs text-zinc-300 py-0.5"
-            >
-                <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={lambda e: any  -> None { toggleManualOp(op_name);}}
-                    className="w-3.5 h-3.5 rounded border-zinc-700 bg-zinc-900 text-amber-500 focus:ring-amber-500/50"
-                />
-                <span className="truncate">
-                    {format_op_short(op_name)}
-                </span>
-            </label>
-        );
-    }
-    manualSelectedCount = 0;
-    for op_name in manualOps {
-        if str(op_name) in manualSelectedMap {
-            manualSelectedCount += 1;
+        op_short = format_op_short(op_name);
+        
+        baseline_ms = "--";
+        best_ms = "--";
+        speedup = "--";
+        is_forged = False;
+        ratio_for_sort = 0.0;
+        
+        for sd in to_list(speedData) {
+            if sd and "name" in sd and str(sd["name"]) == op_name {
+                b_val = to_num(sd["pytorch"] if "pytorch" in sd else None);
+                if b_val != None { baseline_ms = format_tick_ms(b_val); }
+                
+                f_val = to_num(sd["forged"] if "forged" in sd else None);
+                if f_val != None { best_ms = format_tick_ms(f_val); }
+                
+                r_val = to_num(sd["ratio"] if "ratio" in sd else None);
+                if r_val != None {
+                    speedup = f"{r_val.toFixed(2)}×";
+                    ratio_for_sort = r_val;
+                    if r_val > 1.00 {
+                        is_forged = True;
+                    }
+                }
+            }
         }
+        
+        op_status = "Not started";
+        for task in active_tasks {
+            if str(task["op_name"]) == op_name {
+                op_status = str(task["current_step"]);
+            }
+        }
+        
+        if op_status == "Not started" {
+            if is_forged {
+                op_status = "Forged ✓";
+            } elif best_ms != "--" {
+                op_status = "Benchmarked";
+            }
+        }
+        
+        if is_forged {
+            forgedCount += 1;
+        }
+        if ratio_for_sort > bestSpeedupVal {
+            bestSpeedupVal = ratio_for_sort;
+        }
+        
+        operatorRows.push({
+            "name": op_name,
+            "short": op_short,
+            "baseline": baseline_ms,
+            "best": best_ms,
+            "speedup": speedup,
+            "status": op_status,
+            "ratio": ratio_for_sort,
+            "is_forged": is_forged
+        });
+    }
+    
+    operatorRows.sort(lambda a: dict, b: dict -> int {
+        if not a and not b { return 0; }
+        if not a { return 1; }
+        if not b { return -1; }
+
+        a_stat = a["status"] if "status" in a else "Not started";
+        b_stat = b["status"] if "status" in b else "Not started";
+
+        a_active = a_stat != "Not started" and a_stat != "Forged ✓" and a_stat != "Benchmarked";
+        b_active = b_stat != "Not started" and b_stat != "Forged ✓" and b_stat != "Benchmarked";
+        if a_active and not b_active { return -1; }
+        if not a_active and b_active { return 1; }
+
+        a_forged = a["is_forged"] if "is_forged" in a else False;
+        b_forged = b["is_forged"] if "is_forged" in b else False;
+        if a_forged and not b_forged { return -1; }
+        if not a_forged and b_forged { return 1; }
+        
+        a_ratio = a["ratio"] if "ratio" in a else 0.0;
+        b_ratio = b["ratio"] if "ratio" in b else 0.0;
+        if a_ratio > b_ratio { return -1; }
+        if a_ratio < b_ratio { return 1; }
+        
+        return 0;
+    });
+
+    operatorRowsNodes = [];
+    for r in operatorRows {
+        if not r {
+            continue;
+        }
+        r_stat = r["status"] if "status" in r else "Not started";
+        r_short = r["short"] if "short" in r else "";
+        r_baseline = r["baseline"] if "baseline" in r else "--";
+        r_best = r["best"] if "best" in r else "--";
+        r_speedup = r["speedup"] if "speedup" in r else "--";
+        r_is_forged = r["is_forged"] if "is_forged" in r else False;
+        r_name = r["name"] if "name" in r else "";
+
+        row_status_color = "text-zinc-500";
+        if r_stat == "Forged ✓" { row_status_color = "text-emerald-400"; }
+        elif r_stat != "Not started" and r_stat != "Benchmarked" { row_status_color = "text-[var(--accent-orange)] animate-pulse"; }
+        
+        action_text = "Optimize" if r_stat == "Benchmarked" or r_stat == "Forged ✓" else "Generate";
+        action_colors = "border-[var(--accent-orange)]/40 text-[var(--accent-orange)] hover:bg-[var(--accent-orange)] hover:text-zinc-950" if action_text == "Optimize" else "border-zinc-600 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 hover:border-zinc-500";
+        action_btn_class = f"px-2 py-0.5 bg-transparent border rounded text-[10px] uppercase font-semibold transition-colors {action_colors}";
+        
+        operatorRowsNodes.push(
+            <tr
+                key={r_name}
+                className="border-b border-[var(--border)] bg-[var(--surface-1)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                onClick={lambda -> None { navigate(f"/project/{name}/operator-workbench/{r_name}"); }}
+            >
+                <td className="py-2.5 px-4 font-mono text-xs text-zinc-200" title={r_name}>{r_short}</td>
+                <td className="py-2.5 px-4 font-mono text-xs text-zinc-400">{r_baseline}</td>
+                <td className="py-2.5 px-4 font-mono text-xs text-zinc-300">{r_best}</td>
+                <td className={"py-2.5 px-4 font-mono text-xs " + ("text-emerald-400 font-semibold" if r_is_forged else "text-zinc-500")}>{r_speedup}</td>
+                <td className="py-2 px-4 font-mono text-xs flex items-center justify-between">
+                    <span className={row_status_color}>{r_stat}</span>
+                    <button
+                        onClick={lambda e: any -> None { e.stopPropagation(); openActionModal(r_name, action_text); }}
+                        className={action_btn_class}
+                    >
+                        {action_text}
+                    </button>
+                </td>
+            </tr>
+        );
     }
 
     return
         <div className="p-6 md:p-8 max-w-7xl mx-auto space-y-6">
-            <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-                <div className="space-y-1">
-                    <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-[var(--text-strong)]">
-                        Project Dashboard
-                    </h2>
-                    <p className="text-[10px] uppercase tracking-[0.22em] text-[var(--text-muted)]">
-                        Forge command center · {name}
-                    </p>
-                </div>
-                <div className="flex items-center gap-3 bg-[var(--surface-0)] border border-[var(--border)] rounded-lg p-2.5 shrink-0 shadow-sm">
-                    <div className="flex items-center justify-center w-9 h-9 rounded bg-zinc-900/60 border border-[var(--border)]">
-                        <CpuIcon className="w-4 h-4 text-zinc-400"/>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[var(--surface-0)] border border-[var(--border)] rounded-lg p-4 shadow-sm">
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center justify-center w-10 h-10 rounded-md bg-zinc-900 border border-[var(--border)]">
+                        <CpuIcon className="w-5 h-5 text-[var(--accent-orange)]"/>
                     </div>
-                    <div className="pr-2">
-                        <div className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-0.5 flex items-center gap-2">
-                            <span>Selected GPU</span>
-                            <span className="w-1 h-1 rounded-full bg-zinc-700"></span>
-                            <span>{activeBackend}</span>
-                        </div>
-                        <div className="text-sm font-semibold text-[var(--text-strong)] truncate max-w-[280px]" title={hardwareStatus}>
-                            {hardwareStatus}
-                        </div>
+                    <div>
+                        <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">
+                            Project Dashboard
+                        </h2>
+                        <p className="text-[10px] uppercase tracking-[0.22em] text-[var(--text-muted)] mt-0.5">
+                            Forge command center · {name}
+                        </p>
                     </div>
                 </div>
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <div className="clip-anvil border border-[var(--border)] bg-[var(--surface-0)] p-4 space-y-3">
-                    <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-zinc-200">
-                        Forge Control
-                    </h3>
-                    <div className="flex items-center gap-2">
-                        <GlowButton
-                            label={(
-                                "Heating forge..."
-                                if forgeBusy
-                                else "Start / Resume Forging"
-                            )}
-                            onClick={lambda -> None { startForge();}}
-                            disabled={forgeBusy
-                            or not name
-                            or profile_active
-                            or gen_active
-                            or opt_active}
-                        />
-                        <button
-                            className="px-3 py-2 rounded-lg border border-[var(--accent-orange)]/35 bg-[var(--accent-orange)]/10 text-orange-100 text-xs font-semibold hover:bg-[var(--accent-orange)]/20 transition-colors inline-flex items-center gap-1"
-                            onClick={lambda -> None { openWorkbench();}}
-                        >
-                            Open Workbench
-                            <ArrowRightIcon className="w-3 h-3"/>
-                        </button>
-                    </div>
-                    {<div className="text-xs text-red-300">
-                        {forgeError}
-                    </div>
-                    if forgeError
-                    else <div className="text-xs text-zinc-400">
-                        {forgeNotice}
-                    </div>
-                    if forgeNotice
-                    else <span></span>}
-                </div>
-                <div className="clip-anvil border border-[var(--border)] bg-[var(--surface-0)] p-4 space-y-3">
-                    <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-zinc-200">
-                        Run Mode
-                    </h3>
-                    <div className="inline-flex rounded-md border border-[var(--border)] overflow-hidden bg-[var(--surface-1)]">
-                        <button
-                            className={"px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.15em] transition-colors " + (
-                                "bg-[var(--accent-orange)]/15 text-orange-100"
-                                if forgeMode == "auto"
-                                else "text-zinc-400 hover:text-zinc-200"
-                            )}
-                            onClick={lambda -> None { setForgeMode("auto");}}
-                        >
-                            Automatic
-                        </button>
-                        <button
-                            className={"px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.15em] border-l border-[var(--border)] transition-colors " + (
-                                "bg-[var(--accent-orange)]/15 text-orange-100"
-                                if forgeMode == "manual"
-                                else "text-zinc-400 hover:text-zinc-200"
-                            )}
-                            onClick={lambda -> None { setForgeMode("manual");}}
-                        >
-                            Manual
-                        </button>
-                    </div>
-                    {<div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                            <button
-                                className="px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-[0.14em] border border-[var(--border)] bg-[var(--surface-1)] text-zinc-300"
-                                onClick={lambda -> None { selectAllManualOps();}}
-                            >
-                                Select all
-                            </button>
-                            <button
-                                className="px-2 py-1 rounded-md text-[10px] font-semibold uppercase tracking-[0.14em] border border-[var(--border)] bg-[var(--surface-1)] text-zinc-300"
-                                onClick={lambda -> None { clearManualOps();}}
-                            >
-                                Clear
-                            </button>
-                        </div>
-                        <div className="max-h-28 overflow-y-auto clip-anvil border border-[var(--border)] bg-[var(--surface-1)] p-2 space-y-1">
-                            {manualOpItems
-                            if list_len(manualOpItems) > 0
-                            else <div className="text-xs text-zinc-500">
-                                No operators discovered yet.
-                            </div>}
-                        </div>
-                        <div className="text-[11px] uppercase tracking-[0.14em] text-zinc-500">
-                            Selected: {manualSelectedCount}
+                
+                <div className="flex flex-wrap items-center gap-6 md:gap-8 pb-2 md:pb-0">
+                    <div className="flex flex-col">
+                        <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1">Coverage</span>
+                        <div className="flex items-baseline gap-1.5">
+                            <span className="text-sm font-bold text-zinc-200">{forgedCount}</span>
+                            <span className="text-xs text-zinc-500">/ {list_len(to_list(ops))} forged</span>
                         </div>
                     </div>
-                    if forgeMode == "manual"
-                    else <div className="text-xs text-zinc-400">
-                        Automatic mode processes all discovered operators.
-                    </div>}
-                </div>
-                <div className="clip-anvil border border-[var(--border)] bg-[var(--surface-0)] p-4 space-y-3">
-                    <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-zinc-200">
-                        Forge State
-                    </h3>
-                    <div
-                        className={"px-3 py-2 clip-anvil border text-xs font-semibold uppercase tracking-[0.16em] " + forgeStateToneClass}
-                    >
-                        {forge_status}
+                    <div className="w-px h-8 bg-[var(--border)] hidden sm:block"></div>
+                    <div className="flex flex-col">
+                        <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1">Best Speedup</span>
+                        <span className="text-sm font-bold text-emerald-400">{bestSpeedupVal.toFixed(2)}×</span>
                     </div>
-                    <div className="text-sm text-zinc-200 leading-relaxed">
-                        {forge_detail}
+                    <div className="w-px h-8 bg-[var(--border)] hidden sm:block"></div>
+                    <div className="flex flex-col">
+                        <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1 flex items-center gap-1.5">
+                            Selected GPU
+                            <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse"></span>
+                        </span>
+                        <span className="text-xs font-semibold text-zinc-300 truncate max-w-[150px]" title={hardwareStatus}>{hardwareStatus}</span>
                     </div>
-                    {<div className="w-full h-1.5 rounded-sm bg-zinc-900/80 overflow-hidden border border-[var(--border)]">
-                        <div
-                            className="forge-progress-fill"
-                            style={{"width": f"{current_progress_bar}%"}}
-                        ></div>
-                    </div>
-                    if active_poll
-                    else <span></span>}
-                    {<div
-                        className="mt-1 relative rounded border border-[var(--border)] bg-zinc-950/60 overflow-hidden cursor-pointer group"
-                        onClick={lambda -> None { logModalOpen = True;}}
-                    >
-                        <div className="p-2 font-mono text-[10px] text-zinc-400 leading-[1.6] max-h-[4.5rem] overflow-hidden">
-                            <div className="text-[9px] uppercase tracking-[0.14em] text-zinc-600 mb-1">
-                                {activeLogKey + ".log — live tail"}
-                            </div>
-                            {log_line_nodes}
-                        </div>
-                        <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/75 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
-                            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-100">
-                                View more details →
-                            </span>
-                        </div>
-                    </div>
-                    if active_poll and logTail.length > 0
-                    else <span></span>}
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                        Auto-refresh: {poll_label}
-                    </div>
-                    {<div className="text-[10px] text-zinc-500 leading-relaxed">
-                        {current_state_meta}
-                    </div>
-                    if current_state_meta
-                    else <span></span>}
                 </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {status_cards}
-            </div>
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                <div className="xl:col-span-2 clip-anvil border border-[var(--border)] bg-[var(--surface-0)] p-4 space-y-3">
-                    <div className="flex flex-wrap justify-between items-center gap-3">
-                        <div>
-                            <h3 className="text-sm font-semibold text-zinc-200">
-                                Speed Comparison
-                            </h3>
-                            <p className="text-[10px] uppercase tracking-[0.14em] text-zinc-500">
-                                Top 8 slowest operators by baseline time
-                            </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="inline-flex rounded-md border border-[var(--border)] overflow-hidden bg-[var(--surface-1)]">
-                                <button
-                                    className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] transition-colors " + (
-                                        "bg-[var(--accent-orange)]/15 text-orange-100"
-                                        if comparisonView == "ratio"
-                                        else "text-zinc-400 hover:text-zinc-200"
-                                    )}
-                                    onClick={lambda -> None { setComparisonView("ratio");}}
-                                >
-                                    Ratio
-                                </button>
-                                <button
-                                    className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] border-l border-[var(--border)] transition-colors " + (
-                                        "bg-[var(--accent-orange)]/15 text-orange-100"
-                                        if comparisonView == "absolute"
-                                        else "text-zinc-400 hover:text-zinc-200"
-                                    )}
-                                    onClick={lambda -> None { setComparisonView("absolute");}}
-                                >
-                                    Absolute ms
-                                </button>
-                            </div>
-                            <button
-                                onClick={lambda -> None { benchLogOpen = True;}}
-                                className="text-[10px] px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface-1)] text-zinc-300"
-                            >
-                                benchmark.log
-                            </button>
-                        </div>
-                    </div>
-                    <div className="text-[11px] text-zinc-400">
-                        Mode: {effectiveComparisonView}
-                    </div>
-                    {<div className="w-full h-[250px] min-h-[250px]">
-                        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                            <BarChart
-                                data={to_list(speedChartData)}
-                                margin={{"top": 8, "right": 12, "left": 12, "bottom": 8}}
-                            >
-                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" vertical={False}/>
-                                <XAxis dataKey="name" stroke="#7a8494" fontSize={11} tickLine={False} axisLine={False}/>
-                                {<YAxis
-                                    stroke="#7a8494"
-                                    fontSize={11}
-                                    tickLine={False}
-                                    axisLine={False}
-                                    tickFormatter={format_tick_ratio}
-                                />
-                                if effectiveComparisonView == "ratio"
-                                else <YAxis
-                                    stroke="#7a8494"
-                                    fontSize={11}
-                                    tickLine={False}
-                                    axisLine={False}
-                                    tickFormatter={format_tick_ms}
-                                />}
-                                <Tooltip
-                                    cursor={{"fill": 'rgba(20, 26, 34, 0.45)'}}
-                                    contentStyle={{
-                                        "backgroundColor": 'rgba(11, 16, 22, 0.96)',
-                                        "borderColor": 'rgba(120, 132, 148, 0.35)',
-                                        "borderRadius": '8px',
-                                        "color": '#e5e7eb'
-                                    }}
-                                    formatter={format_tick_ratio if effectiveComparisonView == "ratio" else format_tick_ms}
-                                />
-                                <Bar dataKey="ratio" name="Kernel Forge / PyTorch" fill="#e17055" radius={[4, 4, 0, 0]} minPointSize={3} hide={effectiveComparisonView != "ratio"}/>
-                                <Bar dataKey="forged" name="Kernel Forge" fill="#e17055" radius={[4, 4, 0, 0]} minPointSize={3} hide={effectiveComparisonView != "absolute"}/>
-                                <Bar dataKey="pytorch" name="PyTorch" fill="#94a3b8" radius={[4, 4, 0, 0]} minPointSize={3} hide={effectiveComparisonView != "absolute"}/>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </div>
-                    if hasSpeedChart
-                    else <div className="text-zinc-500 text-sm italic">
-                        {charts_empty_message}
-                    </div>}
-                </div>
-                <div className="clip-anvil border border-[var(--border)] bg-[var(--surface-0)] p-4 space-y-3">
-                    <div className="flex justify-between items-center gap-2">
-                        <h3 className="text-sm font-semibold text-zinc-200">
-                            Operator Time Consumption
+
+            <div className="space-y-4">
+                <div className="rounded-md border border-[var(--border)] bg-[var(--surface-0)] overflow-hidden">
+                    <div className="p-3 border-b border-[var(--border)] bg-zinc-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-200 shrink-0">
+                            Work Queue {("(" + current_operator + ")") if current_operator else ""}
                         </h3>
-                        <div className="inline-flex rounded-md border border-[var(--border)] overflow-hidden bg-[var(--surface-1)]">
+                        {<div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs font-mono bg-black/20 rounded px-3 py-1.5 border border-[var(--border)]">
+                            <div className="flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse"></span>
+                                <span className="text-zinc-500 uppercase tracking-wider text-[10px]">GPU Slot:</span>
+                            </div>
+                            <span className="text-zinc-200 font-semibold">{benchmark_slot["now"] if benchmark_slot["now"] else "idle"}</span>
+                            {<span className="text-zinc-500">· Next: <span className="text-zinc-400">{", ".join(pending_operators)}</span></span> if list_len(pending_operators) > 0 else <span></span>}
+                        </div> if active_poll else <span></span>}
+                    </div>
+                    <div className="divide-y divide-[var(--border)] max-h-[400px] overflow-y-auto">
+                        {active_tasks_nodes
+                        if list_len(active_tasks_nodes) > 0
+                        else <div className="p-8 text-center text-xs text-zinc-500 font-mono">Queue empty</div>}
+                    </div>
+                </div>
+
+                <div className="rounded-md border border-[var(--border)] bg-[var(--surface-0)] overflow-hidden">
+                    <div className="p-3 border-b border-[var(--border)] bg-zinc-900/40 flex justify-between items-center">
+                        <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-200">
+                            Operator Results
+                        </h3>
+                        <div className="flex items-center gap-3">
                             <button
-                                className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] transition-colors " + (
-                                    "bg-[var(--accent-orange)]/15 text-orange-100"
-                                    if opTimeMode == "best"
-                                    else "text-zinc-400 hover:text-zinc-200"
-                                )}
-                                onClick={lambda -> None { setOpTimeMode("best");}}
+                                onClick={lambda -> None { setBenchLogOpen(True);}}
+                                className="text-[10px] px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface-1)] hover:bg-[var(--surface-2)] text-zinc-300 transition-colors"
                             >
-                                Best
-                            </button>
-                            <button
-                                className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] border-l border-[var(--border)] transition-colors " + (
-                                    "bg-[var(--accent-orange)]/15 text-orange-100"
-                                    if opTimeMode == "forged"
-                                    else "text-zinc-400 hover:text-zinc-200"
-                                )}
-                                onClick={lambda -> None { setOpTimeMode("forged");}}
-                            >
-                                Forged
-                            </button>
-                            <button
-                                className={"px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] border-l border-[var(--border)] transition-colors " + (
-                                    "bg-[var(--accent-orange)]/15 text-orange-100"
-                                    if opTimeMode == "pytorch"
-                                    else "text-zinc-400 hover:text-zinc-200"
-                                )}
-                                onClick={lambda -> None { setOpTimeMode("pytorch");}}
-                            >
-                                PyTorch
+                                View Log
                             </button>
                         </div>
                     </div>
-                    {<div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
-                        {to_list(timeListRows).map(
-                            lambda item: dict  -> Any { return <div
-                                key={f"{item['rank']}-{item['name']}"}
-                                className="clip-anvil border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2"
-                            >
-                                <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs text-zinc-200 truncate">
-                                        #{item["rank"] if item and "rank" in item else ""} {item["name"] if item and "name" in item else ""}
-                                    </span>
-                                    <span className="text-[11px] font-mono text-zinc-300 shrink-0">
-                                        {format_tick_ms(item["value"] if item and "value" in item else 0)}
-                                    </span>
-                                </div>
-                                <div className="mt-2 h-1.5 rounded-full border border-[var(--border)] bg-zinc-900/80 overflow-hidden">
-                                    <div
-                                        className="h-full rounded-full bg-gradient-to-r from-[var(--accent-orange)] to-[var(--molten-gold)] transition-all duration-500 ease-out"
-                                        style={{"width": item["bar_width"] if item and "bar_width" in item else "0%"}}
-                                    ></div>
-                                </div>
-                            </div>; }
-                        )}
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                            <thead>
+                                <tr className="bg-zinc-900/80 border-b border-[var(--border)] text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">
+                                    <th className="py-2.5 px-4 font-normal">Operator</th>
+                                    <th className="py-2.5 px-4 font-normal">Baseline</th>
+                                    <th className="py-2.5 px-4 font-normal">Best Kernel</th>
+                                    <th className="py-2.5 px-4 font-normal">Speedup</th>
+                                    <th className="py-2.5 px-4 font-normal">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {operatorRowsNodes}
+                            </tbody>
+                        </table>
+                        {<div className="p-8 text-center text-xs text-zinc-500 font-mono">
+                            No operators discovered yet. Profile the model to find operators.
+                        </div> if list_len(operatorRowsNodes) == 0 else <span></span>}
                     </div>
-                    if list_len(timeListRows) > 0
-                    else <div className="text-zinc-500 text-sm italic">
-                        {charts_empty_message}
-                    </div>}
                 </div>
             </div>
+            <GenerateModal
+                isOpen={generateModalOpen}
+                onClose={lambda -> None { setGenerateModalOpen(False);}}
+                onComplete={lambda -> None { setGenerateModalOpen(False);}}
+                onStarted={lambda -> None { setGenerateModalOpen(False);}}
+                projectName={name}
+                opName={modalOpName}
+            />
+            <OptimizeModal
+                isOpen={optimizeModalOpen}
+                onClose={lambda -> None { setOptimizeModalOpen(False);}}
+                onComplete={lambda -> None { setOptimizeModalOpen(False);}}
+                onStarted={lambda -> None { setOptimizeModalOpen(False);}}
+                projectName={name}
+                opName={modalOpName}
+            />
             <Modal
                 isOpen={benchLogOpen}
-                onClose={lambda -> None { benchLogOpen = False;}}
+                onClose={lambda -> None { setBenchLogOpen(False);}}
                 title="Benchmark log"
             >
                 <div className="p-4 space-y-3">
@@ -1596,7 +1515,7 @@ def:pub Dashboard -> Any {
             </Modal>
             <Modal
                 isOpen={logModalOpen}
-                onClose={lambda -> None { logModalOpen = False;}}
+                onClose={lambda -> None { setLogModalOpen(False);}}
                 title={f"{activeLogKey}.log — Live Tail"}
             >
                 <div className="p-4 font-mono text-[11px] leading-[1.75] space-y-px">

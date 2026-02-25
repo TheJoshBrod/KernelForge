@@ -2478,6 +2478,18 @@ walker:pub GetProjectStatus {
 
     can return_status with entry {
         state = _read_state(self.projectName);
+        queue_path = path.join(_project_dir(self.projectName), "queue.json");
+        queue_state = {};
+        if path.exists(queue_path) {
+            try {
+                with open(queue_path, "r") as f {
+                    queue_state = load(f);
+                }
+            } except Exception as e {
+                print(f"Failed to read queue state: {e}");
+            }
+        }
+        state["queue"] = queue_state;
         report state;
     }
 }

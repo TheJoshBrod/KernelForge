@@ -26,6 +26,37 @@ from src.optimizer.backends.triton import TritonBackend
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
+def update_queue_state(proj_base_dir: Path, updates: dict):
+    from src.optimizer.benchmarking.locks import file_lock
+    queue_path = proj_base_dir / "queue.json"
+    lock_path = queue_path.with_suffix(".json.lock")
+    with file_lock(lock_path):
+        if queue_path.exists():
+            try:
+                state = json.loads(queue_path.read_text())
+            except:
+                state = {"active_tasks": {}, "benchmark_slot": {"now": None, "pending": []}, "pending_operators": [], "current_operator": ""}
+        else:
+            state = {"active_tasks": {}, "benchmark_slot": {"now": None, "pending": []}, "pending_operators": [], "current_operator": ""}
+        
+        if "active_tasks" in updates:
+            for k, v in updates["active_tasks"].items():
+                if k not in state["active_tasks"]:
+                    state["active_tasks"][k] = {}
+                state["active_tasks"][k].update(v)
+        if "remove_tasks" in updates:
+            for k in updates["remove_tasks"]:
+                state["active_tasks"].pop(str(k), None)
+        if "benchmark_slot" in updates:
+            state["benchmark_slot"].update(updates["benchmark_slot"])
+        if "pending_operators" in updates:
+            state["pending_operators"] = updates["pending_operators"]
+        if "current_operator" in updates:
+            state["current_operator"] = updates["current_operator"]
+        
+        queue_path.write_text(json.dumps(state, indent=2))
+
+
 
 def _projects_base_dir() -> Path:
     base = _repo_root() / "kernels" / "projects"
@@ -534,6 +565,18 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
             dispatched_this_round = True
             dispatch_blocked = False
             
+            proj_base_dir = paths["proj_dir"].parent.parent
+            queue_entry = {
+                "tag": "[OPT]" if node.id > 0 else "[GEN]",
+                "op_name": paths["io_dir"].name,
+                "current_step": "Monitoring" if node.id == 0 else "Generating",
+                "attempt_current": 1,
+                "attempt_max": settings.retry_limit if hasattr(settings, 'retry_limit') else 3,
+                "parent_ref": f"kernel_{node.id}" if node.id > 0 else "",
+                "status": "In Progress"
+            }
+            update_queue_state(proj_base_dir, {"active_tasks": {str(node.id): queue_entry}})
+            
             elapsed = time.time() - start_time
             print(f"[DISPATCH] Node {node.id} ({nodes_dispatched}/{max_iterations}) | In-flight: {len(in_flight_ids)} | {elapsed:.0f}s")
         
@@ -552,13 +595,16 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
             results_collected = True
             dispatch_blocked = False
             
+            proj_base_dir = paths["proj_dir"].parent.parent
             if status == "success" and result_data is not None:
                 nodes_completed += 1
                 runtime_ms = result_data["runtime_ms"]
                 kernel_id = result_data["kernel_id"]
                 
                 parent_node = mcts._NODE_CACHE.get(node_id)
+                speedup = 1.0
                 if parent_node:
+                    speedup = parent_node.value / runtime_ms if runtime_ms > 0 else 1.0
                     new_node = KernelNode(
                         id=kernel_id,
                         parent_id=node_id,
@@ -566,16 +612,31 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                         visits=1,
                         value=runtime_ms,
                         best_subtree_value=runtime_ms,
-                        speedup_vs_parent=parent_node.value / runtime_ms if runtime_ms > 0 else 1.0,
+                        speedup_vs_parent=speedup,
                         improvement_description=result_data.get("feedback", "Parallel optimization"),
                         code=result_data["code_path"]
                     )
                     mcts.update_tree(paths, new_node)
-                    
-                    speedup = parent_node.value / runtime_ms if runtime_ms > 0 else 1.0
                     print(f"[SUCCESS] Node {node_id} -> {kernel_id} | {runtime_ms:.4f}ms | {speedup:.2f}x | Done: {nodes_completed}")
+                
+                update_queue_state(proj_base_dir, {
+                    "active_tasks": {str(node_id): {"current_step": "Done", "result": f"{speedup:.2f}x", "status": "Done"}},
+                    "benchmark_slot": {"now": None, "pending": []}
+                })
+            elif status == "status_update":
+                step_name = result_data.get("step")
+                update_dict = {"current_step": step_name, "attempt_current": result_data.get("attempt", 1)}
+                bm_slot = {}
+                if step_name == "Benchmarking":
+                    bm_slot = {"benchmark_slot": {"now": f"{paths['io_dir'].name} · kernel_{node_id}", "pending": []}}
+                update_queue_state(proj_base_dir, {"active_tasks": {str(node_id): update_dict}, **bm_slot})
             else:
                 nodes_failed += 1
+                error_label = status[:50] if isinstance(status, str) else "Failed"
+                update_queue_state(proj_base_dir, {
+                    "active_tasks": {str(node_id): {"current_step": "Failed", "result": error_label, "status": "Failed"}},
+                    "benchmark_slot": {"now": None, "pending": []}
+                })
                 print(f"[FAILED] Node {node_id}: {status}")
         
         # If nothing happened this round and we have in-flight work, wait
@@ -822,6 +883,15 @@ Examples:
         operators_to_process = [d for d in proj_dir.iterdir() if d.is_dir()]
         print(f"Processing all operators ({len(operators_to_process)} found)")
 
+    # Initialize queue status
+    proj_base_dir = proj_dir.parent
+    update_queue_state(proj_base_dir, {
+        "pending_operators": [d.name for d in operators_to_process],
+        "active_tasks": {},
+        "benchmark_slot": {"now": None, "pending": []},
+        "current_operator": ""
+    })
+
     # Process each operator
     for op_dir_path in operators_to_process:
         op_name = op_dir_path.name
@@ -839,6 +909,10 @@ Examples:
                 f"new_nodes=0 last_reason={json.dumps(_compact_reason(reason))}"
             )
             continue
+            
+        update_queue_state(proj_base_dir, {
+            "current_operator": op_name
+        })
 
         # Paths for optimization
         paths = {
