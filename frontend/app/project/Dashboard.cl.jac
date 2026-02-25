@@ -624,9 +624,18 @@ def:pub Dashboard -> Any {
 
     useEffect(lambda -> None { refreshData();}, [name]);
 
+    # Stable boolean dep for the polling effect — only flips when jobs start/stop,
+    # not on every status object update.  Computed before the effect so it is
+    # defined once per render and never reassigned (avoids var-scoping issues).
+    _ep_profile = status["profile"] if status and "profile" in status else {};
+    _ep_gen = status["generate"] if status and "generate" in status else {};
+    _ep_opt = status["optimize"] if status and "optimize" in status else {};
+    _ep_bench = status["benchmark"] if status and "benchmark" in status else {};
+    any_job_active = forgeBusy or is_job_active(_ep_profile) or is_job_active(_ep_gen) or is_job_active(_ep_opt) or is_job_active(_ep_bench);
+
     # Auto-refresh status (faster while active, slower while idle)
     useEffect(
-        lambda -> Any { poll_ms = get_profile_poll_ms();timer = setInterval(
+        lambda -> Any { poll_ms = 1500 if any_job_active else 15000;timer = setInterval(
             lambda -> None { __jacSpawn("GetProjectStatus", "", {"projectName": name}).then(
                 lambda resp: any  -> None { data = resp.reports[0]
                 if resp and resp.reports
@@ -688,7 +697,7 @@ def:pub Dashboard -> Any {
             );},
             poll_ms
         );return lambda -> None { clearInterval(timer);}; },
-        [name, forgeBusy, status]
+        [name, forgeBusy, any_job_active]
     );
 
     async def fetchSystemInfo -> None {
@@ -1152,7 +1161,7 @@ def:pub Dashboard -> Any {
         tag = task["tag"];
         
         track_nodes = [];
-        steps = ["Monitoring", "Generating", "Verifying", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Verifying", "Benchmarking"];
+        steps = ["Monitoring", "Generating", "Verifying", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
         
         c_idx = -1;
         for i in range(list_len(steps)) {
@@ -1189,21 +1198,26 @@ def:pub Dashboard -> Any {
         }
         
         bar_w = "0%";
-        if c_step == "Generating" { bar_w = "40%"; }
-        elif c_step == "Verifying" { bar_w = "70%"; }
-        elif c_step == "Benchmarking" { bar_w = "90%"; }
+        if c_step == "Generating" { bar_w = "33%"; }
+        elif c_step == "Verifying" { bar_w = "66%"; }
+        elif c_step == "Validating" { bar_w = "66%"; }
+        elif c_step == "Benchmarking" { bar_w = "85%"; }
+        elif c_step == "Profiling" { bar_w = "85%"; }
         elif c_step == "Done" { bar_w = "100%"; }
         
         sub_info = "";
-        if tag == "[OPT]" and task["parent_ref"] {
-            sub_info = sub_info + "from parent: " + task["parent_ref"] + " · ";
+        if "iter_current" in task and "iter_max" in task {
+            sub_info = f"iter {str(task['iter_current'])}/{str(task['iter_max'])} · ";
+        }
+        if tag == "[OPT]" and "parent_ref" in task and task["parent_ref"] {
+            sub_info = sub_info + "parent: " + task["parent_ref"] + " · ";
         }
         if c_step == "Failed" {
-            sub_info = sub_info + (task["result"] if "result" in task else "verification failed");
+            sub_info = sub_info + (task["result"] if "result" in task else "validation failed");
         } else {
-            atmpt = str(task["attempt_current"]);
-            max_atmpt = str(task["attempt_max"]);
-            sub_info = sub_info + f"attempt {atmpt} / {max_atmpt}";
+            atmpt = str(task["attempt_current"] if "attempt_current" in task else 1);
+            max_atmpt = str(task["attempt_max"] if "attempt_max" in task else 3);
+            sub_info = sub_info + f"attempt {atmpt}/{max_atmpt}";
         }
         
         active_tasks_nodes.push(
@@ -1215,7 +1229,7 @@ def:pub Dashboard -> Any {
                     </div>
                     <div className="flex items-center gap-3">
                         {<div className="w-24 h-1.5 bg-zinc-900 rounded overflow-hidden">
-                            <div className={"h-full transition-all duration-300 " + ("bg-emerald-500" if c_step == "Done" else ("bg-red-500" if c_step == "Failed" else "bg-[var(--accent-orange)]"))} style={{"width": bar_w}}></div>
+                            <div className={"h-full transition-all duration-500 " + ("bg-emerald-500" if c_step == "Done" else ("bg-red-500" if c_step == "Failed" else "forge-progress-fill"))} style={{"width": bar_w}}></div>
                         </div> if c_step != "Failed" and c_step != "Done" else <span></span>}
                         <span className={"font-mono text-xs text-right " + ("text-red-400" if c_step == "Failed" else ("text-emerald-400" if c_step == "Done" else "text-zinc-400"))}>{status_label}</span>
                     </div>
@@ -1432,7 +1446,7 @@ def:pub Dashboard -> Any {
                     </div>
                     <div className="divide-y divide-[var(--border)] max-h-[400px] overflow-y-auto">
                         {active_tasks_nodes
-                        if list_len(active_tasks_nodes) > 0
+                        if list_len(active_tasks_nodes) > 0 and active_poll
                         else <div className="p-8 text-center text-xs text-zinc-500 font-mono">Queue empty</div>}
                     </div>
                 </div>

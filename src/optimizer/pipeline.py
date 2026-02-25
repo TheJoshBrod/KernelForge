@@ -154,7 +154,9 @@ def optimize(
     paths: dict[str, Path],
     parent_node: KernelNode,
     ssh_config: dict = None,
-    model: str = None
+    model: str = None,
+    _proj_base_dir: Path = None,
+    _task_key: str = None,
 ) -> tuple[KernelNode | None, str]:
     """Optimizes target kernel
     """
@@ -192,6 +194,8 @@ def optimize(
 
         # If valid, profile and save normally
         if is_valid:
+            if _proj_base_dir and _task_key:
+                update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {"current_step": "Profiling"}}})
             log_entry, new_node = save_iteration(
                 backend, paths, parent_node, improvement_description, str(paths["proj_dir"] / "kernels" / f"kernel_{parent_node.id}{backend.kernel_extension}"), ssh_config=ssh_config)
             return new_node, ""
@@ -942,13 +946,27 @@ Examples:
             # === SEQUENTIAL MODE (original) ===
             op_new_nodes = 0
             op_last_reason = ""
+            task_key = "seq_opt"
+            retry_limit = getattr(settings, 'retry_limit', 3)
             for i in range(args.max_iterations):
                 # Select parent node then optimize off of it
                 parent_node = mcts.choose_optimization(paths)
+                update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
+                    "tag": "[OPT]",
+                    "op_name": op_name,
+                    "current_step": "Generating",
+                    "attempt_current": 1,
+                    "attempt_max": retry_limit,
+                    "parent_ref": f"kernel_{parent_node.id}",
+                    "status": "In Progress",
+                    "iter_current": i + 1,
+                    "iter_max": args.max_iterations,
+                }}})
                 new_node, failure_reason = optimize(
-                    backend, gpu_specs, paths, parent_node, ssh_config, model=model_name
+                    backend, gpu_specs, paths, parent_node, ssh_config, model=model_name,
+                    _proj_base_dir=proj_base_dir, _task_key=task_key,
                 )
-                
+
                 # Update tree with the new node (always saved now)
                 if new_node:
                     mcts.update_tree(paths, new_node)
@@ -956,7 +974,25 @@ Examples:
                     if new_node.value is not None:
                         op_new_nodes += 1
                         op_last_reason = ""
-                
+                        speedup = parent_node.value / new_node.value if new_node.value > 0 else 1.0
+                        update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
+                            "current_step": "Done",
+                            "result": f"{speedup:.2f}x",
+                            "status": "Done",
+                        }}})
+                    else:
+                        update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
+                            "current_step": "Failed",
+                            "result": "validation failed",
+                            "status": "Failed",
+                        }}})
+                else:
+                    update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
+                        "current_step": "Failed",
+                        "result": "no kernel produced",
+                        "status": "Failed",
+                    }}})
+
                 if (i + 1) % 10 == 0:
                     print(f"  Progress: {i+1}/{args.max_iterations} iterations")
             if op_new_nodes > 0:

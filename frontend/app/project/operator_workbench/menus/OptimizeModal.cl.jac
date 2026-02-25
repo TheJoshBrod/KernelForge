@@ -30,7 +30,14 @@ def:pub OptimizeModal(props: any) -> Any {
 
     ssh_connections = config["ssh_connections"] if config and "ssh_connections" in config else [];
     active_ssh_index = config["active_ssh_index"] if config and "active_ssh_index" in config else -1;
-    active_ssh = ssh_connections[active_ssh_index] if active_ssh_index >= 0 and ssh_connections.length > active_ssh_index else None;
+    
+    selected_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
+    is_remote_gpu = selected_gpu_info and "connection" in selected_gpu_info and selected_gpu_info["connection"] != "local";
+    
+    active_ssh = None;
+    if is_remote_gpu and active_ssh_index >= 0 and ssh_connections.length > active_ssh_index {
+        active_ssh = ssh_connections[active_ssh_index];
+    }
 
     is_working_state = useState(False);
     isWorking = is_working_state[0];
@@ -245,7 +252,7 @@ def:pub OptimizeModal(props: any) -> Any {
             if llmProvider {
                 payload["llm_provider"] = llmProvider;
             }
-            if active_ssh_index >= 0 and ssh_connections.length > active_ssh_index {
+            if active_ssh {
                 payload["ssh_connections"] = ssh_connections;
                 payload["active_ssh_index"] = active_ssh_index;
             }

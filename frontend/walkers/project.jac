@@ -1185,6 +1185,7 @@ def _start_job(project_name: str, job_key: str, cmd: list, log_name: str) -> dic
     child_env = os.environ.copy();
     child_env["KFORGE_STATE_PATH"] = path.join(_project_dir(project_name), "state.json");
     child_env["KFORGE_JOB_KEY"] = job_key;
+    child_env["PYTHONUNBUFFERED"] = "1";
     log_file = open(log_path, "a");
     proc = subprocess.Popen(
         cmd,
@@ -1196,6 +1197,48 @@ def _start_job(project_name: str, job_key: str, cmd: list, log_name: str) -> dic
     log_file.close();
     _update_job_state(project_name, job_key, {"pid": proc.pid});
     return {"success": True, "pid": proc.pid, "log": log_path};
+}
+
+def _write_initial_queue_state(project_name: str, ops_list: list, tag: str) -> None {
+    queue_path = path.join(_project_dir(project_name), "queue.json");
+    active_tasks = {};
+    if tag == "[OPT]" {
+        # Sequential optimize mode uses "seq_opt" as the task key — match it
+        if len(ops_list) > 0 {
+            active_tasks["seq_opt"] = {
+                "tag": "[OPT]",
+                "op_name": str(ops_list[0]),
+                "current_step": "Starting",
+                "attempt_current": 1,
+                "attempt_max": 3,
+                "status": "Starting"
+            };
+        }
+    } else {
+        for op in ops_list {
+            active_tasks["gen_" + str(op)] = {
+                "tag": "[GEN]",
+                "op_name": str(op),
+                "current_step": "Monitoring",
+                "attempt_current": 1,
+                "attempt_max": 1,
+                "status": "Starting"
+            };
+        }
+    }
+    queue_data = {
+        "pending_operators": [str(o) for o in ops_list],
+        "active_tasks": active_tasks,
+        "benchmark_slot": {"now": None, "pending": []},
+        "current_operator": str(ops_list[0]) if len(ops_list) > 0 else ""
+    };
+    try {
+        with open(queue_path, "w") as f {
+            dump(queue_data, f);
+        }
+    } except Exception as e {
+        print(f"Failed to write initial queue state: {e}");
+    }
 }
 
 def _start_job_container(
@@ -2662,6 +2705,9 @@ walker:pub StartGenerate {
             }
         }
         result = _start_job(self.projectName, "generate", cmd, "generate.log");
+        if result and "success" in result and result["success"] {
+            _write_initial_queue_state(self.projectName, ops_list, "[GEN]");
+        }
         report result;
     }
 }
@@ -2745,6 +2791,9 @@ walker:pub StartOptimize {
             }
         }
         result = _start_job(self.projectName, "optimize", cmd, "optimize.log");
+        if result and "success" in result and result["success"] {
+            _write_initial_queue_state(self.projectName, ops_list, "[OPT]");
+        }
         report result;
     }
 }

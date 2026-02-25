@@ -469,7 +469,21 @@ def run_optimize(args: argparse.Namespace) -> int:
     if not ops:
         ops = _discover_ops(io_dir)
 
-    for op_name in ops:
+    total = len(ops)
+    update_job_progress(0, total or 1, "Starting kernel optimization.")
+
+    for idx, op_name in enumerate(ops):
+        if not wait_if_paused():
+            return 130
+        if check_cancelled():
+            return 130
+
+        update_job_progress(
+            idx,
+            total,
+            f"Optimizing {op_name} ({idx + 1}/{total})",
+        )
+
         opt_cmd = [
             sys.executable,
             "-m",
@@ -490,13 +504,24 @@ def run_optimize(args: argparse.Namespace) -> int:
                 f"[workflow-optimize-result] op={op_name} status=hard_error "
                 f"new_nodes=0 last_reason={json.dumps(reason)}"
             )
+            update_job_progress(
+                idx + 1,
+                total,
+                f"Optimization failed for {op_name} (exit {rc}).",
+            )
             return rc
         print(
             f"[workflow-optimize-result] op={op_name} status=completed "
             f"pipeline_exit={rc}"
         )
+        update_job_progress(
+            idx + 1,
+            total,
+            f"Optimized {idx + 1}/{total} operators.",
+        )
 
     if args.benchmark:
+        update_job_progress(total, total, "Benchmarking optimized kernels.")
         bench_cmd = [
             sys.executable,
             "-m",
@@ -508,6 +533,7 @@ def run_optimize(args: argparse.Namespace) -> int:
         if rc != 0:
             return rc
 
+    update_job_progress(total, total, "Kernel optimization completed.")
     return 0
 
 
