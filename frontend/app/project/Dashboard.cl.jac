@@ -1136,23 +1136,7 @@ def:pub Dashboard -> Any {
             </div>
         </div>
     );
-    status_cards.push(
-        <div key="metric-gpu" className={metricCardClass}>
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"></div>
-            <div className="flex items-center justify-between mb-3">
-                <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                    Selected GPU
-                </span>
-                <CpuIcon className="w-4 h-4 text-zinc-300"/>
-            </div>
-            <div className="text-sm font-semibold text-[var(--text-strong)] truncate" title={hardwareStatus}>
-                {hardwareStatus}
-            </div>
-            <div className="mt-2 text-[11px] uppercase tracking-[0.16em] text-zinc-500">
-                Backend: {activeBackend}
-            </div>
-        </div>
-    );
+
     status_cards.push(
         <div key="metric-speedup" className={metricCardClass}>
             <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent-orange)]/65 to-transparent"></div>
@@ -1248,13 +1232,30 @@ def:pub Dashboard -> Any {
 
     return
         <div className="p-6 md:p-8 max-w-7xl mx-auto space-y-6">
-            <div className="space-y-1">
-                <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-[var(--text-strong)]">
-                    Project Dashboard
-                </h2>
-                <p className="text-[10px] uppercase tracking-[0.22em] text-[var(--text-muted)]">
-                    Forge command center · {name}
-                </p>
+            <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                <div className="space-y-1">
+                    <h2 className="text-2xl md:text-3xl font-semibold tracking-tight text-[var(--text-strong)]">
+                        Project Dashboard
+                    </h2>
+                    <p className="text-[10px] uppercase tracking-[0.22em] text-[var(--text-muted)]">
+                        Forge command center · {name}
+                    </p>
+                </div>
+                <div className="flex items-center gap-3 bg-[var(--surface-0)] border border-[var(--border)] rounded-lg p-2.5 shrink-0 shadow-sm">
+                    <div className="flex items-center justify-center w-9 h-9 rounded bg-zinc-900/60 border border-[var(--border)]">
+                        <CpuIcon className="w-4 h-4 text-zinc-400"/>
+                    </div>
+                    <div className="pr-2">
+                        <div className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-0.5 flex items-center gap-2">
+                            <span>Selected GPU</span>
+                            <span className="w-1 h-1 rounded-full bg-zinc-700"></span>
+                            <span>{activeBackend}</span>
+                        </div>
+                        <div className="text-sm font-semibold text-[var(--text-strong)] truncate max-w-[280px]" title={hardwareStatus}>
+                            {hardwareStatus}
+                        </div>
+                    </div>
+                </div>
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 <div className="clip-anvil border border-[var(--border)] bg-[var(--surface-0)] p-4 space-y-3">
@@ -1398,7 +1399,7 @@ def:pub Dashboard -> Any {
                     else <span></span>}
                 </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {status_cards}
             </div>
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
