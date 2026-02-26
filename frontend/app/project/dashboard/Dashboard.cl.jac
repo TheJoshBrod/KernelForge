@@ -2,14 +2,6 @@
 
 import from react { useEffect, useLayoutEffect, useState }
 import from "react-router-dom" { useNavigate, useParams }
-import from ...components.ui.Icons {
-    CpuIcon,
-    ShieldCheckIcon,
-    ArrowRightIcon,
-    CheckIcon
-}
-import from ...components.ui.GlowButton { GlowButton }
-import from ...components.ui.Modal { Modal }
 import from recharts {
     BarChart,
     Bar,
@@ -19,10 +11,10 @@ import from recharts {
     Tooltip,
     ResponsiveContainer
 }
-import from ...context.ConfigContext { useConfig }
-import from .operator_workbench.menus.GenerateModal { GenerateModal }
-import from .operator_workbench.menus.OptimizeModal { OptimizeModal }
-import from .shared.MetricsAdapter {
+import from ....context.ConfigContext { useConfig }
+import from ..operator_workbench.menus.GenerateModal { GenerateModal }
+import from ..operator_workbench.menus.OptimizeModal { OptimizeModal }
+import from ..shared.MetricsAdapter {
     to_num,
     to_list,
     list_len,
@@ -31,6 +23,18 @@ import from .shared.MetricsAdapter {
     build_dashboard_metrics_view,
     compute_speed_kpis
 }
+import from .DashboardUtils {
+    format_op,
+    format_op_short,
+    format_tick_op,
+    format_tick_ms,
+    format_tick_ratio
+}
+import from .DashboardHeader { DashboardHeader }
+import from .WorkQueuePanel { WorkQueuePanel }
+import from .OperatorResultsTable { OperatorResultsTable }
+import from .BenchmarkLogModal { BenchmarkLogModal }
+import from .JobLogModal { JobLogModal }
 
 def:pub Dashboard -> Any {
     navigate = useNavigate();
@@ -210,59 +214,6 @@ def:pub Dashboard -> Any {
         speedChartData.push(chart_row);
     }
     hasSpeedChart = list_len(speedChartData) > 0;
-
-    def format_op(raw: str) -> str {
-        raw_text = raw or "";
-        prefix = "torch_nn_functional_";
-        if raw_text.startsWith(prefix) {
-            return "torch.nn.functional." + raw_text.replace(prefix, "");
-        }
-        return raw_text.replace("_", ".");
-    }
-
-    def format_op_short(raw: str) -> str {
-        full = format_op(raw);
-        prefix = "torch.nn.functional.";
-        if full.startsWith(prefix) {
-            return full.replace(prefix, "");
-        }
-        return full;
-    }
-
-    def format_tick_op(value: any) -> str {
-        return format_op_short(str(value));
-    }
-
-    def format_tick_ms(value: any) -> str {
-        num = to_num(value);
-        if num is None {
-            return "0 ms";
-        }
-        if num <= 0 {
-            return "0 ms";
-        }
-        if num < 0.000001 {
-            return f"{num.toExponential(2)} ms";
-        }
-        if num < 0.001 {
-            return f"{(num * 1000).toFixed(3)} µs";
-        }
-        if num < 0.01 {
-            return f"{num.toFixed(5)} ms";
-        }
-        if num < 1 {
-            return f"{num.toFixed(3)} ms";
-        }
-        return f"{num.toFixed(2)} ms";
-    }
-
-    def format_tick_ratio(value: any) -> str {
-        num = to_num(value);
-        if num is None {
-            return "--";
-        }
-        return f"{num.toFixed(2)}x";
-    }
 
     def get_dashboard_cache_store -> dict {
         try {
@@ -1098,23 +1049,6 @@ def:pub Dashboard -> Any {
         current_progress_bar = 4;
     }
 
-    log_line_nodes = [];
-    for log_line in to_list(logTail) {
-        ls = str(log_line);
-        lsl = ls.toLowerCase();
-        lc = "truncate ";
-        if lsl.includes("error") or lsl.includes("failed") or lsl.includes("exception") {
-            lc = lc + "text-red-400";
-        } elif lsl.includes("warning") {
-            lc = lc + "text-yellow-400/80";
-        } elif lsl.includes("success") or lsl.includes("passed") or lsl.includes("completed") {
-            lc = lc + "text-emerald-400/80";
-        } elif ls.startsWith("[workflow]") or ls.startsWith("[Remote]") or ls.startsWith("DEBUG:") {
-            lc = lc + "text-zinc-300";
-        }
-        log_line_nodes.push(<div key={ls} className={lc}>{ls}</div>);
-    }
-
     forge_status = "Idle";
     if current_phase == "queued" {
         forge_status = "Heating up the forge";
@@ -1159,97 +1093,6 @@ def:pub Dashboard -> Any {
     benchmark_slot = queue_data["benchmark_slot"] if "benchmark_slot" in queue_data else {"now": None, "pending": []};
     pending_operators = queue_data["pending_operators"] if "pending_operators" in queue_data else [];
     current_operator = queue_data["current_operator"] if "current_operator" in queue_data else "";
-
-    active_tasks_nodes = [];
-    for task in active_tasks {
-        c_step = task["current_step"];
-        tag = task["tag"];
-        
-        track_nodes = [];
-        steps = ["Monitoring", "Generating", "Verifying", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
-        
-        c_idx = -1;
-        for i in range(list_len(steps)) {
-            if steps[i] == c_step {
-                c_idx = i;
-            }
-        }
-        
-        for i in range(list_len(steps)) {
-            s = steps[i];
-            is_active = (i == c_idx);
-            is_done = (c_step == "Done" or c_step == "Failed" or (c_idx > -1 and i < c_idx));
-            
-            s_label = s;
-            if is_active {
-                s_label = f"[{s}]";
-                track_nodes.push(<span key={s} className="text-[var(--accent-orange)] font-semibold">{s_label}</span>);
-            } elif is_done {
-                s_label = s + (" ✓" if c_step != "Failed" else "");
-                track_nodes.push(<span key={s} className="text-zinc-500">{s_label}</span>);
-            } else {
-                track_nodes.push(<span key={s} className="text-zinc-600">{s_label}</span>);
-            }
-            if i < list_len(steps) - 1 {
-                track_nodes.push(<span key={s + "sep"} className="text-zinc-700 mx-1.5">→</span>);
-            }
-        }
-        
-        status_label = c_step;
-        if c_step == "Done" {
-            status_label = "Done " + (task["result"] if "result" in task else "");
-        } elif c_step == "Failed" {
-            status_label = "Failed";
-        }
-        
-        bar_w = "0%";
-        if c_step == "Generating" { bar_w = "33%"; }
-        elif c_step == "Verifying" { bar_w = "66%"; }
-        elif c_step == "Validating" { bar_w = "66%"; }
-        elif c_step == "Benchmarking" { bar_w = "85%"; }
-        elif c_step == "Profiling" { bar_w = "85%"; }
-        elif c_step == "Done" { bar_w = "100%"; }
-        
-        sub_info = "";
-        if "iter_current" in task and "iter_max" in task {
-            sub_info = f"iter {str(task['iter_current'])}/{str(task['iter_max'])} · ";
-        }
-        if tag == "[OPT]" and "parent_ref" in task and task["parent_ref"] {
-            sub_info = sub_info + "parent: " + task["parent_ref"] + " · ";
-        }
-        if c_step == "Failed" {
-            sub_info = sub_info + (task["result"] if "result" in task else "validation failed");
-        } else {
-            atmpt = str(task["attempt_current"] if "attempt_current" in task else 1);
-            max_atmpt = str(task["attempt_max"] if "attempt_max" in task else 3);
-            sub_info = sub_info + f"attempt {atmpt}/{max_atmpt}";
-        }
-        
-        active_tasks_nodes.push(
-            <div key={task["id"]} className="p-4 bg-[var(--surface-0)] hover:bg-[var(--surface-1)] transition-colors group">
-                <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-3 font-mono text-xs">
-                        <span className={"font-semibold " + ("text-emerald-400" if tag == "[GEN]" else "text-blue-400")}>{tag}</span>
-                        <span className="text-zinc-200">{task["op_name"]} · node {task["id"]}</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        {<div className="w-24 h-1.5 bg-zinc-900 rounded overflow-hidden">
-                            <div className={"h-full transition-all duration-500 " + ("bg-emerald-500" if c_step == "Done" else ("bg-red-500" if c_step == "Failed" else "forge-progress-fill"))} style={{"width": bar_w}}></div>
-                        </div> if c_step != "Failed" and c_step != "Done" else <span></span>}
-                        <span className={"font-mono text-xs text-right " + ("text-red-400" if c_step == "Failed" else ("text-emerald-400" if c_step == "Done" else "text-zinc-400"))}>{status_label}</span>
-                    </div>
-                </div>
-                <div className="flex items-center justify-between font-mono text-[10px] text-zinc-500 pl-11">
-                    <div className="flex items-center">
-                        {track_nodes}
-                    </div>
-                    <div className="text-zinc-600 truncate max-w-[200px]" title={sub_info}>
-                        {sub_info}
-                    </div>
-                </div>
-            </div>
-        );
-    }
 
     forgedCount = 0;
     totalPytorchMs = 0.0;
@@ -1329,7 +1172,7 @@ def:pub Dashboard -> Any {
     if totalPytorchMs > 0 and totalForgedMs > 0 and totalPytorchMs > totalForgedMs {
         modelSpeedupPct = ((totalPytorchMs - totalForgedMs) / totalPytorchMs) * 100.0;
     }
-    
+
     operatorRows.sort(lambda a: dict, b: dict -> int {
         if not a and not b { return 0; }
         if not a { return 1; }
@@ -1347,171 +1190,44 @@ def:pub Dashboard -> Any {
         b_forged = b["is_forged"] if "is_forged" in b else False;
         if a_forged and not b_forged { return -1; }
         if not a_forged and b_forged { return 1; }
-        
+
         a_ratio = a["ratio"] if "ratio" in a else 0.0;
         b_ratio = b["ratio"] if "ratio" in b else 0.0;
         if a_ratio > b_ratio { return -1; }
         if a_ratio < b_ratio { return 1; }
-        
+
         return 0;
     });
 
-    operatorRowsNodes = [];
-    for r in operatorRows {
-        if not r {
-            continue;
-        }
-        r_stat = r["status"] if "status" in r else "Not started";
-        r_short = r["short"] if "short" in r else "";
-        r_baseline = r["baseline"] if "baseline" in r else "--";
-        r_best = r["best"] if "best" in r else "--";
-        r_speedup = r["speedup"] if "speedup" in r else "--";
-        r_is_forged = r["is_forged"] if "is_forged" in r else False;
-        r_name = r["name"] if "name" in r else "";
-
-        row_status_color = "text-zinc-500";
-        if r_stat == "Forged ✓" { row_status_color = "text-emerald-400"; }
-        elif r_stat != "Not started" and r_stat != "Benchmarked" { row_status_color = "text-[var(--accent-orange)] animate-pulse"; }
-        
-        action_text = "Optimize" if r_stat == "Benchmarked" or r_stat == "Forged ✓" else "Generate";
-        action_colors = "border-[var(--accent-orange)]/40 text-[var(--accent-orange)] hover:bg-[var(--accent-orange)] hover:text-zinc-950" if action_text == "Optimize" else "border-zinc-600 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 hover:border-zinc-500";
-        action_btn_class = f"px-2 py-0.5 bg-transparent border rounded text-[10px] uppercase font-semibold transition-colors {action_colors}";
-        
-        operatorRowsNodes.push(
-            <tr
-                key={r_name}
-                className="border-b border-[var(--border)] bg-[var(--surface-1)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
-                onClick={lambda -> None { navigate(f"/project/{name}/operator-workbench/{r_name}"); }}
-            >
-                <td className="py-2.5 px-4 font-mono text-xs text-zinc-200" title={r_name}>{r_short}</td>
-                <td className="py-2.5 px-4 font-mono text-xs text-zinc-400">{r_baseline}</td>
-                <td className="py-2.5 px-4 font-mono text-xs text-zinc-300">{r_best}</td>
-                <td className={"py-2.5 px-4 font-mono text-xs " + ("text-emerald-400 font-semibold" if r_is_forged else "text-zinc-500")}>{r_speedup}</td>
-                <td className="py-2 px-4 font-mono text-xs flex items-center justify-between">
-                    <span className={row_status_color}>{r_stat}</span>
-                    <button
-                        data-opname={r_name}
-                        data-action={action_text}
-                        onClick={lambda e: any -> None { openActionModal(e, e.currentTarget.getAttribute("data-opname"), e.currentTarget.getAttribute("data-action")); }}
-                        className={action_btn_class}
-                    >
-                        {action_text}
-                    </button>
-                </td>
-            </tr>
-        );
-    }
-
     return
         <div className="p-6 md:p-8 max-w-7xl mx-auto space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[var(--surface-0)] border border-[var(--border)] rounded-lg p-4 shadow-sm">
-                <div className="flex items-center gap-4">
-                    <div className="flex items-center justify-center w-10 h-10 rounded-md bg-zinc-900 border border-[var(--border)]">
-                        <CpuIcon className="w-5 h-5 text-[var(--accent-orange)]"/>
-                    </div>
-                    <div>
-                        <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">
-                            Project Dashboard
-                        </h2>
-                        <p className="text-[10px] uppercase tracking-[0.22em] text-[var(--text-muted)] mt-0.5">
-                            Forge command center · {name}
-                        </p>
-                    </div>
-                </div>
-                
-                <div className="flex flex-wrap items-center gap-6 md:gap-8 pb-2 md:pb-0">
-                    <div
-                        className="flex flex-col cursor-help"
-                        onMouseMove={lambda e: any -> None { setForgedTooltipPos({"x": e.clientX, "y": e.clientY}); }}
-                        onMouseLeave={lambda -> None { setForgedTooltipPos(None); }}
-                    >
-                        <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1">Coverage</span>
-                        <div className="flex items-baseline gap-1.5">
-                            <span className="text-sm font-bold text-zinc-200">{forgedCount}</span>
-                            <span className="text-xs text-zinc-500">/ {list_len(to_list(ops))} forged</span>
-                        </div>
-                    </div>
-                    <div className="w-px h-8 bg-[var(--border)] hidden sm:block"></div>
-                    <div className="flex flex-col">
-                        <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1">Model Speedup</span>
-                        {<span className="text-sm font-bold text-emerald-400">+{modelSpeedupPct.toFixed(1)}% faster</span>
-                        if modelSpeedupPct > 0
-                        else <span className="text-sm font-bold text-zinc-500">—</span>}
-                    </div>
-                    <div className="w-px h-8 bg-[var(--border)] hidden sm:block"></div>
-                    <div className="flex flex-col">
-                        <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1">
-                            Selected GPU
-                        </span>
-                        <span className="text-xs font-semibold text-zinc-300" title={hardwareStatus}>{hardwareStatus}</span>
-                    </div>
-                </div>
-            </div>
-
+            <DashboardHeader
+                name={name}
+                forgedCount={forgedCount}
+                opsCount={list_len(to_list(ops))}
+                modelSpeedupPct={modelSpeedupPct}
+                hardwareStatus={hardwareStatus}
+                forgedTooltipPos={forgedTooltipPos}
+                setForgedTooltipPos={setForgedTooltipPos}
+            />
             <div className="space-y-4">
-                <div className="rounded-md border border-[var(--border)] bg-[var(--surface-0)] overflow-hidden">
-                    <div className="p-3 border-b border-[var(--border)] bg-zinc-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div className="flex items-center gap-3 shrink-0">
-                            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-200">
-                                Work Queue {("(" + current_operator + ")") if current_operator else ""}
-                            </h3>
-                            <button
-                                onClick={lambda -> None { __jacSpawn("ClearProjectQueue", "", {"projectName": name}).then(lambda _r: any -> None { refreshData();});}}
-                                className="text-[10px] px-2 py-0.5 rounded border border-zinc-700 bg-zinc-900 hover:border-zinc-500 hover:text-zinc-200 text-zinc-500 transition-colors font-mono"
-                            >
-                                clear
-                            </button>
-                        </div>
-                        {<div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs font-mono bg-black/20 rounded px-3 py-1.5 border border-[var(--border)]">
-                            <div className="flex items-center gap-1.5">
-                                <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse"></span>
-                                <span className="text-zinc-500 uppercase tracking-wider text-[10px]">GPU Slot:</span>
-                            </div>
-                            <span className="text-zinc-200 font-semibold">{benchmark_slot["now"] if benchmark_slot["now"] else "idle"}</span>
-                            {<span className="text-zinc-500">· Next: <span className="text-zinc-400">{", ".join(pending_operators)}</span></span> if list_len(pending_operators) > 0 else <span></span>}
-                        </div> if active_poll else <span></span>}
-                    </div>
-                    <div className="divide-y divide-[var(--border)] max-h-[400px] overflow-y-auto">
-                        {active_tasks_nodes
-                        if list_len(active_tasks_nodes) > 0 and active_poll
-                        else <div className="p-8 text-center text-xs text-zinc-500 font-mono">Queue empty</div>}
-                    </div>
-                </div>
-
-                <div className="rounded-md border border-[var(--border)] bg-[var(--surface-0)] overflow-hidden">
-                    <div className="p-3 border-b border-[var(--border)] bg-zinc-900/40 flex justify-between items-center">
-                        <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-200">
-                            Operator Results
-                        </h3>
-                        <div className="flex items-center gap-3">
-                            <button
-                                onClick={lambda -> None { setBenchLogOpen(True);}}
-                                className="text-[10px] px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface-1)] hover:bg-[var(--surface-2)] text-zinc-300 transition-colors"
-                            >
-                                View Log
-                            </button>
-                        </div>
-                    </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
-                            <thead>
-                                <tr className="bg-zinc-900/80 border-b border-[var(--border)] text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">
-                                    <th className="py-2.5 px-4 font-normal">Operator</th>
-                                    <th className="py-2.5 px-4 font-normal">PyTorch</th>
-                                    <th className="py-2.5 px-4 font-normal">Best Kernel</th>
-                                    <th className="py-2.5 px-4 font-normal">Speedup</th>
-                                    <th className="py-2.5 px-4 font-normal">Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {operatorRowsNodes}
-                            </tbody>
-                        </table>
-                        {<div className="p-8 text-center text-xs text-zinc-500 font-mono">
-                            No operators discovered yet. Profile the model to find operators.
-                        </div> if list_len(operatorRowsNodes) == 0 else <span></span>}
-                    </div>
-                </div>
+                <WorkQueuePanel
+                    name={name}
+                    activeTasks={active_tasks}
+                    activePoll={active_poll}
+                    currentOperator={current_operator}
+                    benchmarkSlot={benchmark_slot}
+                    pendingOperators={pending_operators}
+                    onClearQueue={lambda -> None { __jacSpawn("ClearProjectQueue", "", {"projectName": name}).then(lambda _r: any -> None { refreshData();});}}
+                />
+                <OperatorResultsTable
+                    operatorRows={operatorRows}
+                    name={name}
+                    navigate={navigate}
+                    onOpenActionModal={openActionModal}
+                    onOpenBenchLog={lambda -> None { setBenchLogOpen(True);}}
+                    loading={loading}
+                />
             </div>
             <GenerateModal
                 isOpen={generateModalOpen}
@@ -1529,62 +1245,21 @@ def:pub Dashboard -> Any {
                 projectName={name}
                 opName={modalOpName}
             />
-            <Modal
+            <BenchmarkLogModal
                 isOpen={benchLogOpen}
+                name={name}
                 onClose={lambda -> None { setBenchLogOpen(False);}}
-                title="Benchmark log"
-            >
-                <div className="p-4 space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                        <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500">
-                            projects/{name}/logs/benchmark.log
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={lambda -> None { refreshBenchLog();}}
-                                className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded-md text-xs text-zinc-300 border border-zinc-700 transition-colors"
-                            >
-                                Refresh
-                            </button>
-                            <button
-                                onClick={lambda -> None { copyBenchLog();}}
-                                className="px-3 py-1.5 bg-[var(--accent-orange)] hover:bg-[var(--molten-gold-dark)] rounded-md text-xs text-zinc-950 border border-[var(--accent-orange)]/40 transition-colors"
-                            >
-                                {"Copied" if benchLogCopied else "Copy"}
-                            </button>
-                        </div>
-                    </div>
-                    {<div className="text-xs text-zinc-400">
-                        Loading...
-                    </div>
-                    if benchLogLoading
-                    else <pre
-                        className="text-xs font-mono text-zinc-200 whitespace-pre-wrap break-words bg-zinc-950 border border-zinc-800 rounded-lg p-3"
-                    >
-                        {benchLog or "No log yet."}
-                    </pre>}
-                </div>
-            </Modal>
-            <Modal
+                benchLog={benchLog}
+                benchLogLoading={benchLogLoading}
+                benchLogCopied={benchLogCopied}
+                onRefresh={refreshBenchLog}
+                onCopy={copyBenchLog}
+            />
+            <JobLogModal
                 isOpen={logModalOpen}
                 onClose={lambda -> None { setLogModalOpen(False);}}
-                title={f"{activeLogKey}.log — Live Tail"}
-            >
-                <div className="p-4 font-mono text-[11px] leading-[1.75] space-y-px">
-                    {log_line_nodes
-                    if list_len(log_line_nodes) > 0
-                    else <div className="text-zinc-500 text-xs">
-                        No log output captured yet.
-                    </div>}
-                </div>
-            </Modal>
-            {<div
-                style={{"position": "fixed", "left": forgedTooltipPos["x"] + 14, "top": forgedTooltipPos["y"] + 14, "zIndex": 9999, "pointerEvents": "none"}}
-                className="bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-xs text-zinc-300 shadow-xl max-w-[220px] leading-relaxed"
-            >
-                Operators with a custom kernel that outperforms PyTorch's built-in implementation.
-            </div>
-            if forgedTooltipPos
-            else <span/>}
+                activeLogKey={activeLogKey}
+                logTail={logTail}
+            />
         </div>;
 }
