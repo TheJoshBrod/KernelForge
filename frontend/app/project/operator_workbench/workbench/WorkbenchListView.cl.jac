@@ -1,10 +1,10 @@
 """Workbench List View Component"""
 
-def:pub WorkbenchListView -> Any {
-    has viewMode: str,
-        sortedNodes: list,
-        selectedNodeId: Any,
-        setSelectedNodeId: Any;
+def:pub WorkbenchListView(props: any) -> Any {
+    viewMode = props.viewMode;
+    sortedNodes = props.sortedNodes;
+    selectedNodeId = props.selectedNodeId;
+    onNodeSelect = props.onNodeSelect;
 
     if viewMode != "list" {
         return <span/>;
@@ -22,7 +22,7 @@ def:pub WorkbenchListView -> Any {
                     if f"{n['id']}" == selectedNodeId
                     else "border-zinc-800 bg-zinc-900/30 hover:border-zinc-700 hover:bg-zinc-900/80"
                 )}
-                onClick={lambda event: any  -> None { setSelectedNodeId(f"{n['id']}");}}
+                onClick={lambda event: any  -> None { onNodeSelect(f"{n['id']}");}}
             >
                 <div className="text-zinc-500 font-mono text-xs w-8 text-right">
                     {"#" + str(idx)}

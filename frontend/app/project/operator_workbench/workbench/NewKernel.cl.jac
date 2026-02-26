@@ -10,10 +10,10 @@ import from .menus.GenerateTrigger { GenerateTrigger }
 import from .menus.OptimizeModal { OptimizeModal }
 import from .menus.OptimizeTrigger { OptimizeTrigger }
 
-def:pub NewKernel -> Any {
-    has projectName: str,
-        opName: str,
-        hasTree: bool = False;
+def:pub NewKernel(props: any) -> Any {
+    projectName = props.projectName;
+    opName = props.opName;
+    hasTree = props.hasTree if props and "hasTree" in props else False;
 
     params = useParams();
     resolvedProjectName = projectName or params.projectName;

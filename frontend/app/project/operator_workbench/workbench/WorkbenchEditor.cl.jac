@@ -3,9 +3,9 @@
 import from .....components.editor.ForgePythonEditor { ForgePythonEditor }
 import from .....components.ui.Icons { CodeIcon }
 
-def:pub WorkbenchEditor -> Any {
-    has selectedNodeId: Any,
-        selectedNodeData: dict;
+def:pub WorkbenchEditor(props: any) -> Any {
+    selectedNodeId = props.selectedNodeId;
+    selectedNodeData = props.selectedNodeData;
 
     return
         <div className="flex-1 flex flex-col min-h-0 border-b border-zinc-800">

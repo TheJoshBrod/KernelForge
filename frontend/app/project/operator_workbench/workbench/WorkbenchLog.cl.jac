@@ -3,11 +3,11 @@
 import from react { useState }
 import from .....components.ui.Icons { ActivityIcon }
 
-def:pub WorkbenchLog -> Any {
-    has selectedNodeId: Any,
-        rawNodes: dict,
-        nodes: list,
-        edges: list;
+def:pub WorkbenchLog(props: any) -> Any {
+    selectedNodeId = props.selectedNodeId;
+    rawNodes = props.rawNodes;
+    nodes = props.nodes;
+    edges = props.edges;
 
     log_collapsed_state = useState(False);
     logCollapsed = log_collapsed_state[0];

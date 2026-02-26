@@ -2,14 +2,14 @@
 
 import from reactflow { ReactFlow, Background }
 
-def:pub WorkbenchTreeView -> Any {
-    has displayNodes: list,
-        displayEdges: list,
-        onNodesChange: Any,
-        onEdgesChange: Any,
-        onNodeClick: Any,
-        hasTree: bool,
-        isOptimizing: bool;
+def:pub WorkbenchTreeView(props: any) -> Any {
+    displayNodes = props.displayNodes;
+    displayEdges = props.displayEdges;
+    onNodesChange = props.onNodesChange;
+    onEdgesChange = props.onEdgesChange;
+    onNodeClick = props.onNodeClick;
+    hasTree = props.hasTree;
+    isOptimizing = props.isOptimizing;
 
     if not (hasTree or isOptimizing) {
         return

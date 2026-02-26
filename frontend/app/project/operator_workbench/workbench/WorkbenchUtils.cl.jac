@@ -106,7 +106,7 @@ def:pub get_layouted_elements(nodes_data: list, edges_data: list) -> dict {
             {
                 "id": f"{cid}",
                 "position": {"x": x_pos, "y": y_pos},
-                "data": {"label": f"Kernel {cid}\\n{label_val} ms"},
+                "data": {"label": f"Kernel {cid}\n{label_val} ms"},
                 "style": {
                     "background": "#18181b",
                     "color": "#e4e4e7",

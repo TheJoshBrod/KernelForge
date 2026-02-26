@@ -2,10 +2,10 @@
 
 import from .....components.ui.Icons { ShieldCheckIcon }
 
-def:pub WorkbenchNodeDetails -> Any {
-    has selectedNodeId: Any,
-        selectedNodeData: dict,
-        torchDisplayMs: Any;
+def:pub WorkbenchNodeDetails(props: any) -> Any {
+    selectedNodeId = props.selectedNodeId;
+    selectedNodeData = props.selectedNodeData;
+    torchDisplayMs = props.torchDisplayMs;
 
     torch_display_text = "--";
     if torchDisplayMs and torchDisplayMs > 0 {
@@ -21,7 +21,7 @@ def:pub WorkbenchNodeDetails -> Any {
                     className="text-lg font-bold text-white flex items-center gap-2"
                 >
                     <ShieldCheckIcon className="w-5 h-5 text-teal-400"/>
-                    Node Details
+                    Kernel {" " + selectedNodeData["id"]} Details
                 </h3>
                 <span className="font-mono text-zinc-400 text-xs">
                     {Reflect.construct(
@@ -32,14 +32,6 @@ def:pub WorkbenchNodeDetails -> Any {
                 </span>
             </div>
             {<div className="space-y-4">
-                <div className="flex justify-between items-center">
-                    <span className="text-zinc-500 text-sm">
-                        Node ID
-                    </span>
-                    <span className="font-mono text-orange-300">
-                        {selectedNodeData["id"]}
-                    </span>
-                </div>
                 <div className="flex justify-between items-center">
                     <span className="text-zinc-500 text-sm">
                         Visits
@@ -77,7 +69,7 @@ def:pub WorkbenchNodeDetails -> Any {
             </div>
             if selectedNodeId
             else <div className="text-zinc-500 text-sm italic">
-                Select a node from the tree to view details.
+                Select a kernel from the tree to view details.
             </div>}
         </div>;
 }
