@@ -84,7 +84,7 @@ def:pub WorkbenchLog(props: any) -> Any {
                 </button>
             </div>
             {<div
-                className="flex-1 overflow-y-auto p-4 space-y-2 flex flex-col-reverse"
+                className="flex-1 overflow-y-auto p-4 space-y-2 flex flex-col-reverse custom-scrollbar"
             >
                 {logViewItems}
             </div>

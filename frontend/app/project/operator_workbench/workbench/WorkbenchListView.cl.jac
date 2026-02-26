@@ -5,14 +5,47 @@ def:pub WorkbenchListView(props: any) -> Any {
     sortedNodes = props.sortedNodes;
     selectedNodeId = props.selectedNodeId;
     onNodeSelect = props.onNodeSelect;
+    torchDisplayMs = props.torchDisplayMs;
 
     if viewMode != "list" {
         return <span/>;
     }
 
+    pytorch_el = <span/>;
+    if torchDisplayMs and torchDisplayMs > 0 {
+        pytorch_el = (
+            <div
+                key="pytorch-baseline"
+                className="p-3 rounded-lg border border-blue-500/50 bg-blue-500/10 shadow-[0_0_15px_rgba(59,130,246,0.1)] flex items-center gap-4 group"
+            >
+                <div className="text-zinc-500 font-mono text-xs w-8 text-right">
+                    --
+                </div>
+                <div className="font-mono text-sm font-bold text-blue-300">
+                    PyTorch Baseline
+                </div>
+                <div className="font-mono text-blue-300 text-sm font-bold flex-1">
+                    <span>{Number(torchDisplayMs).toFixed(6)}</span>
+                    <span>{" ms"}</span>
+                </div>
+                <div className="text-zinc-600 text-xs font-mono w-40 text-right">
+                    --
+                </div>
+            </div>
+        );
+    }
+
     listViewItems = [];
+    pytorch_inserted = False;
+
     idx = 0;
     for n in sortedNodes {
+        val = Number(n["value"] or 0);
+        if not pytorch_inserted and torchDisplayMs and torchDisplayMs > 0 and val > torchDisplayMs {
+            listViewItems.push(pytorch_el);
+            pytorch_inserted = True;
+        }
+
         idx += 1;
         listViewItems.push(
             <div
@@ -55,8 +88,12 @@ def:pub WorkbenchListView(props: any) -> Any {
         );
     }
 
+    if not pytorch_inserted and torchDisplayMs and torchDisplayMs > 0 {
+        listViewItems.push(pytorch_el);
+    }
+
     return
-        <div className="h-full overflow-y-auto p-4 pt-14 space-y-2">
+        <div className="h-full overflow-y-auto p-4 pt-14 space-y-2 custom-scrollbar">
             {listViewItems}{<div
                 className="text-center py-10 text-zinc-600 italic text-sm"
             >

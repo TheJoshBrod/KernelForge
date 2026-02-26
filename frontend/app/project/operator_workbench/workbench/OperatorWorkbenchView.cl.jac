@@ -76,12 +76,18 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     tree_signature_ref = useRef("");
     selected_node_ref = useRef(None);
 
-    # Resizable split panel
+    # Resizable split panels
     panel_width_state = useState(50.0);
     panelWidth = panel_width_state[0];
     setPanelWidth = panel_width_state[1];
     is_dragging_ref = useRef(False);
     container_ref = useRef(None);
+
+    v_panel_height_state = useState(55.0);
+    vPanelHeight = v_panel_height_state[0];
+    setVPanelHeight = v_panel_height_state[1];
+    is_v_dragging_ref = useRef(False);
+    v_container_ref = useRef(None);
 
     is_optimizing_state = useState(False);
     isOptimizing = is_optimizing_state[0];
@@ -442,27 +448,37 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
         is_dragging_ref.current = True;
     }
 
+    def handleVDividerMouseDown(e: any) -> None {
+        e.preventDefault();
+        is_v_dragging_ref.current = True;
+    }
+
     def handleMouseMove(e: any) -> None {
-        if not is_dragging_ref.current {
-            return;
+        if is_dragging_ref.current {
+            container = container_ref.current;
+            if container {
+                rect = container.getBoundingClientRect();
+                new_width = ((e.clientX - rect.left) / rect.width) * 100;
+                if new_width < 20 { new_width = 20; }
+                if new_width > 80 { new_width = 80; }
+                setPanelWidth(new_width);
+            }
         }
-        container = container_ref.current;
-        if not container {
-            return;
+        if is_v_dragging_ref.current {
+            v_container = v_container_ref.current;
+            if v_container {
+                rect = v_container.getBoundingClientRect();
+                new_height = ((e.clientY - rect.top) / rect.height) * 100;
+                if new_height < 20 { new_height = 20; }
+                if new_height > 80 { new_height = 80; }
+                setVPanelHeight(new_height);
+            }
         }
-        rect = container.getBoundingClientRect();
-        new_width = ((e.clientX - rect.left) / rect.width) * 100;
-        if new_width < 20 {
-            new_width = 20;
-        }
-        if new_width > 80 {
-            new_width = 80;
-        }
-        setPanelWidth(new_width);
     }
 
     def handleMouseUp(e: any) -> None {
         is_dragging_ref.current = False;
+        is_v_dragging_ref.current = False;
     }
 
     return
@@ -488,9 +504,10 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                 className="w-1 bg-zinc-800 hover:bg-indigo-500/50 cursor-col-resize flex-shrink-0 transition-colors select-none"
                 onMouseDown={handleDividerMouseDown}
             />
-            <div style={{"width": (100 - panelWidth) + "%"}} className="flex flex-col bg-zinc-950 min-w-0">
+            <div style={{"width": (100 - panelWidth) + "%"}} className="flex flex-col bg-zinc-950 min-w-0" ref={v_container_ref}>
                 <div
-                    className="h-[50%] border-b border-zinc-800 relative bg-[radial-gradient(circle_at_18%_14%,rgba(225,112,85,0.12),transparent_42%),radial-gradient(circle_at_84%_78%,rgba(20,184,166,0.10),transparent_45%),#09090b]"
+                    style={{"height": vPanelHeight + "%"}}
+                    className="border-b border-zinc-800 relative bg-[radial-gradient(circle_at_18%_14%,rgba(225,112,85,0.12),transparent_42%),radial-gradient(circle_at_84%_78%,rgba(20,184,166,0.10),transparent_45%),#09090b]"
                 >
                     <WorkbenchControls
                         viewMode={viewMode}
@@ -514,12 +531,16 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         sortedNodes={sortedNodes}
                         selectedNodeId={selectedNodeId}
                         onNodeSelect={setSelectedNodeId}
+                        torchDisplayMs={torchOpMs}
                     />}
                 </div>
+                <div
+                    className="h-1 bg-zinc-800 hover:bg-indigo-500/50 cursor-row-resize flex-shrink-0 transition-colors select-none"
+                    onMouseDown={handleVDividerMouseDown}
+                />
                 <WorkbenchNodeDetails
                     selectedNodeId={selectedNodeId}
                     selectedNodeData={selectedNodeData}
-                    torchDisplayMs={torchOpMs}
                 />
                 <div className="p-4 border-t border-zinc-800 bg-zinc-900/30">
                     <NewKernel

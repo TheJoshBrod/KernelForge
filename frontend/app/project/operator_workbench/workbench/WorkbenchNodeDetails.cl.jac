@@ -5,15 +5,9 @@ import from .....components.ui.Icons { ShieldCheckIcon }
 def:pub WorkbenchNodeDetails(props: any) -> Any {
     selectedNodeId = props.selectedNodeId;
     selectedNodeData = props.selectedNodeData;
-    torchDisplayMs = props.torchDisplayMs;
-
-    torch_display_text = "--";
-    if torchDisplayMs and torchDisplayMs > 0 {
-        torch_display_text = f"{Number(torchDisplayMs).toFixed(9)} ms";
-    }
 
     return
-        <div className="flex-1 p-6 overflow-y-auto">
+        <div className="flex-1 p-6 overflow-y-auto custom-scrollbar">
             <div
                 className="flex justify-between items-center mb-4 border-b border-zinc-800 pb-2"
             >
@@ -56,14 +50,6 @@ def:pub WorkbenchNodeDetails(props: any) -> Any {
                         {Number(selectedNodeData["best_subtree_value"] or 0).toFixed(
                             6
                         )}
-                    </span>
-                </div>
-                <div className="flex justify-between items-center">
-                    <span className="text-zinc-500 text-sm">
-                        PyTorch Op Time
-                    </span>
-                    <span className="font-mono text-teal-300">
-                        {torch_display_text}
                     </span>
                 </div>
             </div>
