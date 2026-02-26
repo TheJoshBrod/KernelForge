@@ -1106,15 +1106,21 @@ def:pub Dashboard -> Any {
         op_name = str(op["name"]);
         op_short = format_op_short(op_name);
 
+        op_count_raw = op["count"] if "count" in op else 1;
+        op_count_n = parseInt(f"{op_count_raw}") if op_count_raw else 1;
+        if not op_count_n or op_count_n <= 0 { op_count_n = 1; }
+
         baseline_ms = "--";
         best_ms = "--";
         speedup = "--";
         is_forged = False;
         ratio_for_sort = 0.0;
+        b_val_raw = None;
 
         for sd in to_list(speedData) {
             if sd and "name" in sd and op_matches(str(sd["name"]), op_name) {
                 b_val = to_num(sd["pytorch"] if "pytorch" in sd else None);
+                b_val_raw = b_val;
                 if b_val != None { baseline_ms = format_tick_ms(b_val); }
 
                 f_val = to_num(sd["forged"] if "forged" in sd else None);
@@ -1126,9 +1132,6 @@ def:pub Dashboard -> Any {
                     ratio_for_sort = r_val;
                     if r_val > 1.001 {
                         is_forged = True;
-                        op_count_raw = op["count"] if "count" in op else 1;
-                        op_count_n = parseInt(f"{op_count_raw}") if op_count_raw else 1;
-                        if not op_count_n or op_count_n <= 0 { op_count_n = 1; }
                         totalPytorchMs = totalPytorchMs + b_val * op_count_n;
                         totalForgedMs = totalForgedMs + f_val * op_count_n;
                     }
@@ -1164,8 +1167,33 @@ def:pub Dashboard -> Any {
             "speedup": speedup,
             "status": op_status,
             "ratio": ratio_for_sort,
-            "is_forged": is_forged
+            "is_forged": is_forged,
+            "call_count": op_count_n,
+            "baseline_raw": b_val_raw
         });
+    }
+
+    grandTotalPytorchTime = 0.0;
+    for r in operatorRows {
+        c_count = r["call_count"] if "call_count" in r else 1;
+        b_raw = r["baseline_raw"] if "baseline_raw" in r else None;
+        if b_raw != None and b_raw > 0 {
+            grandTotalPytorchTime += b_raw * c_count;
+        }
+    }
+
+    for r in operatorRows {
+        r["runtime_pct"] = "--";
+        c_count = r["call_count"] if "call_count" in r else 1;
+        b_raw = r["baseline_raw"] if "baseline_raw" in r else None;
+        if b_raw != None and b_raw > 0 and grandTotalPytorchTime > 0 {
+            pct = ((b_raw * c_count) / grandTotalPytorchTime) * 100.0;
+            if pct < 0.1 {
+                r["runtime_pct"] = "<0.1%";
+            } else {
+                r["runtime_pct"] = f"{pct.toFixed(2)}%";
+            }
+        }
     }
 
     modelSpeedupPct = 0.0;
