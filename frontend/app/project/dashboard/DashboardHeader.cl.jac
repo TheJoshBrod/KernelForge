@@ -38,6 +38,14 @@ def:pub DashboardHeader(props: any) -> Any {
                         <span className="text-sm font-bold text-zinc-200">{forgedCount}</span>
                         <span className="text-xs text-zinc-500">/ {opsCount} forged</span>
                     </div>
+                    {<div
+                        style={{"position": "fixed", "left": forgedTooltipPos["x"] + 14, "top": forgedTooltipPos["y"] + 14, "zIndex": 9999, "pointerEvents": "none"}}
+                        className="bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-xs text-zinc-300 shadow-xl max-w-[220px] leading-relaxed"
+                    >
+                        Operators with a custom kernel that outperforms PyTorch's built-in implementation.
+                    </div>
+                    if forgedTooltipPos
+                    else <span/>}
                 </div>
                 <div className="w-px h-8 bg-[var(--border)] hidden sm:block"></div>
                 <div className="flex flex-col">
@@ -54,14 +62,5 @@ def:pub DashboardHeader(props: any) -> Any {
                     <span className="text-xs font-semibold text-zinc-300" title={hardwareStatus}>{hardwareStatus}</span>
                 </div>
             </div>
-
-            {<div
-                style={{"position": "fixed", "left": forgedTooltipPos["x"] + 14, "top": forgedTooltipPos["y"] + 14, "zIndex": 9999, "pointerEvents": "none"}}
-                className="bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-xs text-zinc-300 shadow-xl max-w-[220px] leading-relaxed"
-            >
-                Operators with a custom kernel that outperforms PyTorch's built-in implementation.
-            </div>
-            if forgedTooltipPos
-            else <span/>}
         </div>;
 }

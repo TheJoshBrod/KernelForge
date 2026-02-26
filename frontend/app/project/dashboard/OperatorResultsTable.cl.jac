@@ -200,7 +200,7 @@ def:pub OperatorResultsTable(props: any) -> Any {
                                 <div className="flex items-center">Status {getSortIcon("status")}</div>
                             </th>
                             <th className="py-2.5 px-4 font-normal text-right pr-4" title="Actions you can take on this operator">
-                                <div className="flex items-center justify-end">Action</div>
+                                <div className="flex items-center">Action</div>
                             </th>
                         </tr>
                     </thead>
