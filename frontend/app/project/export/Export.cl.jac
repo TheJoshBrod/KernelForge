@@ -1,8 +1,8 @@
 """Export Page"""
 
 import from react { useState }
-import from ...components.ui.Icons { UploadIcon, ZapIcon }
-import from ...components.ui.GlowButton { GlowButton }
+import from ....components.ui.Icons { UploadIcon, ZapIcon }
+import from ....components.ui.GlowButton { GlowButton }
 import from "react-router-dom" { useParams }
 import from .CastExportModal { CastExportModal }
 
