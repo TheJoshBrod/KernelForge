@@ -34,8 +34,8 @@ def:pub DashboardHeader(props: any) -> Any {
                     onMouseLeave={lambda -> None { setForgedTooltipPos(None); }}
                 >
                     <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1">Coverage</span>
-                    <div className="flex items-baseline gap-1.5">
-                        <span className="text-sm font-bold text-zinc-200">{forgedCount}</span>
+                    <div className="flex items-baseline">
+                        <span className="text-xs font-bold text-zinc-200">{forgedCount}</span>
                         <span className="text-xs text-zinc-500">/ {opsCount} forged</span>
                     </div>
                     {<div
