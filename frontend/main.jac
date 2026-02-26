@@ -10,29 +10,34 @@ import from walkers.system {
     DetectHardware
 }
 import from walkers.llm { GetOpenLLMModels }
-import from walkers.project {
-    CreateProject,
-    GetProjects,
-    GetProjectOps,
-    GetProjectStatus,
-    GetJobLog,
-    SetJobControl,
+import from walkers.kernel_job_runners {
     StartProfile,
     StartGenerate,
     StartOptimize,
-    GetDashboardCharts,
     StartBenchmark,
-    ExportProject,
-    GetOpDetails,
-    ReadRepoFile,
-    DownloadExport,
+    SetJobControl,
+    ClearProjectQueue,
+    GetJobLog
+}
+import from walkers.project_admin {
+    CreateProject,
+    DeleteProject,
+    GetProjects,
+    GetProjectOps,
+    GetProjectStatus,
     GetProjectBenchmarks,
+    ExportProject,
+    DownloadExport,
+    ReadRepoFile
+}
+import from walkers.optimization_results {
+    GetDashboardCharts,
     GetMctsTree,
-    ImportKernel,
     GetProjectMctsSummary,
+    GetOpDetails,
     GetProjectMetrics,
     GetOperatorMetrics,
-    DeleteProject,
+    ImportKernel,
     DownloadCast,
     GetCastChunk
 }

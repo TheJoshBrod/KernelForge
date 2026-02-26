@@ -26,6 +26,7 @@ import from .shared.MetricsAdapter {
     to_num,
     to_list,
     list_len,
+    op_matches,
     get_metrics_speed_source,
     build_dashboard_metrics_view,
     compute_speed_kpis
@@ -131,6 +132,10 @@ def:pub Dashboard -> Any {
     forge_error_state = useState("");
     forgeError = forge_error_state[0];
     setForgeError = forge_error_state[1];
+
+    forged_tooltip_state = useState(None);
+    forgedTooltipPos = forged_tooltip_state[0];
+    setForgedTooltipPos = forged_tooltip_state[1];
 
     forge_notice_state = useState("");
     forgeNotice = forge_notice_state[0];
@@ -1247,48 +1252,55 @@ def:pub Dashboard -> Any {
     }
 
     forgedCount = 0;
-    bestSpeedupVal = 1.0;
+    totalPytorchMs = 0.0;
+    totalForgedMs = 0.0;
     operatorRows = [];
-    
+
     for op in to_list(ops) {
         if not op or not ("name" in op) or not op["name"] {
             continue;
         }
         op_name = str(op["name"]);
         op_short = format_op_short(op_name);
-        
+
         baseline_ms = "--";
         best_ms = "--";
         speedup = "--";
         is_forged = False;
         ratio_for_sort = 0.0;
-        
+
         for sd in to_list(speedData) {
-            if sd and "name" in sd and str(sd["name"]) == op_name {
+            if sd and "name" in sd and op_matches(str(sd["name"]), op_name) {
                 b_val = to_num(sd["pytorch"] if "pytorch" in sd else None);
                 if b_val != None { baseline_ms = format_tick_ms(b_val); }
-                
+
                 f_val = to_num(sd["forged"] if "forged" in sd else None);
                 if f_val != None { best_ms = format_tick_ms(f_val); }
-                
-                r_val = to_num(sd["ratio"] if "ratio" in sd else None);
-                if r_val != None {
+
+                if b_val != None and b_val > 0 and f_val != None and f_val > 0 {
+                    r_val = b_val / f_val;
                     speedup = f"{r_val.toFixed(2)}×";
                     ratio_for_sort = r_val;
-                    if r_val > 1.00 {
+                    if r_val > 1.001 {
                         is_forged = True;
+                        op_count_raw = op["count"] if "count" in op else 1;
+                        op_count_n = parseInt(f"{op_count_raw}") if op_count_raw else 1;
+                        if not op_count_n or op_count_n <= 0 { op_count_n = 1; }
+                        totalPytorchMs = totalPytorchMs + b_val * op_count_n;
+                        totalForgedMs = totalForgedMs + f_val * op_count_n;
                     }
                 }
+                break;
             }
         }
-        
+
         op_status = "Not started";
         for task in active_tasks {
             if str(task["op_name"]) == op_name {
                 op_status = str(task["current_step"]);
             }
         }
-        
+
         if op_status == "Not started" {
             if is_forged {
                 op_status = "Forged ✓";
@@ -1296,14 +1308,11 @@ def:pub Dashboard -> Any {
                 op_status = "Benchmarked";
             }
         }
-        
+
         if is_forged {
             forgedCount += 1;
         }
-        if ratio_for_sort > bestSpeedupVal {
-            bestSpeedupVal = ratio_for_sort;
-        }
-        
+
         operatorRows.push({
             "name": op_name,
             "short": op_short,
@@ -1314,6 +1323,11 @@ def:pub Dashboard -> Any {
             "ratio": ratio_for_sort,
             "is_forged": is_forged
         });
+    }
+
+    modelSpeedupPct = 0.0;
+    if totalPytorchMs > 0 and totalForgedMs > 0 and totalPytorchMs > totalForgedMs {
+        modelSpeedupPct = ((totalPytorchMs - totalForgedMs) / totalPytorchMs) * 100.0;
     }
     
     operatorRows.sort(lambda a: dict, b: dict -> int {
@@ -1406,7 +1420,11 @@ def:pub Dashboard -> Any {
                 </div>
                 
                 <div className="flex flex-wrap items-center gap-6 md:gap-8 pb-2 md:pb-0">
-                    <div className="flex flex-col">
+                    <div
+                        className="flex flex-col cursor-help"
+                        onMouseMove={lambda e: any -> None { setForgedTooltipPos({"x": e.clientX, "y": e.clientY}); }}
+                        onMouseLeave={lambda -> None { setForgedTooltipPos(None); }}
+                    >
                         <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1">Coverage</span>
                         <div className="flex items-baseline gap-1.5">
                             <span className="text-sm font-bold text-zinc-200">{forgedCount}</span>
@@ -1415,16 +1433,17 @@ def:pub Dashboard -> Any {
                     </div>
                     <div className="w-px h-8 bg-[var(--border)] hidden sm:block"></div>
                     <div className="flex flex-col">
-                        <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1">Best Speedup</span>
-                        <span className="text-sm font-bold text-emerald-400">{bestSpeedupVal.toFixed(2)}×</span>
+                        <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1">Model Speedup</span>
+                        {<span className="text-sm font-bold text-emerald-400">+{modelSpeedupPct.toFixed(1)}% faster</span>
+                        if modelSpeedupPct > 0
+                        else <span className="text-sm font-bold text-zinc-500">—</span>}
                     </div>
                     <div className="w-px h-8 bg-[var(--border)] hidden sm:block"></div>
                     <div className="flex flex-col">
-                        <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1 flex items-center gap-1.5">
+                        <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1">
                             Selected GPU
-                            <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse"></span>
                         </span>
-                        <span className="text-xs font-semibold text-zinc-300 truncate max-w-[150px]" title={hardwareStatus}>{hardwareStatus}</span>
+                        <span className="text-xs font-semibold text-zinc-300" title={hardwareStatus}>{hardwareStatus}</span>
                     </div>
                 </div>
             </div>
@@ -1432,9 +1451,17 @@ def:pub Dashboard -> Any {
             <div className="space-y-4">
                 <div className="rounded-md border border-[var(--border)] bg-[var(--surface-0)] overflow-hidden">
                     <div className="p-3 border-b border-[var(--border)] bg-zinc-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-200 shrink-0">
-                            Work Queue {("(" + current_operator + ")") if current_operator else ""}
-                        </h3>
+                        <div className="flex items-center gap-3 shrink-0">
+                            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-200">
+                                Work Queue {("(" + current_operator + ")") if current_operator else ""}
+                            </h3>
+                            <button
+                                onClick={lambda -> None { __jacSpawn("ClearProjectQueue", "", {"projectName": name}).then(lambda _r: any -> None { refreshData();});}}
+                                className="text-[10px] px-2 py-0.5 rounded border border-zinc-700 bg-zinc-900 hover:border-zinc-500 hover:text-zinc-200 text-zinc-500 transition-colors font-mono"
+                            >
+                                clear
+                            </button>
+                        </div>
                         {<div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs font-mono bg-black/20 rounded px-3 py-1.5 border border-[var(--border)]">
                             <div className="flex items-center gap-1.5">
                                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse"></span>
@@ -1470,7 +1497,7 @@ def:pub Dashboard -> Any {
                             <thead>
                                 <tr className="bg-zinc-900/80 border-b border-[var(--border)] text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">
                                     <th className="py-2.5 px-4 font-normal">Operator</th>
-                                    <th className="py-2.5 px-4 font-normal">Baseline</th>
+                                    <th className="py-2.5 px-4 font-normal">PyTorch</th>
                                     <th className="py-2.5 px-4 font-normal">Best Kernel</th>
                                     <th className="py-2.5 px-4 font-normal">Speedup</th>
                                     <th className="py-2.5 px-4 font-normal">Status</th>
@@ -1551,5 +1578,13 @@ def:pub Dashboard -> Any {
                     </div>}
                 </div>
             </Modal>
+            {<div
+                style={{"position": "fixed", "left": forgedTooltipPos["x"] + 14, "top": forgedTooltipPos["y"] + 14, "zIndex": 9999, "pointerEvents": "none"}}
+                className="bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-xs text-zinc-300 shadow-xl max-w-[220px] leading-relaxed"
+            >
+                Operators with a custom kernel that outperforms PyTorch's built-in implementation.
+            </div>
+            if forgedTooltipPos
+            else <span/>}
         </div>;
 }
