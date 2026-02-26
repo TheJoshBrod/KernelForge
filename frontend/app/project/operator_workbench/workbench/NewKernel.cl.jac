@@ -2,7 +2,7 @@
 
 import from react { useState, useRef, useEffect }
 import from "react-router-dom" { useParams }
-import from ....components.ui.Icons { CpuIcon }
+import from .....components.ui.Icons { CpuIcon }
 import from .menus.UploadModal { UploadModal }
 import from .menus.UploadTrigger { UploadTrigger }
 import from .menus.GenerateModal { GenerateModal }
@@ -110,11 +110,6 @@ def:pub NewKernel -> Any {
                 <CpuIcon className="w-5 h-5"/>
                 Create New Kernel Node
             </button>
-            <div className="text-center mt-2 text-[10px] text-zinc-500">
-                {"Project context missing. Reopen from project route."
-                if missingProject
-                else "Create a new starting point for optimization."}
-            </div>
             {<div
                 className="absolute bottom-full left-0 w-full mb-2 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl overflow-hidden z-20 flex flex-col"
             >

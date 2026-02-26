@@ -11,7 +11,7 @@ import from "reactflow" {
     useEdgesState,
     MarkerType
 }
-import from ....components.ui.Icons {
+import from .....components.ui.Icons {
     CodeIcon,
     CpuIcon,
     ShieldCheckIcon,
@@ -22,8 +22,8 @@ import from ....components.ui.Icons {
     ArrowRightIcon
 }
 import from .NewKernel { NewKernel }
-import from ....components.editor.ForgePythonEditor { ForgePythonEditor }
-import from ..shared.MetricsAdapter {
+import from .....components.editor.ForgePythonEditor { ForgePythonEditor }
+import from ...shared.MetricsAdapter {
     to_list,
     to_num,
     normalize_op_name,
@@ -203,7 +203,7 @@ def:pub OperatorWorkbenchView -> Any {
                 {
                     "id": f"{cid}",
                     "position": {"x": x_pos, "y": y_pos},
-                    "data": {"label": f"Kernel_{cid}\n{label_val} ms"},
+                    "data": {"label": f"Kernel {cid}\n{label_val} ms"},
                     "style": {
                         "background": "#18181b",
                         "color": "#e4e4e7",
@@ -571,7 +571,7 @@ def:pub OperatorWorkbenchView -> Any {
                             else "text-zinc-300"
                         )}
                     >
-                        Kernel_{n["id"]}:
+                        Kernel{" " + n["id"]}:
                     </div>
                     <div
                         className="font-mono text-teal-300 text-sm font-bold flex-1"
@@ -585,7 +585,7 @@ def:pub OperatorWorkbenchView -> Any {
                     </div>
                     <div className="text-zinc-600 text-xs font-mono w-40 text-right">
                         {Reflect.construct(Date, [n["timestamp"] * 1000]).toLocaleString()
-                        if "timestamp" in n
+                        if "timestamp" in n and n["timestamp"] > 0.0
                         else ""}
                     </div>
                 </div>
@@ -626,7 +626,7 @@ def:pub OperatorWorkbenchView -> Any {
             >
                 <div className="flex justify-between mb-1">
                     <span className="font-mono font-bold text-orange-300">
-                        kernel_{item["id"]}
+                        Kernel{" " + item["id"]}
                     </span>
                     <span className="text-teal-300 font-mono">
                         {Number(item["value"] or 0).toFixed(4)}
@@ -771,7 +771,7 @@ def:pub OperatorWorkbenchView -> Any {
                             Kernel Code
                         </span>
                         <span className="text-xs font-mono text-orange-300">
-                            Node{selectedNodeId or "?"}
+                            Kernel {" " + (selectedNodeId or "?")}
                         </span>
                     </div>
                     <div className="flex-1 min-h-0 relative bg-[#0d0a08] border-l-2 border-[var(--accent)]/30">
@@ -779,7 +779,7 @@ def:pub OperatorWorkbenchView -> Any {
                             value={selectedNodeData["code"] if "code" in selectedNodeData else ""}
                             readOnly={True}
                             language="cpp"
-                            placeholder="// Select a node to view code"
+                            placeholder="// Select a kernel to view code"
                             fontSize={12}
                         />
                     </div>
@@ -847,22 +847,6 @@ def:pub OperatorWorkbenchView -> Any {
                         >
                             List
                         </button>
-                        <button
-                            className="px-3 py-1.5 text-xs font-bold rounded transition-all text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
-                            onClick={lambda -> None { fetchData(False);}}
-                        >
-                            Refresh
-                        </button>
-                        <button
-                            className={"px-3 py-1.5 text-xs font-bold rounded transition-all " + (
-                                "bg-teal-700/80 text-white shadow-sm"
-                                if liveUpdates
-                                else "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
-                            )}
-                            onClick={lambda -> None { setLiveUpdates(not liveUpdates);}}
-                        >
-                            {"Live On" if liveUpdates else "Live Off"}
-                        </button>
                     </div>
                     {<ReactFlow
                         nodes={displayNodes}
@@ -927,7 +911,7 @@ def:pub OperatorWorkbenchView -> Any {
                             {Reflect.construct(
                                 Date, [selectedNodeData["timestamp"] * 1000]
                             ).toLocaleString()
-                            if "timestamp" in selectedNodeData
+                            if "timestamp" in selectedNodeData and selectedNodeData["timestamp"] > 0.0
                             else ""}
                         </span>
                     </div>

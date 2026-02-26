@@ -54,6 +54,7 @@ class KernelNode(BaseModel):
     best_subtree_value: Optional[float] = None
     code: Optional[str] = None
     improvement_description: Optional[str] = None
+    timestamp: float = 0.0
     speedup_vs_parent: Optional[float] = None
     
     class Config:

@@ -1,6 +1,6 @@
 """Optimize Trigger Component"""
 
-import from .....components.ui.Icons { ZapIcon }
+import from ......components.ui.Icons { ZapIcon }
 
 def:pub OptimizeTrigger(props: any) -> Any {
     onOptimize = props.onOptimize;

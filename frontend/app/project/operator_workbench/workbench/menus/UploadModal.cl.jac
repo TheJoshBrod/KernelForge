@@ -2,10 +2,9 @@
 
 import from react { useState, useRef, useEffect }
 import from "react-router-dom" { useParams }
-import from .....components.ui.Icons { UploadIcon, CodeIcon, SettingsIcon }
-import from .....components.ui.Modal { Modal }
-
-import from .....context.ConfigContext { useConfig }
+import from ......components.ui.Icons { UploadIcon, CodeIcon, SettingsIcon }
+import from ......components.ui.Modal { Modal }
+import from ......context.ConfigContext { useConfig }
 
 def:pub UploadModal(props: any) -> Any {
     isOpen = props.isOpen;

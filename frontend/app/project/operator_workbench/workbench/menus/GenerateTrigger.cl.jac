@@ -1,6 +1,6 @@
 """Generate Trigger Component"""
 
-import from .....components.ui.Icons { PlusIcon }
+import from ......components.ui.Icons { PlusIcon }
 
 def:pub GenerateTrigger(props: any) -> Any {
     onGenerate = props.onGenerate;

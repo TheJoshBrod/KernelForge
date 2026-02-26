@@ -1,43 +1,31 @@
-"""Optimize Modal Component"""
+"""Generate Modal Component"""
 
 import from react { useState, useEffect }
 import from "react-router-dom" { useParams }
-import from .....components.ui.Icons {
-    ZapIcon,
+import from ......components.ui.Icons {
+    PlusIcon,
+    SettingsIcon,
+    CpuIcon,
     BrainIcon,
-    ActivityIcon,
-    TimerIcon,
     ChevronDownIcon
 }
-import from .....components.ui.SearchableSelect { SearchableSelect }
-import from .....components.ui.Modal { Modal }
-import from .....context.ConfigContext { useConfig }
+import from ......components.ui.SearchableSelect { SearchableSelect }
+import from ......components.ui.Modal { Modal }
+import from ......context.ConfigContext { useConfig }
 
-def:pub OptimizeModal(props: any) -> Any {
+def:pub GenerateModal(props: any) -> Any {
     isOpen = props.isOpen;
     onClose = props.onClose;
     onComplete = props.onComplete;
     onStarted = props.onStarted;
     projectName = props.projectName;
     opName = props.opName;
-    hasTree = props.hasTree if props and "hasTree" in props else True;
     params = useParams();
     resolvedProjectName = projectName or params.projectName or "";
     routeOpName = params.opName if params and "opName" in params else "";
 
     config_ctx = useConfig();
     config = config_ctx.config;
-
-    ssh_connections = config["ssh_connections"] if config and "ssh_connections" in config else [];
-    active_ssh_index = config["active_ssh_index"] if config and "active_ssh_index" in config else -1;
-    
-    selected_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
-    is_remote_gpu = selected_gpu_info and "connection" in selected_gpu_info and selected_gpu_info["connection"] != "local";
-    
-    active_ssh = None;
-    if is_remote_gpu and active_ssh_index >= 0 and ssh_connections.length > active_ssh_index {
-        active_ssh = ssh_connections[active_ssh_index];
-    }
 
     is_working_state = useState(False);
     isWorking = is_working_state[0];
@@ -92,13 +80,9 @@ def:pub OptimizeModal(props: any) -> Any {
     llmModel = llm_model_state[0];
     setLlmModel = llm_model_state[1];
 
-    iterations_state = useState(5);
-    iterations = iterations_state[0];
-    setIterations = iterations_state[1];
-
-    patience_state = useState(2);
-    patience = patience_state[0];
-    setPatience = patience_state[1];
+    target_device_state = useState("cuda");
+    targetDevice = target_device_state[0];
+    setTargetDevice = target_device_state[1];
 
     # Model List State
     models_state = useState([]);
@@ -206,6 +190,40 @@ def:pub OptimizeModal(props: any) -> Any {
         [isOpen, resolvedProjectName]
     );
 
+    # Determine available devices
+    hwInfo = config_ctx.hwInfo if "hwInfo" in config_ctx else {};
+    selected_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
+
+    cuda_ok = False;
+    mps_ok = False;
+    if selected_gpu_info {
+        hint = selected_gpu_info["backend_hint"] if "backend_hint" in selected_gpu_info else "cuda";
+        cuda_ok = hint == "cuda" or hint == "rocm";
+        mps_ok = hint == "metal";
+    } else {
+        cuda_ok = hwInfo and "cuda_available" in hwInfo and hwInfo["cuda_available"];
+        mps_ok = hwInfo and "mps_available" in hwInfo and hwInfo["mps_available"];
+    }
+    available_devices = [{"label": "Triton", "value": "triton"}];
+    if cuda_ok {
+        available_devices.splice(0, 0, {"label": "CUDA", "value": "cuda"});
+    } elif mps_ok {
+        available_devices.splice(0, 0, {"label": "MPS", "value": "mps"});
+    }
+
+    # Update default target device if current selection is invalid
+    useEffect(
+        lambda -> None { current_valid = False;for dev in available_devices {
+            if dev["value"] == targetDevice {
+                current_valid = True;
+                break;
+            }
+        }if not current_valid and available_devices.length > 0 {
+            setTargetDevice(available_devices[0]["value"]);
+        }},
+        [hwInfo, targetDevice]
+    );
+
     provider_option_nodes = [];
     for p in provider_options {
         provider_option_nodes.push(
@@ -215,13 +233,16 @@ def:pub OptimizeModal(props: any) -> Any {
         );
     }
 
-    async def handleOptimize -> None {
-        if not hasTree and selectedOp == (opName or routeOpName or "") {
-            alert(
-                "No optimization tree yet for this operator. Generate a new root first."
-            );
-            return;
-        }
+    available_device_nodes = [];
+    for d in available_devices {
+        available_device_nodes.push(
+            <option key={d["value"]} value={d["value"]}>
+                {d["label"]}
+            </option>
+        );
+    }
+
+    async def handleGenerate -> None {
         if not resolvedProjectName {
             alert("Missing project.");
             return;
@@ -233,36 +254,31 @@ def:pub OptimizeModal(props: any) -> Any {
 
         setIsWorking(True);
         try {
+            ssh_conns = config["ssh_connections"] if config and "ssh_connections" in config else [];
+            active_ssh = config["active_ssh_index"] if config and "active_ssh_index" in config else -1;
+            # If the selected GPU is local, do not forward SSH credentials
+            # even when active_ssh_index is still set from a previous remote session.
+            if selected_gpu_info {
+                gpu_conn = selected_gpu_info["connection"] if "connection" in selected_gpu_info else "local";
+                if not gpu_conn or gpu_conn == "local" {
+                    active_ssh = -1;
+                }
+            }
             payload = {
                 "projectName": resolvedProjectName,
                 "ops": [selectedOp],
-                "iterations": int(iterations),
-                "patience": int(patience),
-                "minImproveMs": 0.0,
-                "minSpeedupPct": 0.0,
-                "optimizer_config": {
-                    "iterations": int(iterations),
-                    "patience": int(patience)
-                }
+                "benchmark": True,
+                "targetDevice": targetDevice,
+                "ssh_connections": ssh_conns,
+                "active_ssh_index": active_ssh
             };
 
-            if llmModel {
-                payload["llm_model"] = llmModel;
-            }
-            if llmProvider {
-                payload["llm_provider"] = llmProvider;
-            }
-            if active_ssh {
-                payload["ssh_connections"] = ssh_connections;
-                payload["active_ssh_index"] = active_ssh_index;
-            }
-
-            resp = await __jacSpawn("StartOptimize", "", payload);
+            resp = await __jacSpawn("StartGenerate", "", payload);
             data = resp.reports[0] if resp and resp.reports else {};
             if data and "success" in data and not data["success"] {
                 err = data["error"]
                 if "error" in data
-                else "Failed to queue optimization.";
+                else "Failed to queue generation.";
                 alert(err);
             } else {
                 onClose();
@@ -271,8 +287,8 @@ def:pub OptimizeModal(props: any) -> Any {
                 }
             }
         } except Exception as e {
-            console.error("Failed to start optimization:", e);
-            alert("Failed to start optimization.");
+            console.error("Failed to start generation:", e);
+            alert("Failed to start generation.");
         } finally {
             setIsWorking(False);
             if onComplete {
@@ -286,14 +302,14 @@ def:pub OptimizeModal(props: any) -> Any {
     }
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Optimize Kernel">
+        <Modal isOpen={isOpen} onClose={onClose} title="Generate New Kernel">
             <div className="p-6 space-y-6">
                 <div className="space-y-4">
                     <div className="space-y-2">
                         <label
                             className="text-sm font-medium text-zinc-300 flex items-center gap-2"
                         >
-                            <ZapIcon className="w-4 h-4 text-amber-400"/>
+                            <CpuIcon className="w-4 h-4 text-amber-400"/>
                             Operator
                         </label>
                         {<div
@@ -366,51 +382,26 @@ def:pub OptimizeModal(props: any) -> Any {
                             Select model from{" " + str(list_len(models))} available
                         </p>}
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4">
                         <div className="space-y-2">
                             <label
                                 className="text-sm font-medium text-zinc-300 flex items-center gap-2"
                             >
-                                <ActivityIcon className="w-4 h-4 text-blue-400"/>
-                                Iterations
+                                <SettingsIcon className="w-4 h-4 text-amber-400"/>
+                                Target Device
                             </label>
-                            <input
-                                type="number"
-                                value={iterations}
-                                onChange={lambda e: any  -> None { setIterations(
+                            <select
+                                value={targetDevice}
+                                onChange={lambda e: any  -> None { setTargetDevice(
                                     e.target.value
                                 );}}
-                                min="1"
-                                max="50"
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <label
-                                className="text-sm font-medium text-zinc-300 flex items-center gap-2"
                             >
-                                <TimerIcon className="w-4 h-4 text-amber-400"/>
-                                Patience
-                            </label>
-                            <input
-                                type="number"
-                                value={patience}
-                                onChange={lambda e: any  -> None { setPatience(
-                                    e.target.value
-                                );}}
-                                min="1"
-                                max="10"
-                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                            />
+                                {available_device_nodes}
+                            </select>
                         </div>
                     </div>
                 </div>
-                {<div className="flex items-center gap-2 px-3 py-2 bg-emerald-950/40 border border-emerald-800/40 rounded-lg text-xs text-emerald-400">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"/>
-                    {"Remote: " + str(active_ssh["user"]) + "@" + str(active_ssh["host"]) if active_ssh and "user" in active_ssh and "host" in active_ssh else "Remote GPU"}
-                </div>
-                if active_ssh
-                else <span/>}
                 <div className="pt-6 flex justify-end gap-3 border-t border-zinc-800">
                     <button
                         onClick={onClose}
@@ -420,14 +411,14 @@ def:pub OptimizeModal(props: any) -> Any {
                         Cancel
                     </button>
                     <button
-                        onClick={handleOptimize}
+                        onClick={handleGenerate}
                         disabled={isWorking}
                         className={"px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-all shadow-lg hover:shadow-indigo-500/20 flex items-center gap-2 " + (
                             "opacity-50 cursor-not-allowed" if isWorking else ""
                         )}
                     >
-                        {"Starting..." if isWorking else "Start Optimization"}
-                        <ZapIcon
+                        {"Starting..." if isWorking else "Start Generation"}
+                        <PlusIcon
                             className={"w-4 h-4 " + ("opacity-0" if isWorking else "")}
                         />
                     </button>
