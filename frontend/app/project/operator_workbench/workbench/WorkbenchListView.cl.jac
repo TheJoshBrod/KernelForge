@@ -16,20 +16,17 @@ def:pub WorkbenchListView(props: any) -> Any {
         pytorch_el = (
             <div
                 key="pytorch-baseline"
-                className="p-3 rounded-lg border border-blue-500/50 bg-blue-500/10 shadow-[0_0_15px_rgba(59,130,246,0.1)] flex items-center gap-4 group"
+                className="p-2.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 shadow-[0_0_15px_rgba(99,102,241,0.05)] flex items-center gap-4 group"
             >
-                <div className="text-zinc-500 font-mono text-xs w-8 text-right">
+                <div className="text-[var(--text-muted)] font-mono text-[11px] w-8 text-right">
                     --
                 </div>
-                <div className="font-mono text-sm font-bold text-blue-300">
+                <div className="font-mono text-sm font-semibold text-indigo-300">
                     PyTorch Baseline
                 </div>
-                <div className="font-mono text-blue-300 text-sm font-bold flex-1">
+                <div className="font-mono text-indigo-300 text-sm font-semibold flex-1">
                     <span>{Number(torchDisplayMs).toFixed(6)}</span>
-                    <span>{" ms"}</span>
-                </div>
-                <div className="text-zinc-600 text-xs font-mono w-40 text-right">
-                    --
+                    <span className="text-[11px] ml-1 opacity-70">ms</span>
                 </div>
             </div>
         );
@@ -50,39 +47,38 @@ def:pub WorkbenchListView(props: any) -> Any {
         listViewItems.push(
             <div
                 key={n["id"]}
-                className={"p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-4 group " + (
-                    "border-orange-500/80 bg-orange-500/10 shadow-[0_0_15px_rgba(225,112,85,0.18)]"
+                className={"p-2.5 rounded-md border cursor-pointer transition-all flex items-center gap-4 group " + (
+                    "border-[var(--accent)]/50 bg-[var(--accent)]/10 shadow-[0_0_15px_rgba(253,203,110,0.1)]"
                     if f"{n['id']}" == selectedNodeId
-                    else "border-zinc-800 bg-zinc-900/30 hover:border-zinc-700 hover:bg-zinc-900/80"
+                    else "border-[var(--border)] bg-[var(--surface-0)]/50 hover:border-zinc-600 hover:bg-[var(--surface-1)]/50"
                 )}
                 onClick={lambda event: any  -> None { onNodeSelect(f"{n['id']}");}}
             >
-                <div className="text-zinc-500 font-mono text-xs w-8 text-right">
+                <div className="text-[var(--text-muted)] font-mono text-[11px] w-8 text-right">
                     {"#" + str(idx)}
                 </div>
                 <div
-                    className={"font-mono text-sm font-bold " + (
-                        "text-orange-300"
+                    className={"font-mono text-sm font-semibold " + (
+                        "text-[var(--accent)]"
                         if f"{n['id']}" == selectedNodeId
-                        else "text-zinc-300"
+                        else "text-[var(--text-light)]"
                     )}
                 >
                     Kernel{" " + n["id"]}:
                 </div>
                 <div
-                    className="font-mono text-teal-300 text-sm font-bold flex-1"
+                    className={"font-mono text-sm font-semibold flex-1 " + (
+                        "text-[var(--accent)]"
+                        if f"{n['id']}" == selectedNodeId
+                        else "text-zinc-300"
+                    )}
                 >
                     <span>
                         {Number(n["value"] or 0).toFixed(6)}
                     </span>
-                    <span>
-                        {" ms"}
+                    <span className="text-[11px] ml-1 opacity-70">
+                        ms
                     </span>
-                </div>
-                <div className="text-zinc-600 text-xs font-mono w-40 text-right">
-                    {Reflect.construct(Date, [n["timestamp"] * 1000]).toLocaleString()
-                    if "timestamp" in n and n["timestamp"] > 0.0
-                    else ""}
                 </div>
             </div>
         );
@@ -95,7 +91,7 @@ def:pub WorkbenchListView(props: any) -> Any {
     return
         <div className="h-full overflow-y-auto p-4 pt-14 space-y-2 custom-scrollbar">
             {listViewItems}{<div
-                className="text-center py-10 text-zinc-600 italic text-sm"
+                className="text-center py-10 text-[var(--text-muted)] italic text-sm"
             >
                 No kernels found.
             </div>

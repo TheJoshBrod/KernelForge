@@ -30,33 +30,38 @@ def:pub WorkbenchLog(props: any) -> Any {
     }
 
     logViewItems = [];
+    idx = 0;
     for item in log_items {
+        is_even = (idx % 2) == 0;
+        base_bg = "border-[var(--border)] bg-[var(--surface-0)]/50" if is_even else "border-[var(--border)] bg-[var(--surface-1)]/50";
+
         logViewItems.push(
             <div
                 key={item["id"]}
-                className={"p-3 rounded border text-xs " + (
-                    "border-orange-500/50 bg-orange-500/10"
+                className={"p-2.5 rounded-md border transition-all " + (
+                    "border-[var(--accent)]/50 bg-[var(--accent)]/10 shadow-[0_0_15px_rgba(253,203,110,0.1)]"
                     if f"{item['id']}" == selectedNodeId
-                    else "border-zinc-800 bg-zinc-900/50"
+                    else base_bg
                 )}
                 ref={lambda el: any  -> None { if f"{item['id']}" == selectedNodeId
                 and el {
                     el.scrollIntoView({"behavior": "smooth", "block": "nearest"});
                 }}}
             >
-                <div className="flex justify-between mb-1">
-                    <span className="font-mono font-bold text-orange-300">
+                <div className="flex justify-between items-center mb-1">
+                    <span className={"font-mono text-sm font-semibold " + ("text-[var(--accent)]" if f"{item['id']}" == selectedNodeId else "text-[var(--text-light)]")}>
                         Kernel{" " + item["id"]}
                     </span>
-                    <span className="text-teal-300 font-mono">
-                        {Number(item["value"] or 0).toFixed(4)}
-                    </span>
+                    <div className={"font-mono text-sm font-semibold " + ("text-[var(--accent)]" if f"{item['id']}" == selectedNodeId else "text-[var(--text-light)]")}>
+                        <span>{Number(item["value"] or 0).toFixed(4)}</span>
+                    </div>
                 </div>
-                <div className="text-zinc-400">
+                <div className="text-[var(--text-muted)] text-[11px] leading-relaxed">
                     {item["improvement_description"]}
                 </div>
             </div>
         );
+        idx += 1;
     }
 
     return
@@ -71,13 +76,13 @@ def:pub WorkbenchLog(props: any) -> Any {
                 )}
             >
                 <span
-                    className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2"
+                    className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-2"
                 >
-                    <ActivityIcon className="w-4 h-4"/>
+                    <ActivityIcon className="w-4 h-4 text-[var(--accent)]"/>
                     Iteration Log
                 </span>
                 <button
-                    className="text-[11px] text-zinc-400 hover:text-zinc-200 px-2 py-1 rounded border border-zinc-700 bg-zinc-900/50"
+                    className="text-[11px] text-[var(--text-muted)] hover:text-[var(--text-light)] px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface-0)]/50 transition-colors"
                     onClick={lambda -> None { setLogCollapsed(not logCollapsed);}}
                 >
                     {"Expand" if logCollapsed else "Collapse"}

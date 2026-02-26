@@ -65,6 +65,10 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     viewMode = view_mode_state[0];
     setViewMode = view_mode_state[1];
 
+    left_panel_mode_state = useState("editor");  # "editor", "log", or "details"
+    leftPanelMode = left_panel_mode_state[0];
+    setLeftPanelMode = left_panel_mode_state[1];
+
     live_updates_state = useState(False);
     liveUpdates = live_updates_state[0];
     setLiveUpdates = live_updates_state[1];
@@ -77,17 +81,11 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     selected_node_ref = useRef(None);
 
     # Resizable split panels
-    panel_width_state = useState(50.0);
+    panel_width_state = useState(80.0);
     panelWidth = panel_width_state[0];
     setPanelWidth = panel_width_state[1];
     is_dragging_ref = useRef(False);
     container_ref = useRef(None);
-
-    v_panel_height_state = useState(55.0);
-    vPanelHeight = v_panel_height_state[0];
-    setVPanelHeight = v_panel_height_state[1];
-    is_v_dragging_ref = useRef(False);
-    v_container_ref = useRef(None);
 
     is_optimizing_state = useState(False);
     isOptimizing = is_optimizing_state[0];
@@ -443,14 +441,35 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     resolvedProjectNameClean = decode_param(resolvedProjectName);
     resolvedOpNameClean = canonical_op_param(resolvedOpName);
 
+    left_content = [];
+    if leftPanelMode == "editor" {
+        left_content.push(
+            <WorkbenchEditor
+                selectedNodeId={selectedNodeId}
+                selectedNodeData={selectedNodeData}
+            />
+        );
+    } elif leftPanelMode == "log" {
+        left_content.push(
+            <WorkbenchLog
+                selectedNodeId={selectedNodeId}
+                rawNodes={rawNodes}
+                nodes={nodes}
+                edges={edges}
+            />
+        );
+    } else {
+        left_content.push(
+            <WorkbenchNodeDetails
+                selectedNodeId={selectedNodeId}
+                selectedNodeData={selectedNodeData}
+            />
+        );
+    }
+
     def handleDividerMouseDown(e: any) -> None {
         e.preventDefault();
         is_dragging_ref.current = True;
-    }
-
-    def handleVDividerMouseDown(e: any) -> None {
-        e.preventDefault();
-        is_v_dragging_ref.current = True;
     }
 
     def handleMouseMove(e: any) -> None {
@@ -464,21 +483,10 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                 setPanelWidth(new_width);
             }
         }
-        if is_v_dragging_ref.current {
-            v_container = v_container_ref.current;
-            if v_container {
-                rect = v_container.getBoundingClientRect();
-                new_height = ((e.clientY - rect.top) / rect.height) * 100;
-                if new_height < 20 { new_height = 20; }
-                if new_height > 80 { new_height = 80; }
-                setVPanelHeight(new_height);
-            }
-        }
     }
 
     def handleMouseUp(e: any) -> None {
         is_dragging_ref.current = False;
-        is_v_dragging_ref.current = False;
     }
 
     return
@@ -489,25 +497,49 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
             onMouseUp={handleMouseUp}
         >
             <div style={{"width": panelWidth + "%"}} className="flex flex-col min-w-0">
-                <WorkbenchEditor
-                    selectedNodeId={selectedNodeId}
-                    selectedNodeData={selectedNodeData}
-                />
-                <WorkbenchLog
-                    selectedNodeId={selectedNodeId}
-                    rawNodes={rawNodes}
-                    nodes={nodes}
-                    edges={edges}
-                />
+                <div
+                    className="h-10 bg-zinc-900/50 border-b border-zinc-800 flex items-center px-4 gap-1 flex-shrink-0"
+                >
+                    <button
+                        className={"px-3 py-1.5 text-xs font-bold rounded transition-all " + (
+                            "bg-zinc-700 text-white shadow-sm"
+                            if leftPanelMode == "editor"
+                            else "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+                        )}
+                        onClick={lambda : setLeftPanelMode("editor")}
+                    >
+                        Editor
+                    </button>
+                    <button
+                        className={"px-3 py-1.5 text-xs font-bold rounded transition-all " + (
+                            "bg-zinc-700 text-white shadow-sm"
+                            if leftPanelMode == "log"
+                            else "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+                        )}
+                        onClick={lambda : setLeftPanelMode("log")}
+                    >
+                        Log
+                    </button>
+                    <button
+                        className={"px-3 py-1.5 text-xs font-bold rounded transition-all " + (
+                            "bg-zinc-700 text-white shadow-sm"
+                            if leftPanelMode == "details"
+                            else "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50"
+                        )}
+                        onClick={lambda : setLeftPanelMode("details")}
+                    >
+                        Details
+                    </button>
+                </div>
+                {left_content}
             </div>
             <div
                 className="w-1 bg-zinc-800 hover:bg-indigo-500/50 cursor-col-resize flex-shrink-0 transition-colors select-none"
                 onMouseDown={handleDividerMouseDown}
             />
-            <div style={{"width": (100 - panelWidth) + "%"}} className="flex flex-col bg-zinc-950 min-w-0" ref={v_container_ref}>
+            <div style={{"width": (100 - panelWidth) + "%"}} className="flex flex-col bg-zinc-950 min-w-0">
                 <div
-                    style={{"height": vPanelHeight + "%"}}
-                    className="border-b border-zinc-800 relative bg-[radial-gradient(circle_at_18%_14%,rgba(225,112,85,0.12),transparent_42%),radial-gradient(circle_at_84%_78%,rgba(20,184,166,0.10),transparent_45%),#09090b]"
+                    className="flex-1 border-b border-zinc-800 relative bg-[radial-gradient(circle_at_18%_14%,rgba(225,112,85,0.12),transparent_42%),radial-gradient(circle_at_84%_78%,rgba(20,184,166,0.10),transparent_45%),#09090b]"
                 >
                     <WorkbenchControls
                         viewMode={viewMode}
@@ -534,14 +566,6 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         torchDisplayMs={torchOpMs}
                     />}
                 </div>
-                <div
-                    className="h-1 bg-zinc-800 hover:bg-indigo-500/50 cursor-row-resize flex-shrink-0 transition-colors select-none"
-                    onMouseDown={handleVDividerMouseDown}
-                />
-                <WorkbenchNodeDetails
-                    selectedNodeId={selectedNodeId}
-                    selectedNodeData={selectedNodeData}
-                />
                 <div className="p-4 border-t border-zinc-800 bg-zinc-900/30">
                     <NewKernel
                         projectName={resolvedProjectNameClean}
