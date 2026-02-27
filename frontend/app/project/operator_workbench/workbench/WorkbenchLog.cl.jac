@@ -1,5 +1,6 @@
 """Workbench Log Panel Component"""
 
+import from react { useEffect, useRef }
 import from .....components.ui.Icons { ActivityIcon }
 
 def:pub WorkbenchLog(props: any) -> Any {
@@ -7,6 +8,16 @@ def:pub WorkbenchLog(props: any) -> Any {
     rawNodes = props.rawNodes;
     nodes = props.nodes;
     edges = props.edges;
+
+    selected_item_ref = useRef(None);
+    useEffect(
+        lambda -> None {
+            if selected_item_ref.current {
+                selected_item_ref.current.scrollIntoView({"behavior": "smooth", "block": "nearest"});
+            }
+        },
+        [selectedNodeId]
+    );
 
     log_items = [];
     if selectedNodeId and nodes.length > 0 and edges.length > 0 {
@@ -68,10 +79,7 @@ def:pub WorkbenchLog(props: any) -> Any {
                     if f"{item['id']}" == selectedNodeId
                     else base_bg
                 )}
-                ref={lambda el: any  -> None { if f"{item['id']}" == selectedNodeId
-                and el {
-                    el.scrollIntoView({"behavior": "smooth", "block": "nearest"});
-                }}}
+                ref={selected_item_ref if f"{item['id']}" == selectedNodeId else None}
             >
                 <div className="flex justify-between items-center mb-1.5">
                     <span className={"font-mono text-sm font-semibold " + ("text-[var(--accent)]" if f"{item['id']}" == selectedNodeId else "text-[var(--text-light)]")}>
@@ -100,7 +108,7 @@ def:pub WorkbenchLog(props: any) -> Any {
                     {"Kernel " + selectedNodeId if selectedNodeId else ""}
                 </span>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-2 flex flex-col-reverse custom-scrollbar">
+            <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
                 {logViewItems}
             </div>
         </div>;
