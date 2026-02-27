@@ -1,6 +1,7 @@
 import json
 import math
 import sqlite3
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
@@ -48,7 +49,7 @@ def _node_from_row(row: Any, parent_id: Optional[int] = None, children_ids: List
     # row keys: id, visits, value, best_subtree, code, imp_desc, timestamp
     
     # Handle tuple from fetchone/fetchall
-    (nid, vis, val, best_val, code, imp_desc, _) = row
+    (nid, vis, val, best_val, code, imp_desc, ts) = row
     
     return KernelNode(
         id=nid,
@@ -59,6 +60,7 @@ def _node_from_row(row: Any, parent_id: Optional[int] = None, children_ids: List
         best_subtree_value=best_val,
         code=code,
         improvement_description=imp_desc,
+        timestamp=ts if ts is not None else 0.0,
         speedup_vs_parent=None # Not stored in DB anymore
     )
 
@@ -135,6 +137,10 @@ def update_tree(paths: dict, new_node: KernelNode):
 
     with sqlite3.connect(db_path) as conn:
         while True:
+            # If timestamp is missing or 0.0 on a node update, give it a real timestamp
+            if current.timestamp == 0.0:
+                current.timestamp = time.time()
+
             # Upsert current node properties
             conn.execute("""
                 INSERT OR REPLACE INTO nodes 
@@ -147,7 +153,7 @@ def update_tree(paths: dict, new_node: KernelNode):
                 current.best_subtree_value,
                 current.code,
                 current.improvement_description,
-                0.0
+                current.timestamp
             ))
 
             if current.parent_id == -1 or current.parent_id is None:
@@ -451,10 +457,11 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
         
         for h in history:
             current_time = h["results"]["mean_time_ms"]
-            if current_time > 0 and baseline_time > 0:
+            if (baseline_time > 0 and baseline_time != float('inf')
+                    and current_time > 0 and current_time != float('inf')):
                 h["speedup_vs_baseline"] = baseline_time / current_time
             else:
-                h["speedup_vs_baseline"] = 0.0
+                h["speedup_vs_baseline"] = 1.0 if current_time == baseline_time else 0.0
 
     return history, codes
 

@@ -54,6 +54,7 @@ class KernelNode(BaseModel):
     best_subtree_value: Optional[float] = None
     code: Optional[str] = None
     improvement_description: Optional[str] = None
+    timestamp: float = 0.0
     speedup_vs_parent: Optional[float] = None
     
     class Config:
@@ -65,6 +66,8 @@ class KernelNode(BaseModel):
         Lower score = better.
         """
         exploitation = self.best_subtree_value if self.best_subtree_value is not None else self.value
+        if exploitation is None:
+            return float('inf')
         exploration = C * math.sqrt(math.log(parent_node.visits) / self.visits)
 
         return exploitation - exploration

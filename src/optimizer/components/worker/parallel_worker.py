@@ -158,7 +158,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                 (paths["tmp_dir"] / f"kernel{backend.kernel_extension}").write_text(code)
 
                 # 4. Validate
-                result_queue.put((node_id, {"step": "Verifying", "attempt": attempt + 1}, "status_update"))
+                result_queue.put((node_id, {"step": "Validating", "attempt": attempt + 1}, "status_update"))
                 is_valid, validation_error = backend.validate_kernel(code, paths)
                 
                 if is_valid:
@@ -177,7 +177,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
             # 5. Profile (Exclusive GPU access)
             runtime_ms = float('inf')
             
-            result_queue.put((node_id, {"step": "Benchmarking", "attempt": attempt + 1 if 'attempt' in locals() else 1}, "status_update"))
+            result_queue.put((node_id, {"step": "Profiling", "attempt": attempt + 1 if 'attempt' in locals() else 1}, "status_update"))
             
             # Use lock if provided (for strict serialization of GPU kernels)
             if gpu_lock:
@@ -209,10 +209,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                 {
                     "runtime_ms": runtime_ms,
                     "kernel_id": kernel_id,
-                    "code_path": str(kernel_filename), # Store relative path or absolute?
-                                                     # Pipeline usually expects relative to proj_dir/attempts? 
-                                                     # Let's verify how main loop does it.
-                                                     # Main loop stores: str(paths["proj_dir"] / "kernels" / f"kernel_{parent_node.id}{backend.kernel_extension}")
+                    "code_path": str(Path(paths["proj_dir"].name) / "kernels" / kernel_filename),
                     "feedback": feedback
                 },
                 "success"

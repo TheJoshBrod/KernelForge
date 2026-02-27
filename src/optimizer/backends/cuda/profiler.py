@@ -102,12 +102,8 @@ def get_module(kernel_path: Path, baseline: bool):
     cpp_source = match.group(1) + ";"
 
     if not so_files:
-        if not baseline:
-            raise FileNotFoundError(
-                "Somehow passed correctness validation (generator.py), but lost .so file (GPUprofiler.py)")
-
-        # Baseline case: compile the kernel now
-        # Use a consistent module name based on the directory
+        # No .so found — compile now (covers baseline and cases where the
+        # pre-compiled .so lives in a different cache directory).
         module_name = kernel_path.name
     else:
         # Already compiled case: load existing module

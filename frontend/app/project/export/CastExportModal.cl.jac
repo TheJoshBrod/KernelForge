@@ -2,14 +2,14 @@
 
 import from react { useState, useEffect }
 import from "react-router-dom" { useParams }
-import from ...components.ui.Modal { Modal }
-import from ...components.ui.Icons {
+import from ....components.ui.Modal { Modal }
+import from ....components.ui.Icons {
     ZapIcon,
     ChevronDownIcon,
     CpuIcon,
     CheckIcon
 }
-import from ...context.ConfigContext { useConfig }
+import from ....context.ConfigContext { useConfig }
 
 def:pub CastExportModal(props: any) -> Any {
     isOpen = props.isOpen;

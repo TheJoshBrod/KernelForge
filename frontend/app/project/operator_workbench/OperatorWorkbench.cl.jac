@@ -3,7 +3,7 @@
 import from react { useEffect }
 import from "react-router-dom" { useParams, useNavigate }
 import from .OpSelector { OpSelector }
-import from .OperatorWorkbenchView { OperatorWorkbenchView }
+import from .workbench.OperatorWorkbenchView { OperatorWorkbenchView }
 
 def:pub OperatorWorkbench -> Any {
     params = useParams();
