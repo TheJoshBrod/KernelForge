@@ -280,15 +280,7 @@ walker:pub ClearProjectQueue {
                     state = load(f);
                 }
             }
-            existing = state.get("active_tasks", {}) if state else {};
-            kept = {};
-            for (k, v) in existing.items() {
-                step = v.get("current_step", "") if v else "";
-                if step in active_steps {
-                    kept[k] = v;
-                }
-            }
-            state["active_tasks"] = kept;
+            state["active_tasks"] = {};
             state["pending_operators"] = [];
             state["current_operator"] = "";
             state["benchmark_slot"] = {"now": None, "pending": []};

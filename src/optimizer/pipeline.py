@@ -640,7 +640,7 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                     print(f"[SUCCESS] Node {node_id} -> {kernel_id} | {runtime_ms:.4f}ms | {speedup:.2f}x | Done: {nodes_completed}")
                 
                 update_queue_state(proj_base_dir, {
-                    "active_tasks": {str(node_id): {"current_step": "Done", "result": f"{speedup:.2f}x", "status": "Done"}},
+                    "active_tasks": {str(node_id): {"current_step": "Done", "result": f"{speedup:.2f}x", "status": "Done", "value_ms": float(runtime_ms)}},
                     "benchmark_slot": {"now": None, "pending": []}
                 })
             elif status == "status_update":
@@ -953,6 +953,11 @@ Examples:
                 max_iterations=args.max_iterations,
                 model=model_name
             )
+            update_queue_state(proj_base_dir, {
+                "active_tasks": {},
+                "current_operator": "",
+                "benchmark_slot": {"now": None, "pending": []},
+            })
             print(
                 f"[optimize-result] op={op_name} status=unknown "
                 "new_nodes=0 last_reason="
@@ -962,7 +967,7 @@ Examples:
             # === SEQUENTIAL MODE (original) ===
             op_new_nodes = 0
             op_last_reason = ""
-            task_key = "seq_opt"
+            task_key = f"seq_opt_{op_name}"
             retry_limit = getattr(settings, 'retry_limit', 3)
             for i in range(args.max_iterations):
                 paths["iteration"] = i + 1
@@ -999,6 +1004,7 @@ Examples:
                             "current_step": "Done",
                             "result": f"{speedup:.2f}x",
                             "status": "Done",
+                            "value_ms": float(new_node.value),
                         }}})
                     else:
                         update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
@@ -1015,6 +1021,10 @@ Examples:
 
                 if (i + 1) % 10 == 0:
                     print(f"  Progress: {i+1}/{args.max_iterations} iterations")
+            update_queue_state(proj_base_dir, {
+                "remove_tasks": [task_key],
+                "current_operator": "",
+            })
             if op_new_nodes > 0:
                 print(
                     f"[optimize-result] op={op_name} status=improved "

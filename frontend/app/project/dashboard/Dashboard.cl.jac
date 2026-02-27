@@ -1246,6 +1246,8 @@ def:pub Dashboard -> Any {
                     currentOperator={current_operator}
                     benchmarkSlot={benchmark_slot}
                     pendingOperators={pending_operators}
+                    speedData={speedData}
+                    mctsSummary={mctsSummary}
                     onClearQueue={lambda -> None { __jacSpawn("ClearProjectQueue", "", {"projectName": name}).then(lambda _r: any -> None { refreshData();});}}
                 />
                 <OperatorResultsTable

@@ -91,6 +91,10 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     isOptimizing = is_optimizing_state[0];
     setIsOptimizing = is_optimizing_state[1];
 
+    pending_parent_ref_state = useState("");
+    pendingParentRef = pending_parent_ref_state[0];
+    setPendingParentRef = pending_parent_ref_state[1];
+
     async def fetchData(showLoader: bool = False) -> None {
         project_for_query = decode_param(resolvedProjectName);
         op_for_query = canonical_op_param(resolvedOpName);
@@ -283,6 +287,16 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         if opt_job and "status" in opt_job
                         else "";
                     setIsOptimizing(is_active or status_raw == "running");
+                    queue_data = data["queue"] if data and "queue" in data else {};
+                    active_tasks_data = queue_data["active_tasks"] if "active_tasks" in queue_data else {};
+                    found_ref = "";
+                    for tk in Object.keys(active_tasks_data) {
+                        t = active_tasks_data[tk];
+                        if "parent_ref" in t and t["parent_ref"] {
+                            found_ref = str(t["parent_ref"]);
+                        }
+                    }
+                    setPendingParentRef(found_ref);
                 } except Exception {
                     setIsOptimizing(False);
                 }
@@ -391,27 +405,27 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     };
 
     if isOptimizing and hasTree {
-        # Find the best (lowest value) real node to parent the pending node under
+        # Use the actual parent from the queue's parent_ref (e.g. "kernel_15" -> id "15")
         pending_parent_id = None;
-        pending_parent_x = 0;
         pending_parent_y = 0;
-        best_val = None;
+        parent_node_id = pendingParentRef.replace("kernel_", "") if pendingParentRef else "";
         for n in nodes {
-            raw = rawNodes[n.id] if n.id in rawNodes else None;
-            if raw {
-                v = Number(raw["value"]) if "value" in raw and raw["value"] else 0;
-                if v > 0 and (best_val is None or v < best_val) {
-                    best_val = v;
-                    pending_parent_id = n.id;
-                    pending_parent_x = n.position.x;
-                    pending_parent_y = n.position.y;
-                }
+            if str(n.id) == parent_node_id {
+                pending_parent_id = n.id;
+                pending_parent_y = n.position.y;
             }
         }
         if pending_parent_id {
+            child_y = pending_parent_y + 150;
+            nodes_at_child_level = 0;
+            for n in nodes {
+                if n.position.y == child_y {
+                    nodes_at_child_level += 1;
+                }
+            }
             displayNodes.push({
                 "id": "pending-node",
-                "position": {"x": pending_parent_x, "y": pending_parent_y + 150},
+                "position": {"x": nodes_at_child_level * 200, "y": child_y},
                 "data": {"label": "Generating..."},
                 "className": "pending-kernel-node",
                 "style": pending_style,

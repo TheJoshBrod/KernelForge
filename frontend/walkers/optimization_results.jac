@@ -383,15 +383,18 @@ walker:pub GetProjectMctsSummary {
                         cursor.execute("SELECT COUNT(*) FROM nodes WHERE value IS NOT NULL AND value > 0");
                         node_count = cursor.fetchone()[0];
 
-                        cursor.execute("SELECT MIN(value) FROM nodes WHERE value IS NOT NULL AND value > 0");
-                        best_val = cursor.fetchone()[0] or 0.0;
+                        cursor.execute("SELECT id, value FROM nodes WHERE value IS NOT NULL AND value > 0 ORDER BY value ASC LIMIT 1");
+                        best_row = cursor.fetchone();
+                        best_val = float(best_row[1]) if best_row else 0.0;
+                        best_node_id = int(best_row[0]) if best_row else None;
 
                         total_nodes += node_count;
                         op_summaries.append(
                             {
                                 "op": op_name,
                                 "nodes": node_count,
-                                "best_value": best_val
+                                "best_value": best_val,
+                                "best_node_id": best_node_id
                             }
                         );
                         conn.close();
