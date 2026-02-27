@@ -9,6 +9,7 @@ from pathlib import Path
 
 from src.progress import check_cancelled, update_job_progress, wait_if_paused
 from src.optimizer.tree_store import publish_generated_root
+from src.optimizer.pipeline import update_queue_state
 
 
 def _repo_root() -> Path:
@@ -261,6 +262,12 @@ def run_generate(args: argparse.Namespace) -> int:
         if check_cancelled():
             return 130
 
+        task_key = f"gen_{op_name}"
+        update_queue_state(project_dir, {
+            "active_tasks": {task_key: {"current_step": "Generating", "status": "In Progress"}},
+            "current_operator": op_name,
+        })
+
         update_job_progress(
             idx,
             progress_total,
@@ -337,6 +344,9 @@ def run_generate(args: argparse.Namespace) -> int:
                     )
 
         if args.optimize and can_benchmark:
+            update_queue_state(project_dir, {
+                "active_tasks": {task_key: {"current_step": "Optimizing"}},
+            })
             update_job_progress(
                 idx,
                 total_ops,
@@ -366,6 +376,9 @@ def run_generate(args: argparse.Namespace) -> int:
             if check_cancelled():
                 return 130
 
+            update_queue_state(project_dir, {
+                "active_tasks": {task_key: {"current_step": "Benchmarking"}},
+            })
             update_job_progress(
                 idx,
                 progress_total,
@@ -413,6 +426,13 @@ def run_generate(args: argparse.Namespace) -> int:
         if op_failure:
             failed_ops.append((op_name, op_failure))
             print(f"[workflow] Failed {op_name}: {op_failure}. Continuing.")
+            update_queue_state(project_dir, {
+                "active_tasks": {task_key: {
+                    "current_step": "Failed",
+                    "result": op_failure[:80],
+                    "status": "Failed",
+                }},
+            })
             update_job_progress(
                 idx + 1,
                 progress_total,
@@ -422,6 +442,15 @@ def run_generate(args: argparse.Namespace) -> int:
                 ),
             )
             continue
+
+        # Mark this operator as Done in the queue
+        update_queue_state(project_dir, {
+            "active_tasks": {task_key: {
+                "current_step": "Done",
+                "result": "completed",
+                "status": "Done",
+            }},
+        })
 
         if args.benchmark:
             if reused_existing:
@@ -435,6 +464,11 @@ def run_generate(args: argparse.Namespace) -> int:
             else:
                 msg = f"Generated {idx + 1}/{total_ops} operators."
             update_job_progress(idx + 1, progress_total, msg)
+
+    # Clear current_operator when all generations are complete
+    update_queue_state(project_dir, {
+        "current_operator": ""
+    })
 
     if failed_ops:
         failed_count = len(failed_ops)
@@ -477,7 +511,7 @@ def run_optimize(args: argparse.Namespace) -> int:
             return 130
         if check_cancelled():
             return 130
-
+            
         update_job_progress(
             idx,
             total,

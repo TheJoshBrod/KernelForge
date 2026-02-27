@@ -229,30 +229,33 @@ def _validate_static_kernel(
     kernel_dir = op_dir / "kernel"
     kernel_dir.mkdir(parents=True, exist_ok=True)
 
-    for i, entry_file in enumerate(entry_files):
-        if not wait_if_paused():
-            return False, "Generation cancelled."
-        if check_cancelled():
-            return False, "Generation cancelled."
+    if not entry_files:
+        return False, "No entry files to validate against."
 
-        tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
-        log_file_loc = op_dir / "attempts" / f"log-{tag}-{i}.txt"
-        os.makedirs(log_file_loc.parent, exist_ok=True)
+    if not wait_if_paused():
+        return False, "Generation cancelled."
+    if check_cancelled():
+        return False, "Generation cancelled."
 
-        call_success, exec_success, feedback = _validate_kernel(
-            cu_code, entry_file, log_file_loc, tmpdir, ssh_config=ssh_config
-        )
+    tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
+    log_file_loc = op_dir / "attempts" / f"log-{tag}-0.txt"
+    os.makedirs(log_file_loc.parent, exist_ok=True)
 
-        if os.path.exists(tmpdir):
-            shutil.rmtree(tmpdir)
+    # Use the first entry file's path to find io_dir; the backend validates ALL files in it
+    call_success, exec_success, feedback = _validate_kernel(
+        cu_code, entry_files[0], log_file_loc, tmpdir, ssh_config=ssh_config
+    )
 
-        ext = _kernel_ext()
-        if not (call_success and exec_success):
-            with open(kernel_dir / f"kernel-{tag}-{i}{ext}", "w") as f:
-                f.write(cu_code)
-            with open(op_dir / "attempts" / f"feedback-{tag}-{i}.txt", "w") as f:
-                f.write(feedback)
-            return False, feedback
+    if os.path.exists(tmpdir):
+        shutil.rmtree(tmpdir)
+
+    ext = _kernel_ext()
+    if not (call_success and exec_success):
+        with open(kernel_dir / f"kernel-{tag}-0{ext}", "w") as f:
+            f.write(cu_code)
+        with open(op_dir / "attempts" / f"feedback-{tag}-0.txt", "w") as f:
+            f.write(feedback)
+        return False, feedback
 
     with open(op_dir / _kernel_filename(), "w", encoding="utf-8") as f:
         f.write(cu_code)
@@ -445,6 +448,16 @@ def validate_with_retries(
                     # See `repair` variable below.
                     msg = last_repair_prompt
                 
+                # Save prompt to prompts/ folder for inspection
+                try:
+                    prompts_dir = output_dir / "prompts"
+                    prompts_dir.mkdir(parents=True, exist_ok=True)
+                    prompt_file = prompts_dir / f"prompt-{attempt}.txt"
+                    with open(prompt_file, "w", encoding="utf-8") as pf:
+                        pf.write(msg)
+                except Exception:
+                    pass
+                
                 cu_code = generator.generate(gen_model, msg, llm_model)
 
             except Exception as e:
@@ -468,6 +481,16 @@ def validate_with_retries(
              return False, "No entry files", "setup"
 
         update_job_progress(attempt, max_attempts, f"Validating {op_key} (attempt {attempt + 1}/{max_attempts}){' — remote' if ssh_config else ''}")
+        # Update queue state so the dashboard shows "Validating" instead of "Generating"
+        try:
+            _p_dir = project_dir or _find_project_dir(Path(entry_files[0]))
+            if _p_dir:
+                from src.optimizer.pipeline import update_queue_state
+                update_queue_state(_p_dir, {
+                    "active_tasks": {f"gen_{op_key}": {"current_step": "Validating", "attempt_current": attempt + 1, "attempt_max": max_attempts}},
+                })
+        except Exception:
+            pass
 
         # Validate all inputs at once using backend
         call_success, exec_success, feedback = _validate_kernel(
@@ -499,6 +522,15 @@ def validate_with_retries(
                     pass
 
             update_job_progress(attempt, max_attempts, f"Repairing {op_key} (attempt {attempt + 1}/{max_attempts})")
+            try:
+                _p_dir = project_dir or _find_project_dir(Path(entry_files[0]))
+                if _p_dir:
+                    from src.optimizer.pipeline import update_queue_state
+                    update_queue_state(_p_dir, {
+                        "active_tasks": {f"gen_{op_key}": {"current_step": "Validating", "attempt_current": attempt + 1}},
+                    })
+            except Exception:
+                pass
             last_repair_prompt = prompts.get_repair_prompt(
                 function_name=function_name,
                 attempt=attempt,

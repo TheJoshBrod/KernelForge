@@ -1,6 +1,6 @@
 """Dashboard Page"""
 
-import from react { useEffect, useLayoutEffect, useState }
+import from react { useEffect, useLayoutEffect, useState, useRef }
 import from "react-router-dom" { useNavigate, useParams }
 import from ...components.ui.Icons {
     CpuIcon,
@@ -638,6 +638,21 @@ def:pub Dashboard -> Any {
     _ep_bench = status["benchmark"] if status and "benchmark" in status else {};
     any_job_active = forgeBusy or is_job_active(_ep_profile) or is_job_active(_ep_gen) or is_job_active(_ep_opt) or is_job_active(_ep_bench);
 
+    # Track previous active state to catch when jobs finish
+    prev_active_ref = useRef(any_job_active);
+    useEffect(
+        lambda -> None {
+            was_active = prev_active_ref.current;
+            prev_active_ref.current = any_job_active;
+            
+            # If a job just transitioned from running -> stopped
+            if was_active and not any_job_active {
+                refreshData();
+            }
+        },
+        [any_job_active]
+    );
+
     # Auto-refresh status (faster while active, slower while idle)
     useEffect(
         lambda -> Any { poll_ms = 1500 if any_job_active else 15000;timer = setInterval(
@@ -1166,7 +1181,7 @@ def:pub Dashboard -> Any {
         tag = task["tag"];
         
         track_nodes = [];
-        steps = ["Monitoring", "Generating", "Verifying", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
+        steps = ["Monitoring", "Generating", "Validating", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
         
         c_idx = -1;
         for i in range(list_len(steps)) {
@@ -1203,11 +1218,11 @@ def:pub Dashboard -> Any {
         }
         
         bar_w = "0%";
-        if c_step == "Generating" { bar_w = "33%"; }
-        elif c_step == "Verifying" { bar_w = "66%"; }
-        elif c_step == "Validating" { bar_w = "66%"; }
-        elif c_step == "Benchmarking" { bar_w = "85%"; }
-        elif c_step == "Profiling" { bar_w = "85%"; }
+        if c_step == "Monitoring" { bar_w = "10%"; }
+        elif c_step == "Generating" { bar_w = "33%"; }
+        elif c_step == "Validating" { bar_w = "55%"; }
+        elif c_step == "Benchmarking" { bar_w = "80%"; }
+        elif c_step == "Profiling" { bar_w = "80%"; }
         elif c_step == "Done" { bar_w = "100%"; }
         
         sub_info = "";
@@ -1371,10 +1386,12 @@ def:pub Dashboard -> Any {
 
         row_status_color = "text-zinc-500";
         if r_stat == "Forged ✓" { row_status_color = "text-emerald-400"; }
-        elif r_stat != "Not started" and r_stat != "Benchmarked" { row_status_color = "text-[var(--accent-orange)] animate-pulse"; }
+        elif r_stat != "Not started" and r_stat != "Benchmarked" and r_stat != "Done" { row_status_color = "text-[var(--accent-orange)] animate-pulse"; }
         
-        action_text = "Optimize" if r_stat == "Benchmarked" or r_stat == "Forged ✓" else "Generate";
+        action_text = "Optimize" if r_stat == "Benchmarked" or r_stat == "Forged ✓" or r_stat == "Done" else "Generate";
+        
         action_colors = "border-[var(--accent-orange)]/40 text-[var(--accent-orange)] hover:bg-[var(--accent-orange)] hover:text-zinc-950" if action_text == "Optimize" else "border-zinc-600 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 hover:border-zinc-500";
+        
         action_btn_class = f"px-2 py-0.5 bg-transparent border rounded text-[10px] uppercase font-semibold transition-colors {action_colors}";
         
         operatorRowsNodes.push(
