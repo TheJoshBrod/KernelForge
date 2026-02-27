@@ -99,6 +99,83 @@ ENABLE_WRAPPING = True
 skipped_counts: dict[str, int] = {}
 
 
+def _serialize(v):
+    if isinstance(v, torch.Tensor):
+        return v.detach().cpu()
+    if isinstance(v, (list, tuple)):
+        return type(v)(_serialize(x) for x in v)
+    if isinstance(v, dict):
+        return {k: _serialize(x) for k, x in v.items()}
+    return v  # torch.dtype, torch.device, int, float, bool, None, etc.
+
+
+# Known signatures for C-extension ops that lack Python-inspectable signatures.
+# Matches the public PyTorch API parameter order exactly.
+_KNOWN_SIGS: dict[str, dict] = {  # noqa: E501  (line-length; values kept readable)
+    "torch.nn.functional.linear": {
+        "params": ["input", "weight", "bias"],
+        "defaults": {"bias": None},
+    },
+    "torch.nn.functional.conv1d": {
+        "params": ["input", "weight", "bias", "stride", "padding", "dilation", "groups"],
+        "defaults": {"bias": None, "stride": 1, "padding": 0, "dilation": 1, "groups": 1},
+    },
+    "torch.nn.functional.conv2d": {
+        "params": ["input", "weight", "bias", "stride", "padding", "dilation", "groups"],
+        "defaults": {"bias": None, "stride": 1, "padding": 0, "dilation": 1, "groups": 1},
+    },
+    "torch.nn.functional.conv3d": {
+        "params": ["input", "weight", "bias", "stride", "padding", "dilation", "groups"],
+        "defaults": {"bias": None, "stride": 1, "padding": 0, "dilation": 1, "groups": 1},
+    },
+    "torch.nn.functional.conv_transpose1d": {
+        "params": ["input", "weight", "bias", "stride", "padding", "output_padding", "groups", "dilation"],
+        "defaults": {"bias": None, "stride": 1, "padding": 0, "output_padding": 0, "groups": 1, "dilation": 1},
+    },
+    "torch.nn.functional.conv_transpose2d": {
+        "params": ["input", "weight", "bias", "stride", "padding", "output_padding", "groups", "dilation"],
+        "defaults": {"bias": None, "stride": 1, "padding": 0, "output_padding": 0, "groups": 1, "dilation": 1},
+    },
+    "torch.nn.functional.max_pool2d": {
+        "params": ["input", "kernel_size", "stride", "padding", "dilation", "ceil_mode", "return_indices"],
+        "defaults": {"stride": None, "padding": 0, "dilation": 1, "ceil_mode": False, "return_indices": False},
+    },
+    "torch.nn.functional.avg_pool2d": {
+        "params": ["input", "kernel_size", "stride", "padding", "ceil_mode", "count_include_pad", "divisor_override"],
+        "defaults": {"stride": None, "padding": 0, "ceil_mode": False, "count_include_pad": True, "divisor_override": None},
+    },
+    "torch.nn.functional.adaptive_avg_pool2d": {
+        "params": ["input", "output_size"],
+        "defaults": {},
+    },
+    "torch.nn.functional.adaptive_max_pool2d": {
+        "params": ["input", "output_size", "return_indices"],
+        "defaults": {"return_indices": False},
+    },
+}
+
+
+def _build_signature(op_dict: dict) -> inspect.Signature:
+    parameters = []
+    for name in op_dict["params"]:
+        if name in op_dict["defaults"]:
+            param = inspect.Parameter(
+                name,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                default=op_dict["defaults"][name],
+            )
+        else:
+            param = inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        parameters.append(param)
+    return inspect.Signature(parameters)
+
+
+# Pre-built Signature objects — computed once at import time.
+_COMPILED_SIGS: dict[str, inspect.Signature] = {
+    k: _build_signature(v) for k, v in _KNOWN_SIGS.items()
+}
+
+
 @contextmanager
 def _patched_auto_docstring():
     restored = []
@@ -178,6 +255,38 @@ def wrap_function(module, func_name: str) -> None:
     _wrapped.add(func)
     module_path = module.__name__
 
+    # Precompute full signature once per wrapped function.
+    # Priority: _COMPILED_SIGS (hardcoded, reliable) → inspect (Python-native ops).
+    # Using module_path.func_name avoids the func.__module__ trap where C-extension
+    # ops report their internal module (e.g. torch._C._nn) rather than the public one.
+    op_key = f"{module_path}.{func_name}"
+    _func_sig = _COMPILED_SIGS.get(op_key)
+    _sig_params: list[str] = []
+    _sig_defaults: dict[str, Any] = {}
+
+    if _func_sig:
+        _sig_params = list(_func_sig.parameters.keys())
+        _sig_defaults = {
+            k: v.default
+            for k, v in _func_sig.parameters.items()
+            if v.default is not inspect.Parameter.empty
+        }
+    else:
+        try:
+            _func_sig = inspect.signature(func)
+            for name, param in _func_sig.parameters.items():
+                if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                    continue
+                _sig_params.append(name)
+                if param.default is not inspect.Parameter.empty:
+                    _sig_defaults[name] = param.default
+        except (ValueError, TypeError):
+            pass
+        if not _sig_params:
+            # Stub (*args, **kwargs) or uninspectable — discard the signature object
+            # so the fallback recording path is used in wrapper.
+            _func_sig = None
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         key = f"{module_path}.{func_name}"
@@ -187,33 +296,35 @@ def wrap_function(module, func_name: str) -> None:
             skipped_counts[key] = skipped_counts.get(key, 0) + 1
             return output
 
-        ser_args = [
-            a.detach().cpu() if isinstance(a, torch.Tensor) else a
-            for a in args
-        ]
-        ser_kwargs = {
-            k: (v.detach().cpu() if isinstance(v, torch.Tensor) else v)
-            for k, v in kwargs.items()
-        }
-        if isinstance(output, torch.Tensor):
-            ser_output = output.detach().cpu()
-        elif isinstance(output, (list, tuple)):
-            ser_output = [
-                o.detach().cpu() if isinstance(o, torch.Tensor) else o
-                for o in output
-            ]
-        else:
-            ser_output = output
-
+        ser_output = _serialize(output)
         calls.setdefault(key, [])
-        calls[key].append(
-            {
-                "function_name": key,
-                "args": ser_args,
-                "kwargs": ser_kwargs,
-                "output": ser_output,
-            }
-        )
+
+        # Try to resolve full parameter set including defaults.
+        # _func_sig is always a real inspect.Signature when set, so bind() +
+        # apply_defaults() handles both Python-native and C-extension ops uniformly.
+        if _func_sig and _sig_params:
+            try:
+                bound = _func_sig.bind(*args, **kwargs)
+                bound.apply_defaults()
+                resolved_kwargs = {k: _serialize(v) for k, v in bound.arguments.items()}
+                calls[key].append({
+                    "function_name": key,
+                    "args": [],
+                    "kwargs": resolved_kwargs,
+                    "output": ser_output,
+                    "signature": {"params": _sig_params, "defaults": _sig_defaults},
+                })
+                return output
+            except TypeError:
+                pass  # bind failed — fall through to original
+
+        # Original recording path (fallback)
+        calls[key].append({
+            "function_name": key,
+            "args": [_serialize(a) for a in args],
+            "kwargs": {k: _serialize(v) for k, v in kwargs.items()},
+            "output": ser_output,
+        })
         return output
 
     setattr(module, func_name, wrapper)

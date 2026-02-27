@@ -29,6 +29,7 @@ import src.generator.prompts.prompts as prompts
 import src.generator.templates as templates
 from src.optimizer.backends.cuda import CUDABackend
 from src.optimizer.backends.triton import TritonBackend
+from src.optimizer.pipeline import update_queue_state
 from src.progress import update_job_progress, wait_if_paused, check_cancelled
 try:
     from src import codex_utils
@@ -272,6 +273,8 @@ def validate_with_retries(
     project_dir: Path | None,
     template: str | None,
     ssh_config=None,
+    _proj_base_dir: Path | None = None,
+    _task_key: str | None = None,
 ) -> tuple[bool, str, str]:
     """
     Attempt to validate and fix kernel code up to MAX_ATTEMPTS times.
@@ -378,6 +381,13 @@ def validate_with_retries(
         if check_cancelled():
             return False, "Generation cancelled.", "control"
 
+        if _proj_base_dir and _task_key:
+            update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
+                "current_step": "Generating",
+                "attempt_current": attempt + 1,
+                "attempt_max": max_attempts,
+            }}})
+
         # Generate kernel
         if use_codex_generate:
             prompt = _build_codex_prompt(
@@ -469,6 +479,11 @@ def validate_with_retries(
 
         update_job_progress(attempt, max_attempts, f"Validating {op_key} (attempt {attempt + 1}/{max_attempts}){' — remote' if ssh_config else ''}")
 
+        if _proj_base_dir and _task_key:
+            update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
+                "current_step": "Verifying",
+            }}})
+
         # Validate all inputs at once using backend
         call_success, exec_success, feedback = _validate_kernel(
             cu_code, entry_files[0], log_file_loc, tmpdir, ssh_config=ssh_config
@@ -516,8 +531,18 @@ def validate_with_retries(
             with open(kernel_dir / f"kernel-{attempt}-g{_kernel_ext()}", "w") as f:
                 f.write(cu_code)
 
+            if _proj_base_dir and _task_key:
+                update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
+                    "current_step": "Done",
+                    "status": "Done",
+                }}})
             return True, "", "success"
 
+    if _proj_base_dir and _task_key:
+        update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
+            "current_step": "Failed",
+            "status": "Failed",
+        }}})
     return False, last_feedback, last_stage
 
 
@@ -597,6 +622,8 @@ def process_function(
     call_list.clear()
 
     op_key = _normalize_op_name(function_name)
+    task_key = "gen_" + op_key
+    proj_base_dir = project_dir if project_dir else None
 
     # Validate loop - pass entry files directly
     success, failure_msg, failure_stage = validate_with_retries(
@@ -609,6 +636,8 @@ def process_function(
         project_dir=project_dir,
         template=template,
         ssh_config=ssh_config,
+        _proj_base_dir=proj_base_dir,
+        _task_key=task_key,
     )
 
     # Track performance

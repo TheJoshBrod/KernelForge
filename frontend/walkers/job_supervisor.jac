@@ -1189,7 +1189,7 @@ def:pub _write_initial_queue_state(project_name: str, ops_list: list, tag: str) 
                 "op_name": str(op),
                 "current_step": "Monitoring",
                 "attempt_current": 1,
-                "attempt_max": 1,
+                "attempt_max": 8,
                 "status": "Starting"
             };
         }
