@@ -39,7 +39,9 @@ walker:pub StartGenerate {
         iterations: int = 0,
         targetDevice: str = "cuda",
         ssh_connections: list = [],
-        active_ssh_index: int = -1;
+        active_ssh_index: int = -1,
+        llmModel: str = "",
+        llmProvider: str = "";
 
     can run with entry {
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
@@ -110,6 +112,14 @@ walker:pub StartGenerate {
             cmd.append("--iterations");
             cmd.append(str(self.iterations));
         }
+        if self.llmModel {
+            cmd.append("--llm-model");
+            cmd.append(self.llmModel);
+        }
+        if self.llmProvider {
+            cmd.append("--llm-provider");
+            cmd.append(self.llmProvider);
+        }
         if self.active_ssh_index >= 0
         and len(self.ssh_connections) > self.active_ssh_index {
             try {
@@ -143,7 +153,9 @@ walker:pub StartOptimize {
         iterations: int = 3,
         benchmark: bool = False,
         ssh_connections: list = [],
-        active_ssh_index: int = -1;
+        active_ssh_index: int = -1,
+        llm_model: str = "",
+        llm_provider: str = "";
 
     can run with entry {
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
@@ -195,6 +207,14 @@ walker:pub StartOptimize {
         }
         if self.benchmark {
             cmd.append("--benchmark");
+        }
+        if self.llm_model {
+            cmd.append("--llm-model");
+            cmd.append(self.llm_model);
+        }
+        if self.llm_provider {
+            cmd.append("--llm-provider");
+            cmd.append(self.llm_provider);
         }
         if self.active_ssh_index >= 0
         and len(self.ssh_connections) > self.active_ssh_index {

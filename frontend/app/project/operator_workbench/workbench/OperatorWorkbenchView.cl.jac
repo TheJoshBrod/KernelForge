@@ -95,6 +95,10 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     pendingParentRef = pending_parent_ref_state[0];
     setPendingParentRef = pending_parent_ref_state[1];
 
+    gen_task_info_state = useState(None);
+    genTaskInfo = gen_task_info_state[0];
+    setGenTaskInfo = gen_task_info_state[1];
+
     async def fetchData(showLoader: bool = False) -> None {
         project_for_query = decode_param(resolvedProjectName);
         op_for_query = canonical_op_param(resolvedOpName);
@@ -290,15 +294,33 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                     queue_data = data["queue"] if data and "queue" in data else {};
                     active_tasks_data = queue_data["active_tasks"] if "active_tasks" in queue_data else {};
                     found_ref = "";
+                    found_active_info = None;
+                    found_failed_info = None;
                     for tk in Object.keys(active_tasks_data) {
                         t = active_tasks_data[tk];
                         if "parent_ref" in t and t["parent_ref"] {
                             found_ref = str(t["parent_ref"]);
                         }
+                        if tk.startsWith("gen_") {
+                            step = t["current_step"] if "current_step" in t else "";
+                            status = t["status"] if "status" in t else "";
+                            if step and step != "Done" and status != "Done" {
+                                att_cur = t["attempt_current"] if "attempt_current" in t else None;
+                                att_max = t["attempt_max"] if "attempt_max" in t else None;
+                                info = {"step": step, "status": status, "attempt_current": att_cur, "attempt_max": att_max};
+                                if step == "Failed" or status == "Failed" {
+                                    found_failed_info = info;
+                                } else {
+                                    found_active_info = info;
+                                }
+                            }
+                        }
                     }
                     setPendingParentRef(found_ref);
+                    setGenTaskInfo(found_active_info if found_active_info else found_failed_info);
                 } except Exception {
                     setIsOptimizing(False);
+                    setGenTaskInfo(None);
                 }
             }
             pollStatus();
@@ -455,6 +477,26 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     resolvedProjectNameClean = decode_param(resolvedProjectName);
     resolvedOpNameClean = canonical_op_param(resolvedOpName);
 
+    gen_status_els = [];
+    if genTaskInfo {
+        step_text = genTaskInfo["step"] if "step" in genTaskInfo else "";
+        att_cur = genTaskInfo["attempt_current"] if "attempt_current" in genTaskInfo else None;
+        att_max = genTaskInfo["attempt_max"] if "attempt_max" in genTaskInfo else None;
+        attempt_label = "";
+        if att_cur is not None and att_max is not None {
+            attempt_label = f" · attempt {att_cur}/{att_max}";
+        }
+        gen_status_els.push(
+            <div
+                key="gen-status-badge"
+                className="absolute top-2 right-2 z-10 bg-indigo-950/90 border border-indigo-700/60 rounded-lg px-3 py-1.5 flex items-center gap-1.5 text-xs text-indigo-300 shadow-lg"
+            >
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse inline-block"/>
+                <span>{step_text}{attempt_label}</span>
+            </div>
+        );
+    }
+
     left_content = [];
     if leftPanelMode == "editor" {
         left_content.push(
@@ -562,6 +604,7 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         onLiveUpdatesChange={setLiveUpdates}
                         fetchData={fetchData}
                     />
+                    {gen_status_els}
                     {<WorkbenchTreeView
                         displayNodes={displayNodes}
                         displayEdges={displayEdges}

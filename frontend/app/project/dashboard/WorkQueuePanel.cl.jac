@@ -188,6 +188,9 @@ def:pub WorkQueuePanel(props: any) -> Any {
         tag_cls = "text-emerald-400" if tag == "[GEN]" else "text-blue-400";
 
         perf_label = "all failed";
+        if any_done {
+            perf_label = "done";
+        }
         if best_task != None and best_ms != None {
             perf_label = f"Kernel {best_task['id']} · {Number(best_ms).toFixed(4)} ms";
         }
