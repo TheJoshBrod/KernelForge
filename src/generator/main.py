@@ -527,7 +527,7 @@ def validate_with_retries(
                 if _p_dir:
                     from src.optimizer.pipeline import update_queue_state
                     update_queue_state(_p_dir, {
-                        "active_tasks": {f"gen_{op_key}": {"current_step": "Validating", "attempt_current": attempt + 1}},
+                        "active_tasks": {f"gen_{op_key}": {"current_step": "Generating", "attempt_current": attempt + 1}},
                     })
             except Exception:
                 pass
