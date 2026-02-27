@@ -224,6 +224,19 @@ def run_generate(args: argparse.Namespace) -> int:
     root = _repo_root()
     env = dict(os.environ)
 
+    if hasattr(args, "llm_provider") and args.llm_provider:
+        env["LLM_PROVIDER"] = args.llm_provider
+    if hasattr(args, "llm_model") and args.llm_model:
+        provider = getattr(args, "llm_provider", "") or ""
+        if provider == "openai":
+            env["OPENAI_MODEL"] = args.llm_model
+        elif provider == "anthropic":
+            env["ANTHROPIC_MODEL"] = args.llm_model
+        elif provider in ("google", "gemini"):
+            env["GEMINI_MODEL"] = args.llm_model
+        else:
+            env["OPENAI_MODEL"] = args.llm_model
+
     target_device = _normalize_device(args.target_device)
     env["KFORGE_TARGET_DEVICE"] = target_device
     if target_device == "cuda":
@@ -460,6 +473,20 @@ def run_generate(args: argparse.Namespace) -> int:
 def run_optimize(args: argparse.Namespace) -> int:
     root = _repo_root()
     env = dict(os.environ)
+
+    if hasattr(args, "llm_provider") and args.llm_provider:
+        env["LLM_PROVIDER"] = args.llm_provider
+    if hasattr(args, "llm_model") and args.llm_model:
+        provider = getattr(args, "llm_provider", "") or ""
+        if provider == "openai":
+            env["OPENAI_MODEL"] = args.llm_model
+        elif provider == "anthropic":
+            env["ANTHROPIC_MODEL"] = args.llm_model
+        elif provider in ("google", "gemini"):
+            env["GEMINI_MODEL"] = args.llm_model
+        else:
+            env["OPENAI_MODEL"] = args.llm_model
+
     target_device = _normalize_device(args.target_device)
     env["KFORGE_TARGET_DEVICE"] = target_device
 
@@ -558,6 +585,8 @@ def main() -> int:
     generate.add_argument("--iterations", type=int, default=0)
     generate.add_argument("--target-device", default="cuda")
     generate.add_argument("--remote", default="")
+    generate.add_argument("--llm-provider", default="")
+    generate.add_argument("--llm-model", default="")
 
     optimize = sub.add_parser("optimize")
     optimize.add_argument("--project", required=True)
@@ -566,6 +595,8 @@ def main() -> int:
     optimize.add_argument("--benchmark", action="store_true")
     optimize.add_argument("--target-device", default="cuda")
     optimize.add_argument("--remote", default="")
+    optimize.add_argument("--llm-provider", default="")
+    optimize.add_argument("--llm-model", default="")
 
     args = parser.parse_args()
 

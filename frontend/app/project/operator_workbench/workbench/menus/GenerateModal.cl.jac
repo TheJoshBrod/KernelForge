@@ -273,6 +273,13 @@ def:pub GenerateModal(props: any) -> Any {
                 "active_ssh_index": active_ssh
             };
 
+            if llmModel {
+                payload["llmModel"] = llmModel;
+            }
+            if llmProvider {
+                payload["llmProvider"] = llmProvider;
+            }
+
             resp = await __jacSpawn("StartGenerate", "", payload);
             data = resp.reports[0] if resp and resp.reports else {};
             if data and "success" in data and not data["success"] {

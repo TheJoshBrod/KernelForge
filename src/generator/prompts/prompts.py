@@ -161,7 +161,8 @@ def generate_function_spec_from_calls(call_list, function_name):
         # Normalize args to dict keys (arg0, arg1...) to match kwargs
         current_params = {}
         for i, arg in enumerate(call.get("args", [])):
-            current_params[f"arg{i}"] = arg
+            name = param_order[i] if i < len(param_order) else f"arg{i}"
+            current_params[name] = arg
         current_params.update(call.get("kwargs", {}))
 
         # Update stats for each parameter

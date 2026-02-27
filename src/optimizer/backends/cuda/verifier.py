@@ -182,19 +182,47 @@ def _validate_worker_loop(q_in, q_out):
                         (False, "[Error] No entry files found in io_dir"))
                     continue
 
+                # Determine canonical param order once for all entries, matching
+                # _infer_param_order in prompts.py: prefer an explicit recorded
+                # signature; otherwise build from the first entry's positional args
+                # plus the union of all kwargs keys seen across every entry (in
+                # first-seen order).  Using a per-entry order would give different
+                # arities to module.launch() for entries with different kwargs
+                # structures (e.g. some passing stride=2, others relying on defaults).
+                entries = []
+                canonical_signature = None
+                for f in entry_files:
+                    e = torch.load(f)
+                    entries.append(e)
+                    if canonical_signature is None:
+                        sig = e.get("signature", {})
+                        if sig and sig.get("params"):
+                            canonical_signature = sig
+
+                if canonical_signature is None and entries:
+                    first_args = entries[0].get("args", []) or []
+                    param_order = [f"arg{i}" for i in range(len(first_args))]
+                    seen = set(param_order)
+                    for entry in entries:
+                        kw = entry.get("kwargs", {}) or {}
+                        if isinstance(kw, dict):
+                            for k in kw:
+                                if k not in seen:
+                                    param_order.append(k)
+                                    seen.add(k)
+                    canonical_signature = {"params": param_order, "defaults": {}}
+
                 all_valid = True
                 error_logs = []
                 llm_analysis_count = 0
                 MAX_LLM_ANALYSIS = 1
 
-                for entry_file in entry_files:
+                for entry_file, entry in zip(entry_files, entries):
                     try:
-                        entry = torch.load(entry_file)
                         args = entry.get("args", [])
                         kwargs = entry.get("kwargs", {})
-                        signature_info = entry.get("signature", {"params": [], "defaults": {}})
 
-                        normalized_args, remaining_kwargs = normalize_args_kwargs(args, kwargs, signature_info)
+                        normalized_args, remaining_kwargs = normalize_args_kwargs(args, kwargs, canonical_signature)
                         cuda_args = [move_to_target(item) for item in normalized_args]
 
                         output_generated = module.launch(*cuda_args)
