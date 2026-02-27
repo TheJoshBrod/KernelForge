@@ -108,7 +108,7 @@ def get_project_dir(gpu_name: str, optional_name: str = None, backend_name: str 
     return proj_dir
 
 
-def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, improvement_description: str, best_kernel_code: str, ssh_config: dict = None):
+def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, improvement_description: str, best_kernel_code: str, ssh_config: dict = None, _proj_base_dir: Path = None, _task_key: str = None):
     """Profiles iteration and records performance results
     """
     next_id = mcts.get_next_node_id(paths)
@@ -119,15 +119,27 @@ def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, impro
     with open(paths["proj_dir"] / "kernels" / f"kernel_{next_id}{ext}", "w") as f:
         f.write(current_kernel_code)
 
+    # Signal profiling phase before the (potentially slow) profiler call
+    if _proj_base_dir and _task_key:
+        update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {"current_step": "Profiling"}}})
+
     # Log the attempt with results
     print("\tBeginning Profiler...")
-    current_stats = backend.profile_kernel(paths, ssh_config=ssh_config)
+    try:
+        current_stats = backend.profile_kernel(paths, ssh_config=ssh_config)
+    except Exception as prof_err:
+        print(f"\t\t- Profiler error: {prof_err}")
+        if _proj_base_dir and _task_key:
+            update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {"current_step": "Failed", "result": "profiler error", "status": "Failed"}}})
+        return None, f"[Profiler Error] {prof_err}"
     print("\tFinished Profiler.")
     log_entry = {
         "iteration": next_id,
         "attempted": improvement_description,
         "results": current_stats,
-        "speedup_vs_parent": parent_info.value / current_stats['mean_time_ms'] if current_stats['mean_time_ms'] > 0 else 1.0,
+        "speedup_vs_parent": (parent_info.value / current_stats['mean_time_ms']
+                              if parent_info.value is not None and current_stats['mean_time_ms'] > 0
+                              else 1.0),
     }
 
     # Save node to DB
@@ -195,9 +207,10 @@ def optimize(
         # If valid, profile and save normally
         if is_valid:
             if _proj_base_dir and _task_key:
-                update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {"current_step": "Profiling"}}})
+                update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {"current_step": "Validating"}}})
             log_entry, new_node = save_iteration(
-                backend, paths, parent_node, improvement_description, str(paths["proj_dir"] / "kernels" / f"kernel_{parent_node.id}{backend.kernel_extension}"), ssh_config=ssh_config)
+                backend, paths, parent_node, improvement_description, str(paths["proj_dir"] / "kernels" / f"kernel_{parent_node.id}{backend.kernel_extension}"), ssh_config=ssh_config,
+                _proj_base_dir=_proj_base_dir, _task_key=_task_key)
             return new_node, ""
 
         # Failed/invalid kernel — still save to tree so MCTS can track it.
@@ -571,6 +584,7 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
             
             proj_base_dir = paths["proj_dir"].parent.parent
             queue_entry = {
+                "id": str(node.id),
                 "tag": "[OPT]" if node.id > 0 else "[GEN]",
                 "op_name": paths["io_dir"].name,
                 "current_step": "Monitoring" if node.id == 0 else "Generating",
@@ -608,7 +622,9 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                 parent_node = mcts._NODE_CACHE.get(node_id)
                 speedup = 1.0
                 if parent_node:
-                    speedup = parent_node.value / runtime_ms if runtime_ms > 0 else 1.0
+                    speedup = (parent_node.value / runtime_ms
+                               if parent_node.value is not None and runtime_ms > 0
+                               else 1.0)
                     new_node = KernelNode(
                         id=kernel_id,
                         parent_id=node_id,
@@ -631,7 +647,7 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                 step_name = result_data.get("step")
                 update_dict = {"current_step": step_name, "attempt_current": result_data.get("attempt", 1)}
                 bm_slot = {}
-                if step_name == "Benchmarking":
+                if step_name == "Profiling":
                     bm_slot = {"benchmark_slot": {"now": f"{paths['io_dir'].name} · kernel_{node_id}", "pending": []}}
                 update_queue_state(proj_base_dir, {"active_tasks": {str(node_id): update_dict}, **bm_slot})
             else:
@@ -949,9 +965,11 @@ Examples:
             task_key = "seq_opt"
             retry_limit = getattr(settings, 'retry_limit', 3)
             for i in range(args.max_iterations):
+                paths["iteration"] = i + 1
                 # Select parent node then optimize off of it
                 parent_node = mcts.choose_optimization(paths)
                 update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
+                    "id": task_key,
                     "tag": "[OPT]",
                     "op_name": op_name,
                     "current_step": "Generating",
@@ -974,7 +992,9 @@ Examples:
                     if new_node.value is not None:
                         op_new_nodes += 1
                         op_last_reason = ""
-                        speedup = parent_node.value / new_node.value if new_node.value > 0 else 1.0
+                        speedup = (parent_node.value / new_node.value
+                                   if parent_node.value is not None and new_node.value > 0
+                                   else 1.0)
                         update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
                             "current_step": "Done",
                             "result": f"{speedup:.2f}x",

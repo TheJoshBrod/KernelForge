@@ -457,10 +457,11 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
         
         for h in history:
             current_time = h["results"]["mean_time_ms"]
-            if current_time > 0 and baseline_time > 0:
+            if (baseline_time > 0 and baseline_time != float('inf')
+                    and current_time > 0 and current_time != float('inf')):
                 h["speedup_vs_baseline"] = baseline_time / current_time
             else:
-                h["speedup_vs_baseline"] = 0.0
+                h["speedup_vs_baseline"] = 1.0 if current_time == baseline_time else 0.0
 
     return history, codes
 

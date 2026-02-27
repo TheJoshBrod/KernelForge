@@ -66,6 +66,8 @@ class KernelNode(BaseModel):
         Lower score = better.
         """
         exploitation = self.best_subtree_value if self.best_subtree_value is not None else self.value
+        if exploitation is None:
+            return float('inf')
         exploration = C * math.sqrt(math.log(parent_node.visits) / self.visits)
 
         return exploitation - exploration

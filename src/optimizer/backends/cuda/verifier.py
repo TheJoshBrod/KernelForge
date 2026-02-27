@@ -6,6 +6,8 @@ and comparing its tensor output against a ground-truth tensor.
 
 import os
 import re
+import hashlib
+import tempfile
 import multiprocessing
 import queue
 import traceback
@@ -62,84 +64,6 @@ def handle_output(traceback_error: str, cu_code: str, log_file_path: Path, input
         input_and_output=input_and_output,
         summarizer=summarizer,
     )
-
-
-def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:
-    """
-    Normalize args and kwargs into a complete positional argument list.
-
-    Args:
-        args: Positional arguments as captured
-        kwargs: Keyword arguments as captured
-        signature_info: Dict with 'params' (list of param names) and 'defaults' (dict of defaults)
-
-    Returns:
-        tuple: (normalized_args, remaining_kwargs)
-            - normalized_args: Complete list of positional args with defaults filled
-            - remaining_kwargs: Any kwargs that couldn't be mapped (for error reporting)
-    """
-    params = signature_info.get("params", [])
-    defaults = signature_info.get("defaults", {})
-
-    if not params:
-        # No signature info available, return as-is
-        return args, kwargs
-
-    # Start with provided positional args
-    normalized = list(args)
-    remaining_kwargs = dict(kwargs)
-
-    # Fill in any kwargs that should be positional
-    for i in range(len(normalized), len(params)):
-        param_name = params[i]
-
-        if param_name in remaining_kwargs:
-            # Use the provided kwarg
-            normalized.append(remaining_kwargs.pop(param_name))
-        elif param_name in defaults:
-            # Use the default value
-            normalized.append(defaults[param_name])
-        else:
-            # No value available - this might cause issues
-            # Log a warning but continue
-            print(
-                f"Warning: No value for parameter '{param_name}' at position {i}")
-            break
-
-    return normalized, remaining_kwargs
-
-
-def move_to_cuda(item):
-    """Recursively move tensors to CUDA."""
-    if torch.is_tensor(item):
-        return item.cuda()
-    elif isinstance(item, (list, tuple)):
-        return type(item)(move_to_cuda(x) for x in item)
-    elif isinstance(item, dict):
-        return {k: move_to_cuda(v) for k, v in item.items()}
-    return item
-
-
-def move_to_target(item):
-    target = loader.target_device()
-    if target == "cpu":
-        if torch.is_tensor(item):
-            return item.cpu()
-        if isinstance(item, (list, tuple)):
-            return type(item)(move_to_target(x) for x in item)
-        if isinstance(item, dict):
-            return {k: move_to_target(v) for k, v in item.items()}
-        return item
-    if target == "mps":
-        if torch.is_tensor(item):
-            return item.to("mps")
-        if isinstance(item, (list, tuple)):
-            return type(item)(move_to_target(x) for x in item)
-        if isinstance(item, dict):
-            return {k: move_to_target(v) for k, v in item.items()}
-        return item
-    return move_to_cuda(item)
-
 
 
 def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:
@@ -229,17 +153,17 @@ def _validate_worker_loop(q_in, q_out):
             if job is None:
                 break  # Sentinel to exit
 
-            generated_cu_code, tmpdir, io_dir = job
+            generated_cu_code, tmpdir, io_dir, cache_name, cache_dir = job
 
             # Run the validation logic
             try:
-                # Compile using shared loader logic
-                # This handles environment setup and platform differences (CUDA vs CPU/MPS)
+                # Load the pre-compiled module from the cache dir populated by the main process.
+                # compile_code_string finds the existing .so and skips nvcc entirely.
                 try:
                     module = loader.compile_code_string(
                         code=generated_cu_code,
-                        name=f"generated_module_{os.path.basename(tmpdir)}",
-                        build_dir=tmpdir,
+                        name=cache_name,
+                        build_dir=cache_dir,
                         verbose=False
                     )
                 except Exception as e:
@@ -395,9 +319,24 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
     with open(cu_path, "w", encoding="utf-8") as f:
         f.write(generated_cu_code)
 
-    # Send to worker
+    # Pre-compile in the main process so the worker subprocess only needs to
+    # load the already-built .so — avoids nvcc hanging inside a spawned process.
+    code_hash = hashlib.md5(generated_cu_code.encode()).hexdigest()[:16]
+    cache_name = f"kforge_{code_hash}"
+    cache_dir = os.path.join(tempfile.gettempdir(), "kforge_build_cache", cache_name)
+    try:
+        loader.compile_code_string(
+            code=generated_cu_code,
+            name=cache_name,
+            build_dir=cache_dir,
+            verbose=False,
+        )
+    except Exception as compile_err:
+        return False, f"[Compilation Failed]\n{compile_err}"
+
+    # Send to worker (cache_name + cache_dir so it loads the pre-built .so)
     _ensure_worker_alive()
-    _WORKER_Q_IN.put((generated_cu_code, str(tmpdir), str(io_dir)))
+    _WORKER_Q_IN.put((generated_cu_code, str(tmpdir), str(io_dir), cache_name, cache_dir))
 
     # Wait for result with timeout
     import time
