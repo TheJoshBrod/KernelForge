@@ -1,6 +1,5 @@
 """Workbench Log Panel Component"""
 
-import from react { useState }
 import from .....components.ui.Icons { ActivityIcon }
 
 def:pub WorkbenchLog(props: any) -> Any {
@@ -8,10 +7,6 @@ def:pub WorkbenchLog(props: any) -> Any {
     rawNodes = props.rawNodes;
     nodes = props.nodes;
     edges = props.edges;
-
-    log_collapsed_state = useState(False);
-    logCollapsed = log_collapsed_state[0];
-    setLogCollapsed = log_collapsed_state[1];
 
     log_items = [];
     if selectedNodeId and nodes.length > 0 and edges.length > 0 {
@@ -35,6 +30,36 @@ def:pub WorkbenchLog(props: any) -> Any {
         is_even = (idx % 2) == 0;
         base_bg = "border-[var(--border)] bg-[var(--surface-0)]/50" if is_even else "border-[var(--border)] bg-[var(--surface-1)]/50";
 
+        # Build formatted description
+        desc_nodes = [];
+        raw_desc = item["improvement_description"] if item["improvement_description"] else "";
+        nl = String.fromCharCode(10);
+        if raw_desc.startsWith("[FAILED]") {
+            first_line = raw_desc.split(nl)[0];
+            desc_nodes.push(<span key="err" className="text-red-400 text-[11px]">{first_line}</span>);
+        } elif raw_desc {
+            lines = raw_desc.split(nl);
+            line_idx = 0;
+            for line in lines {
+                trimmed = line.trim();
+                if trimmed {
+                    if trimmed.startsWith("OPTIMIZATION:") or trimmed.startsWith("RATIONALE:") or trimmed.startsWith("IMPROVEMENT:") {
+                        desc_nodes.push(<div key={line_idx} className="font-semibold text-zinc-300 text-[11px] mt-2 first:mt-0">{trimmed}</div>);
+                    } elif trimmed.startsWith("- ") {
+                        desc_nodes.push(
+                            <div key={line_idx} className="flex gap-1.5 text-[11px] text-[var(--text-muted)] pl-2">
+                                <span className="text-zinc-600 flex-shrink-0 mt-px">·</span>
+                                <span>{trimmed.slice(2)}</span>
+                            </div>
+                        );
+                    } else {
+                        desc_nodes.push(<div key={line_idx} className="text-[11px] text-[var(--text-muted)]">{trimmed}</div>);
+                    }
+                }
+                line_idx += 1;
+            }
+        }
+
         logViewItems.push(
             <div
                 key={item["id"]}
@@ -48,7 +73,7 @@ def:pub WorkbenchLog(props: any) -> Any {
                     el.scrollIntoView({"behavior": "smooth", "block": "nearest"});
                 }}}
             >
-                <div className="flex justify-between items-center mb-1">
+                <div className="flex justify-between items-center mb-1.5">
                     <span className={"font-mono text-sm font-semibold " + ("text-[var(--accent)]" if f"{item['id']}" == selectedNodeId else "text-[var(--text-light)]")}>
                         Kernel{" " + item["id"]}
                     </span>
@@ -56,8 +81,8 @@ def:pub WorkbenchLog(props: any) -> Any {
                         <span>{Number(item["value"] or 0).toFixed(4)}</span>
                     </div>
                 </div>
-                <div className="text-[var(--text-muted)] text-[11px] leading-relaxed">
-                    {item["improvement_description"]}
+                <div className="space-y-0.5">
+                    {desc_nodes}
                 </div>
             </div>
         );
@@ -65,35 +90,18 @@ def:pub WorkbenchLog(props: any) -> Any {
     }
 
     return
-        <div
-            className={"flex flex-col bg-zinc-900/20 " + (
-                "h-10" if logCollapsed else "h-[40%]"
-            )}
-        >
-            <div
-                className={"h-10 bg-zinc-900/50 flex items-center px-4 justify-between " + (
-                    "border-b border-zinc-800" if not logCollapsed else ""
-                )}
-            >
-                <span
-                    className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider flex items-center gap-2"
-                >
+        <div className="flex-1 flex flex-col min-h-0">
+            <div className="h-10 bg-zinc-900/50 border-b border-zinc-800 flex items-center px-4 justify-between flex-shrink-0">
+                <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-2">
                     <ActivityIcon className="w-4 h-4 text-[var(--accent)]"/>
                     Iteration Log
                 </span>
-                <button
-                    className="text-[11px] text-[var(--text-muted)] hover:text-[var(--text-light)] px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface-0)]/50 transition-colors"
-                    onClick={lambda -> None { setLogCollapsed(not logCollapsed);}}
-                >
-                    {"Expand" if logCollapsed else "Collapse"}
-                </button>
+                <span className="font-mono text-xs font-semibold text-zinc-400">
+                    {"Kernel " + selectedNodeId if selectedNodeId else ""}
+                </span>
             </div>
-            {<div
-                className="flex-1 overflow-y-auto p-4 space-y-2 flex flex-col-reverse custom-scrollbar"
-            >
+            <div className="flex-1 overflow-y-auto p-4 space-y-2 flex flex-col-reverse custom-scrollbar">
                 {logViewItems}
             </div>
-            if not logCollapsed
-            else <span></span>}
         </div>;
 }

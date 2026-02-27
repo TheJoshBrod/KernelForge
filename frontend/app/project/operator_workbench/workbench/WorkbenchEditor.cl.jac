@@ -13,9 +13,9 @@ def:pub WorkbenchEditor(props: any) -> Any {
                 className="h-10 bg-zinc-900/50 border-b border-zinc-800 flex items-center px-4 justify-between"
             >
                 <span
-                    className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2"
+                    className="text-xs font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-2"
                 >
-                    <CodeIcon className="w-4 h-4"/>
+                    <CodeIcon className="w-4 h-4 text-[var(--accent)]"/>
                     Kernel Code
                 </span>
                 <span className="text-xs font-mono text-orange-300">

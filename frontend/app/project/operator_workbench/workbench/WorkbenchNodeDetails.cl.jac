@@ -7,17 +7,21 @@ def:pub WorkbenchNodeDetails(props: any) -> Any {
     selectedNodeData = props.selectedNodeData;
 
     return
-        <div className="flex-1 p-5 overflow-y-auto custom-scrollbar">
+        <div className="flex-1 flex flex-col min-h-0">
             <div
-                className="flex justify-between items-center mb-4 border-b border-[var(--border)] pb-3"
+                className="h-10 bg-zinc-900/50 border-b border-zinc-800 flex items-center px-4 justify-between flex-shrink-0"
             >
-                <h3
-                    className="text-sm font-semibold text-[var(--text-light)] uppercase tracking-wider flex items-center gap-2"
+                <span
+                    className="text-xs font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-2"
                 >
-                    <ShieldCheckIcon className="w-5 h-5 text-[var(--accent)]"/>
-                    Kernel {" " + selectedNodeData["id"]} Details
-                </h3>
+                    <ShieldCheckIcon className="w-4 h-4 text-[var(--accent)]"/>
+                    Node Details
+                </span>
+                <span className="text-xs font-mono text-orange-300">
+                    Kernel {" " + (selectedNodeId or "?")}
+                </span>
             </div>
+            <div className="flex-1 p-5 overflow-y-auto custom-scrollbar">
             {<div className="space-y-4">
                 <div className="flex justify-between items-center bg-[var(--surface-0)]/50 p-2.5 rounded border border-[var(--border)]">
                     <span className="text-[var(--text-muted)] text-xs uppercase font-medium">
@@ -62,5 +66,6 @@ def:pub WorkbenchNodeDetails(props: any) -> Any {
             else <div className="text-[var(--text-muted)] text-xs italic text-center py-4">
                 Select a kernel from the tree to view details.
             </div>}
+            </div>
         </div>;
 }
