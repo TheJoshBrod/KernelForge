@@ -1097,6 +1097,7 @@ def:pub Dashboard -> Any {
     forgedCount = 0;
     totalPytorchMs = 0.0;
     totalForgedMs = 0.0;
+    totalAllPytorchMs = 0.0;
     operatorRows = [];
 
     for op in to_list(ops) {
@@ -1126,14 +1127,17 @@ def:pub Dashboard -> Any {
                 f_val = to_num(sd["forged"] if "forged" in sd else None);
                 if f_val != None { best_ms = format_tick_ms(f_val); }
 
-                if b_val != None and b_val > 0 and f_val != None and f_val > 0 {
-                    r_val = b_val / f_val;
-                    speedup = f"{r_val.toFixed(2)}×";
-                    ratio_for_sort = r_val;
-                    if r_val > 1.001 {
-                        is_forged = True;
-                        totalPytorchMs = totalPytorchMs + b_val * op_count_n;
-                        totalForgedMs = totalForgedMs + f_val * op_count_n;
+                if b_val != None and b_val > 0 {
+                    totalAllPytorchMs = totalAllPytorchMs + b_val * op_count_n;
+                    if f_val != None and f_val > 0 {
+                        r_val = b_val / f_val;
+                        speedup = f"{r_val.toFixed(2)}×";
+                        ratio_for_sort = r_val;
+                        if r_val > 1.001 {
+                            is_forged = True;
+                            totalPytorchMs = totalPytorchMs + b_val * op_count_n;
+                            totalForgedMs = totalForgedMs + f_val * op_count_n;
+                        }
                     }
                 }
                 break;
@@ -1196,9 +1200,12 @@ def:pub Dashboard -> Any {
         }
     }
 
-    modelSpeedupPct = 0.0;
-    if totalPytorchMs > 0 and totalForgedMs > 0 and totalPytorchMs > totalForgedMs {
-        modelSpeedupPct = ((totalPytorchMs - totalForgedMs) / totalPytorchMs) * 100.0;
+    modelSpeedupRatio = 0.0;
+    if totalAllPytorchMs > 0 and totalPytorchMs > totalForgedMs {
+        effectiveMs = totalAllPytorchMs - (totalPytorchMs - totalForgedMs);
+        if effectiveMs > 0 {
+            modelSpeedupRatio = totalAllPytorchMs / effectiveMs;
+        }
     }
 
     operatorRows.sort(lambda a: dict, b: dict -> int {
@@ -1233,7 +1240,7 @@ def:pub Dashboard -> Any {
                 name={name}
                 forgedCount={forgedCount}
                 opsCount={list_len(to_list(ops))}
-                modelSpeedupPct={modelSpeedupPct}
+                modelSpeedupRatio={modelSpeedupRatio}
                 hardwareStatus={hardwareStatus}
                 forgedTooltipPos={forgedTooltipPos}
                 setForgedTooltipPos={setForgedTooltipPos}

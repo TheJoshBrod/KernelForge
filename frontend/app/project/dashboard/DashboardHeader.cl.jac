@@ -1,15 +1,20 @@
 """Dashboard header KPI bar component."""
 
+import from react { useState }
 import from ....components.ui.Icons { CpuIcon }
 
 def:pub DashboardHeader(props: any) -> Any {
     name = props.name;
     forgedCount = props.forgedCount;
     opsCount = props.opsCount;
-    modelSpeedupPct = props.modelSpeedupPct;
+    modelSpeedupRatio = props.modelSpeedupRatio;
     hardwareStatus = props.hardwareStatus;
     forgedTooltipPos = props.forgedTooltipPos;
     setForgedTooltipPos = props.setForgedTooltipPos;
+
+    speedup_tip_state = useState(None);
+    speedupTooltipPos = speedup_tip_state[0];
+    setSpeedupTooltipPos = speedup_tip_state[1];
 
     return
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[var(--surface-0)] border border-[var(--border)] rounded-lg p-4 shadow-sm">
@@ -48,11 +53,26 @@ def:pub DashboardHeader(props: any) -> Any {
                     else <span/>}
                 </div>
                 <div className="w-px h-8 bg-[var(--border)] hidden sm:block"></div>
-                <div className="flex flex-col">
+                <div
+                    className="flex flex-col cursor-help"
+                    onMouseMove={lambda e: any -> None { setSpeedupTooltipPos({"x": e.clientX, "y": e.clientY}); }}
+                    onMouseLeave={lambda -> None { setSpeedupTooltipPos(None); }}
+                >
                     <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1">Model Speedup</span>
-                    {<span className="text-sm font-bold text-emerald-400">+{modelSpeedupPct.toFixed(1)}% faster</span>
-                    if modelSpeedupPct > 0
+                    {<span className="text-sm font-bold text-emerald-400">{modelSpeedupRatio.toFixed(2)}×</span>
+                    if modelSpeedupRatio > 1.0
                     else <span className="text-sm font-bold text-zinc-500">—</span>}
+                    {<div
+                        style={{"position": "fixed", "left": speedupTooltipPos["x"] + 14, "top": speedupTooltipPos["y"] + 14, "zIndex": 9999, "pointerEvents": "none"}}
+                        className="bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-xs text-zinc-300 shadow-xl max-w-[260px] leading-relaxed"
+                    >
+                        <div className="font-semibold text-zinc-100 mb-1">Model Speedup Ratio</div>
+                        <div className="text-zinc-400 mb-2">Total op time with PyTorch ÷ estimated op time with forged kernels.</div>
+                        <div className="font-mono text-[10px] text-zinc-400 bg-zinc-800 rounded px-2 py-1">total_pytorch_ms / (total_pytorch_ms − savings_ms)</div>
+                        <div className="text-zinc-500 mt-2 text-[10px]">Only operators where the forged kernel outperforms PyTorch contribute to savings. All profiled ops are included in the denominator.</div>
+                    </div>
+                    if speedupTooltipPos
+                    else <span/>}
                 </div>
                 <div className="w-px h-8 bg-[var(--border)] hidden sm:block"></div>
                 <div className="flex flex-col">
