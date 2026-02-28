@@ -323,7 +323,7 @@ def validate_with_retries(
     elif llm_provider == "google" or llm_provider == "gemini":
         llm_model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
     
-    attempts_total = codex_max_attempts if use_codex_generate else max_attempts + 1
+    attempts_total = codex_max_attempts if use_codex_generate else max_attempts
 
     def _run_codex_repair(feedback: str, attempt_idx: int) -> tuple[bool, str, str]:
         # Note: This still uses base_prompt logic which isn't carried here perfectly
@@ -539,9 +539,11 @@ def validate_with_retries(
             return True, "", "success"
 
     if _proj_base_dir and _task_key:
+        result_msg = f"{last_stage}: {last_feedback[:120]}" if last_feedback else last_stage
         update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
             "current_step": "Failed",
             "status": "Failed",
+            "result": result_msg,
         }}})
     return False, last_feedback, last_stage
 
@@ -802,9 +804,12 @@ def main():
     update_job_progress(0, total_jobs, "Starting generation")
 
     completed = 0
-    for func_dir, entry_files, function_name, op_key in tqdm(
+    # Track failed task keys locally to remove them at the start of the next
+    # op iteration — avoids reading queue.json without a lock (M5).
+    failed_task_keys: list[str] = []
+    for job_idx, (func_dir, entry_files, function_name, op_key) in enumerate(tqdm(
         jobs, desc="Processing functions"
-    ):
+    )):
         if not wait_if_paused():
             print("Generation cancelled.")
             return
@@ -817,30 +822,31 @@ def main():
         op_dir = OUTPUT_BASE_DIR / "individual_op_kernels" / op_key
         op_dir.mkdir(parents=True, exist_ok=True)
 
-        # Remove stale "Failed" task entries left by previous ops so they don't
-        # persist in the frontend status badge while the new op is running.
         if project_dir:
-            try:
-                queue_path = project_dir / "queue.json"
-                if queue_path.exists():
-                    q = json.loads(queue_path.read_text())
-                    failed_keys = [
-                        k for k, v in q.get("active_tasks", {}).items()
-                        if isinstance(v, dict) and v.get("status") == "Failed"
-                    ]
-                    if failed_keys:
-                        update_queue_state(project_dir, {"remove_tasks": failed_keys})
-            except Exception:
-                pass
+            # Remove stale "Failed" entries from the previous op (M5 — no lock-free read).
+            queue_update: dict = {}
+            if failed_task_keys:
+                update_queue_state(project_dir, {"remove_tasks": failed_task_keys})
+                failed_task_keys = []
+            # Advance current_operator; update pending_operators only in multi-op
+            # standalone mode so we don't overwrite workflow.py's correct state when
+            # main.py is called as a single-op subprocess (C3/C4).
+            if len(jobs) > 1:
+                remaining_keys = [j[3] for j in jobs[job_idx + 1:]]
+                update_queue_state(project_dir, {
+                    "current_operator": op_key,
+                    "pending_operators": remaining_keys,
+                })
+            else:
+                update_queue_state(project_dir, {"current_operator": op_key})
 
         performance_file = op_dir / _success_filename()
         if performance_file.exists():
             completed += 1
             update_job_progress(completed, total_jobs, function_name)
+            # Already done in a prior run — remove from active_tasks silently (M3).
             if project_dir:
-                update_queue_state(project_dir, {"active_tasks": {"gen_" + op_key: {
-                    "current_step": "Done", "status": "Done",
-                }}})
+                update_queue_state(project_dir, {"remove_tasks": ["gen_" + op_key]})
             continue
 
         if skip_ops and op_key in skip_ops:
@@ -855,9 +861,7 @@ def main():
             completed += 1
             update_job_progress(completed, total_jobs, function_name)
             if project_dir:
-                update_queue_state(project_dir, {"active_tasks": {"gen_" + op_key: {
-                    "current_step": "Done", "status": "Done",
-                }}})
+                update_queue_state(project_dir, {"remove_tasks": ["gen_" + op_key]})
             continue
 
         baseline_code = None
@@ -892,9 +896,7 @@ def main():
             completed += 1
             update_job_progress(completed, total_jobs, function_name)
             if project_dir:
-                update_queue_state(project_dir, {"active_tasks": {"gen_" + op_key: {
-                    "current_step": "Done", "status": "Done",
-                }}})
+                update_queue_state(project_dir, {"remove_tasks": ["gen_" + op_key]})
             continue
 
         success = process_function(
@@ -927,6 +929,9 @@ def main():
                 )
             except Exception:
                 pass
+        elif not success:
+            # Track for cleanup at the start of the next op (M5).
+            failed_task_keys.append("gen_" + op_key)
         if check_cancelled():
             print("Generation cancelled.")
             return
@@ -934,6 +939,9 @@ def main():
         update_job_progress(completed, total_jobs, function_name)
 
     if project_dir:
+        # Remove any remaining failed tasks and reset operator tracking.
+        if failed_task_keys:
+            update_queue_state(project_dir, {"remove_tasks": failed_task_keys})
         update_queue_state(project_dir, {
             "pending_operators": [],
             "current_operator": "",

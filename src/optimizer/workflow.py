@@ -9,6 +9,7 @@ from pathlib import Path
 
 from src.progress import check_cancelled, update_job_progress, wait_if_paused
 from src.optimizer.tree_store import publish_generated_root
+from src.optimizer.pipeline import update_queue_state
 
 
 def _repo_root() -> Path:
@@ -285,6 +286,12 @@ def run_generate(args: argparse.Namespace) -> int:
         can_benchmark = False
         reused_existing = False
 
+        # C3/C4: advance current_operator and shrink pending_operators in the queue
+        update_queue_state(project_dir, {
+            "current_operator": op_name,
+            "pending_operators": ops[idx + 1:],
+        })
+
         if _has_success_marker(generated_op_dir):
             reused_existing = True
             can_benchmark = True
@@ -400,12 +407,28 @@ def run_generate(args: argparse.Namespace) -> int:
                 "--ops",
                 op_name,
             ]
+            # C2: signal benchmarking phase so the UI progress bar advances
+            update_queue_state(project_dir, {"active_tasks": {"gen_" + op_name: {
+                "current_step": "Benchmarking",
+                "status": "In Progress",
+            }}})
             rc = _run(bench_cmd, root, subprocess_env)
             if rc != 0:
                 failure_msg = f"benchmark failed (exit {rc})"
                 op_failure = f"{op_failure}; {failure_msg}" if op_failure else failure_msg
+                update_queue_state(project_dir, {"active_tasks": {"gen_" + op_name: {
+                    "current_step": "Failed",
+                    "status": "Failed",
+                    "result": failure_msg[:200],
+                }}})
             else:
                 kernel_ms, backend = _load_kernel_benchmark(project_dir, op_name)
+                # C1: write benchmark timing so completed section can show value_ms
+                update_queue_state(project_dir, {"active_tasks": {"gen_" + op_name: {
+                    "current_step": "Done",
+                    "status": "Done",
+                    "value_ms": kernel_ms,
+                }}})
                 publish_result = publish_generated_root(
                     project_dir,
                     op_name,
@@ -448,6 +471,12 @@ def run_generate(args: argparse.Namespace) -> int:
             else:
                 msg = f"Generated {idx + 1}/{total_ops} operators."
             update_job_progress(idx + 1, progress_total, msg)
+
+    # Clear operator tracking once the generation loop finishes
+    update_queue_state(project_dir, {
+        "pending_operators": [],
+        "current_operator": "",
+    })
 
     if failed_ops:
         failed_count = len(failed_ops)

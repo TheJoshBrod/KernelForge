@@ -21,17 +21,24 @@ def:pub WorkQueuePanel(props: any) -> Any {
     completedHistory = history_state[0];
     setCompletedHistory = history_state[1];
 
-    # Accumulate Done/Failed tasks from activeTasks into persistent history
+    # Accumulate Done/Failed tasks from activeTasks into persistent history.
+    # Update existing entries (e.g. when value_ms is added after Benchmarking).
     useEffect(lambda -> None {
         for task in to_list(activeTasks) {
             if task["current_step"] == "Done" or task["current_step"] == "Failed" {
                 setCompletedHistory(lambda prev: any -> Any {
+                    found = False;
+                    next_list = [];
                     for t in to_list(prev) {
                         if str(t["id"]) == str(task["id"]) {
-                            return prev;
+                            found = True;
+                            next_list.push(task);
+                        } else {
+                            next_list.push(t);
                         }
                     }
-                    return prev.concat([task]);
+                    if not found { next_list.push(task); }
+                    return next_list;
                 });
             }
         }
@@ -104,10 +111,12 @@ def:pub WorkQueuePanel(props: any) -> Any {
         }
         if c_step == "Failed" {
             sub_info = sub_info + (task["result"] if "result" in task else "validation failed");
-        } else {
+        } elif c_step == "Generating" or c_step == "Verifying" {
             atmpt = str(task["attempt_current"] if "attempt_current" in task else 1);
             max_atmpt = str(task["attempt_max"] if "attempt_max" in task else 3);
             sub_info = sub_info + f"attempt {atmpt}/{max_atmpt}";
+        } else {
+            sub_info = sub_info + "queued";
         }
 
         active_tasks_nodes.push(
@@ -329,7 +338,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
                 </div>
                 <div className="divide-y divide-[var(--border)] max-h-[400px] overflow-y-auto">
                     {<div className="p-8 text-center text-xs text-zinc-200 font-mono">Queue empty</div> if show_empty else <span/>}
-                    {active_tasks_nodes if activePoll and in_progress.length > 0 else <span/>}
+                    {active_tasks_nodes if in_progress.length > 0 else <span/>}
                     {<div>
                         <div className="px-4 py-1.5 bg-zinc-900/50 border-t border-[var(--border)] flex items-center justify-between">
                             <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-600">Completed</span>
