@@ -141,6 +141,7 @@ def:pub GenerateModal(props: any) -> Any {
                             # Set default if none selected and list not empty
                             if not llmModel and list_len(list_models) > 0 {
                                 setLlmModel(list_models[0]["id"]);
+                                setLlmProvider(list_models[0]["provider"] if "provider" in list_models[0] else "openai");
                             }
                         }
                     }
@@ -240,6 +241,16 @@ def:pub GenerateModal(props: any) -> Any {
                 {d["label"]}
             </option>
         );
+    }
+
+    def handleModelChange(model_id: str) -> None {
+        setLlmModel(model_id);
+        for m in models {
+            if m["id"] == model_id {
+                setLlmProvider(m["provider"] if "provider" in m else "openai");
+                break;
+            }
+        }
     }
 
     async def handleGenerate -> None {
@@ -370,7 +381,7 @@ def:pub GenerateModal(props: any) -> Any {
                         <div className="relative">
                             <SearchableSelect
                                 value={llmModel}
-                                onChange={setLlmModel}
+                                onChange={handleModelChange}
                                 options={models.map(
                                     lambda m: dict  -> dict { return {
                                         "value": m["id"],
