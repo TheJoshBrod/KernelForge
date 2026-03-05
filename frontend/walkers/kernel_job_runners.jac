@@ -292,6 +292,30 @@ walker:pub ClearProjectQueue {
             state["pending_operators"] = [];
             state["current_operator"] = "";
             state["benchmark_slot"] = {"now": None, "pending": []};
+            state["completed_tasks"] = [];
+            with open(queue_path, "w") as f {
+                dump(state, f);
+            }
+            report {"success": True};
+        } except Exception as e {
+            report {"success": False, "error": str(e)};
+        }
+    }
+}
+
+walker:pub ClearCompletedTasks {
+    has projectName: str;
+
+    can run with entry {
+        queue_path = path.join(_project_dir(self.projectName), "queue.json");
+        try {
+            state = {};
+            if path.exists(queue_path) {
+                with open(queue_path, "r") as f {
+                    state = load(f);
+                }
+            }
+            state["completed_tasks"] = [];
             with open(queue_path, "w") as f {
                 dump(state, f);
             }

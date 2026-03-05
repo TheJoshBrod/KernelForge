@@ -1194,11 +1194,27 @@ def:pub _write_initial_queue_state(project_name: str, ops_list: list, tag: str) 
             };
         }
     }
+    # Preserve existing completed_tasks history
+    existing_completed = [];
+    try {
+        if path.exists(queue_path) {
+            with open(queue_path, "r") as f {
+                existing = load(f);
+                if existing and "completed_tasks" in existing {
+                    existing_completed = existing["completed_tasks"];
+                }
+            }
+        }
+    } except Exception {
+        # If we can't read, start fresh
+        existing_completed = [];
+    }
     queue_data = {
         "pending_operators": [str(o) for o in ops_list],
         "active_tasks": active_tasks,
         "benchmark_slot": {"now": None, "pending": []},
-        "current_operator": str(ops_list[0]) if len(ops_list) > 0 else ""
+        "current_operator": str(ops_list[0]) if len(ops_list) > 0 else "",
+        "completed_tasks": existing_completed
     };
     try {
         with open(queue_path, "w") as f {

@@ -7,6 +7,7 @@ import argparse
 import tempfile
 import queue
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
@@ -35,10 +36,13 @@ def update_queue_state(proj_base_dir: Path, updates: dict):
             try:
                 state = json.loads(queue_path.read_text())
             except:
-                state = {"active_tasks": {}, "benchmark_slot": {"now": None, "pending": []}, "pending_operators": [], "current_operator": ""}
+                state = {"active_tasks": {}, "benchmark_slot": {"now": None, "pending": []}, "pending_operators": [], "current_operator": "", "completed_tasks": []}
         else:
-            state = {"active_tasks": {}, "benchmark_slot": {"now": None, "pending": []}, "pending_operators": [], "current_operator": ""}
-        
+            state = {"active_tasks": {}, "benchmark_slot": {"now": None, "pending": []}, "pending_operators": [], "current_operator": "", "completed_tasks": []}
+
+        if "completed_tasks" not in state:
+            state["completed_tasks"] = []
+
         if "active_tasks" in updates:
             for k, v in updates["active_tasks"].items():
                 if k not in state["active_tasks"]:
@@ -46,14 +50,33 @@ def update_queue_state(proj_base_dir: Path, updates: dict):
                 state["active_tasks"][k].update(v)
         if "remove_tasks" in updates:
             for k in updates["remove_tasks"]:
-                state["active_tasks"].pop(str(k), None)
+                removed = state["active_tasks"].pop(str(k), None)
+                if removed:
+                    removed["id"] = str(k)
+                    removed["completed_at"] = datetime.now(timezone.utc).isoformat()
+                    state["completed_tasks"].append(removed)
         if "benchmark_slot" in updates:
             state["benchmark_slot"].update(updates["benchmark_slot"])
         if "pending_operators" in updates:
             state["pending_operators"] = updates["pending_operators"]
         if "current_operator" in updates:
             state["current_operator"] = updates["current_operator"]
-        
+
+        # Auto-archive Done/Failed tasks from active_tasks
+        done_keys = []
+        for k, v in state["active_tasks"].items():
+            step = v.get("current_step", "")
+            if step in ("Done", "Failed"):
+                done_keys.append(k)
+        for k in done_keys:
+            archived = state["active_tasks"].pop(k)
+            archived["id"] = k
+            archived["completed_at"] = datetime.now(timezone.utc).isoformat()
+            state["completed_tasks"].append(archived)
+        # Cap completed list at 200 entries
+        if len(state["completed_tasks"]) > 200:
+            state["completed_tasks"] = state["completed_tasks"][-200:]
+
         queue_path.write_text(json.dumps(state, indent=2))
 
 

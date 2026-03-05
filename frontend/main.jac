@@ -17,6 +17,7 @@ import from walkers.kernel_job_runners {
     StartBenchmark,
     SetJobControl,
     ClearProjectQueue,
+    ClearCompletedTasks,
     GetJobLog
 }
 import from walkers.project_admin {

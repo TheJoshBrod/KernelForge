@@ -264,7 +264,7 @@ def run_generate(args: argparse.Namespace) -> int:
 
         task_key = f"gen_{op_name}"
         update_queue_state(project_dir, {
-            "active_tasks": {task_key: {"current_step": "Generating", "status": "In Progress"}},
+            "active_tasks": {task_key: {"tag": "[GEN]", "op_name": op_name, "current_step": "Generating", "status": "In Progress"}},
             "current_operator": op_name,
         })
 
@@ -345,7 +345,7 @@ def run_generate(args: argparse.Namespace) -> int:
 
         if args.optimize and can_benchmark:
             update_queue_state(project_dir, {
-                "active_tasks": {task_key: {"current_step": "Optimizing"}},
+                "active_tasks": {task_key: {"tag": "[OPT]", "op_name": op_name, "current_step": "Optimizing"}},
             })
             update_job_progress(
                 idx,
@@ -377,7 +377,7 @@ def run_generate(args: argparse.Namespace) -> int:
                 return 130
 
             update_queue_state(project_dir, {
-                "active_tasks": {task_key: {"current_step": "Benchmarking"}},
+                "active_tasks": {task_key: {"tag": "[GEN]", "op_name": op_name, "current_step": "Benchmarking"}},
             })
             update_job_progress(
                 idx,
