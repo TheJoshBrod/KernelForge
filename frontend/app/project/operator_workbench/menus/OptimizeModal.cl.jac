@@ -232,6 +232,13 @@ def:pub OptimizeModal(props: any) -> Any {
         }
 
         setIsWorking(True);
+
+        # Close modal and inject optimistic queue entries IMMEDIATELY
+        onClose();
+        if onStarted {
+            onStarted(None, [selectedOp]);
+        }
+
         try {
             payload = {
                 "projectName": resolvedProjectName,
@@ -264,11 +271,6 @@ def:pub OptimizeModal(props: any) -> Any {
                 if "error" in data
                 else "Failed to queue optimization.";
                 alert(err);
-            } else {
-                onClose();
-                if onStarted {
-                    onStarted(data);
-                }
             }
         } except Exception as e {
             console.error("Failed to start optimization:", e);

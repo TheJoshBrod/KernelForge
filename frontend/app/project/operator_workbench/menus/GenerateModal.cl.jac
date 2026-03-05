@@ -80,7 +80,14 @@ def:pub GenerateModal(props: any) -> Any {
     llmModel = llm_model_state[0];
     setLlmModel = llm_model_state[1];
 
-    target_device_state = useState("cuda");
+    saved_device = "cuda";
+    try {
+        ld = localStorage.getItem("kforge_target_device");
+        if ld {
+            saved_device = ld;
+        }
+    } except Exception {}
+    target_device_state = useState(saved_device);
     targetDevice = target_device_state[0];
     setTargetDevice = target_device_state[1];
 
@@ -220,7 +227,11 @@ def:pub GenerateModal(props: any) -> Any {
             }
         }if not current_valid and available_devices.length > 0 {
             setTargetDevice(available_devices[0]["value"]);
-        }},
+        }
+        # Persist selection to localStorage
+        try {
+            localStorage.setItem("kforge_target_device", targetDevice);
+        } except Exception {}},
         [hwInfo, targetDevice]
     );
 
@@ -253,6 +264,14 @@ def:pub GenerateModal(props: any) -> Any {
         }
 
         setIsWorking(True);
+
+        # Close modal and inject optimistic queue entries IMMEDIATELY
+        # (before the blocking server call)
+        onClose();
+        if onStarted {
+            onStarted(None, [selectedOp]);
+        }
+
         try {
             ssh_conns = config["ssh_connections"] if config and "ssh_connections" in config else [];
             active_ssh = config["active_ssh_index"] if config and "active_ssh_index" in config else -1;
@@ -280,11 +299,6 @@ def:pub GenerateModal(props: any) -> Any {
                 if "error" in data
                 else "Failed to queue generation.";
                 alert(err);
-            } else {
-                onClose();
-                if onStarted {
-                    onStarted(data);
-                }
             }
         } except Exception as e {
             console.error("Failed to start generation:", e);
