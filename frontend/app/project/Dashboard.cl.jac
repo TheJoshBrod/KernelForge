@@ -56,6 +56,11 @@ def:pub Dashboard -> Any {
     status = status_state[0];
     setStatus = status_state[1];
 
+    # Separate state for optimistic queue entries (survives server polls)
+    optimistic_tasks_state = useState({});
+    optimisticTasks = optimistic_tasks_state[0];
+    setOptimisticTasks = optimistic_tasks_state[1];
+
     hardware_info_state = useState({});
     hardwareInfo = hardware_info_state[0];
     setHardwareInfo = hardware_info_state[1];
@@ -384,9 +389,29 @@ def:pub Dashboard -> Any {
         navigate(f"/project/{name}/operator-workbench");
     }
 
-    async def handleModalStarted -> None {
+    async def handleModalStarted(data: Any = None, started_ops: list = None) -> None {
         setGenerateModalOpen(False);
         setOptimizeModalOpen(False);
+        # Optimistic UI: inject placeholder tasks into separate state
+        if started_ops and started_ops.length > 0 {
+            setOptimisticTasks(lambda prev: Any -> Any {
+                updated = Object.assign({}, prev);
+                now_ts = Date.now();
+                for sop in started_ops {
+                    task_key = "gen_" + str(sop);
+                    updated[task_key] = {
+                        "tag": "[GEN]",
+                        "op_name": str(sop),
+                        "current_step": "Monitoring",
+                        "attempt_current": 1,
+                        "attempt_max": 8,
+                        "status": "Starting",
+                        "_created_at": now_ts
+                    };
+                }
+                return updated;
+            });
+        }
         await refreshData();
         setTimeout(lambda -> None { refreshData();}, 1500);
         setTimeout(lambda -> None { refreshData();}, 3500);
@@ -1165,15 +1190,147 @@ def:pub Dashboard -> Any {
 
     queue_data = status["queue"] if status and "queue" in status else {};
     active_tasks_dict = queue_data["active_tasks"] if "active_tasks" in queue_data else {};
+    # Build a set of completed task IDs for optimistic cleanup
+    completed_task_ids = {};
+    completed_tasks_raw = queue_data["completed_tasks"] if "completed_tasks" in queue_data else [];
+    for ct in to_list(completed_tasks_raw) {
+        if ct and "id" in ct {
+            completed_task_ids[ct["id"]] = True;
+        }
+    }
+    # Merge optimistic entries: add any that server doesn't know about yet
+    merged_tasks_dict = Object.assign({}, active_tasks_dict);
+    stale_optimistic = [];
+    now_ms = Date.now();
+    for ok in Object.keys(optimisticTasks) {
+        opt_entry = optimisticTasks[ok];
+        opt_age = now_ms - (opt_entry["_created_at"] if "_created_at" in opt_entry else 0);
+        if ok in active_tasks_dict or ok in completed_task_ids or opt_age > 30000 {
+            # Server has this task, or entry expired (>30s) — mark as stale
+            stale_optimistic.push(ok);
+        } else {
+            merged_tasks_dict[ok] = opt_entry;
+        }
+    }
+    # Clean up stale optimistic entries (server now has them)
+    if stale_optimistic.length > 0 {
+        setOptimisticTasks(lambda prev: Any -> Any {
+            cleaned = {};
+            for pk in Object.keys(prev) {
+                if not stale_optimistic.includes(pk) {
+                    cleaned[pk] = prev[pk];
+                }
+            }
+            return cleaned;
+        });
+    }
     active_tasks = [];
-    for k in Object.keys(active_tasks_dict) {
-        t = active_tasks_dict[k];
+    for k in Object.keys(merged_tasks_dict) {
+        t = merged_tasks_dict[k];
         t["id"] = k;
         active_tasks.push(t);
     }
     benchmark_slot = queue_data["benchmark_slot"] if "benchmark_slot" in queue_data else {"now": None, "pending": []};
     pending_operators = queue_data["pending_operators"] if "pending_operators" in queue_data else [];
     current_operator = queue_data["current_operator"] if "current_operator" in queue_data else "";
+    # Sort: currently active task first, then by op_name
+    active_tasks.sort(lambda a: Any, b: Any -> int {
+        a_op = a["op_name"] if "op_name" in a else "";
+        b_op = b["op_name"] if "op_name" in b else "";
+        a_active = 1 if a_op == current_operator else 0;
+        b_active = 1 if b_op == current_operator else 0;
+        if a_active != b_active {
+            return b_active - a_active;
+        }
+        return 0;
+    });
+
+    # --- Completed Tasks (flat activity log, newest first) ---
+    completed_tasks_raw = queue_data["completed_tasks"] if "completed_tasks" in queue_data else [];
+    completed_list = [];
+    for ct in to_list(completed_tasks_raw) {
+        if not ct {
+            continue;
+        }
+        ct_op = ct["op_name"] if "op_name" in ct else "";
+        if not ct_op or ct_op == "unknown" {
+            ct_id = ct["id"] if "id" in ct else "";
+            if ct_id and ct_id.startsWith("gen_") {
+                ct_op = ct_id.slice(4);
+            } elif ct_id and ct_id.startsWith("opt_") {
+                ct_op = ct_id.slice(4);
+            } elif ct_id == "seq_opt" {
+                continue;
+            } elif ct_id {
+                ct_op = ct_id;
+            } else {
+                ct_op = "unknown";
+            }
+        }
+        completed_list.push(Object.assign({}, ct, {"_resolved_op": ct_op}));
+    }
+    # Reverse to show newest first
+    completed_list.reverse();
+
+    completed_section_nodes = [];
+    for ci_idx in range(list_len(completed_list)) {
+        ci = completed_list[ci_idx];
+        ci_step = ci["current_step"] if "current_step" in ci else "";
+        ci_tag = ci["tag"] if "tag" in ci else "[GEN]";
+        ci_op = ci["_resolved_op"];
+        ci_result = ci["result"] if "result" in ci else "";
+        ci_time = ci["completed_at"] if "completed_at" in ci else "";
+        ci_is_done = (ci_step == "Done");
+        ci_is_failed = (ci_step == "Failed");
+
+        # Format the result text
+        ci_result_text = "";
+        if ci_result and ci_result != "completed" {
+            ci_result_text = ci_result;
+        }
+
+        # Format relative time
+        ci_time_text = "";
+        if ci_time {
+            try {
+                ci_date = Reflect.construct(Date, [ci_time]);
+                ci_now = Reflect.construct(Date, []);
+                ci_diff_ms = ci_now.getTime() - ci_date.getTime();
+                ci_diff_min = Math.floor(ci_diff_ms / 60000);
+                if ci_diff_min < 1 {
+                    ci_time_text = "just now";
+                } elif ci_diff_min < 60 {
+                    ci_time_text = f"{ci_diff_min}m ago";
+                } elif ci_diff_min < 1440 {
+                    ci_hrs = Math.floor(ci_diff_min / 60);
+                    ci_time_text = f"{ci_hrs}h ago";
+                } else {
+                    ci_days = Math.floor(ci_diff_min / 1440);
+                    ci_time_text = f"{ci_days}d ago";
+                }
+            } except Exception {
+                ci_time_text = "";
+            }
+        }
+
+        ci_icon_class = "text-emerald-400" if ci_is_done else "text-red-400";
+        ci_icon = "✓" if ci_is_done else "✗";
+        ci_border = "border-l-2 border-emerald-500/40" if ci_is_done else "border-l-2 border-red-500/40";
+
+        completed_section_nodes.push(
+            <div key={"cl_" + str(ci_idx)} className={"px-4 py-2 bg-[var(--surface-0)] hover:bg-[var(--surface-1)] transition-colors " + ci_border}>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5 font-mono text-xs">
+                        <span className={ci_icon_class + " text-sm w-4 text-center"}>{ci_icon}</span>
+                        <span className={"font-semibold " + ("text-emerald-400/70" if ci_tag == "[GEN]" else "text-blue-400/70")}>{ci_tag}</span>
+                        <span className="text-zinc-300">{format_op_short(ci_op)}</span>
+                        {<span className="text-zinc-500 ml-1">{ci_result_text}</span> if ci_result_text else <span></span>}
+                    </div>
+                    <span className="font-mono text-[10px] text-zinc-600">{ci_time_text}</span>
+                </div>
+            </div>
+        );
+    }
 
     active_tasks_nodes = [];
     for task in active_tasks {
@@ -1386,7 +1543,8 @@ def:pub Dashboard -> Any {
 
         row_status_color = "text-zinc-500";
         if r_stat == "Forged ✓" { row_status_color = "text-emerald-400"; }
-        elif r_stat != "Not started" and r_stat != "Benchmarked" and r_stat != "Done" { row_status_color = "text-[var(--accent-orange)] animate-pulse"; }
+        elif r_stat == "Benchmarked" { row_status_color = "text-yellow-400"; }
+        elif r_stat != "Not started" and r_stat != "Done" { row_status_color = "text-[var(--accent-orange)] animate-pulse"; }
         
         action_text = "Optimize" if r_stat == "Benchmarked" or r_stat == "Forged ✓" or r_stat == "Done" else "Generate";
         
@@ -1490,8 +1648,30 @@ def:pub Dashboard -> Any {
                     </div>
                     <div className="divide-y divide-[var(--border)] max-h-[400px] overflow-y-auto">
                         {active_tasks_nodes
-                        if list_len(active_tasks_nodes) > 0 and active_poll
-                        else <div className="p-8 text-center text-xs text-zinc-500 font-mono">Queue empty</div>}
+                        if list_len(active_tasks_nodes) > 0
+                        else <div className="p-8 text-center text-xs text-zinc-500 font-mono">{"Queue empty" if list_len(completed_section_nodes) == 0 else "No active tasks"}</div>}
+                        {<div>
+                            <div className="px-4 py-2 bg-zinc-900/60 border-t border-b border-[var(--border)] flex items-center gap-3">
+                                <span className="text-[10px] uppercase tracking-[0.12em] text-zinc-500 font-semibold">Completed</span>
+                                <button
+                                    onClick={lambda -> None {
+                                        # Clear on server, then refresh
+                                        __jacSpawn("ClearCompletedTasks", "", {"projectName": name}).then(lambda _r: any -> None { refreshData();});
+                                        # Optimistically clear local completed_tasks
+                                        if status and "queue" in status and "completed_tasks" in status["queue"] {
+                                            status["queue"]["completed_tasks"] = [];
+                                            setStatus(Object.assign({}, status));
+                                        }
+                                    }}
+                                    className="text-[10px] px-2 py-0.5 rounded border border-zinc-700 bg-zinc-900 hover:border-zinc-500 hover:text-zinc-200 text-zinc-500 transition-colors font-mono"
+                                >
+                                    clear
+                                </button>
+                            </div>
+                            <div className="divide-y divide-[var(--border)]">
+                                {completed_section_nodes}
+                            </div>
+                        </div> if list_len(completed_section_nodes) > 0 else <span></span>}
                     </div>
                 </div>
 
