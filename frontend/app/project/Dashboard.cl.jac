@@ -1289,29 +1289,6 @@ def:pub Dashboard -> Any {
             ci_result_text = ci_result;
         }
 
-        # Format relative time
-        ci_time_text = "";
-        if ci_time {
-            try {
-                ci_date = Reflect.construct(Date, [ci_time]);
-                ci_now = Reflect.construct(Date, []);
-                ci_diff_ms = ci_now.getTime() - ci_date.getTime();
-                ci_diff_min = Math.floor(ci_diff_ms / 60000);
-                if ci_diff_min < 1 {
-                    ci_time_text = "just now";
-                } elif ci_diff_min < 60 {
-                    ci_time_text = f"{ci_diff_min}m ago";
-                } elif ci_diff_min < 1440 {
-                    ci_hrs = Math.floor(ci_diff_min / 60);
-                    ci_time_text = f"{ci_hrs}h ago";
-                } else {
-                    ci_days = Math.floor(ci_diff_min / 1440);
-                    ci_time_text = f"{ci_days}d ago";
-                }
-            } except Exception {
-                ci_time_text = "";
-            }
-        }
 
         ci_icon_class = "text-emerald-400" if ci_is_done else "text-red-400";
         ci_icon = "✓" if ci_is_done else "✗";
@@ -1326,7 +1303,7 @@ def:pub Dashboard -> Any {
                         <span className="text-zinc-300">{format_op_short(ci_op)}</span>
                         {<span className="text-zinc-500 ml-1">{ci_result_text}</span> if ci_result_text else <span></span>}
                     </div>
-                    <span className="font-mono text-[10px] text-zinc-600">{ci_time_text}</span>
+
                 </div>
             </div>
         );

@@ -8,6 +8,7 @@ import tempfile
 import queue
 import os
 from datetime import datetime, timezone
+import time
 from pathlib import Path
 
 import torch
@@ -53,7 +54,7 @@ def update_queue_state(proj_base_dir: Path, updates: dict):
                 removed = state["active_tasks"].pop(str(k), None)
                 if removed:
                     removed["id"] = str(k)
-                    removed["completed_at"] = datetime.now(timezone.utc).isoformat()
+                    removed["completed_at"] = int(time.time() * 1000)
                     state["completed_tasks"].append(removed)
         if "benchmark_slot" in updates:
             state["benchmark_slot"].update(updates["benchmark_slot"])
@@ -71,7 +72,7 @@ def update_queue_state(proj_base_dir: Path, updates: dict):
         for k in done_keys:
             archived = state["active_tasks"].pop(k)
             archived["id"] = k
-            archived["completed_at"] = datetime.now(timezone.utc).isoformat()
+            archived["completed_at"] = int(time.time() * 1000)
             state["completed_tasks"].append(archived)
         # Cap completed list at 200 entries
         if len(state["completed_tasks"]) > 200:
