@@ -1204,6 +1204,10 @@ def:pub Dashboard -> Any {
     now_ms = Date.now();
     for ok in Object.keys(optimisticTasks) {
         opt_entry = optimisticTasks[ok];
+        if not opt_entry {
+            stale_optimistic.push(ok);
+            continue;
+        }
         opt_age = now_ms - (opt_entry["_created_at"] if "_created_at" in opt_entry else 0);
         if ok in active_tasks_dict or ok in completed_task_ids or opt_age > 30000 {
             # Server has this task, or entry expired (>30s) — mark as stale
@@ -1227,6 +1231,9 @@ def:pub Dashboard -> Any {
     active_tasks = [];
     for k in Object.keys(merged_tasks_dict) {
         t = merged_tasks_dict[k];
+        if not t {
+            continue;
+        }
         t["id"] = k;
         active_tasks.push(t);
     }
@@ -1235,6 +1242,9 @@ def:pub Dashboard -> Any {
     current_operator = queue_data["current_operator"] if "current_operator" in queue_data else "";
     # Sort: currently active task first, then by op_name
     active_tasks.sort(lambda a: Any, b: Any -> int {
+        if not a or not b {
+            return 0;
+        }
         a_op = a["op_name"] if "op_name" in a else "";
         b_op = b["op_name"] if "op_name" in b else "";
         a_active = 1 if a_op == current_operator else 0;
@@ -1315,7 +1325,7 @@ def:pub Dashboard -> Any {
         tag = task["tag"];
         
         track_nodes = [];
-        steps = ["Monitoring", "Generating", "Validating", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
+        steps = ["Queued", "Starting", "Monitoring", "Generating", "Validating", "Benchmarking"] if tag == "[GEN]" else ["Queued", "Starting", "Generating", "Validating", "Profiling"];
         
         c_idx = -1;
         for i in range(list_len(steps)) {
@@ -1326,6 +1336,11 @@ def:pub Dashboard -> Any {
         
         for i in range(list_len(steps)) {
             s = steps[i];
+            # Only show Queued/Starting if we are currently in them, otherwise hide them to keep the UI clean
+            if (s == "Queued" or s == "Starting") and c_idx > 1 {
+                continue;
+            }
+            
             is_active = (i == c_idx);
             is_done = (c_step == "Done" or c_step == "Failed" or (c_idx > -1 and i < c_idx));
             
@@ -1444,6 +1459,14 @@ def:pub Dashboard -> Any {
         }
 
         op_status = "Not started";
+        # Check completed tasks (newest first)
+        for ct in completed_list {
+            if ct["_resolved_op"] == op_name {
+                op_status = str(ct["current_step"]);
+                break;
+            }
+        }
+        # Active tasks override completed ones
         for task in active_tasks {
             if str(task["op_name"]) == op_name {
                 op_status = str(task["current_step"]);
