@@ -603,15 +603,62 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    if args.action == "profile":
-        return run_profile(args)
-    if args.action == "benchmark":
-        return run_benchmark(args)
-    if args.action == "generate":
-        return run_generate(args)
-    if args.action == "optimize":
-        return run_optimize(args)
-    return 1
+    try:
+        if args.action == "profile":
+            return run_profile(args)
+        if args.action == "benchmark":
+            return run_benchmark(args)
+        if args.action == "generate":
+            return run_generate(args)
+        if args.action == "optimize":
+            return run_optimize(args)
+        return 1
+    finally:
+        # Check pending queue and spawn next job if available
+        try:
+            from pathlib import Path
+            import json
+            import subprocess
+            import os
+            
+            project_dir = Path.home() / "CUDA598" / "CGinS" / "kernels" / "projects" / args.project
+            pending_path = project_dir / "pending_jobs.json"
+            
+            if pending_path.exists():
+                with open(pending_path, "r") as f:
+                    pending_jobs = json.load(f)
+                
+                if pending_jobs and len(pending_jobs) > 0:
+                    next_job = pending_jobs.pop(0)
+                    
+                    # Save the updated queue
+                    with open(pending_path, "w") as f:
+                        json.dump(pending_jobs, f)
+                    
+                    # Spawn the next job detached
+                    cmd = next_job.get("cmd", [])
+                    if cmd:
+                        log_name = next_job.get("log_name", "generate.log")
+                        log_path = project_dir / "logs" / log_name
+                        log_path.parent.mkdir(parents=True, exist_ok=True)
+                        
+                        env = os.environ.copy()
+                        env["KFORGE_STATE_PATH"] = str(project_dir / "state.json")
+                        env["KFORGE_JOB_KEY"] = next_job.get("job_key", "generate")
+                        env["PYTHONUNBUFFERED"] = "1"
+                        
+                        with open(log_path, "a") as log_file:
+                            log_file.write(f"\n[job] Dequeued and started from background\n")
+                            subprocess.Popen(
+                                cmd,
+                                cwd=str(Path.home() / "CUDA598" / "CGinS"),
+                                stdout=log_file,
+                                stderr=subprocess.STDOUT,
+                                env=env,
+                                start_new_session=True # Detach
+                            )
+        except Exception as e:
+            print(f"Failed to process pending queue: {e}")
 
 
 if __name__ == "__main__":
