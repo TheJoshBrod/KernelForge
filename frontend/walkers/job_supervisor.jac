@@ -1071,12 +1071,51 @@ def:pub _start_job(project_name: str, job_key: str, cmd: list, log_name: str) ->
         or current_status == "paused"
     )
     and _pid_is_alive(current_pid) {
+        # Queue the job instead of skipping
+        project_dir = _project_dir(project_name);
+        pending_path = path.join(project_dir, "pending_jobs.json");
+        pending_jobs = [];
+        try {
+            if path.exists(pending_path) {
+                with open(pending_path, "r") as f {
+                    pending_jobs = load(f);
+                }
+            }
+        } except Exception {
+            pending_jobs = [];
+        }
+        
+        # Append this job to the pending list
+        pending_jobs.append({
+            "job_key": job_key,
+            "cmd": cmd,
+            "log_name": log_name,
+            "queued_at": datetime.now().isoformat()
+        });
+        
+        try {
+            with open(pending_path, "w") as f {
+                dump(pending_jobs, f);
+            }
+        } except Exception as e {
+            print(f"Failed to write to pending queue: {e}");
+        }
+
+        # Update job state in state.json so it shows as queued
+        _update_job_state(project_name, job_key, {
+            "status": "queued",
+            "control": "queued",
+            "active": True,
+            "phase": "queued",
+            "message": "Queued waiting for resources.",
+            "updated_at": datetime.now().isoformat()
+        });
+
         return {
             "success": True,
-            "skipped": True,
+            "queued": True,
             "reason": "in_progress",
-            "message": f"{job_key} job already in progress.",
-            "pid": current_pid
+            "message": f"{job_key} job queued because another job is in progress."
         };
     }
 

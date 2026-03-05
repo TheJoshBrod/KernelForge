@@ -131,7 +131,36 @@ walker:pub StartGenerate {
         }
         result = _start_job(self.projectName, "generate", cmd, "generate.log");
         if result and "success" in result and result["success"] {
-            _write_initial_queue_state(self.projectName, ops_list, "[GEN]");
+            if "queued" in result and result["queued"] {
+                # Add to queue.json as "Queued"
+                queue_path = path.join(_project_dir(self.projectName), "queue.json");
+                try {
+                    queue_data = {"active_tasks": {}, "pending_operators": []};
+                    if path.exists(queue_path) {
+                        with open(queue_path, "r") as f {
+                            queue_data = load(f);
+                        }
+                    }
+                    if not ("active_tasks" in queue_data) { queue_data["active_tasks"] = {}; }
+                    for op in ops_list {
+                        queue_data["active_tasks"]["gen_" + str(op)] = {
+                            "tag": "[GEN]",
+                            "op_name": str(op),
+                            "current_step": "Queued",
+                            "attempt_current": 1,
+                            "attempt_max": 1,
+                            "status": "queued"
+                        };
+                    }
+                    with open(queue_path, "w") as f {
+                        dump(queue_data, f);
+                    }
+                } except Exception as e {
+                    print(f"Failed to write queued state: {e}");
+                }
+            } else {
+                _write_initial_queue_state(self.projectName, ops_list, "[GEN]");
+            }
         }
         report result;
     }
@@ -217,7 +246,34 @@ walker:pub StartOptimize {
         }
         result = _start_job(self.projectName, "optimize", cmd, "optimize.log");
         if result and "success" in result and result["success"] {
-            _write_initial_queue_state(self.projectName, ops_list, "[OPT]");
+            if "queued" in result and result["queued"] {
+                # Add to queue.json as "Queued"
+                queue_path = path.join(_project_dir(self.projectName), "queue.json");
+                try {
+                    queue_data = {"active_tasks": {}, "pending_operators": []};
+                    if path.exists(queue_path) {
+                        with open(queue_path, "r") as f {
+                            queue_data = load(f);
+                        }
+                    }
+                    if not ("active_tasks" in queue_data) { queue_data["active_tasks"] = {}; }
+                    queue_data["active_tasks"]["seq_opt"] = {
+                        "tag": "[OPT]",
+                        "op_name": str(ops_list[0]) if len(ops_list) > 0 else "unknown",
+                        "current_step": "Queued",
+                        "attempt_current": 1,
+                        "attempt_max": 3,
+                        "status": "queued"
+                    };
+                    with open(queue_path, "w") as f {
+                        dump(queue_data, f);
+                    }
+                } except Exception as e {
+                    print(f"Failed to write queued state: {e}");
+                }
+            } else {
+                _write_initial_queue_state(self.projectName, ops_list, "[OPT]");
+            }
         }
         report result;
     }
