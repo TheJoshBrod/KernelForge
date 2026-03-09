@@ -301,7 +301,7 @@ def:pub GenerateModal(props: any) -> Any {
             } else {
                 onClose();
                 if onStarted {
-                    onStarted(data);
+                    onStarted({"_tag": "[GEN]", "_op": selectedOp});
                 }
             }
         } except Exception as e {

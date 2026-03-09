@@ -273,7 +273,7 @@ def:pub OptimizeModal(props: any) -> Any {
             } else {
                 onClose();
                 if onStarted {
-                    onStarted(data);
+                    onStarted({"_tag": "[OPT]", "_op": selectedOp});
                 }
             }
         } except Exception as e {

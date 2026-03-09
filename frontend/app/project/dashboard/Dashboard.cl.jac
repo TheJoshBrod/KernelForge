@@ -137,6 +137,10 @@ def:pub Dashboard -> Any {
     postSubmitActive = post_submit_state[0];
     setPostSubmitActive = post_submit_state[1];
 
+    starting_hint_state = useState({"tag": "", "op": ""});
+    startingHint = starting_hint_state[0];
+    setStartingHint = starting_hint_state[1];
+
     clear_signal_state = useState(0);
     clearSignal = clear_signal_state[0];
     setClearSignal = clear_signal_state[1];
@@ -343,9 +347,12 @@ def:pub Dashboard -> Any {
         navigate(f"/project/{name}/operator-workbench");
     }
 
-    async def handleModalStarted -> None {
+    async def handleModalStarted(hint: any) -> None {
         setGenerateModalOpen(False);
         setOptimizeModalOpen(False);
+        hint_tag = hint["_tag"] if hint and "_tag" in hint else "";
+        hint_op = hint["_op"] if hint and "_op" in hint else "";
+        setStartingHint({"tag": hint_tag, "op": hint_op});
         setPostSubmitActive(True);
         # Hard fallback: cancel after 120s if tasks never appear (e.g. job errored).
         # The useEffect below cancels it earlier once real tasks are visible.
@@ -695,7 +702,7 @@ def:pub Dashboard -> Any {
 
     # Cancel the "starting" indicator the moment real queue tasks appear.
     useEffect(
-        lambda -> None { if postSubmitActive and has_queue_work { setPostSubmitActive(False); } },
+        lambda -> None { if postSubmitActive and has_queue_work { setPostSubmitActive(False); setStartingHint({"tag": "", "op": ""}); } },
         [postSubmitActive, has_queue_work]
     );
 
@@ -1295,6 +1302,8 @@ def:pub Dashboard -> Any {
                     activeTasks={active_tasks}
                     activePoll={active_poll}
                     isStarting={postSubmitActive}
+                    startingTag={startingHint["tag"]}
+                    startingOp={startingHint["op"]}
                     currentOperator={current_operator}
                     benchmarkSlot={benchmark_slot}
                     pendingOperators={pending_operators}

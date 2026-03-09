@@ -12,6 +12,8 @@ def:pub WorkQueuePanel(props: any) -> Any {
     pendingOperators = props.pendingOperators;
     onClearQueue = props.onClearQueue;
     isStarting = props.isStarting if "isStarting" in props else False;
+    startingTag = props.startingTag if "startingTag" in props else "";
+    startingOp = props.startingOp if "startingOp" in props else "";
     speedData = props.speedData if "speedData" in props else [];
 
     modal_state = useState(False);
@@ -340,7 +342,9 @@ def:pub WorkQueuePanel(props: any) -> Any {
                     {<div className="p-8 text-center text-xs text-zinc-200 font-mono">Queue empty</div> if show_empty else <span/>}
                     {<div className="p-4 flex items-center gap-3 font-mono text-xs text-zinc-400">
                         <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse flex-shrink-0"></span>
-                        Starting job...
+                        {<span className={"font-semibold mr-1 " + ("text-emerald-400" if startingTag == "[GEN]" else "text-blue-400")}>{startingTag}</span> if startingTag else <span/>}
+                        {<span className="text-zinc-300 mr-1">{startingOp + ":"}</span> if startingOp else <span/>}
+                        <span>Initializing job...</span>
                     </div> if isStarting and in_progress.length == 0 else <span/>}
                     {active_tasks_nodes if in_progress.length > 0 else <span/>}
                     {<div>
