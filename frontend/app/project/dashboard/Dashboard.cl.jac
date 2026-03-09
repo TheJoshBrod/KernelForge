@@ -12,8 +12,8 @@ import from recharts {
     ResponsiveContainer
 }
 import from ....context.ConfigContext { useConfig }
-import from ..operator_workbench.menus.GenerateModal { GenerateModal }
-import from ..operator_workbench.menus.OptimizeModal { OptimizeModal }
+import from ..operator_workbench.workbench.menus.GenerateModal { GenerateModal }
+import from ..operator_workbench.workbench.menus.OptimizeModal { OptimizeModal }
 import from ..shared.MetricsAdapter {
     to_num,
     to_list,
@@ -132,6 +132,18 @@ def:pub Dashboard -> Any {
     forge_busy_state = useState(False);
     forgeBusy = forge_busy_state[0];
     setForgeBusy = forge_busy_state[1];
+
+    post_submit_state = useState(False);
+    postSubmitActive = post_submit_state[0];
+    setPostSubmitActive = post_submit_state[1];
+
+    starting_hint_state = useState({"tag": "", "op": ""});
+    startingHint = starting_hint_state[0];
+    setStartingHint = starting_hint_state[1];
+
+    clear_signal_state = useState(0);
+    clearSignal = clear_signal_state[0];
+    setClearSignal = clear_signal_state[1];
 
     forge_error_state = useState("");
     forgeError = forge_error_state[0];
@@ -335,12 +347,41 @@ def:pub Dashboard -> Any {
         navigate(f"/project/{name}/operator-workbench");
     }
 
-    async def handleModalStarted -> None {
+    async def handleModalStarted(hint: any) -> None {
         setGenerateModalOpen(False);
         setOptimizeModalOpen(False);
-        await refreshData();
-        setTimeout(lambda -> None { refreshData();}, 1500);
-        setTimeout(lambda -> None { refreshData();}, 3500);
+        hint_tag = hint["_tag"] if hint and "_tag" in hint else "";
+        hint_op = hint["_op"] if hint and "_op" in hint else "";
+        setStartingHint({"tag": hint_tag, "op": hint_op});
+        setPostSubmitActive(True);
+        # Hard fallback: cancel after 120s if tasks never appear (e.g. job errored).
+        # The useEffect below cancels it earlier once real tasks are visible.
+        setTimeout(lambda -> None { setPostSubmitActive(False);}, 120000);
+        # Kick off a single fast status RPC so polling doesn't have to wait
+        # a full interval before showing the first real task.
+        status_resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name});
+        status_data = status_resp.reports[0] if status_resp and status_resp.reports else {};
+        if status_data {
+            setStatus(status_data);
+        }
+        refreshData();
+    }
+
+    async def handleClearQueue -> None {
+        # Optimistic update: patch local status immediately so WorkQueuePanel
+        # remounts with empty activeTasks instead of the stale server data.
+        empty_queue = {
+            "active_tasks": {},
+            "pending_operators": [],
+            "current_operator": "",
+            "benchmark_slot": {"now": None, "pending": []}
+        };
+        patched = {**status};
+        patched["queue"] = empty_queue;
+        setStatus(patched);
+        setClearSignal(lambda p: any -> any { return p + 1; });
+        await __jacSpawn("ClearProjectQueue", "", {"projectName": name});
+        refreshData();
     }
 
     def op_names_from_rows(op_rows: list) -> list {
@@ -587,11 +628,14 @@ def:pub Dashboard -> Any {
     _ep_gen = status["generate"] if status and "generate" in status else {};
     _ep_opt = status["optimize"] if status and "optimize" in status else {};
     _ep_bench = status["benchmark"] if status and "benchmark" in status else {};
-    any_job_active = forgeBusy or is_job_active(_ep_profile) or is_job_active(_ep_gen) or is_job_active(_ep_opt) or is_job_active(_ep_bench);
+    _ep_queue_data = status["queue"] if status and "queue" in status else {};
+    _ep_active_tasks = _ep_queue_data["active_tasks"] if "active_tasks" in _ep_queue_data else {};
+    has_queue_work = Object.keys(_ep_active_tasks).length > 0;
+    any_job_active = postSubmitActive or forgeBusy or has_queue_work or is_job_active(_ep_profile) or is_job_active(_ep_gen) or is_job_active(_ep_opt) or is_job_active(_ep_bench);
 
     # Auto-refresh status (faster while active, slower while idle)
     useEffect(
-        lambda -> Any { poll_ms = 1500 if any_job_active else 15000;timer = setInterval(
+        lambda -> Any { poll_ms = 500 if any_job_active else 15000;timer = setInterval(
             lambda -> None { __jacSpawn("GetProjectStatus", "", {"projectName": name}).then(
                 lambda resp: any  -> None { data = resp.reports[0]
                 if resp and resp.reports
@@ -654,6 +698,12 @@ def:pub Dashboard -> Any {
             poll_ms
         );return lambda -> None { clearInterval(timer);}; },
         [name, forgeBusy, any_job_active]
+    );
+
+    # Cancel the "starting" indicator the moment real queue tasks appear.
+    useEffect(
+        lambda -> None { if postSubmitActive and has_queue_work { setPostSubmitActive(False); setStartingHint({"tag": "", "op": ""}); } },
+        [postSubmitActive, has_queue_work]
     );
 
     async def fetchSystemInfo -> None {
@@ -1247,15 +1297,19 @@ def:pub Dashboard -> Any {
             />
             <div className="space-y-4">
                 <WorkQueuePanel
+                    key={clearSignal}
                     name={name}
                     activeTasks={active_tasks}
                     activePoll={active_poll}
+                    isStarting={postSubmitActive}
+                    startingTag={startingHint["tag"]}
+                    startingOp={startingHint["op"]}
                     currentOperator={current_operator}
                     benchmarkSlot={benchmark_slot}
                     pendingOperators={pending_operators}
                     speedData={speedData}
                     mctsSummary={mctsSummary}
-                    onClearQueue={lambda -> None { __jacSpawn("ClearProjectQueue", "", {"projectName": name}).then(lambda _r: any -> None { refreshData();});}}
+                    onClearQueue={handleClearQueue}
                 />
                 <OperatorResultsTable
                     operatorRows={operatorRows}

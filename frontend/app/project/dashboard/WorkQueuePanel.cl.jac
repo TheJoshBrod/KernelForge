@@ -11,6 +11,9 @@ def:pub WorkQueuePanel(props: any) -> Any {
     benchmarkSlot = props.benchmarkSlot;
     pendingOperators = props.pendingOperators;
     onClearQueue = props.onClearQueue;
+    isStarting = props.isStarting if "isStarting" in props else False;
+    startingTag = props.startingTag if "startingTag" in props else "";
+    startingOp = props.startingOp if "startingOp" in props else "";
     speedData = props.speedData if "speedData" in props else [];
 
     modal_state = useState(False);
@@ -63,7 +66,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
         tag = task["tag"];
 
         track_nodes = [];
-        steps = ["Monitoring", "Generating", "Verifying", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
+        steps = ["Monitoring", "Generating", "Validating", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
 
         c_idx = -1;
         for i in range(list_len(steps)) {
@@ -96,7 +99,6 @@ def:pub WorkQueuePanel(props: any) -> Any {
 
         bar_w = "0%";
         if c_step == "Generating" { bar_w = "33%"; }
-        elif c_step == "Verifying" { bar_w = "66%"; }
         elif c_step == "Validating" { bar_w = "66%"; }
         elif c_step == "Benchmarking" { bar_w = "85%"; }
         elif c_step == "Profiling" { bar_w = "85%"; }
@@ -111,7 +113,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
         }
         if c_step == "Failed" {
             sub_info = sub_info + (task["result"] if "result" in task else "validation failed");
-        } elif c_step == "Generating" or c_step == "Verifying" {
+        } elif c_step == "Generating" or c_step == "Validating" {
             atmpt = str(task["attempt_current"] if "attempt_current" in task else 1);
             max_atmpt = str(task["attempt_max"] if "attempt_max" in task else 3);
             sub_info = sub_info + f"attempt {atmpt}/{max_atmpt}";
@@ -304,7 +306,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
         queue_label = "Work Queue (" + currentOperator + ")";
     }
 
-    show_empty = in_progress.length == 0 and completed.length == 0;
+    show_empty = in_progress.length == 0 and completed.length == 0 and not isStarting;
 
     return
         <div>
@@ -338,6 +340,12 @@ def:pub WorkQueuePanel(props: any) -> Any {
                 </div>
                 <div className="divide-y divide-[var(--border)] max-h-[400px] overflow-y-auto">
                     {<div className="p-8 text-center text-xs text-zinc-200 font-mono">Queue empty</div> if show_empty else <span/>}
+                    {<div className="p-4 flex items-center gap-3 font-mono text-xs text-zinc-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse flex-shrink-0"></span>
+                        {<span className={"font-semibold mr-1 " + ("text-emerald-400" if startingTag == "[GEN]" else "text-blue-400")}>{startingTag}</span> if startingTag else <span/>}
+                        {<span className="text-zinc-300 mr-1">{startingOp + ":"}</span> if startingOp else <span/>}
+                        <span>Initializing job...</span>
+                    </div> if isStarting and in_progress.length == 0 else <span/>}
                     {active_tasks_nodes if in_progress.length > 0 else <span/>}
                     {<div>
                         <div className="px-4 py-1.5 bg-zinc-900/50 border-t border-[var(--border)] flex items-center justify-between">

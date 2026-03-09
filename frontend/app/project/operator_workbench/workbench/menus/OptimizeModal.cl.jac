@@ -7,7 +7,8 @@ import from ......components.ui.Icons {
     BrainIcon,
     ActivityIcon,
     TimerIcon,
-    ChevronDownIcon
+    ChevronDownIcon,
+    SettingsIcon
 }
 import from ......components.ui.SearchableSelect { SearchableSelect }
 import from ......components.ui.Modal { Modal }
@@ -99,6 +100,10 @@ def:pub OptimizeModal(props: any) -> Any {
     patience_state = useState(2);
     patience = patience_state[0];
     setPatience = patience_state[1];
+
+    workers_state = useState(4);
+    workers = workers_state[0];
+    setWorkers = workers_state[1];
 
     # Model List State
     models_state = useState([]);
@@ -240,6 +245,7 @@ def:pub OptimizeModal(props: any) -> Any {
                 "patience": int(patience),
                 "minImproveMs": 0.0,
                 "minSpeedupPct": 0.0,
+                "workers": int(workers),
                 "optimizer_config": {
                     "iterations": int(iterations),
                     "patience": int(patience)
@@ -267,7 +273,7 @@ def:pub OptimizeModal(props: any) -> Any {
             } else {
                 onClose();
                 if onStarted {
-                    onStarted(data);
+                    onStarted({"_tag": "[OPT]", "_op": selectedOp});
                 }
             }
         } except Exception as e {
@@ -400,6 +406,22 @@ def:pub OptimizeModal(props: any) -> Any {
                                 );}}
                                 min="1"
                                 max="10"
+                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label
+                                className="text-sm font-medium text-zinc-300 flex items-center gap-2"
+                            >
+                                <SettingsIcon className="w-4 h-4 text-purple-400"/>
+                                Parallel Workers
+                            </label>
+                            <input
+                                type="number"
+                                value={workers}
+                                onChange={lambda e: any -> None { setWorkers(e.target.value); }}
+                                min="1"
+                                max="32"
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
                             />
                         </div>

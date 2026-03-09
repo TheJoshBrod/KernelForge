@@ -134,7 +134,7 @@ def extract_feedback_and_code(content: str) -> Tuple[Optional[str], Optional[str
 
 
 
-def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, paths: dict[Path], ssh_config: dict = None) -> Tuple[str, bool, str]:
+def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, paths: dict[Path], ssh_config: dict = None, status_callback = None) -> Tuple[str, bool, str]:
     """Generates a new kernel then validates it for correctness
 
     Args:
@@ -144,12 +144,16 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
         model (str): Name of LLM model
         paths (dict[Path]): Data structure holding different filepaths
         ssh_config (dict, optional): SSH configuration for remote validation.
+        status_callback (callable, optional): Callback for updating UI status.
 
     Returns:
         Tuple[str, bool, str]: _description_
     """
     response = llm.chat(msg, model)
     feedback, cu_code = extract_feedback_and_code(response)
+
+    if status_callback:
+        status_callback("Validating", paths.get("attempt", 0) + 1)
 
     if cu_code is None:
         reason = "Failed to extract code from LLM response"
@@ -192,7 +196,7 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
     return feedback, is_valid, error
 
 
-def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None, ssh_config: dict = None) -> Tuple[str, bool, str]:
+def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None, ssh_config: dict = None, status_callback = None) -> Tuple[str, bool, str]:
     """Generates and validates CUDA kernels 
 
     Args:
@@ -204,6 +208,7 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
         model (str, optional): LLM model name. Defaults to settings value.
         ancestor_codes (list[tuple[int, str]], optional): List of (iteration_id, code) tuples from ancestors
         ssh_config (dict, optional): SSH configuration for remote validation.
+        status_callback (callable, optional): Callback for updating UI status.
     """
     if not model:
         ensure_llm_config()
@@ -236,7 +241,9 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
     print(f"\t\tSaved prompt to: {prompt_dump_path}")
 
     paths["attempt"] = 0
-    feedback, is_valid, error = create_and_validate(backend, llm, msg, model, paths, ssh_config)
+    if status_callback:
+        status_callback("Generating", 1)
+    feedback, is_valid, error = create_and_validate(backend, llm, msg, model, paths, ssh_config, status_callback)
     if is_valid:
         return feedback, True, ""
     print("\t\tInitial gen failed...")
@@ -245,7 +252,9 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
     for i in range(settings.retry_limit):
         print(f"\t\t\tReattempt {i}")
         paths["attempt"] = i + 1
-        retry_feedback, is_valid, error = create_and_validate(backend, llm, error, model, paths, ssh_config)
+        if status_callback:
+            status_callback("Generating", i + 2)
+        retry_feedback, is_valid, error = create_and_validate(backend, llm, error, model, paths, ssh_config, status_callback)
         if is_valid:
             return retry_feedback, True, ""
         if error:

@@ -91,13 +91,9 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     isOptimizing = is_optimizing_state[0];
     setIsOptimizing = is_optimizing_state[1];
 
-    pending_parent_ref_state = useState("");
-    pendingParentRef = pending_parent_ref_state[0];
-    setPendingParentRef = pending_parent_ref_state[1];
-
-    gen_task_info_state = useState(None);
-    genTaskInfo = gen_task_info_state[0];
-    setGenTaskInfo = gen_task_info_state[1];
+    active_gen_tasks_state = useState([]);
+    activeGenTasks = active_gen_tasks_state[0];
+    setActiveGenTasks = active_gen_tasks_state[1];
 
     async def fetchData(showLoader: bool = False) -> None {
         project_for_query = decode_param(resolvedProjectName);
@@ -293,34 +289,33 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                     setIsOptimizing(is_active or status_raw == "running");
                     queue_data = data["queue"] if data and "queue" in data else {};
                     active_tasks_data = queue_data["active_tasks"] if "active_tasks" in queue_data else {};
-                    found_ref = "";
-                    found_active_info = None;
-                    found_failed_info = None;
+                    active_tasks_list = [];
                     for tk in Object.keys(active_tasks_data) {
                         t = active_tasks_data[tk];
-                        if "parent_ref" in t and t["parent_ref"] {
-                            found_ref = str(t["parent_ref"]);
-                        }
-                        if tk.startsWith("gen_") {
+                        is_gen_or_opt = tk.startsWith("gen_") or (t and "tag" in t and (t["tag"] == "[OPT]" or t["tag"] == "[GEN]")) or tk == "seq_opt" or (t and "parent_ref" in t);
+                        if is_gen_or_opt {
                             step = t["current_step"] if "current_step" in t else "";
                             status = t["status"] if "status" in t else "";
                             if step and step != "Done" and status != "Done" {
                                 att_cur = t["attempt_current"] if "attempt_current" in t else None;
                                 att_max = t["attempt_max"] if "attempt_max" in t else None;
-                                info = {"step": step, "status": status, "attempt_current": att_cur, "attempt_max": att_max};
-                                if step == "Failed" or status == "Failed" {
-                                    found_failed_info = info;
-                                } else {
-                                    found_active_info = info;
-                                }
+                                pref = str(t["parent_ref"]) if "parent_ref" in t and t["parent_ref"] else "";
+                                info = {
+                                    "id": tk,
+                                    "step": step,
+                                    "status": status,
+                                    "attempt_current": att_cur,
+                                    "attempt_max": att_max,
+                                    "parent_ref": pref
+                                };
+                                active_tasks_list.push(info);
                             }
                         }
                     }
-                    setPendingParentRef(found_ref);
-                    setGenTaskInfo(found_active_info if found_active_info else found_failed_info);
+                    setActiveGenTasks(active_tasks_list);
                 } except Exception {
                     setIsOptimizing(False);
-                    setGenTaskInfo(None);
+                    setActiveGenTasks([]);
                 }
             }
             pollStatus();
@@ -331,7 +326,7 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     );
 
     onNodeClick = useCallback(
-        lambda event: any , node: any  -> None { setSelectedNodeId(node.id);}, []
+        lambda event: any , nd: any  -> None { setSelectedNodeId(nd.id);}, []
     );
 
     useEffect(
@@ -427,74 +422,107 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     };
 
     if isOptimizing and hasTree {
-        # Use the actual parent from the queue's parent_ref (e.g. "kernel_15" -> id "15")
-        pending_parent_id = None;
-        pending_parent_y = 0;
-        parent_node_id = pendingParentRef.replace("kernel_", "") if pendingParentRef else "";
-        for n in nodes {
-            if str(n.id) == parent_node_id {
-                pending_parent_id = n.id;
-                pending_parent_y = n.position.y;
-            }
-        }
-        if pending_parent_id {
-            child_y = pending_parent_y + 150;
-            nodes_at_child_level = 0;
+        level_x_offsets = {};
+        for tinfo in activeGenTasks {
+            pending_parent_id = None;
+            pending_parent_y = 0;
+            pref = tinfo["parent_ref"] if tinfo and "parent_ref" in tinfo else "";
+            parent_node_id = str(pref).replace("kernel_", "") if pref else "";
             for n in nodes {
-                if n.position.y == child_y {
-                    nodes_at_child_level += 1;
+                if str(n.id) == parent_node_id {
+                    pending_parent_id = n.id;
+                    pending_parent_y = n.position.y;
                 }
             }
+            if pending_parent_id {
+                child_y = pending_parent_y + 150;
+                key = str(child_y);
+                if not (key in level_x_offsets) {
+                    nodes_at_child_level = 0;
+                    for n in nodes {
+                        if n.position.y == child_y {
+                            nodes_at_child_level += 1;
+                        }
+                    }
+                    level_x_offsets[key] = nodes_at_child_level;
+                }
+                
+                offset_idx = level_x_offsets[key];
+                level_x_offsets[key] = offset_idx + 1;
+                
+                task_id = tinfo["id"] if "id" in tinfo else str(offset_idx);
+                node_id = f"pending-node-{task_id}";
+                
+                displayNodes.push({
+                    "id": node_id,
+                    "position": {"x": offset_idx * 200, "y": child_y},
+                    "data": {"label": "Generating..."},
+                    "className": "pending-kernel-node",
+                    "style": pending_style,
+                    "type": "default"
+                });
+                displayEdges.push({
+                    "id": f"e-pending-{task_id}",
+                    "source": pending_parent_id,
+                    "target": node_id,
+                    "type": "smoothstep",
+                    "animated": True,
+                    "style": {"stroke": "#6366f1", "strokeDasharray": "5,5"}
+                });
+            }
+        }
+    } elif isOptimizing {
+        # No tree yet — standalone pending root node(s)
+        idx = 0;
+        for tinfo in activeGenTasks {
+            task_id = tinfo["id"] if "id" in tinfo else str(idx);
             displayNodes.push({
-                "id": "pending-node",
-                "position": {"x": nodes_at_child_level * 200, "y": child_y},
+                "id": f"pending-node-{task_id}",
+                "position": {"x": idx * 200, "y": 0},
                 "data": {"label": "Generating..."},
                 "className": "pending-kernel-node",
                 "style": pending_style,
                 "type": "default"
             });
-            displayEdges.push({
-                "id": "e-pending",
-                "source": pending_parent_id,
-                "target": "pending-node",
-                "type": "smoothstep",
-                "animated": True,
-                "style": {"stroke": "#6366f1", "strokeDasharray": "5,5"}
-            });
+            idx += 1;
         }
-    } elif isOptimizing {
-        # No tree yet — standalone pending root node
-        displayNodes.push({
-            "id": "pending-node",
-            "position": {"x": 0, "y": 0},
-            "data": {"label": "Generating..."},
-            "className": "pending-kernel-node",
-            "style": pending_style,
-            "type": "default"
-        });
     }
 
     resolvedProjectNameClean = decode_param(resolvedProjectName);
     resolvedOpNameClean = canonical_op_param(resolvedOpName);
 
     gen_status_els = [];
-    if genTaskInfo {
-        step_text = genTaskInfo["step"] if "step" in genTaskInfo else "";
-        att_cur = genTaskInfo["attempt_current"] if "attempt_current" in genTaskInfo else None;
-        att_max = genTaskInfo["attempt_max"] if "attempt_max" in genTaskInfo else None;
+    idx = 0;
+    for tinfo in activeGenTasks {
+        step_text = tinfo["step"] if "step" in tinfo else "";
+        att_cur = tinfo["attempt_current"] if "attempt_current" in tinfo else None;
+        att_max = tinfo["attempt_max"] if "attempt_max" in tinfo else None;
+        pref = str(tinfo["parent_ref"]) if "parent_ref" in tinfo and tinfo["parent_ref"] else "";
+        
         attempt_label = "";
         if att_cur is not None and att_max is not None {
             attempt_label = f" · attempt {att_cur}/{att_max}";
         }
+        
+        pref_label = "";
+        if pref {
+            pref_label = f"parent: {pref} · ";
+        }
+        
+        top_offset = 8 + (idx * 40);
+        task_id = tinfo["id"] if "id" in tinfo else str(idx);
+        
         gen_status_els.push(
             <div
-                key="gen-status-badge"
-                className="absolute top-2 right-2 z-10 bg-indigo-950/90 border border-indigo-700/60 rounded-lg px-3 py-1.5 flex items-center gap-1.5 text-xs text-indigo-300 shadow-lg"
+                key={f"gen-status-badge-{task_id}"}
+                className="absolute right-2 z-10 bg-indigo-950/90 border border-indigo-700/60 rounded-lg px-3 py-1.5 flex items-center gap-1.5 text-xs text-indigo-300 shadow-lg"
+                style={{"top": f"{top_offset}px"}}
             >
                 <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse inline-block"/>
-                <span>{step_text}{attempt_label}</span>
+                <span>{pref_label}{step_text}{attempt_label}</span>
             </div>
         );
+        idx += 1;
     }
 
     left_content = [];
@@ -605,23 +633,25 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         fetchData={fetchData}
                     />
                     {gen_status_els}
-                    {<WorkbenchTreeView
-                        displayNodes={displayNodes}
-                        displayEdges={displayEdges}
-                        onNodesChange={onNodesChange}
-                        onEdgesChange={onEdgesChange}
-                        onNodeClick={onNodeClick}
-                        hasTree={hasTree}
-                        isOptimizing={isOptimizing}
-                    />
-                    if viewMode == "graph"
-                    else <WorkbenchListView
-                        viewMode={viewMode}
-                        sortedNodes={sortedNodes}
-                        selectedNodeId={selectedNodeId}
-                        onNodeSelect={setSelectedNodeId}
-                        torchDisplayMs={torchOpMs}
-                    />}
+                    {(
+                        <WorkbenchTreeView
+                            displayNodes={displayNodes}
+                            displayEdges={displayEdges}
+                            onNodesChange={onNodesChange}
+                            onEdgesChange={onEdgesChange}
+                            onNodeClick={onNodeClick}
+                            hasTree={hasTree}
+                            isOptimizing={isOptimizing}
+                        />
+                    ) if viewMode == "graph" else (
+                        <WorkbenchListView
+                            viewMode={viewMode}
+                            sortedNodes={sortedNodes}
+                            selectedNodeId={selectedNodeId}
+                            onNodeSelect={setSelectedNodeId}
+                            torchDisplayMs={torchOpMs}
+                        />
+                    )}
                 </div>
                 <div className="p-4 border-t border-zinc-800 bg-zinc-900/30">
                     <NewKernel
