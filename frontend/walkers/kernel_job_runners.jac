@@ -224,7 +224,33 @@ walker:pub StartOptimize {
         }
         result = _start_job(self.projectName, "optimize", cmd, "optimize.log");
         if result and "success" in result and result["success"] {
-            _write_initial_queue_state(self.projectName, ops_list, "[OPT]");
+            if self.workers <= 1 {
+                # Sequential: write placeholder with matching key so the pipeline
+                # merges its first update into the same entry (no duplicate row).
+                _write_initial_queue_state(self.projectName, ops_list, "[OPT]");
+            } else {
+                # Parallel: node IDs unknown until subprocess starts, so no
+                # placeholder.  Clear any stale active_tasks from prior runs so
+                # they don't appear alongside the new node entries.
+                queue_path = path.join(_project_dir(self.projectName), "queue.json");
+                try {
+                    q_state = {};
+                    if path.exists(queue_path) {
+                        with open(queue_path, "r") as f {
+                            q_state = load(f);
+                        }
+                    }
+                    q_state["active_tasks"] = {};
+                    q_state["benchmark_slot"] = {"now": None, "pending": []};
+                    q_state["current_operator"] = str(ops_list[0]) if len(ops_list) > 0 else "";
+                    q_state["pending_operators"] = [str(o) for o in ops_list];
+                    with open(queue_path, "w") as f {
+                        dump(q_state, f);
+                    }
+                } except Exception as e {
+                    print(f"Failed to reset queue for parallel optimize: {e}");
+                }
+            }
         }
         report result;
     }

@@ -543,7 +543,7 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
     nodes_dispatched = 0
     nodes_completed = 0
     nodes_failed = 0
-    
+
     # Start persistent workers
     print(f"[INIT] Starting {n_workers} workers...")
     workers = []

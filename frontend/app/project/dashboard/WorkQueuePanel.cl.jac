@@ -11,6 +11,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
     benchmarkSlot = props.benchmarkSlot;
     pendingOperators = props.pendingOperators;
     onClearQueue = props.onClearQueue;
+    isStarting = props.isStarting if "isStarting" in props else False;
     speedData = props.speedData if "speedData" in props else [];
 
     modal_state = useState(False);
@@ -303,7 +304,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
         queue_label = "Work Queue (" + currentOperator + ")";
     }
 
-    show_empty = in_progress.length == 0 and completed.length == 0;
+    show_empty = in_progress.length == 0 and completed.length == 0 and not isStarting;
 
     return
         <div>
@@ -337,6 +338,10 @@ def:pub WorkQueuePanel(props: any) -> Any {
                 </div>
                 <div className="divide-y divide-[var(--border)] max-h-[400px] overflow-y-auto">
                     {<div className="p-8 text-center text-xs text-zinc-200 font-mono">Queue empty</div> if show_empty else <span/>}
+                    {<div className="p-4 flex items-center gap-3 font-mono text-xs text-zinc-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse flex-shrink-0"></span>
+                        Starting job...
+                    </div> if isStarting and in_progress.length == 0 else <span/>}
                     {active_tasks_nodes if in_progress.length > 0 else <span/>}
                     {<div>
                         <div className="px-4 py-1.5 bg-zinc-900/50 border-t border-[var(--border)] flex items-center justify-between">

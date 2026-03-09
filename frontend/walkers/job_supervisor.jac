@@ -1171,15 +1171,17 @@ def:pub _write_initial_queue_state(project_name: str, ops_list: list, tag: str) 
     queue_path = path.join(_project_dir(project_name), "queue.json");
     active_tasks = {};
     if tag == "[OPT]" {
-        # Sequential optimize mode uses "seq_opt" as the task key — match it
-        if len(ops_list) > 0 {
-            active_tasks["seq_opt"] = {
+        # Key must match pipeline's task_key = f"seq_opt_{op_name}" so the
+        # pipeline's first update_queue_state merges into this entry rather
+        # than creating a separate task that duplicates it in the UI.
+        for op in ops_list {
+            active_tasks["seq_opt_" + str(op)] = {
                 "tag": "[OPT]",
-                "op_name": str(ops_list[0]),
-                "current_step": "Starting",
+                "op_name": str(op),
+                "current_step": "Generating",
                 "attempt_current": 1,
                 "attempt_max": 3,
-                "status": "Starting"
+                "status": "In Progress"
             };
         }
     } else {

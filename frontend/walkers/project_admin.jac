@@ -626,15 +626,11 @@ walker:pub GetProjectStatus {
         if "active_tasks" in queue_state {
             cleaned = {};
             for (k, v) in queue_state["active_tasks"].items() {
-                if v and v.get("current_step", "") != "Starting" {
+                if v {
                     cleaned[k] = v;
                 }
             }
             queue_state["active_tasks"] = cleaned;
-            if len(cleaned) == 0 {
-                queue_state["current_operator"] = "";
-                queue_state["pending_operators"] = [];
-            }
         }
         state["queue"] = queue_state;
         report state;
