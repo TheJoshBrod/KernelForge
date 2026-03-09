@@ -12,8 +12,8 @@ import from recharts {
     ResponsiveContainer
 }
 import from ....context.ConfigContext { useConfig }
-import from ..operator_workbench.menus.GenerateModal { GenerateModal }
-import from ..operator_workbench.menus.OptimizeModal { OptimizeModal }
+import from ..operator_workbench.workbench.menus.GenerateModal { GenerateModal }
+import from ..operator_workbench.workbench.menus.OptimizeModal { OptimizeModal }
 import from ..shared.MetricsAdapter {
     to_num,
     to_list,

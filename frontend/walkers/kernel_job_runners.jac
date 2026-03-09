@@ -41,12 +41,16 @@ walker:pub StartGenerate {
         ssh_connections: list = [],
         active_ssh_index: int = -1,
         llmModel: str = "",
-        llmProvider: str = "";
+        llmProvider: str = "",
+        workers: int = 1;
 
     can run with entry {
+        # Get relevant directories for project 
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
         out_dir = path.join(_project_dir(self.projectName), "kernels", "generated");
         _ensure_dir(out_dir);
+
+        
         target_device = str(self.targetDevice).lower() if self.targetDevice else "cuda";
         if not self.targetDevice {
             cfg_path = path.join(_project_dir(self.projectName), "config.json");
@@ -65,20 +69,11 @@ walker:pub StartGenerate {
                 }
             }
         }
-        if target_device == "gpu"
-        or target_device == "cuda"
-        or target_device == "rocm"
-        or target_device == "amd" {
-            target_device = "cuda";
-        } elif target_device == "mps"
-        or target_device == "metal"
-        or target_device == "apple" {
-            target_device = "mps";
-        } elif target_device == "xpu" or target_device == "intel" {
-            target_device = "cpu";
-        } elif target_device != "cpu" {
-            target_device = "cpu";
+        if target_device not in ["cuda", "mps", "metal", "triton", "cpu"] {
+            report {"success": False, "error": f"Unsupported target device: {target_device}"};
+            disengage;
         }
+        
         ops_list = [];
         for o in self.ops {
             if o {
@@ -111,6 +106,10 @@ walker:pub StartGenerate {
         if self.iterations > 0 {
             cmd.append("--iterations");
             cmd.append(str(self.iterations));
+        }
+        if self.workers > 1 {
+            cmd.append("--workers");
+            cmd.append(str(self.workers));
         }
         if self.llmModel {
             cmd.append("--llm-model");
@@ -155,7 +154,8 @@ walker:pub StartOptimize {
         ssh_connections: list = [],
         active_ssh_index: int = -1,
         llm_model: str = "",
-        llm_provider: str = "";
+        llm_provider: str = "",
+        workers: int = 4;
 
     can run with entry {
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
@@ -173,22 +173,7 @@ walker:pub StartOptimize {
                 }
             }
         }
-        target_device = "cuda";
-        cfg_path = path.join(_project_dir(self.projectName), "config.json");
-        if path.exists(cfg_path) {
-            try {
-                with open(cfg_path, "r") as f {
-                    project_cfg = load(f);
-                }
-                if project_cfg
-                and "generator" in project_cfg
-                and "target_device" in project_cfg["generator"] {
-                    target_device = str(project_cfg["generator"]["target_device"]).lower();
-                }
-            } except Exception as e {
-                print(f"Failed reading config target_device: {e}");
-            }
-        }
+        # Removed unnecessary target device fallback for optimization
         cmd = [
             sys.executable,
             "-m",
@@ -197,13 +182,15 @@ walker:pub StartOptimize {
             "--project",
             self.projectName,
             "--ops",
-            ",".join(ops_list),
-            "--target-device",
-            target_device
+            ",".join(ops_list)
         ];
         if self.iterations > 0 {
             cmd.append("--iterations");
             cmd.append(str(self.iterations));
+        }
+        if self.workers > 1 {
+            cmd.append("--workers");
+            cmd.append(str(self.workers));
         }
         if self.benchmark {
             cmd.append("--benchmark");
@@ -292,7 +279,7 @@ walker:pub ClearProjectQueue {
 
     can run with entry {
         queue_path = path.join(_project_dir(self.projectName), "queue.json");
-        active_steps = {"Monitoring", "Generating", "Verifying", "Benchmarking", "Validating", "Profiling"};
+        active_steps = {"Monitoring", "Generating", "Validating", "Benchmarking", "Profiling"};
         try {
             state = {};
             if path.exists(queue_path) {

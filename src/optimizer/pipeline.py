@@ -199,8 +199,20 @@ def optimize(
 
         # Kernel Generation
         print(f"\tBeginning generation (history: {len(improvement_log)} entries)...")
+        
+        def _status_cb(step: str, attempt: int):
+            if _proj_base_dir and _task_key:
+                max_attempts = settings.retry_limit + 1 if hasattr(settings, 'retry_limit') else 4
+                update_queue_state(_proj_base_dir, {
+                    "active_tasks": {_task_key: {
+                        "current_step": step,
+                        "attempt_current": attempt,
+                        "attempt_max": max_attempts
+                    }}
+                })
+
         improvement_description, is_valid, failure_reason = generator.generate(
-            backend, kernel_code, gpu_specs, improvement_log, paths, model=model, ancestor_codes=ancestor_codes, ssh_config=ssh_config)
+            backend, kernel_code, gpu_specs, improvement_log, paths, model=model, ancestor_codes=ancestor_codes, ssh_config=ssh_config, status_callback=_status_cb)
         print("\tFinished generation.")
         print(f"\t\t- Status: {is_valid}")
 
@@ -414,10 +426,20 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
                 print(f"{op_dir.name} has no i/o")
                 continue
 
-            # Check if the kernel has been previously generated
-            # Map backend extension to success marker name (e.g. .cu -> success.cuda, .py -> success.triton)
-            ext_to_device = {".cu": "cuda", ".py": "triton", ".metal": "metal"}
-            device_name = ext_to_device.get(backend.kernel_extension, "cuda")
+            # Infer per-operator backend based on success markers
+            op_backend = backend
+            device_name = ext_to_name.get(backend.kernel_extension, "cuda")
+            
+            if (op_dir / "success.cuda").exists():
+                op_backend = CUDABackend()
+                device_name = "cuda"
+            elif (op_dir / "success.triton").exists():
+                op_backend = TritonBackend()
+                device_name = "triton"
+            elif (op_dir / "success.mps").exists() or (op_dir / "success.metal").exists():
+                op_backend = MetalBackend()
+                device_name = "metal"
+
             success_marker = op_dir / f"success.{device_name}"
             if not success_marker.exists():
                 print(
@@ -442,17 +464,17 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
                 continue
 
             # Copy kernel to tmp_dir for profiling — prefer backend's own extension
-            if (op_dir / f"kernel{backend.kernel_extension}").exists():
-                src_ext = backend.kernel_extension
+            if (op_dir / f"kernel{op_backend.kernel_extension}").exists():
+                src_ext = op_backend.kernel_extension
             elif (op_dir / "kernel.cu").exists():
                 src_ext = ".cu"
             else:
                 src_ext = ".py"
-            dst_ext = backend.kernel_extension
+            dst_ext = op_backend.kernel_extension
             (tmp_path / f"kernel{dst_ext}").write_text((op_dir / f"kernel{src_ext}").read_text())
 
             # Profile kernel
-            current_stats = backend.profile_kernel(paths, baseline=True, ssh_config=ssh_config)
+            current_stats = op_backend.profile_kernel(paths, baseline=True, ssh_config=ssh_config)
 
             # Log kernel
             node_data = {
@@ -461,7 +483,7 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
                 "speedup_vs_parent": 1.0,
                 "improvement_description": "Initial",
                 "parent": -1,
-                "code": str(Path(proj_op_dir.name) / "kernels" / f"kernel_0{backend.kernel_extension}"),
+                "code": str(Path(proj_op_dir.name) / "kernels" / f"kernel_0{op_backend.kernel_extension}"),
                 "visits": 1
             }
             node = KernelNode.model_validate(node_data)
@@ -471,7 +493,7 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
                 
             # Copy kernel to kernels manually as well
             (paths["proj_dir"] / "kernels").mkdir(parents=True, exist_ok=True)
-            with open(paths["proj_dir"] / "kernels" / f"kernel_0{backend.kernel_extension}", "w") as f:
+            with open(paths["proj_dir"] / "kernels" / f"kernel_0{op_backend.kernel_extension}", "w") as f:
                 f.write((op_dir / f"kernel{src_ext}").read_text())
 
     return proj_dir
@@ -585,12 +607,12 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
             proj_base_dir = paths["proj_dir"].parent.parent
             queue_entry = {
                 "id": str(node.id),
-                "tag": "[OPT]" if node.id > 0 else "[GEN]",
+                "tag": "[OPT]",
                 "op_name": paths["io_dir"].name,
-                "current_step": "Monitoring" if node.id == 0 else "Generating",
+                "current_step": "Generating",
                 "attempt_current": 1,
                 "attempt_max": settings.retry_limit if hasattr(settings, 'retry_limit') else 3,
-                "parent_ref": f"kernel_{node.id}" if node.id > 0 else "",
+                "parent_ref": f"kernel_{node.id}",
                 "status": "In Progress"
             }
             update_queue_state(proj_base_dir, {"active_tasks": {str(node.id): queue_entry}})
@@ -609,9 +631,10 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                 print(f"[ERROR] Result collection: {e}")
                 break
             
-            in_flight_ids.discard(node_id)
+            if status != "status_update":
+                in_flight_ids.discard(node_id)
+                dispatch_blocked = False
             results_collected = True
-            dispatch_blocked = False
             
             proj_base_dir = paths["proj_dir"].parent.parent
             if status == "success" and result_data is not None:
@@ -684,6 +707,52 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
     print(f"  Nodes Failed: {nodes_failed}")
     print(f"  Success Rate: {nodes_completed/(nodes_dispatched or 1)*100:.1f}%")
     print(f"{'='*60}\n")
+
+def handle_new_root(op_name: str, proj_dir: Path, io_parent_dir: Path, optional_proj_name: str, default_backend: Backend, gpu_specs: GPUSpecs, model_name: str):
+    op_dir_path = proj_dir / op_name
+    
+    if not op_dir_path.exists():
+        print(f"Error: Operator '{op_name}' not found in project.")
+        print(f"Expected path: {op_dir_path}")
+        sys.exit(1)
+    
+    # Check if operator has at least node 0 (baseline)
+    paths_check = {"proj_dir": op_dir_path}
+    if not mcts.node_exists(paths_check, 0):
+        print(f"Error: Operator '{op_name}' has no baseline node. Run normal optimization first.")
+        sys.exit(1)
+    
+    io_dir = io_parent_dir / op_name
+    if not io_dir.exists():
+        print(f"Error: IO directory not found for '{op_name}'")
+        sys.exit(1)
+    
+    paths = {
+        "proj_dir": op_dir_path,
+        "io_dir": io_dir,
+        "op_dir": _generated_kernels_root(optional_proj_name) / op_name,
+    }
+    
+    op_generated_dir = paths["op_dir"]
+    op_backend = default_backend
+    if (op_generated_dir / "success.cuda").exists():
+        op_backend = CUDABackend()
+    elif (op_generated_dir / "success.triton").exists():
+        op_backend = TritonBackend()
+    elif (op_generated_dir / "success.mps").exists() or (op_generated_dir / "success.metal").exists():
+        op_backend = MetalBackend()
+
+    print(f"Creating new root for {op_name} using {op_backend.__class__.__name__}...")
+    new_root = create_new_root(op_backend, gpu_specs, paths, model=model_name)
+    
+    if new_root:
+        print(f"\nSuccess! Created new root: Node {new_root.id}")
+        print(f"  Runtime: {new_root.value:.4f} ms")
+    else:
+        print("\nFailed to create new root.")
+        sys.exit(1)
+    
+    sys.exit(0)
 
 def main():
     """Calls optimization pipeline on each kernel."""
@@ -849,43 +918,7 @@ Examples:
     # -----------------------
 
     if args.new_root:
-        op_name = args.new_root
-        op_dir_path = proj_dir / op_name
-        
-        if not op_dir_path.exists():
-            print(f"Error: Operator '{op_name}' not found in project.")
-            print(f"Expected path: {op_dir_path}")
-            sys.exit(1)
-        
-        # Check if operator has at least node 0 (baseline)
-        paths_check = {"proj_dir": op_dir_path}
-        if not mcts.node_exists(paths_check, 0):
-            print(f"Error: Operator '{op_name}' has no baseline node. Run normal optimization first.")
-            sys.exit(1)
-        
-        io_dir = io_parent_dir / op_name
-        if not io_dir.exists():
-            print(f"Error: IO directory not found for '{op_name}'")
-            sys.exit(1)
-        
-        paths = {
-            "proj_dir": op_dir_path,
-            "io_dir": io_dir,
-            "op_dir": _generated_kernels_root(optional_proj_name) / op_name,
-        }
-        
-        print(f"Creating new root for {op_name}...")
-        new_root = create_new_root(backend, gpu_specs, paths, model=model_name)
-        
-        if new_root:
-            print(f"\nSuccess! Created new root: Node {new_root.id}")
-            print(f"  Runtime: {new_root.value:.4f} ms")
-        else:
-            print("\nFailed to create new root.")
-            sys.exit(1)
-        
-        sys.exit(0)
-
+        handle_new_root(args.new_root, proj_dir, io_parent_dir, optional_proj_name, backend, gpu_specs, model_name)
 
 
     # Build list of operators to process
@@ -941,15 +974,28 @@ Examples:
             "op_dir": _generated_kernels_root(optional_proj_name) / op_name,
         }
 
+        # Infer per-operator backend
+        op_generated_dir = paths["op_dir"]
+        op_backend = backend
+        if (op_generated_dir / "success.cuda").exists():
+            op_backend = CUDABackend()
+        elif (op_generated_dir / "success.triton").exists():
+            op_backend = TritonBackend()
+        elif (op_generated_dir / "success.mps").exists() or (op_generated_dir / "success.metal").exists():
+            op_backend = MetalBackend()
+
         mcts._NODE_CACHE.clear()
         if args.parallel:
             # === PARALLEL MODE ===
+            workers = args.workers
+            if args.max_iterations and args.max_iterations > 0:
+                workers = min(workers, args.max_iterations)
             run_parallel_optimization(
-                backend=backend,
+                backend=op_backend,
                 gpu_specs=gpu_specs,
                 paths=paths,
                 ssh_config=ssh_config,
-                n_workers=args.workers,
+                n_workers=workers,
                 max_iterations=args.max_iterations,
                 model=model_name
             )
@@ -986,7 +1032,7 @@ Examples:
                     "iter_max": args.max_iterations,
                 }}})
                 new_node, failure_reason = optimize(
-                    backend, gpu_specs, paths, parent_node, ssh_config, model=model_name,
+                    op_backend, gpu_specs, paths, parent_node, ssh_config, model=model_name,
                     _proj_base_dir=proj_base_dir, _task_key=task_key,
                 )
 

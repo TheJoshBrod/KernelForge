@@ -150,6 +150,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                     validation_error = "Failed to extract code from LLM response"
                     if attempt < retry_limit:
                         current_prompt = f"Error: {validation_error}. Please provide the full kernel code in a code block."
+                        result_queue.put((node_id, {"step": "Generating", "attempt": attempt + 2}, "status_update"))
                         continue
                     else:
                         break
@@ -168,6 +169,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                 if attempt < retry_limit:
                     print(f"[WORKER {worker_pid}] Attempt {attempt+1} failed: {validation_error[:100]}... Retrying.")
                     current_prompt = f"Compilation/Validation failed with error:\n{validation_error}\n\nPlease fix the code."
+                    result_queue.put((node_id, {"step": "Generating", "attempt": attempt + 2}, "status_update"))
             
             # check final status
             if not is_valid:

@@ -481,7 +481,7 @@ def validate_with_retries(
 
         if _proj_base_dir and _task_key:
             update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
-                "current_step": "Verifying",
+                "current_step": "Validating",
             }}})
 
         # Validate all inputs at once using backend

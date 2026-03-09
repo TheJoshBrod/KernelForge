@@ -49,38 +49,42 @@ def:pub ApiKeysTestResults(props: any) -> Any {
                         </div>
                         {<div className="space-y-2">
                             {Object.entries(testResults["results"]).map(
-                                lambda entry: any  -> any { key = entry[0];val = entry[
-                                    1
-                                ];return (
-                                    <div
-                                        key={key}
-                                        className="flex flex-col gap-1 text-xs p-3 bg-[var(--bg-darkest)] border border-[var(--border)] rounded-sm"
-                                    >
-                                        <div className="flex justify-between items-center">
-                                            <span className="capitalize text-[var(--text-muted)] font-mono tracking-wider">
-                                                {key}
-                                            </span>
-                                            <span
-                                                className={"font-mono " + (
-                                                    "text-green-400"
-                                                    if val["success"]
-                                                    else "text-red-400 font-bold"
-                                                )}
-                                            >
-                                                {val["latency_ms"] + "ms" if val["success"] else "Failed"}
-                                            </span>
+                                lambda entry_item: any  -> any {
+                                    key = entry_item[0];
+                                    val = entry_item[1];
+                                    return (
+                                        <div
+                                            key={key}
+                                            className="flex flex-col gap-1 text-xs p-3 bg-[var(--bg-darkest)] border border-[var(--border)] rounded-sm"
+                                        >
+                                            <div className="flex justify-between items-center">
+                                                <span className="capitalize text-[var(--text-muted)] font-mono tracking-wider">
+                                                    {key}
+                                                </span>
+                                                <span
+                                                    className={"font-mono " + (
+                                                        "text-green-400"
+                                                        if val["success"]
+                                                        else "text-red-400 font-bold"
+                                                    )}
+                                                >
+                                                    {(val["latency_ms"] + "ms") if val["success"] else "Failed"}
+                                                </span>
+                                            </div>
+                                            {(
+                                                <div className="mt-1 pb-1 font-mono text-[10px] text-red-400/80 break-words whitespace-pre-wrap max-h-32 overflow-y-auto charcoal-scrollbar">
+                                                    {val["error"]}
+                                                </div>
+                                            ) if not val["success"] else <span/>}
                                         </div>
-                                        {<div className="mt-1 pb-1 font-mono text-[10px] text-red-400/80 break-words whitespace-pre-wrap max-h-32 overflow-y-auto charcoal-scrollbar">
-                                            {val["error"]}
-                                        </div> if not val["success"] else None}
-                                    </div>
-                                ); }
+                                    );
+                                }
                             )}
-                        </div>
-                        if "results" in testResults and testResults["results"]
-                        else <div className="text-xs text-[var(--text-muted)] font-mono flex-wrap">
-                            {testResults["error"] if "error" in testResults else ""}
-                        </div>}
+                        </div> if "results" in testResults and testResults["results"] else (
+                            <div className="text-xs text-[var(--text-muted)] font-mono flex-wrap">
+                                {testResults["error"] if "error" in testResults else ""}
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>

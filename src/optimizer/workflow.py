@@ -22,15 +22,10 @@ def _project_dir(project: str) -> Path:
 
 def _normalize_device(device: str) -> str:
     d = (device or "").strip().lower()
-    if d in {"gpu", "cuda", "rocm", "amd"}:
-        return "cuda"
-    if d in {"mps", "metal", "apple"}:
-        return "mps"
-    if d in {"xpu", "intel"}:
-        return "cpu"
-    if d == "cpu":
-        return "cpu"
-    return "cuda"
+    valid_devices = {"cuda", "metal", "triton", "mps", "cpu"}
+    if d not in valid_devices:
+        raise ValueError(f"Unsupported target device: {d}")
+    return d
 
 
 def _parse_sm_to_capability(arch: str) -> tuple[int, int] | None:
@@ -373,6 +368,8 @@ def run_generate(args: argparse.Namespace) -> int:
             ]
             if args.iterations and args.iterations > 0:
                 opt_cmd += ["--max-iterations", str(args.iterations)]
+            if args.workers and args.workers > 1:
+                opt_cmd += ["--parallel", "--workers", str(args.workers)]
             if args.remote:
                 opt_cmd += ["--remote", args.remote]
             rc = _run(opt_cmd, root, subprocess_env)
@@ -516,8 +513,9 @@ def run_optimize(args: argparse.Namespace) -> int:
         else:
             env["OPENAI_MODEL"] = args.llm_model
 
-    target_device = _normalize_device(args.target_device)
-    env["KFORGE_TARGET_DEVICE"] = target_device
+    # Backend is inferred per-operator in the pipeline from success markers;
+    # do not set KFORGE_TARGET_DEVICE here as it would incorrectly override
+    # downstream device detection for mixed-backend projects.
 
     project_dir = _project_dir(args.project)
     io_dir = project_dir / "io" / "individual_ops"
@@ -551,6 +549,8 @@ def run_optimize(args: argparse.Namespace) -> int:
         ]
         if args.iterations and args.iterations > 0:
             opt_cmd += ["--max-iterations", str(args.iterations)]
+        if args.workers and args.workers > 1:
+            opt_cmd += ["--parallel", "--workers", str(args.workers)]
         if args.remote:
             opt_cmd += ["--remote", args.remote]
         rc = _run(opt_cmd, root, env)
@@ -616,6 +616,7 @@ def main() -> int:
     generate.add_argument("--remote", default="")
     generate.add_argument("--llm-provider", default="")
     generate.add_argument("--llm-model", default="")
+    generate.add_argument("--workers", type=int, default=1)
 
     optimize = sub.add_parser("optimize")
     optimize.add_argument("--project", required=True)
@@ -626,6 +627,7 @@ def main() -> int:
     optimize.add_argument("--remote", default="")
     optimize.add_argument("--llm-provider", default="")
     optimize.add_argument("--llm-model", default="")
+    optimize.add_argument("--workers", type=int, default=4)
 
     args = parser.parse_args()
 

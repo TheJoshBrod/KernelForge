@@ -63,7 +63,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
         tag = task["tag"];
 
         track_nodes = [];
-        steps = ["Monitoring", "Generating", "Verifying", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
+        steps = ["Monitoring", "Generating", "Validating", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
 
         c_idx = -1;
         for i in range(list_len(steps)) {
@@ -96,7 +96,6 @@ def:pub WorkQueuePanel(props: any) -> Any {
 
         bar_w = "0%";
         if c_step == "Generating" { bar_w = "33%"; }
-        elif c_step == "Verifying" { bar_w = "66%"; }
         elif c_step == "Validating" { bar_w = "66%"; }
         elif c_step == "Benchmarking" { bar_w = "85%"; }
         elif c_step == "Profiling" { bar_w = "85%"; }
@@ -111,7 +110,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
         }
         if c_step == "Failed" {
             sub_info = sub_info + (task["result"] if "result" in task else "validation failed");
-        } elif c_step == "Generating" or c_step == "Verifying" {
+        } elif c_step == "Generating" or c_step == "Validating" {
             atmpt = str(task["attempt_current"] if "attempt_current" in task else 1);
             max_atmpt = str(task["attempt_max"] if "attempt_max" in task else 3);
             sub_info = sub_info + f"attempt {atmpt}/{max_atmpt}";
