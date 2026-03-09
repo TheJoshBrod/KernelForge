@@ -188,10 +188,8 @@ walker:pub StartOptimize {
             cmd.append("--iterations");
             cmd.append(str(self.iterations));
         }
-        if self.workers > 1 {
-            cmd.append("--workers");
-            cmd.append(str(self.workers));
-        }
+        cmd.append("--workers");
+        cmd.append(str(self.workers));
         if self.benchmark {
             cmd.append("--benchmark");
         }
