@@ -1,6 +1,6 @@
 """Work queue panel component."""
 
-import from react { useState, useEffect }
+import from react { useState }
 import from ..shared.MetricsAdapter { to_list, list_len, op_matches, to_num }
 
 def:pub WorkQueuePanel(props: any) -> Any {
@@ -14,40 +14,14 @@ def:pub WorkQueuePanel(props: any) -> Any {
     isStarting = props.isStarting if "isStarting" in props else False;
     startingTag = props.startingTag if "startingTag" in props else "";
     startingOp = props.startingOp if "startingOp" in props else "";
+    startingWorkers = props.startingWorkers if "startingWorkers" in props else 1;
     speedData = props.speedData if "speedData" in props else [];
 
     modal_state = useState(False);
     modal_open = modal_state[0];
     setModalOpen = modal_state[1];
 
-    history_state = useState([]);
-    completedHistory = history_state[0];
-    setCompletedHistory = history_state[1];
-
-    # Accumulate Done/Failed tasks from activeTasks into persistent history.
-    # Update existing entries (e.g. when value_ms is added after Benchmarking).
-    useEffect(lambda -> None {
-        for task in to_list(activeTasks) {
-            if task["current_step"] == "Done" or task["current_step"] == "Failed" {
-                setCompletedHistory(lambda prev: any -> Any {
-                    found = False;
-                    next_list = [];
-                    for t in to_list(prev) {
-                        if str(t["id"]) == str(task["id"]) {
-                            found = True;
-                            next_list.push(task);
-                        } else {
-                            next_list.push(t);
-                        }
-                    }
-                    if not found { next_list.push(task); }
-                    return next_list;
-                });
-            }
-        }
-    }, [activeTasks]);
-
-    # Active queue: only in-progress tasks from the live poll
+    # Active queue: in-progress tasks only
     in_progress = [];
     for task in to_list(activeTasks) {
         c_step = task["current_step"];
@@ -56,8 +30,28 @@ def:pub WorkQueuePanel(props: any) -> Any {
         }
     }
 
-    # Completed section uses accumulated history, not the live poll
-    completed = completedHistory;
+    # Completed section: Done/Failed tasks from activeTasks
+    completed = [];
+    for task in to_list(activeTasks) {
+        c_step = task["current_step"];
+        if c_step == "Done" or c_step == "Failed" {
+            completed.push(task);
+        }
+    }
+
+    # ---- Starting placeholders: one per worker ----
+    starting_placeholder_nodes = [];
+    num_placeholders = startingWorkers if startingWorkers and startingWorkers > 0 else 1;
+    for wi in range(num_placeholders) {
+        starting_placeholder_nodes.push(
+            <div key={"starting-" + str(wi)} className="p-4 flex items-center gap-3 font-mono text-xs text-zinc-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse flex-shrink-0"></span>
+                {<span className={"font-semibold mr-1 " + ("text-emerald-400" if startingTag == "[GEN]" else "text-blue-400")}>{startingTag}</span> if startingTag else <span/>}
+                {<span className="text-zinc-300 mr-1">{startingOp + ":"}</span> if startingOp else <span/>}
+                <span>Initializing job...</span>
+            </div>
+        );
+    }
 
     # ---- Active task nodes ----
     active_tasks_nodes = [];
@@ -121,12 +115,15 @@ def:pub WorkQueuePanel(props: any) -> Any {
             sub_info = sub_info + "queued";
         }
 
+        task_id_str = str(task["id"]);
+        node_label = task_id_str if not task_id_str.startsWith("seq_opt_") else "";
+
         active_tasks_nodes.push(
             <div key={task["id"]} className="p-4 bg-[var(--surface-0)] hover:bg-[var(--surface-1)] transition-colors">
                 <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-3 font-mono text-xs">
                         <span className={"font-semibold " + ("text-emerald-400" if tag == "[GEN]" else "text-blue-400")}>{tag}</span>
-                        <span className="text-zinc-200">{task["op_name"]} · node {task["id"]}</span>
+                        <span className="text-zinc-200">{task["op_name"] + (" · node " + node_label if node_label else "")}</span>
                     </div>
                     <div className="flex items-center gap-3">
                         {<div className="w-24 h-1.5 bg-zinc-900 rounded overflow-hidden">
@@ -203,7 +200,8 @@ def:pub WorkQueuePanel(props: any) -> Any {
             perf_label = "done";
         }
         if best_task != None and best_ms != None {
-            perf_label = f"Kernel {best_task['id']} · {Number(best_ms).toFixed(4)} ms";
+            display_kid = best_task["kernel_id"] if "kernel_id" in best_task else best_task["id"];
+            perf_label = f"Kernel {display_kid} · {Number(best_ms).toFixed(4)} ms";
         }
 
         completed_summary_rows.push(
@@ -223,7 +221,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
     for task in completed {
         mt_op = str(task["op_name"]);
         mt_step = task["current_step"];
-        mt_id = task["id"];
+        mt_id = task["kernel_id"] if "kernel_id" in task else task["id"];
         mt_tag = task["tag"];
         mt_v = to_num(task["value_ms"] if "value_ms" in task else None);
 
@@ -317,7 +315,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
                             {queue_label}
                         </h3>
                         <button
-                            onClick={lambda -> None { setCompletedHistory([]); onClearQueue(); }}
+                            onClick={lambda -> None { onClearQueue(); }}
                             className="text-[10px] px-2 py-0.5 rounded border border-zinc-700 bg-zinc-900 hover:border-zinc-500 hover:text-zinc-200 text-zinc-500 transition-colors font-mono"
                         >
                             clear
@@ -340,12 +338,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
                 </div>
                 <div className="divide-y divide-[var(--border)] max-h-[400px] overflow-y-auto">
                     {<div className="p-8 text-center text-xs text-zinc-200 font-mono">Queue empty</div> if show_empty else <span/>}
-                    {<div className="p-4 flex items-center gap-3 font-mono text-xs text-zinc-400">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse flex-shrink-0"></span>
-                        {<span className={"font-semibold mr-1 " + ("text-emerald-400" if startingTag == "[GEN]" else "text-blue-400")}>{startingTag}</span> if startingTag else <span/>}
-                        {<span className="text-zinc-300 mr-1">{startingOp + ":"}</span> if startingOp else <span/>}
-                        <span>Initializing job...</span>
-                    </div> if isStarting and in_progress.length == 0 else <span/>}
+                    {starting_placeholder_nodes if isStarting and in_progress.length == 0 else <span/>}
                     {active_tasks_nodes if in_progress.length > 0 else <span/>}
                     {<div>
                         <div className="px-4 py-1.5 bg-zinc-900/50 border-t border-[var(--border)] flex items-center justify-between">

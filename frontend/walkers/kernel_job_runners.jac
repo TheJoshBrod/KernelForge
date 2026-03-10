@@ -303,8 +303,18 @@ walker:pub ClearProjectQueue {
 
     can run with entry {
         queue_path = path.join(_project_dir(self.projectName), "queue.json");
-        active_steps = {"Monitoring", "Generating", "Validating", "Benchmarking", "Profiling"};
         try {
+            # Cancel any running optimizer/generator job first so the subprocess
+            # stops calling update_queue_state() and re-populating the queue.
+            job_state = _read_state(self.projectName);
+            for job_key in ["optimize", "generate"] {
+                job = job_state[job_key] if job_state and job_key in job_state else {};
+                job_status = str(job["status"] if "status" in job else "").lower();
+                if job_status == "running" or job_status == "queued" {
+                    _update_job_state(self.projectName, job_key, {"control": "cancelled", "status": "cancelled"});
+                }
+            }
+            # Clear the queue file.
             state = {};
             if path.exists(queue_path) {
                 with open(queue_path, "r") as f {

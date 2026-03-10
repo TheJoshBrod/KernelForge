@@ -137,13 +137,17 @@ def:pub Dashboard -> Any {
     postSubmitActive = post_submit_state[0];
     setPostSubmitActive = post_submit_state[1];
 
-    starting_hint_state = useState({"tag": "", "op": ""});
+    starting_hint_state = useState({"tag": "", "op": "", "workers": 1});
     startingHint = starting_hint_state[0];
     setStartingHint = starting_hint_state[1];
 
     clear_signal_state = useState(0);
     clearSignal = clear_signal_state[0];
     setClearSignal = clear_signal_state[1];
+
+    queue_cleared_state = useState(False);
+    queueManuallyCleared = queue_cleared_state[0];
+    setQueueManuallyCleared = queue_cleared_state[1];
 
     forge_error_state = useState("");
     forgeError = forge_error_state[0];
@@ -348,15 +352,19 @@ def:pub Dashboard -> Any {
     }
 
     async def handleModalStarted(hint: any) -> None {
+        setQueueManuallyCleared(False);
         setGenerateModalOpen(False);
         setOptimizeModalOpen(False);
         hint_tag = hint["_tag"] if hint and "_tag" in hint else "";
         hint_op = hint["_op"] if hint and "_op" in hint else "";
-        setStartingHint({"tag": hint_tag, "op": hint_op});
+        hint_workers = hint["_workers"] if hint and "_workers" in hint else 1;
+        setStartingHint({"tag": hint_tag, "op": hint_op, "workers": hint_workers});
         setPostSubmitActive(True);
+        # Persist across navigation (Dashboard unmounts/remounts when switching tabs).
+        window["__kf_post_submit"] = {"tag": hint_tag, "op": hint_op, "workers": hint_workers, "expiry": Date.now() + 120000};
         # Hard fallback: cancel after 120s if tasks never appear (e.g. job errored).
         # The useEffect below cancels it earlier once real tasks are visible.
-        setTimeout(lambda -> None { setPostSubmitActive(False);}, 120000);
+        setTimeout(lambda -> None { setPostSubmitActive(False); window["__kf_post_submit"] = None;}, 120000);
         # Kick off a single fast status RPC so polling doesn't have to wait
         # a full interval before showing the first real task.
         status_resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name});
@@ -368,8 +376,13 @@ def:pub Dashboard -> Any {
     }
 
     async def handleClearQueue -> None {
-        # Optimistic update: patch local status immediately so WorkQueuePanel
-        # remounts with empty activeTasks instead of the stale server data.
+        # Suppress the queue display immediately — before the async backend call —
+        # so stale poll responses can't cause a blink while we wait for the clear.
+        setQueueManuallyCleared(True);
+        setPostSubmitActive(False);
+        window["__kf_post_submit"] = None;
+        # Cancel running jobs and clear backend queue.
+        await __jacSpawn("ClearProjectQueue", "", {"projectName": name});
         empty_queue = {
             "active_tasks": {},
             "pending_operators": [],
@@ -380,7 +393,6 @@ def:pub Dashboard -> Any {
         patched["queue"] = empty_queue;
         setStatus(patched);
         setClearSignal(lambda p: any -> any { return p + 1; });
-        await __jacSpawn("ClearProjectQueue", "", {"projectName": name});
         refreshData();
     }
 
@@ -700,9 +712,23 @@ def:pub Dashboard -> Any {
         [name, forgeBusy, any_job_active]
     );
 
+    # Restore "starting" indicator if navigated back before tasks appeared.
+    useEffect(
+        lambda -> None {
+            try {
+                stored = window["__kf_post_submit"] if "__kf_post_submit" in window else None;
+                if stored and stored["expiry"] > Date.now() {
+                    setStartingHint({"tag": stored["tag"], "op": stored["op"], "workers": stored["workers"] if "workers" in stored else 1});
+                    setPostSubmitActive(True);
+                }
+            } except Exception {}
+        },
+        [name]
+    );
+
     # Cancel the "starting" indicator the moment real queue tasks appear.
     useEffect(
-        lambda -> None { if postSubmitActive and has_queue_work { setPostSubmitActive(False); setStartingHint({"tag": "", "op": ""}); } },
+        lambda -> None { if postSubmitActive and has_queue_work { setPostSubmitActive(False); setStartingHint({"tag": "", "op": ""}); window["__kf_post_submit"] = None; } },
         [postSubmitActive, has_queue_work]
     );
 
@@ -1143,6 +1169,9 @@ def:pub Dashboard -> Any {
     benchmark_slot = queue_data["benchmark_slot"] if "benchmark_slot" in queue_data else {"now": None, "pending": []};
     pending_operators = queue_data["pending_operators"] if "pending_operators" in queue_data else [];
     current_operator = queue_data["current_operator"] if "current_operator" in queue_data else "";
+    # While the user has manually cleared the queue, pass empty arrays so
+    # WorkQueuePanel shows nothing regardless of stale poll responses.
+    active_tasks_for_queue = [] if queueManuallyCleared else active_tasks;
 
     forgedCount = 0;
     totalPytorchMs = 0.0;
@@ -1297,13 +1326,13 @@ def:pub Dashboard -> Any {
             />
             <div className="space-y-4">
                 <WorkQueuePanel
-                    key={clearSignal}
                     name={name}
-                    activeTasks={active_tasks}
+                    activeTasks={active_tasks_for_queue}
                     activePoll={active_poll}
                     isStarting={postSubmitActive}
                     startingTag={startingHint["tag"]}
                     startingOp={startingHint["op"]}
+                    startingWorkers={startingHint["workers"]}
                     currentOperator={current_operator}
                     benchmarkSlot={benchmark_slot}
                     pendingOperators={pending_operators}
