@@ -1,6 +1,6 @@
 """Work queue panel component."""
 
-import from react { useState, useEffect }
+import from react { useState }
 import from ..shared.MetricsAdapter { to_list, list_len, op_matches, to_num }
 
 def:pub WorkQueuePanel(props: any) -> Any {
@@ -21,34 +21,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
     modal_open = modal_state[0];
     setModalOpen = modal_state[1];
 
-    history_state = useState([]);
-    completedHistory = history_state[0];
-    setCompletedHistory = history_state[1];
-
-    # Accumulate Done/Failed tasks from activeTasks into persistent history.
-    # Update existing entries (e.g. when value_ms is added after Benchmarking).
-    useEffect(lambda -> None {
-        for task in to_list(activeTasks) {
-            if task["current_step"] == "Done" or task["current_step"] == "Failed" {
-                setCompletedHistory(lambda prev: any -> Any {
-                    found = False;
-                    next_list = [];
-                    for t in to_list(prev) {
-                        if str(t["id"]) == str(task["id"]) {
-                            found = True;
-                            next_list.push(task);
-                        } else {
-                            next_list.push(t);
-                        }
-                    }
-                    if not found { next_list.push(task); }
-                    return next_list;
-                });
-            }
-        }
-    }, [activeTasks]);
-
-    # Active queue: only in-progress tasks from the live poll
+    # Active queue: in-progress tasks only
     in_progress = [];
     for task in to_list(activeTasks) {
         c_step = task["current_step"];
@@ -57,8 +30,14 @@ def:pub WorkQueuePanel(props: any) -> Any {
         }
     }
 
-    # Completed section uses accumulated history, not the live poll
-    completed = completedHistory;
+    # Completed section: Done/Failed tasks from activeTasks
+    completed = [];
+    for task in to_list(activeTasks) {
+        c_step = task["current_step"];
+        if c_step == "Done" or c_step == "Failed" {
+            completed.push(task);
+        }
+    }
 
     # ---- Starting placeholders: one per worker ----
     starting_placeholder_nodes = [];
@@ -336,7 +315,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
                             {queue_label}
                         </h3>
                         <button
-                            onClick={lambda -> None { setCompletedHistory([]); onClearQueue(); }}
+                            onClick={lambda -> None { onClearQueue(); }}
                             className="text-[10px] px-2 py-0.5 rounded border border-zinc-700 bg-zinc-900 hover:border-zinc-500 hover:text-zinc-200 text-zinc-500 transition-colors font-mono"
                         >
                             clear

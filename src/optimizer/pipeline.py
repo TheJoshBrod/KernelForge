@@ -12,6 +12,7 @@ from pathlib import Path
 import torch
 
 from src.config import ensure_llm_config, load_project_config
+from src.progress import check_cancelled
 
 import src.optimizer.core.generator as generator
 import src.optimizer.core.mcts as mcts
@@ -1016,6 +1017,8 @@ Examples:
             task_key = f"seq_opt_{op_name}"
             retry_limit = getattr(settings, 'retry_limit', 3)
             for i in range(args.max_iterations):
+                if check_cancelled():
+                    break
                 paths["iteration"] = i + 1
                 # Select parent node then optimize off of it
                 parent_node = mcts.choose_optimization(paths)

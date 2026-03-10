@@ -145,6 +145,10 @@ def:pub Dashboard -> Any {
     clearSignal = clear_signal_state[0];
     setClearSignal = clear_signal_state[1];
 
+    queue_cleared_state = useState(False);
+    queueManuallyCleared = queue_cleared_state[0];
+    setQueueManuallyCleared = queue_cleared_state[1];
+
     forge_error_state = useState("");
     forgeError = forge_error_state[0];
     setForgeError = forge_error_state[1];
@@ -348,6 +352,7 @@ def:pub Dashboard -> Any {
     }
 
     async def handleModalStarted(hint: any) -> None {
+        setQueueManuallyCleared(False);
         setGenerateModalOpen(False);
         setOptimizeModalOpen(False);
         hint_tag = hint["_tag"] if hint and "_tag" in hint else "";
@@ -371,8 +376,13 @@ def:pub Dashboard -> Any {
     }
 
     async def handleClearQueue -> None {
-        # Optimistic update: patch local status immediately so WorkQueuePanel
-        # remounts with empty activeTasks instead of the stale server data.
+        # Suppress the queue display immediately — before the async backend call —
+        # so stale poll responses can't cause a blink while we wait for the clear.
+        setQueueManuallyCleared(True);
+        setPostSubmitActive(False);
+        window["__kf_post_submit"] = None;
+        # Cancel running jobs and clear backend queue.
+        await __jacSpawn("ClearProjectQueue", "", {"projectName": name});
         empty_queue = {
             "active_tasks": {},
             "pending_operators": [],
@@ -383,7 +393,6 @@ def:pub Dashboard -> Any {
         patched["queue"] = empty_queue;
         setStatus(patched);
         setClearSignal(lambda p: any -> any { return p + 1; });
-        await __jacSpawn("ClearProjectQueue", "", {"projectName": name});
         refreshData();
     }
 
@@ -1160,6 +1169,9 @@ def:pub Dashboard -> Any {
     benchmark_slot = queue_data["benchmark_slot"] if "benchmark_slot" in queue_data else {"now": None, "pending": []};
     pending_operators = queue_data["pending_operators"] if "pending_operators" in queue_data else [];
     current_operator = queue_data["current_operator"] if "current_operator" in queue_data else "";
+    # While the user has manually cleared the queue, pass empty arrays so
+    # WorkQueuePanel shows nothing regardless of stale poll responses.
+    active_tasks_for_queue = [] if queueManuallyCleared else active_tasks;
 
     forgedCount = 0;
     totalPytorchMs = 0.0;
@@ -1314,9 +1326,8 @@ def:pub Dashboard -> Any {
             />
             <div className="space-y-4">
                 <WorkQueuePanel
-                    key={clearSignal}
                     name={name}
-                    activeTasks={active_tasks}
+                    activeTasks={active_tasks_for_queue}
                     activePoll={active_poll}
                     isStarting={postSubmitActive}
                     startingTag={startingHint["tag"]}
