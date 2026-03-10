@@ -137,7 +137,7 @@ def:pub Dashboard -> Any {
     postSubmitActive = post_submit_state[0];
     setPostSubmitActive = post_submit_state[1];
 
-    starting_hint_state = useState({"tag": "", "op": ""});
+    starting_hint_state = useState({"tag": "", "op": "", "workers": 1});
     startingHint = starting_hint_state[0];
     setStartingHint = starting_hint_state[1];
 
@@ -352,11 +352,14 @@ def:pub Dashboard -> Any {
         setOptimizeModalOpen(False);
         hint_tag = hint["_tag"] if hint and "_tag" in hint else "";
         hint_op = hint["_op"] if hint and "_op" in hint else "";
-        setStartingHint({"tag": hint_tag, "op": hint_op});
+        hint_workers = hint["_workers"] if hint and "_workers" in hint else 1;
+        setStartingHint({"tag": hint_tag, "op": hint_op, "workers": hint_workers});
         setPostSubmitActive(True);
+        # Persist across navigation (Dashboard unmounts/remounts when switching tabs).
+        window["__kf_post_submit"] = {"tag": hint_tag, "op": hint_op, "workers": hint_workers, "expiry": Date.now() + 120000};
         # Hard fallback: cancel after 120s if tasks never appear (e.g. job errored).
         # The useEffect below cancels it earlier once real tasks are visible.
-        setTimeout(lambda -> None { setPostSubmitActive(False);}, 120000);
+        setTimeout(lambda -> None { setPostSubmitActive(False); window["__kf_post_submit"] = None;}, 120000);
         # Kick off a single fast status RPC so polling doesn't have to wait
         # a full interval before showing the first real task.
         status_resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name});
@@ -700,9 +703,23 @@ def:pub Dashboard -> Any {
         [name, forgeBusy, any_job_active]
     );
 
+    # Restore "starting" indicator if navigated back before tasks appeared.
+    useEffect(
+        lambda -> None {
+            try {
+                stored = window["__kf_post_submit"] if "__kf_post_submit" in window else None;
+                if stored and stored["expiry"] > Date.now() {
+                    setStartingHint({"tag": stored["tag"], "op": stored["op"], "workers": stored["workers"] if "workers" in stored else 1});
+                    setPostSubmitActive(True);
+                }
+            } except Exception {}
+        },
+        [name]
+    );
+
     # Cancel the "starting" indicator the moment real queue tasks appear.
     useEffect(
-        lambda -> None { if postSubmitActive and has_queue_work { setPostSubmitActive(False); setStartingHint({"tag": "", "op": ""}); } },
+        lambda -> None { if postSubmitActive and has_queue_work { setPostSubmitActive(False); setStartingHint({"tag": "", "op": ""}); window["__kf_post_submit"] = None; } },
         [postSubmitActive, has_queue_work]
     );
 
@@ -1304,6 +1321,7 @@ def:pub Dashboard -> Any {
                     isStarting={postSubmitActive}
                     startingTag={startingHint["tag"]}
                     startingOp={startingHint["op"]}
+                    startingWorkers={startingHint["workers"]}
                     currentOperator={current_operator}
                     benchmarkSlot={benchmark_slot}
                     pendingOperators={pending_operators}

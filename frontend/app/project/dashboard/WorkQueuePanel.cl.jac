@@ -14,6 +14,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
     isStarting = props.isStarting if "isStarting" in props else False;
     startingTag = props.startingTag if "startingTag" in props else "";
     startingOp = props.startingOp if "startingOp" in props else "";
+    startingWorkers = props.startingWorkers if "startingWorkers" in props else 1;
     speedData = props.speedData if "speedData" in props else [];
 
     modal_state = useState(False);
@@ -58,6 +59,20 @@ def:pub WorkQueuePanel(props: any) -> Any {
 
     # Completed section uses accumulated history, not the live poll
     completed = completedHistory;
+
+    # ---- Starting placeholders: one per worker ----
+    starting_placeholder_nodes = [];
+    num_placeholders = startingWorkers if startingWorkers and startingWorkers > 0 else 1;
+    for wi in range(num_placeholders) {
+        starting_placeholder_nodes.push(
+            <div key={"starting-" + str(wi)} className="p-4 flex items-center gap-3 font-mono text-xs text-zinc-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse flex-shrink-0"></span>
+                {<span className={"font-semibold mr-1 " + ("text-emerald-400" if startingTag == "[GEN]" else "text-blue-400")}>{startingTag}</span> if startingTag else <span/>}
+                {<span className="text-zinc-300 mr-1">{startingOp + ":"}</span> if startingOp else <span/>}
+                <span>Initializing job...</span>
+            </div>
+        );
+    }
 
     # ---- Active task nodes ----
     active_tasks_nodes = [];
@@ -203,7 +218,8 @@ def:pub WorkQueuePanel(props: any) -> Any {
             perf_label = "done";
         }
         if best_task != None and best_ms != None {
-            perf_label = f"Kernel {best_task['id']} · {Number(best_ms).toFixed(4)} ms";
+            display_kid = best_task["kernel_id"] if "kernel_id" in best_task else best_task["id"];
+            perf_label = f"Kernel {display_kid} · {Number(best_ms).toFixed(4)} ms";
         }
 
         completed_summary_rows.push(
@@ -223,7 +239,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
     for task in completed {
         mt_op = str(task["op_name"]);
         mt_step = task["current_step"];
-        mt_id = task["id"];
+        mt_id = task["kernel_id"] if "kernel_id" in task else task["id"];
         mt_tag = task["tag"];
         mt_v = to_num(task["value_ms"] if "value_ms" in task else None);
 
@@ -340,12 +356,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
                 </div>
                 <div className="divide-y divide-[var(--border)] max-h-[400px] overflow-y-auto">
                     {<div className="p-8 text-center text-xs text-zinc-200 font-mono">Queue empty</div> if show_empty else <span/>}
-                    {<div className="p-4 flex items-center gap-3 font-mono text-xs text-zinc-400">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse flex-shrink-0"></span>
-                        {<span className={"font-semibold mr-1 " + ("text-emerald-400" if startingTag == "[GEN]" else "text-blue-400")}>{startingTag}</span> if startingTag else <span/>}
-                        {<span className="text-zinc-300 mr-1">{startingOp + ":"}</span> if startingOp else <span/>}
-                        <span>Initializing job...</span>
-                    </div> if isStarting and in_progress.length == 0 else <span/>}
+                    {starting_placeholder_nodes if isStarting and in_progress.length == 0 else <span/>}
                     {active_tasks_nodes if in_progress.length > 0 else <span/>}
                     {<div>
                         <div className="px-4 py-1.5 bg-zinc-900/50 border-t border-[var(--border)] flex items-center justify-between">

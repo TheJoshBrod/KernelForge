@@ -273,7 +273,7 @@ def:pub OptimizeModal(props: any) -> Any {
             } else {
                 onClose();
                 if onStarted {
-                    onStarted({"_tag": "[OPT]", "_op": selectedOp});
+                    onStarted({"_tag": "[OPT]", "_op": selectedOp, "_workers": int(workers)});
                 }
             }
         } except Exception as e {
