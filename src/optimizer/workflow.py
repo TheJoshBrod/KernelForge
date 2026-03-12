@@ -425,6 +425,7 @@ def run_generate(args: argparse.Namespace) -> int:
                     "current_step": "Done",
                     "status": "Done",
                     "value_ms": kernel_ms,
+                    "kernel_id": "0",
                 }}})
                 publish_result = publish_generated_root(
                     project_dir,

@@ -39,25 +39,16 @@ def test_api_key(provider: str, api_key: str, timeout_seconds: float = 5.0) -> d
     try:
         if provider_norm == "openai":
             client = OpenAI(api_key=key, timeout=timeout_seconds)
-            client.responses.create(
-                model=model,
-                input="ping",
-                max_output_tokens=1,
-            )
+            # Fetch a single model to verify authentication
+            next(iter(client.models.list()))
         elif provider_norm == "anthropic":
             client = anthropic.Anthropic(api_key=key, timeout=timeout_seconds)
-            client.messages.create(
-                model=model,
-                max_tokens=1,
-                messages=[{"role": "user", "content": "ping"}],
-            )
+            # Fetch the first page of models
+            next(iter(client.models.list()))
         elif provider_norm == "google":
             client = genai.Client(api_key=key)
-            client.models.generate_content(
-                model=model,
-                contents="ping",
-                config={"max_output_tokens": 1},
-            )
+            # Fetch the first model in the iterator
+            next(iter(client.models.list()))
         else:
             return _error_payload(provider_norm, started, f"Unsupported provider: {provider_norm}", "UnsupportedProvider")
     except Exception as exc:

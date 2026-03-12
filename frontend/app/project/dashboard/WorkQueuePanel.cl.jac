@@ -60,7 +60,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
         tag = task["tag"];
 
         track_nodes = [];
-        steps = ["Monitoring", "Generating", "Validating", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
+        steps = ["Generating", "Validating", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
 
         c_idx = -1;
         for i in range(list_len(steps)) {
@@ -111,6 +111,8 @@ def:pub WorkQueuePanel(props: any) -> Any {
             atmpt = str(task["attempt_current"] if "attempt_current" in task else 1);
             max_atmpt = str(task["attempt_max"] if "attempt_max" in task else 3);
             sub_info = sub_info + f"attempt {atmpt}/{max_atmpt}";
+        } elif c_step == "Benchmarking" or c_step == "Profiling" {
+            sub_info = sub_info + "running";
         } else {
             sub_info = sub_info + "queued";
         }
