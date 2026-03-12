@@ -623,6 +623,7 @@ def main() -> int:
             status = "partial"
         _write_incremental(status, total_ops, total_ops)
         print(f"[benchmarking.benchmark_ops] Wrote {output_path}")
+
         return 0
     except Exception as e:
         write_json_file(

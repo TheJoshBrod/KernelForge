@@ -3,6 +3,7 @@
 import from react { useEffect }
 import from sonner { toast }
 import from "react-router-dom" { useNavigate }
+import from ...context.ConfigContext { useConfig }
 import from ...components.ui.Icons { SettingsIcon, BackIcon, UploadIcon, FolderIcon }
 import from ...components.editor.ForgePythonEditor { ForgePythonEditor }
 import from "@jac-client/assets/KernelForge.svg" { default as loadingLogo }
@@ -36,6 +37,8 @@ def fileToText(file: Any) -> Any {
 
 def:pub NewProject -> Any {
     navigate = useNavigate();
+    config_ctx = useConfig();
+    config = config_ctx.config;
     has code: str = "",
         formData: dict = {
             "projectName": "",
@@ -165,6 +168,7 @@ def:pub NewProject -> Any {
                 "",
                 {
                     "projectName": formData["projectName"].trim(),
+                    "selectedGpuInfo": config["selected_gpu_info"] if config and "selected_gpu_info" in config else None,
                     "code": model_code,
                     "modelFileB64": model_file_b64,
                     "modelFileName": (
@@ -225,7 +229,7 @@ def:pub NewProject -> Any {
                     <span className="project-loading-bar-fill"></span>
                 </div>
                 <div className="project-loading-foot">
-                    Status:{submitStage or "Working on it..."} | Large weights or validation zips may take a moment.
+                    Status:{" "+ submitStage or " Working on it..."} | Large weights or validation zips may take a moment.
                 </div>
             </div>
         </div>;

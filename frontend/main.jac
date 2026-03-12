@@ -28,7 +28,8 @@ import from walkers.project_admin {
     GetProjectBenchmarks,
     ExportProject,
     DownloadExport,
-    ReadRepoFile
+    ReadRepoFile,
+    CloneProjectForGpu
 }
 import from walkers.optimization_results {
     GetDashboardCharts,

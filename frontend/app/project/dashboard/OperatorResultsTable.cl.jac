@@ -10,6 +10,7 @@ def:pub OperatorResultsTable(props: any) -> Any {
     onOpenActionModal = props.onOpenActionModal;
     onOpenBenchLog = props.onOpenBenchLog;
     loading = props.loading if props.loading else False;
+    gpuMismatch = props.gpuMismatch if props and "gpuMismatch" in props else False;
 
     [sortColumn, setSortColumn] = useState("ratio");
     [sortDirection, setSortDirection] = useState("desc");
@@ -129,7 +130,8 @@ def:pub OperatorResultsTable(props: any) -> Any {
 
         action_text = "Optimize" if r_stat == "Benchmarked" or r_stat == "Forged ✓" else "Generate";
         action_colors = "border-[var(--accent-orange)]/40 text-[var(--accent-orange)] hover:bg-[var(--accent-orange)] hover:text-zinc-950" if action_text == "Optimize" else "border-zinc-600 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 hover:border-zinc-500";
-        action_btn_class = f"px-2 py-0.5 bg-transparent border rounded text-[10px] uppercase font-semibold transition-colors {action_colors}";
+        gpu_disabled_class = " opacity-40" if gpuMismatch else "";
+        action_btn_class = f"px-2 py-0.5 bg-transparent border rounded text-[10px] uppercase font-semibold transition-colors {action_colors}{gpu_disabled_class}";
 
         r_runtime_pct = r["runtime_pct"] if "runtime_pct" in r else "--";
         r_call_count = r["call_count"] if "call_count" in r else "--";

@@ -4,7 +4,7 @@ import from json { load, dump }
 import from os { path, listdir }
 import sys;
 
-import from .globals { repo_root }
+import from .globals { repo_root, config_store }
 import from .catalog_db { _ensure_dir }
 import from .job_supervisor {
     _project_dir,
@@ -12,7 +12,50 @@ import from .job_supervisor {
     _update_job_state,
     _start_job,
     _write_initial_queue_state,
-    _read_log_excerpt
+    _read_log_excerpt,
+    _detect_hardware
+}
+
+def _resolve_current_gpu_info() -> Any {
+    gpu_info = config_store["selected_gpu_info"];
+    if not gpu_info {
+        hw = _detect_hardware();
+        gpus = hw["gpus"] if hw and "gpus" in hw and hw["gpus"] else [];
+        if len(gpus) > 0 {
+            gpu_info = gpus[0];
+        }
+    }
+    return gpu_info;
+}
+
+def _write_benchmarked_gpu(project_name: str, gpu_info: Any) -> None {
+    if not gpu_info {
+        return;
+    }
+    cfg_path = path.join(_project_dir(project_name), "config.json");
+    try {
+        cfg = {};
+        if path.exists(cfg_path) {
+            with open(cfg_path, "r") as f {
+                cfg = load(f);
+            }
+        }
+        gpu_uuid = str(gpu_info["uuid"]) if "uuid" in gpu_info and gpu_info["uuid"] else "";
+        gpu_name = str(gpu_info["name"]) if "name" in gpu_info and gpu_info["name"] else "Unknown";
+        gpu_conn = str(gpu_info["connection"]) if "connection" in gpu_info and gpu_info["connection"] else "local";
+        identity = gpu_uuid if gpu_uuid else f"{gpu_name}:{gpu_conn}";
+        cfg["benchmarked_gpu"] = {
+            "uuid": gpu_uuid,
+            "name": gpu_name,
+            "connection": gpu_conn,
+            "identity": identity
+        };
+        with open(cfg_path, "w") as f {
+            dump(cfg, f, indent=2);
+        }
+    } except Exception as e {
+        print(f"Failed to write benchmarked_gpu for {project_name}: {e}");
+    }
 }
 
 walker:pub StartProfile {
@@ -138,6 +181,9 @@ walker:pub StartGenerate {
                 print(f"Failed to write SSH config for remote generation: {e}");
             }
         }
+        if self.benchmark {
+            _write_benchmarked_gpu(self.projectName, _resolve_current_gpu_info());
+        }
         result = _start_job(self.projectName, "generate", cmd, "generate.log");
         if result and "success" in result and result["success"] {
             _write_initial_queue_state(self.projectName, ops_list, "[GEN]");
@@ -220,6 +266,7 @@ walker:pub StartOptimize {
                 print(f"Failed to write SSH config for remote optimization: {e}");
             }
         }
+        _write_benchmarked_gpu(self.projectName, _resolve_current_gpu_info());
         result = _start_job(self.projectName, "optimize", cmd, "optimize.log");
         if result and "success" in result and result["success"] {
             if self.workers <= 1 {
@@ -258,6 +305,8 @@ walker:pub StartBenchmark {
     has projectName: str;
 
     can run with entry {
+        gpu_info = _resolve_current_gpu_info();
+        _write_benchmarked_gpu(self.projectName, gpu_info);
         cmd = [
             sys.executable,
             "-m",

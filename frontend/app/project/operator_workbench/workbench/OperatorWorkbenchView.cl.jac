@@ -2,6 +2,8 @@
 
 import from react { useState, useEffect, useCallback, useRef }
 import from "react-router-dom" { useNavigate, useParams }
+import from .....context.ConfigContext { useConfig }
+import from ...dashboard.GpuMismatchModal { GpuMismatchModal }
 import from "reactflow" { useNodesState, useEdgesState }
 import from .....components.ui.Icons { CodeIcon, ActivityIcon, ShieldCheckIcon }
 import from .NewKernel { NewKernel }
@@ -95,6 +97,27 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     active_gen_tasks_state = useState([]);
     activeGenTasks = active_gen_tasks_state[0];
     setActiveGenTasks = active_gen_tasks_state[1];
+
+    config_ctx = useConfig();
+    config = config_ctx.config;
+
+    gpu_mismatch_state = useState(False);
+    gpuMismatch = gpu_mismatch_state[0];
+    setGpuMismatch = gpu_mismatch_state[1];
+
+    benchmarked_gpu_name_state = useState("");
+    benchmarkedGpuName = benchmarked_gpu_name_state[0];
+    setBenchmarkedGpuName = benchmarked_gpu_name_state[1];
+
+    gpu_mismatch_modal_open_state = useState(False);
+    gpuMismatchModalOpen = gpu_mismatch_modal_open_state[0];
+    setGpuMismatchModalOpen = gpu_mismatch_modal_open_state[1];
+
+    gpu_clone_busy_state = useState(False);
+    gpuCloneBusy = gpu_clone_busy_state[0];
+    setGpuCloneBusy = gpu_clone_busy_state[1];
+
+    gpu_info_ref = useRef(None);
 
     async def fetchData(showLoader: bool = False) -> None {
         project_for_query = decode_param(resolvedProjectName);
@@ -283,6 +306,11 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
         []
     );
 
+    useEffect(
+        lambda -> None { gpu_info_ref.current = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None; },
+        [config]
+    );
+
     # Poll optimize job status every 3 s to drive the pending-node overlay
     useEffect(
         lambda -> Any {
@@ -290,7 +318,7 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                 try {
                     resp = await __jacSpawn(
                         "GetProjectStatus", "",
-                        {"projectName": decode_param(resolvedProjectName)}
+                        {"projectName": decode_param(resolvedProjectName), "currentGpuInfo": gpu_info_ref.current}
                     );
                     data = resp.reports[0] if resp and resp.reports else {};
                     opt_job = data["optimize"] if data and "optimize" in data else {};
@@ -327,6 +355,11 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         }
                     }
                     setActiveGenTasks(active_tasks_list);
+                    mismatch = data["gpu_mismatch"] if data and "gpu_mismatch" in data else False;
+                    setGpuMismatch(mismatch);
+                    if mismatch and "benchmarked_gpu_name" in data {
+                        setBenchmarkedGpuName(str(data["benchmarked_gpu_name"]));
+                    }
                 } except Exception {
                     setIsOptimizing(False);
                     setActiveGenTasks([]);
@@ -519,6 +552,31 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     resolvedProjectNameClean = decode_param(resolvedProjectName);
     resolvedOpNameClean = canonical_op_param(resolvedOpName);
 
+    gpu_name = "";
+    if config and "selected_gpu_info" in config and config["selected_gpu_info"] {
+        _sgi = config["selected_gpu_info"];
+        gpu_name = _sgi["name"] if "name" in _sgi and _sgi["name"] else "";
+    }
+
+    async def handleCloneForGpu -> None {
+        setGpuCloneBusy(True);
+        try {
+            resp = await __jacSpawn("CloneProjectForGpu", "", {
+                "sourceProjectName": decode_param(resolvedProjectName),
+                "currentGpuInfo": config["selected_gpu_info"] if config and "selected_gpu_info" in config else None
+            });
+            data = resp.reports[0] if resp and resp.reports else {};
+            if data and "success" in data and data["success"] {
+                navigate(f"/project/{data['newProjectName']}");
+            }
+        } except Exception {
+
+        } finally {
+            setGpuCloneBusy(False);
+            setGpuMismatchModalOpen(False);
+        }
+    }
+
     left_content = [];
     if leftPanelMode == "editor" {
         left_content.push(
@@ -568,6 +626,7 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     }
 
     return
+        <>
         <div
             ref={container_ref}
             className="flex h-screen w-full bg-zinc-950 text-zinc-100 overflow-hidden"
@@ -651,8 +710,20 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         projectName={resolvedProjectNameClean}
                         opName={resolvedOpNameClean}
                         hasTree={hasTree}
+                        gpuMismatch={gpuMismatch}
+                        onGpuMismatch={lambda -> None { setGpuMismatchModalOpen(True);}}
                     />
                 </div>
             </div>
-        </div>;
+        </div>
+        <GpuMismatchModal
+            isOpen={gpuMismatchModalOpen}
+            onClose={lambda -> None { setGpuMismatchModalOpen(False);}}
+            benchmarkedGpuName={benchmarkedGpuName}
+            currentGpuName={gpu_name}
+            onClone={handleCloneForGpu}
+            onReturnToProject={lambda -> None { navigate(f"/project/{decode_param(resolvedProjectName)}");}}
+            cloneBusy={gpuCloneBusy}
+        />
+        </>;
 }

@@ -14,6 +14,8 @@ def:pub NewKernel(props: any) -> Any {
     projectName = props.projectName;
     opName = props.opName;
     hasTree = props.hasTree if props and "hasTree" in props else False;
+    gpuMismatch = props.gpuMismatch if props and "gpuMismatch" in props else False;
+    onGpuMismatch = props.onGpuMismatch if props and "onGpuMismatch" in props else None;
 
     params = useParams();
     resolvedProjectName = projectName or params.projectName;
@@ -67,6 +69,11 @@ def:pub NewKernel(props: any) -> Any {
             setIsOpen(False);
             return;
         }
+        if gpuMismatch {
+            setIsOpen(False);
+            if onGpuMismatch { onGpuMismatch(); }
+            return;
+        }
         setUploadModalOpen(True);
         setIsOpen(False);
     }
@@ -76,6 +83,11 @@ def:pub NewKernel(props: any) -> Any {
             setIsOpen(False);
             return;
         }
+        if gpuMismatch {
+            setIsOpen(False);
+            if onGpuMismatch { onGpuMismatch(); }
+            return;
+        }
         setGenerateModalOpen(True);
         setIsOpen(False);
     }
@@ -83,6 +95,11 @@ def:pub NewKernel(props: any) -> Any {
     def handle_optimize_click -> None {
         if missingProject {
             setIsOpen(False);
+            return;
+        }
+        if gpuMismatch {
+            setIsOpen(False);
+            if onGpuMismatch { onGpuMismatch(); }
             return;
         }
         setOptimizeModalOpen(True);
