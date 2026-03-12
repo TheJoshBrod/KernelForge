@@ -32,7 +32,10 @@ def:pub canonical_op_param(value: Any) -> str {
 }
 
 def:pub get_layouted_elements(nodes_data: list, edges_data: list) -> dict {
-    levels = {};
+    NODE_W = 100;
+    H_GAP = 40;
+    V_GAP = 170;
+
     node_map = {};
     children_map = {};
 
@@ -64,43 +67,85 @@ def:pub get_layouted_elements(nodes_data: list, edges_data: list) -> dict {
         }
     }
 
+    # BFS to get traversal order (handles DAG diamonds via visited set)
+    bfs_order = [];
+    visited = {};
     queue = [];
     for r in roots {
-        queue.push({"id": r, "level": 0});
+        queue.push(r);
     }
-
-    layouted_nodes = [];
-    visited = {};
-    level_counts = {};
-    max_level = 0;
-
     while queue.length > 0 {
-        curr = queue.shift();
-        cid = curr["id"];
-        lvl = curr["level"];
-
-        if lvl > max_level {
-            max_level = lvl;
-        }
-
+        cid = queue.shift();
         if cid in visited {
             continue;
         }
         visited[cid] = True;
-
-        if not lvl in level_counts {
-            level_counts[lvl] = 0;
+        bfs_order.push(cid);
+        for ch in children_map[cid] {
+            queue.push(ch);
         }
+    }
 
-        x_pos = level_counts[lvl] * 200;
-        y_pos = lvl * 150;
-        level_counts[lvl] += 1;
+    # Bottom-up pass: compute subtree pixel width for each node
+    subtree_w = {};
+    i = bfs_order.length - 1;
+    while i >= 0 {
+        cid = bfs_order[i];
+        children = children_map[cid];
+        if children.length == 0 {
+            subtree_w[cid] = NODE_W;
+        } else {
+            total = 0;
+            for ch in children {
+                total += subtree_w[ch] if ch in subtree_w else NODE_W;
+            }
+            total += H_GAP * (children.length - 1);
+            subtree_w[cid] = total;
+        }
+        i -= 1;
+    }
 
+    # Top-down pass: assign center_x and depth level
+    center_x = {};
+    node_level = {};
+
+    root_start = 0;
+    for r in roots {
+        rw = subtree_w[r] if r in subtree_w else NODE_W;
+        center_x[r] = root_start + rw / 2;
+        node_level[r] = 0;
+        root_start += rw + H_GAP;
+    }
+
+    for cid in bfs_order {
+        children = children_map[cid];
+        if children.length == 0 {
+            continue;
+        }
+        cx = center_x[cid];
+        total_w = 0;
+        for ch in children {
+            total_w += subtree_w[ch] if ch in subtree_w else NODE_W;
+        }
+        total_w += H_GAP * (children.length - 1);
+        child_start = cx - total_w / 2;
+        for ch in children {
+            cw = subtree_w[ch] if ch in subtree_w else NODE_W;
+            center_x[ch] = child_start + cw / 2;
+            node_level[ch] = node_level[cid] + 1;
+            child_start += cw + H_GAP;
+        }
+    }
+
+    layouted_nodes = [];
+    for cid in bfs_order {
         raw_node = node_map[cid] if cid in node_map else None;
         if not raw_node {
             continue;
         }
         label_val = Number(raw_node["value"] or 0).toFixed(4);
+        x_pos = (center_x[cid] if cid in center_x else 0) - NODE_W / 2;
+        y_pos = (node_level[cid] if cid in node_level else 0) * V_GAP;
 
         layouted_nodes.push(
             {
@@ -115,17 +160,12 @@ def:pub get_layouted_elements(nodes_data: list, edges_data: list) -> dict {
                     "padding": "10px",
                     "fontSize": "12px",
                     "fontFamily": "monospace",
-                    "width": 100,
+                    "width": NODE_W,
                     "textAlign": "center"
                 },
                 "type": "default"
             }
         );
-
-        children = children_map[cid] if cid in children_map else [];
-        for child_id in children {
-            queue.push({"id": child_id, "level": lvl + 1});
-        }
     }
 
     rf_edges = [];
@@ -142,7 +182,7 @@ def:pub get_layouted_elements(nodes_data: list, edges_data: list) -> dict {
                 "source": f"{e['parent_id']}",
                 "target": f"{e['child_id']}",
                 "type": "smoothstep",
-                "animated": True,
+                "animated": False,
                 "style": {"stroke": "#e17055"}
             }
         );

@@ -79,6 +79,7 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
 
     tree_signature_ref = useRef("");
     selected_node_ref = useRef(None);
+    prev_gen_tasks_len_ref = useRef(0);
 
     # Resizable split panels
     panel_width_state = useState(80.0);
@@ -254,6 +255,19 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
         [resolvedProjectName, resolvedOpName, liveUpdates]
     );
 
+    # When a gen task finishes (activeGenTasks shrinks), immediately re-fetch the tree
+    useEffect(
+        lambda -> None {
+            cur_len = activeGenTasks.length;
+            prev_len = prev_gen_tasks_len_ref.current;
+            prev_gen_tasks_len_ref.current = cur_len;
+            if prev_len > 0 and cur_len < prev_len {
+                fetchData(False);
+            }
+        },
+        [activeGenTasks]
+    );
+
     # Inject CSS keyframe animation for the pending node blink (once on mount)
     useEffect(
         lambda -> Any {
@@ -330,36 +344,52 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     );
 
     useEffect(
-        lambda -> None { setNodes(
-            lambda nds: list  -> list { new_nodes = [];for n in nds {
-                new_style = {
-                    "background": "#18181b",
-                    "color": "#e4e4e7",
-                    "border": "1px solid #3f3f46",
-                    "borderRadius": "8px",
-                    "padding": "10px",
-                    "fontSize": "12px",
-                    "fontFamily": "monospace",
-                    "width": 100,
-                    "textAlign": "center"
-                };
-                if n.id == selectedNodeId {
-                    new_style["border"] = "2px solid #e17055";
-                    new_style["background"] = "rgba(225, 112, 85, 0.12)";
-                    new_style["boxShadow"] = "0 0 10px rgba(225, 112, 85, 0.28)";
-                }
-                new_nodes.push(
-                    {
-                        "id": n.id,
-                        "position": n.position,
-                        "data": n.data,
-                        "style": new_style,
-                        "type": n.type
+        lambda -> None {
+            setNodes(
+                lambda nds: list  -> list { new_nodes = [];for n in nds {
+                    new_style = {
+                        "background": "#18181b",
+                        "color": "#e4e4e7",
+                        "border": "1px solid #3f3f46",
+                        "borderRadius": "8px",
+                        "padding": "10px",
+                        "fontSize": "12px",
+                        "fontFamily": "monospace",
+                        "width": 100,
+                        "textAlign": "center"
+                    };
+                    if n.id == selectedNodeId {
+                        new_style["border"] = "2px solid #e17055";
+                        new_style["background"] = "rgba(225, 112, 85, 0.12)";
+                        new_style["boxShadow"] = "0 0 10px rgba(225, 112, 85, 0.28)";
                     }
-                );
-            }return new_nodes; }
-        );},
-        [selectedNodeId, setNodes]
+                    new_nodes.push(
+                        {
+                            "id": n.id,
+                            "position": n.position,
+                            "data": n.data,
+                            "style": new_style,
+                            "type": n.type
+                        }
+                    );
+                }return new_nodes; }
+            );
+            setEdges(
+                lambda eds: list -> list { new_edges = [];for e in eds {
+                    is_connected = bool(selectedNodeId) and (e.source == selectedNodeId or e.target == selectedNodeId);
+                    new_edges.push({
+                        "id": e.id,
+                        "source": e.source,
+                        "target": e.target,
+                        "type": e.type,
+                        "animated": is_connected,
+                        "zIndex": 1 if is_connected else 0,
+                        "style": {"stroke": "#ffa35b", "strokeWidth": 2} if is_connected else {"stroke": "#a4543e"}
+                    });
+                }return new_edges; }
+            );
+        },
+        [selectedNodeId, setNodes, setEdges]
     );
 
     selectedNodeData = rawNodes[selectedNodeId]
@@ -422,41 +452,38 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     };
 
     if isOptimizing and hasTree {
-        level_x_offsets = {};
+        parent_pending_counts = {};
         for tinfo in activeGenTasks {
             pending_parent_id = None;
+            pending_parent_x = 0;
             pending_parent_y = 0;
             pref = tinfo["parent_ref"] if tinfo and "parent_ref" in tinfo else "";
             parent_node_id = str(pref).replace("kernel_", "") if pref else "";
             for n in nodes {
                 if str(n.id) == parent_node_id {
                     pending_parent_id = n.id;
+                    pending_parent_x = n.position.x;
                     pending_parent_y = n.position.y;
                 }
             }
             if pending_parent_id {
-                child_y = pending_parent_y + 150;
-                key = str(child_y);
-                if not (key in level_x_offsets) {
-                    nodes_at_child_level = 0;
-                    for n in nodes {
-                        if n.position.y == child_y {
-                            nodes_at_child_level += 1;
-                        }
-                    }
-                    level_x_offsets[key] = nodes_at_child_level;
+                child_y = pending_parent_y + 170;
+                key = str(pending_parent_id);
+                if not (key in parent_pending_counts) {
+                    parent_pending_counts[key] = 0;
                 }
-                
-                offset_idx = level_x_offsets[key];
-                level_x_offsets[key] = offset_idx + 1;
-                
+
+                offset_idx = parent_pending_counts[key];
+                parent_pending_counts[key] = offset_idx + 1;
+
                 task_id = tinfo["id"] if "id" in tinfo else str(offset_idx);
                 node_id = f"pending-node-{task_id}";
-                
+
+                step_label = tinfo["step"] if "step" in tinfo and tinfo["step"] else "Working...";
                 displayNodes.push({
                     "id": node_id,
-                    "position": {"x": offset_idx * 200, "y": child_y},
-                    "data": {"label": "Generating..."},
+                    "position": {"x": pending_parent_x + offset_idx * 140, "y": child_y},
+                    "data": {"label": step_label},
                     "className": "pending-kernel-node",
                     "style": pending_style,
                     "type": "default"
@@ -476,10 +503,11 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
         idx = 0;
         for tinfo in activeGenTasks {
             task_id = tinfo["id"] if "id" in tinfo else str(idx);
+            step_label = tinfo["step"] if "step" in tinfo and tinfo["step"] else "Working...";
             displayNodes.push({
                 "id": f"pending-node-{task_id}",
                 "position": {"x": idx * 200, "y": 0},
-                "data": {"label": "Generating..."},
+                "data": {"label": step_label},
                 "className": "pending-kernel-node",
                 "style": pending_style,
                 "type": "default"
@@ -490,40 +518,6 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
 
     resolvedProjectNameClean = decode_param(resolvedProjectName);
     resolvedOpNameClean = canonical_op_param(resolvedOpName);
-
-    gen_status_els = [];
-    idx = 0;
-    for tinfo in activeGenTasks {
-        step_text = tinfo["step"] if "step" in tinfo else "";
-        att_cur = tinfo["attempt_current"] if "attempt_current" in tinfo else None;
-        att_max = tinfo["attempt_max"] if "attempt_max" in tinfo else None;
-        pref = str(tinfo["parent_ref"]) if "parent_ref" in tinfo and tinfo["parent_ref"] else "";
-        
-        attempt_label = "";
-        if att_cur is not None and att_max is not None {
-            attempt_label = f" · attempt {att_cur}/{att_max}";
-        }
-        
-        pref_label = "";
-        if pref {
-            pref_label = f"parent: {pref} · ";
-        }
-        
-        top_offset = 8 + (idx * 40);
-        task_id = tinfo["id"] if "id" in tinfo else str(idx);
-        
-        gen_status_els.push(
-            <div
-                key={f"gen-status-badge-{task_id}"}
-                className="absolute right-2 z-10 bg-indigo-950/90 border border-indigo-700/60 rounded-lg px-3 py-1.5 flex items-center gap-1.5 text-xs text-indigo-300 shadow-lg"
-                style={{"top": f"{top_offset}px"}}
-            >
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse inline-block"/>
-                <span>{pref_label}{step_text}{attempt_label}</span>
-            </div>
-        );
-        idx += 1;
-    }
 
     left_content = [];
     if leftPanelMode == "editor" {
@@ -632,7 +626,6 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         onLiveUpdatesChange={setLiveUpdates}
                         fetchData={fetchData}
                     />
-                    {gen_status_els}
                     {(
                         <WorkbenchTreeView
                             displayNodes={displayNodes}
