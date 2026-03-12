@@ -264,8 +264,8 @@ walker:pub GetOpenLLMModels {
         if "anthropic" in api_keys and api_keys["anthropic"] {
             all_models.extend(fetch_anthropic_models(api_keys["anthropic"]));
         }
-        if "gemini" in api_keys and api_keys["gemini"] {
-            all_models.extend(fetch_gemini_models(api_keys["gemini"]));
+        if "google" in api_keys and api_keys["google"] {
+            all_models.extend(fetch_gemini_models(api_keys["google"]));
         }
 
         # Sorting
@@ -329,12 +329,13 @@ walker:pub TestLLMConnection {
         };
 
         has_keys = False;
-        for provider in ["openai", "anthropic", "gemini"] {
+        for provider in ["openai", "anthropic", "google"] {
             key = api_keys[provider] if provider in api_keys else "";
             if key {
                 has_keys = True;
-                model = test_models[provider];
-                res = test_connection_helper(provider, key);
+                model_prov = "gemini" if provider == "google" else provider;
+                model = test_models[model_prov];
+                res = test_connection_helper(model_prov, key); # using the helper logic
                 results.append(res);
             }
         }

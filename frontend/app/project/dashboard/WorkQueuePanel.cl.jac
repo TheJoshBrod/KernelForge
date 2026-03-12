@@ -115,7 +115,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
         );
 
         track_nodes = [];
-        steps = ["Monitoring", "Generating", "Validating", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
+        steps = ["Generating", "Validating", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
 
         c_idx = -1;
         for i in range(list_len(steps)) {
