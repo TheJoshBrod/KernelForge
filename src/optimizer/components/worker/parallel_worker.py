@@ -185,10 +185,10 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
             if gpu_lock:
                  with gpu_lock:
                       stats = backend.profile_kernel(paths)
-                      runtime_ms = stats.get('mean_time_ms', float('inf'))
+                      runtime_ms = stats.get('min_time_ms', float('inf'))
             else:
                  stats = backend.profile_kernel(paths)
-                 runtime_ms = stats.get('mean_time_ms', float('inf'))
+                 runtime_ms = stats.get('min_time_ms', float('inf'))
 
             if runtime_ms == float('inf'):
                  result_queue.put((node_id, None, f"profiling_failed"))

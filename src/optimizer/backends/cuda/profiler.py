@@ -243,12 +243,13 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
         batch_files = all_files[i: i + BATCH_SIZE]
         inputs = load_batch(batch_files)
 
-        # Warmup (only for this batch)
-        for args, kwargs in inputs:
-            try:
-                module.launch(*args, **kwargs)
-            except TypeError:
-                module.launch(*args)
+        # Warmup (only for this batch, discarded)
+        for _ in range(5):
+            for args, kwargs in inputs:
+                try:
+                    module.launch(*args, **kwargs)
+                except TypeError:
+                    module.launch(*args)
         _sync_device(target_device)
 
         # Measure
@@ -302,7 +303,7 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
 
     # Compare with baseline if provided
     if previous_stats:
-        speedup = previous_stats['mean_time_ms'] / stats['mean_time_ms']
+        speedup = previous_stats['min_time_ms'] / stats['min_time_ms']
         print(f"Speedup: {speedup:.2f}x")
 
     return stats, prof

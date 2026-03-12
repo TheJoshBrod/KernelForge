@@ -267,23 +267,15 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
         inputs = load_batch(batch_files)
 
         # Profile each input using triton.testing.do_bench
+        # return_mode="min" gives the minimum timing across reps — most stable signal
         for args, kwargs in inputs:
-            try:
-                # do_bench handles warmup and synchronization internally
-                ms = triton.testing.do_bench(
-                    lambda a=args: module.launch(*a),
-                    warmup=25,
-                    rep=100,
-                )
-                timings.append(ms)
-            except TypeError:
-                # Fallback: try without kwargs
-                ms = triton.testing.do_bench(
-                    lambda a=args: module.launch(*a),
-                    warmup=25,
-                    rep=100,
-                )
-                timings.append(ms)
+            ms = triton.testing.do_bench(
+                lambda a=args: module.launch(*a),
+                warmup=25,
+                rep=100,
+                return_mode="min",
+            )
+            timings.append(ms)
 
         # Cleanup VRAM
         del inputs
@@ -299,7 +291,7 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
 
     # Compare with baseline if provided
     if previous_stats:
-        speedup = previous_stats['mean_time_ms'] / stats['mean_time_ms']
+        speedup = previous_stats['min_time_ms'] / stats['min_time_ms']
         print(f"Speedup: {speedup:.2f}x")
 
     return stats, prof
