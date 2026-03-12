@@ -75,15 +75,18 @@ def _check_gpu_mismatch(project_name: str, current_gpu_info: Any) -> dict {
     stored_uuid = str(benchmarked["uuid"]) if "uuid" in benchmarked and benchmarked["uuid"] else "";
     stored_name = str(benchmarked["name"]) if "name" in benchmarked and benchmarked["name"] else "Unknown";
     stored_conn = str(benchmarked["connection"]) if "connection" in benchmarked and benchmarked["connection"] else "local";
-    stored_identity = stored_uuid if stored_uuid else f"{stored_name}:{stored_conn}";
     if not current_gpu_info {
         return {"gpu_mismatch": False};
     }
     cur_uuid = str(current_gpu_info["uuid"]) if "uuid" in current_gpu_info and current_gpu_info["uuid"] else "";
     cur_name = str(current_gpu_info["name"]) if "name" in current_gpu_info and current_gpu_info["name"] else "Unknown";
     cur_conn = str(current_gpu_info["connection"]) if "connection" in current_gpu_info and current_gpu_info["connection"] else "local";
-    current_identity = cur_uuid if cur_uuid else f"{cur_name}:{cur_conn}";
-    if stored_identity != current_identity {
+    if stored_uuid and cur_uuid {
+        is_match = stored_uuid == cur_uuid;
+    } else {
+        is_match = stored_name == cur_name and stored_conn == cur_conn;
+    }
+    if not is_match {
         return {
             "gpu_mismatch": True,
             "benchmarked_gpu_name": stored_name,

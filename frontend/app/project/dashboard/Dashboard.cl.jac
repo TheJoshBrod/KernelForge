@@ -352,9 +352,15 @@ def:pub Dashboard -> Any {
         return 15000;
     }
 
-    def openActionModal(e: any, opName: str, action: str) -> None {
+    async def openActionModal(e: any, opName: str, action: str) -> None {
         e.stopPropagation();
-        if gpuMismatch {
+        live_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
+        live_resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": live_gpu_info});
+        live_data = live_resp.reports[0] if live_resp and live_resp.reports else {};
+        live_mismatch = live_data["gpu_mismatch"] if live_data and "gpu_mismatch" in live_data else False;
+        if live_mismatch {
+            setGpuMismatch(True);
+            setBenchmarkedGpuName(live_data["benchmarked_gpu_name"] if "benchmarked_gpu_name" in live_data else "");
             setGpuMismatchModalOpen(True);
             return;
         }
@@ -457,11 +463,17 @@ def:pub Dashboard -> Any {
     }
 
     async def startForge -> None {
-        if gpuMismatch {
-            setGpuMismatchModalOpen(True);
+        if not name {
             return;
         }
-        if not name {
+        live_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
+        live_resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": live_gpu_info});
+        live_data = live_resp.reports[0] if live_resp and live_resp.reports else {};
+        live_mismatch = live_data["gpu_mismatch"] if live_data and "gpu_mismatch" in live_data else False;
+        if live_mismatch {
+            setGpuMismatch(True);
+            setBenchmarkedGpuName(live_data["benchmarked_gpu_name"] if "benchmarked_gpu_name" in live_data else "");
+            setGpuMismatchModalOpen(True);
             return;
         }
         setForgeError("");
