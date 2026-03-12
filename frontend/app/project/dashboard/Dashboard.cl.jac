@@ -35,6 +35,8 @@ import from .WorkQueuePanel { WorkQueuePanel }
 import from .OperatorResultsTable { OperatorResultsTable }
 import from .BenchmarkLogModal { BenchmarkLogModal }
 import from .JobLogModal { JobLogModal }
+import from .GpuMismatchBanner { GpuMismatchBanner }
+import from .GpuMismatchModal { GpuMismatchModal }
 
 def:pub Dashboard -> Any {
     navigate = useNavigate();
@@ -160,6 +162,26 @@ def:pub Dashboard -> Any {
     forge_notice_state = useState("");
     forgeNotice = forge_notice_state[0];
     setForgeNotice = forge_notice_state[1];
+
+    gpu_mismatch_state = useState(False);
+    gpuMismatch = gpu_mismatch_state[0];
+    setGpuMismatch = gpu_mismatch_state[1];
+
+    benchmarked_gpu_name_state = useState("");
+    benchmarkedGpuName = benchmarked_gpu_name_state[0];
+    setBenchmarkedGpuName = benchmarked_gpu_name_state[1];
+
+    gpu_clone_busy_state = useState(False);
+    gpuCloneBusy = gpu_clone_busy_state[0];
+    setGpuCloneBusy = gpu_clone_busy_state[1];
+
+    gpu_mismatch_dismissed_state = useState(False);
+    gpuMismatchDismissed = gpu_mismatch_dismissed_state[0];
+    setGpuMismatchDismissed = gpu_mismatch_dismissed_state[1];
+
+    gpu_mismatch_modal_open_state = useState(False);
+    gpuMismatchModalOpen = gpu_mismatch_modal_open_state[0];
+    setGpuMismatchModalOpen = gpu_mismatch_modal_open_state[1];
 
     metricsView = build_dashboard_metrics_view(
         to_list(speedData), to_list(ops), opTimeMode, comparisonView, 8, 12
@@ -330,8 +352,18 @@ def:pub Dashboard -> Any {
         return 15000;
     }
 
-    def openActionModal(e: any, opName: str, action: str) -> None {
+    async def openActionModal(e: any, opName: str, action: str) -> None {
         e.stopPropagation();
+        live_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
+        live_resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": live_gpu_info});
+        live_data = live_resp.reports[0] if live_resp and live_resp.reports else {};
+        live_mismatch = live_data["gpu_mismatch"] if live_data and "gpu_mismatch" in live_data else False;
+        if live_mismatch {
+            setGpuMismatch(True);
+            setBenchmarkedGpuName(live_data["benchmarked_gpu_name"] if "benchmarked_gpu_name" in live_data else "");
+            setGpuMismatchModalOpen(True);
+            return;
+        }
         setModalOpName(opName);
         if action == "Optimize" {
             setOptimizeModalOpen(True);
@@ -367,7 +399,7 @@ def:pub Dashboard -> Any {
         setTimeout(lambda -> None { setPostSubmitActive(False); window["__kf_post_submit"] = None;}, 120000);
         # Kick off a single fast status RPC so polling doesn't have to wait
         # a full interval before showing the first real task.
-        status_resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name});
+        status_resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": config["selected_gpu_info"] if config and "selected_gpu_info" in config else None});
         status_data = status_resp.reports[0] if status_resp and status_resp.reports else {};
         if status_data {
             setStatus(status_data);
@@ -432,6 +464,16 @@ def:pub Dashboard -> Any {
 
     async def startForge -> None {
         if not name {
+            return;
+        }
+        live_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
+        live_resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": live_gpu_info});
+        live_data = live_resp.reports[0] if live_resp and live_resp.reports else {};
+        live_mismatch = live_data["gpu_mismatch"] if live_data and "gpu_mismatch" in live_data else False;
+        if live_mismatch {
+            setGpuMismatch(True);
+            setBenchmarkedGpuName(live_data["benchmarked_gpu_name"] if "benchmarked_gpu_name" in live_data else "");
+            setGpuMismatchModalOpen(True);
             return;
         }
         setForgeError("");
@@ -555,7 +597,7 @@ def:pub Dashboard -> Any {
                 metrics_req = __jacSpawn(
                     "GetProjectMetrics", "", {"projectName": name}
                 );
-                status_req = __jacSpawn("GetProjectStatus", "", {"projectName": name});
+                status_req = __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": config["selected_gpu_info"] if config and "selected_gpu_info" in config else None});
                 hw_req = __jacSpawn("DetectHardware", "", {});
                 mcts_req = __jacSpawn(
                     "GetProjectMctsSummary", "", {"projectName": name}
@@ -589,6 +631,12 @@ def:pub Dashboard -> Any {
                 if status_resp and status_resp.reports
                 else {};
                 setStatus(status_data or {});
+                if status_data and "gpu_mismatch" in status_data {
+                    setGpuMismatch(status_data["gpu_mismatch"]);
+                    setBenchmarkedGpuName(status_data["benchmarked_gpu_name"] if "benchmarked_gpu_name" in status_data else "");
+                } else {
+                    setGpuMismatch(False);
+                }
                 # Process Hardware
                 hw_data = hw_resp.reports[0] if hw_resp and hw_resp.reports else {};
                 setHardwareInfo(hw_data or {});
@@ -645,14 +693,23 @@ def:pub Dashboard -> Any {
     has_queue_work = Object.keys(_ep_active_tasks).length > 0;
     any_job_active = postSubmitActive or forgeBusy or has_queue_work or is_job_active(_ep_profile) or is_job_active(_ep_gen) or is_job_active(_ep_opt) or is_job_active(_ep_bench);
 
+    # Capture current GPU info for polling closure (must be in deps so closure stays fresh)
+    _poll_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
+
     # Auto-refresh status (faster while active, slower while idle)
     useEffect(
         lambda -> Any { poll_ms = 500 if any_job_active else 15000;timer = setInterval(
-            lambda -> None { __jacSpawn("GetProjectStatus", "", {"projectName": name}).then(
+            lambda -> None { __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": _poll_gpu_info}).then(
                 lambda resp: any  -> None { data = resp.reports[0]
                 if resp and resp.reports
                 else {};
                 setStatus(data or {});
+                if data and "gpu_mismatch" in data {
+                    setGpuMismatch(data["gpu_mismatch"]);
+                    setBenchmarkedGpuName(data["benchmarked_gpu_name"] if "benchmarked_gpu_name" in data else "");
+                } else {
+                    setGpuMismatch(False);
+                }
                 __jacSpawn("GetProjectMetrics", "", {"projectName": name}).then(
                     lambda c_resp: any  -> None { c_data = c_resp.reports[0]
                     if c_resp and c_resp.reports
@@ -709,7 +766,28 @@ def:pub Dashboard -> Any {
             );},
             poll_ms
         );return lambda -> None { clearInterval(timer);}; },
-        [name, forgeBusy, any_job_active]
+        [name, forgeBusy, any_job_active, _poll_gpu_info]
+    );
+
+    # On page refresh, config loads after the first poll fires (with null GPU info).
+    # Fire one immediate status call whenever _poll_gpu_info becomes available.
+    useEffect(
+        lambda -> None {
+            if _poll_gpu_info and name {
+                __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": _poll_gpu_info}).then(
+                    lambda resp: any -> None {
+                        data = resp.reports[0] if resp and resp.reports else {};
+                        if data and "gpu_mismatch" in data {
+                            setGpuMismatch(data["gpu_mismatch"]);
+                            setBenchmarkedGpuName(data["benchmarked_gpu_name"] if "benchmarked_gpu_name" in data else "");
+                        } else {
+                            setGpuMismatch(False);
+                        }
+                    }
+                ).catch(lambda e: any -> None {});
+            }
+        },
+        [_poll_gpu_info, name]
     );
 
     # Restore "starting" indicator if navigated back before tasks appeared.
@@ -767,6 +845,47 @@ def:pub Dashboard -> Any {
     }
 
     useEffect(lambda -> None { fetchSystemInfo();}, [config]);
+
+    useEffect(
+        lambda -> None {
+            if gpuMismatch and benchmarkedGpuName and name {
+                key = f"kf_gpu_dismiss_{name}_{benchmarkedGpuName}";
+                if localStorage.getItem(key) {
+                    setGpuMismatchDismissed(True);
+                } else {
+                    setGpuMismatchDismissed(False);
+                }
+            } else {
+                setGpuMismatchDismissed(False);
+            }
+        },
+        [gpuMismatch, benchmarkedGpuName, name]
+    );
+
+    async def handleCloneForGpu -> None {
+        setGpuCloneBusy(True);
+        try {
+            resp = await __jacSpawn("CloneProjectForGpu", "", {"sourceProjectName": name, "currentGpuInfo": config["selected_gpu_info"] if config and "selected_gpu_info" in config else None});
+            data = resp.reports[0] if resp and resp.reports else {};
+            if data and "success" in data and data["success"] {
+                navigate(f"/project/{data['newProjectName']}");
+            } else {
+                setForgeError("Clone failed.");
+            }
+        } except Exception as e {
+            setForgeError("Clone failed.");
+        } finally {
+            setGpuCloneBusy(False);
+        }
+    }
+
+    def handleDismissGpuMismatch -> None {
+        setGpuMismatchDismissed(True);
+        if name and benchmarkedGpuName {
+            key = f"kf_gpu_dismiss_{name}_{benchmarkedGpuName}";
+            localStorage.setItem(key, "1");
+        }
+    }
 
     useEffect(
         lambda -> None { if benchLogOpen and name {
@@ -1324,6 +1443,13 @@ def:pub Dashboard -> Any {
                 forgedTooltipPos={forgedTooltipPos}
                 setForgedTooltipPos={setForgedTooltipPos}
             />
+            {<GpuMismatchBanner
+                benchmarkedGpuName={benchmarkedGpuName}
+                currentGpuName={gpu_name}
+                onClone={handleCloneForGpu}
+                onDismiss={handleDismissGpuMismatch}
+                cloneBusy={gpuCloneBusy}
+            /> if gpuMismatch and not gpuMismatchDismissed else <span/>}
             <div className="space-y-4">
                 <WorkQueuePanel
                     name={name}
@@ -1347,6 +1473,7 @@ def:pub Dashboard -> Any {
                     onOpenActionModal={openActionModal}
                     onOpenBenchLog={lambda -> None { setBenchLogOpen(True);}}
                     loading={loading}
+                    gpuMismatch={gpuMismatch}
                 />
             </div>
             <GenerateModal
@@ -1364,6 +1491,15 @@ def:pub Dashboard -> Any {
                 onStarted={handleModalStarted}
                 projectName={name}
                 opName={modalOpName}
+            />
+            <GpuMismatchModal
+                isOpen={gpuMismatchModalOpen}
+                onClose={lambda -> None { setGpuMismatchModalOpen(False);}}
+                benchmarkedGpuName={benchmarkedGpuName}
+                currentGpuName={gpu_name}
+                onClone={handleCloneForGpu}
+                onReturnToProject={lambda -> None { setGpuMismatchModalOpen(False);}}
+                cloneBusy={gpuCloneBusy}
             />
             <BenchmarkLogModal
                 isOpen={benchLogOpen}

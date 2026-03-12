@@ -11,7 +11,7 @@ import shutil;
 import hashlib;
 import sqlite3;
 
-import from .globals { repo_root }
+import from .globals { repo_root, config_store }
 import from .catalog_db {
     _ensure_dir,
     _projects_base_dir,
@@ -32,6 +32,69 @@ import from .job_supervisor {
 }
 
 # --- Private helpers ---
+
+def _short_gpu_name(gpu_info: Any) -> str {
+    if not gpu_info {
+        return "";
+    }
+    name = str(gpu_info["name"]) if "name" in gpu_info and gpu_info["name"] else "";
+    if not name {
+        return "";
+    }
+    prefixes = [
+        "NVIDIA GeForce ",
+        "NVIDIA Quadro ",
+        "NVIDIA Tesla ",
+        "AMD Radeon ",
+        "Intel Arc "
+    ];
+    for prefix in prefixes {
+        if name.startswith(prefix) {
+            return name[len(prefix):];
+        }
+    }
+    return name;
+}
+
+def _check_gpu_mismatch(project_name: str, current_gpu_info: Any) -> dict {
+    cfg_path = path.join(_project_dir(project_name), "config.json");
+    if not path.exists(cfg_path) {
+        return {"gpu_mismatch": False};
+    }
+    try {
+        with open(cfg_path, "r") as f {
+            cfg = load(f);
+        }
+    } except Exception {
+        return {"gpu_mismatch": False};
+    }
+    if not cfg or "benchmarked_gpu" not in cfg {
+        return {"gpu_mismatch": False};
+    }
+    benchmarked = cfg["benchmarked_gpu"];
+    stored_uuid = str(benchmarked["uuid"]) if "uuid" in benchmarked and benchmarked["uuid"] else "";
+    stored_name = str(benchmarked["name"]) if "name" in benchmarked and benchmarked["name"] else "Unknown";
+    stored_conn = str(benchmarked["connection"]) if "connection" in benchmarked and benchmarked["connection"] else "local";
+    if not current_gpu_info {
+        return {"gpu_mismatch": False};
+    }
+    cur_uuid = str(current_gpu_info["uuid"]) if "uuid" in current_gpu_info and current_gpu_info["uuid"] else "";
+    cur_name = str(current_gpu_info["name"]) if "name" in current_gpu_info and current_gpu_info["name"] else "Unknown";
+    cur_conn = str(current_gpu_info["connection"]) if "connection" in current_gpu_info and current_gpu_info["connection"] else "local";
+    if stored_uuid and cur_uuid {
+        is_match = stored_uuid == cur_uuid;
+    } else {
+        is_match = stored_name == cur_name and stored_conn == cur_conn;
+    }
+    if not is_match {
+        return {
+            "gpu_mismatch": True,
+            "benchmarked_gpu_name": stored_name,
+            "current_gpu_name": cur_name
+        };
+    }
+    return {"gpu_mismatch": False};
+}
 
 def _prune_missing_catalog_projects() -> None {
     _ensure_catalog_schema();
@@ -284,6 +347,7 @@ def _is_allowed_repo_path(rel_path: str, project_name: str) -> bool {
 walker:pub CreateProject {
     has projectName: str,
         code: str,
+        selectedGpuInfo: dict = {},
         modelFileB64: str = "",
         modelFileName: str = "model.py",
         weightsFileB64: str = "",
@@ -299,7 +363,12 @@ walker:pub CreateProject {
             projects_dir = _projects_base_dir();
             _ensure_dir(projects_dir);
 
-            project_path = path.join(projects_dir, self.projectName);
+            base_name = self.projectName;
+            gpu_info = self.selectedGpuInfo if self.selectedGpuInfo else config_store["selected_gpu_info"];
+            short_gpu = _short_gpu_name(gpu_info);
+            final_name = f"{base_name} - {short_gpu}" if short_gpu else base_name;
+
+            project_path = path.join(projects_dir, final_name);
             if path.exists(project_path) {
                 report {"error": "Project already exists", "success": False};
                 disengage;
@@ -380,7 +449,20 @@ walker:pub CreateProject {
                 target_device = "cuda";
             }
 
+            benchmarked_gpu_entry = None;
+            if gpu_info {
+                bg_uuid = str(gpu_info["uuid"]) if "uuid" in gpu_info and gpu_info["uuid"] else "";
+                bg_name = str(gpu_info["name"]) if "name" in gpu_info and gpu_info["name"] else "Unknown";
+                bg_conn = str(gpu_info["connection"]) if "connection" in gpu_info and gpu_info["connection"] else "local";
+                benchmarked_gpu_entry = {
+                    "uuid": bg_uuid,
+                    "name": bg_name,
+                    "connection": bg_conn,
+                    "identity": bg_uuid if bg_uuid else f"{bg_name}:{bg_conn}"
+                };
+            }
             config = {
+                "base_name": base_name,
                 "validation_dir": validation_dir,
                 "created_at": datetime.now().isoformat(),
                 "generator": {
@@ -396,6 +478,9 @@ walker:pub CreateProject {
                 "profile": {"allow_ops": [], "skip_ops": [], "skip_prefixes": []},
                 "artifacts": {"weights": weight_artifacts}
             };
+            if benchmarked_gpu_entry {
+                config["benchmarked_gpu"] = benchmarked_gpu_entry;
+            }
             with open(path.join(project_path, "config.json"), "w") as f {
                 dump(config, f, indent=2);
             }
@@ -431,7 +516,7 @@ walker:pub CreateProject {
                 "src.optimizer.workflow",
                 "profile",
                 "--project",
-                self.projectName
+                final_name
             ];
             if weights_b64_path {
                 profile_cmd.append("--weights-b64-path");
@@ -446,13 +531,13 @@ walker:pub CreateProject {
                 profile_cmd.append(validation_name_path);
             }
             profile_result = _start_job(
-                self.projectName, "profile", profile_cmd, "profile.log"
+                final_name, "profile", profile_cmd, "profile.log"
             );
-            _upsert_project_catalog(self.projectName, project_path);
+            _upsert_project_catalog(final_name, project_path);
 
             report {
                 "success": True,
-                "name": self.projectName,
+                "name": final_name,
                 "weights_count": len(weight_artifacts),
                 "profile": profile_result,
                 "prepare": prepare_result
@@ -608,7 +693,8 @@ walker:pub GetProjectOps {
 }
 
 walker:pub GetProjectStatus {
-    has projectName: str;
+    has projectName: str,
+        currentGpuInfo: dict = {};
 
     can return_status with entry {
         state = _read_state(self.projectName);
@@ -633,6 +719,15 @@ walker:pub GetProjectStatus {
             queue_state["active_tasks"] = cleaned;
         }
         state["queue"] = queue_state;
+        current_gpu_info = self.currentGpuInfo if self.currentGpuInfo else config_store["selected_gpu_info"];
+        mismatch_info = _check_gpu_mismatch(self.projectName, current_gpu_info);
+        state["gpu_mismatch"] = mismatch_info["gpu_mismatch"] if "gpu_mismatch" in mismatch_info else False;
+        if "benchmarked_gpu_name" in mismatch_info {
+            state["benchmarked_gpu_name"] = mismatch_info["benchmarked_gpu_name"];
+        }
+        if "current_gpu_name" in mismatch_info {
+            state["current_gpu_name"] = mismatch_info["current_gpu_name"];
+        }
         report state;
     }
 }
@@ -757,6 +852,123 @@ walker:pub DeleteProject {
             }
         } except Exception as e {
             report {"success": False, "message": f"Error deleting project: {e}"};
+        }
+    }
+}
+
+walker:pub CloneProjectForGpu {
+    has sourceProjectName: str,
+        currentGpuInfo: dict = {};
+
+    can run with entry {
+        try {
+            src_dir = _project_dir(self.sourceProjectName);
+            src_cfg_path = path.join(src_dir, "config.json");
+            base_name = self.sourceProjectName;
+            src_cfg = {};
+            if path.exists(src_cfg_path) {
+                try {
+                    with open(src_cfg_path, "r") as f {
+                        src_cfg = load(f);
+                    }
+                } except Exception {
+                    src_cfg = {};
+                }
+            }
+            if src_cfg and "base_name" in src_cfg and src_cfg["base_name"] {
+                base_name = str(src_cfg["base_name"]);
+            } else {
+                last_dash = self.sourceProjectName.rfind(" - ");
+                if last_dash != -1 {
+                    base_name = self.sourceProjectName[:last_dash];
+                }
+            }
+
+            gpu_info = self.currentGpuInfo if self.currentGpuInfo else config_store["selected_gpu_info"];
+            short_name = _short_gpu_name(gpu_info);
+            new_name = f"{base_name} - {short_name}" if short_name else base_name;
+
+            projects_dir = _projects_base_dir();
+            if path.exists(path.join(projects_dir, new_name)) {
+                new_name = f"{new_name}_2";
+            }
+
+            new_dir = path.join(projects_dir, new_name);
+            makedirs(new_dir);
+
+            src_trees = path.join(src_dir, "trees");
+            new_trees = path.join(new_dir, "trees");
+            if path.exists(src_trees) {
+                for op_name in listdir(src_trees) {
+                    src_op = path.join(src_trees, op_name);
+                    if not path.isdir(src_op) {
+                        continue;
+                    }
+                    new_op = path.join(new_trees, op_name);
+                    _ensure_dir(new_op);
+                    src_kernels = path.join(src_op, "kernels");
+                    if path.exists(src_kernels) {
+                        shutil.copytree(src_kernels, path.join(new_op, "kernels"));
+                    }
+                }
+            }
+
+            src_gen = path.join(src_dir, "kernels", "generated");
+            if path.exists(src_gen) {
+                shutil.copytree(src_gen, path.join(new_dir, "kernels", "generated"));
+            }
+
+            src_io = path.join(src_dir, "io");
+            if path.exists(src_io) {
+                shutil.copytree(src_io, path.join(new_dir, "io"));
+            }
+
+            src_model = path.join(src_dir, "model.py");
+            if path.exists(src_model) {
+                shutil.copy2(src_model, path.join(new_dir, "model.py"));
+            }
+
+            src_artifacts = path.join(src_dir, "artifacts");
+            if path.exists(src_artifacts) {
+                shutil.copytree(src_artifacts, path.join(new_dir, "artifacts"));
+            }
+
+            new_cfg = {**src_cfg} if src_cfg else {};
+            new_cfg["base_name"] = base_name;
+            new_cfg["created_at"] = datetime.now().isoformat();
+            if "benchmarked_gpu" in new_cfg {
+                new_cfg.pop("benchmarked_gpu");
+            }
+            if gpu_info {
+                clone_uuid = str(gpu_info["uuid"]) if "uuid" in gpu_info and gpu_info["uuid"] else "";
+                clone_name = str(gpu_info["name"]) if "name" in gpu_info and gpu_info["name"] else "Unknown";
+                clone_conn = str(gpu_info["connection"]) if "connection" in gpu_info and gpu_info["connection"] else "local";
+                new_cfg["benchmarked_gpu"] = {
+                    "uuid": clone_uuid,
+                    "name": clone_name,
+                    "connection": clone_conn,
+                    "identity": clone_uuid if clone_uuid else f"{clone_name}:{clone_conn}"
+                };
+            }
+            with open(path.join(new_dir, "config.json"), "w") as f {
+                dump(new_cfg, f, indent=2);
+            }
+
+            _upsert_project_catalog(new_name, new_dir);
+
+            bench_cmd = [
+                sys.executable,
+                "-m",
+                "src.optimizer.benchmarking.benchmark_ops",
+                "--project",
+                new_name
+            ];
+            _start_job(new_name, "benchmark", bench_cmd, "benchmark.log");
+
+            report {"success": True, "newProjectName": new_name};
+        } except Exception as e {
+            print(f"Error cloning project: {e}");
+            report {"success": False, "error": str(e)};
         }
     }
 }

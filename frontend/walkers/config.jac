@@ -57,6 +57,7 @@ def _normalize_config(cfg: dict) -> dict {
 walker:pub GetConfig {
     can return_config with entry {
         try {
+            global config_store;
             abs_path = path.abspath(config_path);
             if not path.exists(abs_path) {
                 report _normalize_config(config_store);
@@ -64,7 +65,9 @@ walker:pub GetConfig {
             }
             with open(config_path, "r") as f {
                 config = load(f);
-                report _normalize_config(config);
+                normalized = _normalize_config(config);
+                config_store = normalized;
+                report normalized;
             }
         } except Exception as e {
             print(f"Error loading config: {e}");
