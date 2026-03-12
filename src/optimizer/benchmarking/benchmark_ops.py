@@ -250,7 +250,7 @@ def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
             results = entry.get("results") if isinstance(entry, dict) else None
             if not isinstance(results, dict):
                 continue
-            ms = results.get("mean_time_ms")
+            ms = results.get("min_time_ms")
             if ms is None:
                 continue
             try:
@@ -295,7 +295,7 @@ def _profile_generated_kernel_ms(
                 {"tmp_dir": generated_dir, "io_dir": io_op_dir},
                 baseline=True,
             )
-            ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
+            ms = stats.get("min_time_ms") if isinstance(stats, dict) else None
             if ms is None:
                 return None, "generated_profile_missing", "cuda"
             return float(ms), "ok", "cuda"

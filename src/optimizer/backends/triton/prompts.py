@@ -274,7 +274,7 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
     if improvement_log:
         for entry in improvement_log:
             results = entry.get('results', {})
-            mean_time = results.get('mean_time_ms', float('inf'))
+            mean_time = results.get('min_time_ms', float('inf'))
             if mean_time < best_runtime:
                 best_runtime = mean_time
                 best_iter = entry.get('iteration', 0)
@@ -300,7 +300,7 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
             iter_num = entry.get('iteration', '?')
             strategy_text = entry.get('attempted', 'No description.')
             results = entry.get('results', {})
-            mean_time = results.get('mean_time_ms', 0.0)
+            mean_time = results.get('min_time_ms', 0.0)
             speedup_base = entry.get('speedup_vs_baseline', 1.0)
 
             if iter_num == best_iter:
