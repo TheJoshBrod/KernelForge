@@ -413,8 +413,7 @@ def:pub Dashboard -> Any {
         setQueueManuallyCleared(True);
         setPostSubmitActive(False);
         window["__kf_post_submit"] = None;
-        # Cancel running jobs and clear backend queue.
-        await __jacSpawn("ClearProjectQueue", "", {"projectName": name});
+        
         empty_queue = {
             "active_tasks": {},
             "pending_operators": [],
@@ -425,7 +424,14 @@ def:pub Dashboard -> Any {
         patched["queue"] = empty_queue;
         setStatus(patched);
         setClearSignal(lambda p: any -> any { return p + 1; });
-        refreshData();
+        
+        try {
+            # Cancel running jobs and clear backend queue.
+            await __jacSpawn("ClearProjectQueue", "", {"projectName": name});
+        } except Exception as e {
+            console.error("Failed to clear queue:", e);
+            refreshData();
+        }
     }
 
     def op_names_from_rows(op_rows: list) -> list {

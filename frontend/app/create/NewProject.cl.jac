@@ -1,6 +1,6 @@
 """New Project Component"""
 
-import from react { useEffect }
+import from react { useEffect, useState }
 import from sonner { toast }
 import from "react-router-dom" { useNavigate }
 import from ...context.ConfigContext { useConfig }
@@ -39,25 +39,41 @@ def:pub NewProject -> Any {
     navigate = useNavigate();
     config_ctx = useConfig();
     config = config_ctx.config;
-    has code: str = "",
-        formData: dict = {
-            "projectName": "",
-            "modelFile": None,
-            "weightsFile": None,
-            "validationZip": None
-        },
-        isSubmitting: bool = False,
-        submitStage: str = "",
-        stageIndex: int = 0,
-        stageCycle: list = [
-            "Heating up the coals",
-            "Stoking the bellows",
-            "Preparing the forge",
-            "Tempering model steel",
-            "Shaping kernels on the anvil",
-            "Quenching fresh optimizations",
-            "Cleaning the workspace"
-        ];
+
+    stageCycle = [
+        "Heating up the coals",
+        "Stoking the bellows",
+        "Preparing the forge",
+        "Tempering model steel",
+        "Shaping kernels on the anvil",
+        "Quenching fresh optimizations",
+        "Cleaning the workspace"
+    ];
+
+    code_state = useState("");
+    code = code_state[0];
+    setCode = code_state[1];
+
+    form_data_state = useState({
+        "projectName": "",
+        "modelFile": None,
+        "weightsFile": None,
+        "validationZip": None
+    });
+    formData = form_data_state[0];
+    setFormData = form_data_state[1];
+
+    is_submitting_state = useState(False);
+    isSubmitting = is_submitting_state[0];
+    setIsSubmitting = is_submitting_state[1];
+
+    submit_stage_state = useState("");
+    submitStage = submit_stage_state[0];
+    setSubmitStage = submit_stage_state[1];
+
+    stage_index_state = useState(0);
+    stageIndex = stage_index_state[0];
+    setStageIndex = stage_index_state[1];
 
     def handleInputChange(field: str, value: Any) -> None {
         newFormData = {
@@ -67,7 +83,7 @@ def:pub NewProject -> Any {
             "validationZip": formData["validationZip"]
         };
         newFormData[field] = value;
-        formData = newFormData;
+        setFormData(newFormData);
     }
 
     def previewModelFile(file: Any) -> None {
@@ -79,7 +95,7 @@ def:pub NewProject -> Any {
         reader.onload = lambda -> None { text_value = reader.result
         if reader.result
         else "";if text_value and text_value.trim() {
-            code = text_value;
+            setCode(text_value);
         } else {
             toast.error("Selected model file is empty");
         } };
@@ -104,10 +120,10 @@ def:pub NewProject -> Any {
 
     useEffect(
         lambda -> Any { if not isSubmitting {
-            stageIndex = 0;
+            setStageIndex(0);
             return;
-        }stageIndex = Math.floor(Date.now() / 1300) % stageCycle.length;timer = setInterval(
-            lambda -> None { stageIndex = Math.floor(Date.now() / 1300) % stageCycle.length;},
+        }setStageIndex(Math.floor(Date.now() / 1300) % stageCycle.length);timer = setInterval(
+            lambda -> None { setStageIndex(Math.floor(Date.now() / 1300) % stageCycle.length);},
             650
         );return lambda -> None { clearInterval(timer);}; },
         [isSubmitting]
@@ -123,19 +139,19 @@ def:pub NewProject -> Any {
             return;
         }
 
-        isSubmitting = True;
-        submitStage = "Preparing project files";
+        setIsSubmitting(True);
+        setSubmitStage("Preparing project files");
 
         try {
             model_code = code;
             model_file_b64 = "";
             if formData["modelFile"] {
-                submitStage = "Encoding model file";
+                setSubmitStage("Encoding model file");
                 model_file_b64 = await fileToBase64(formData["modelFile"]);
                 if not model_code or not model_code.trim() {
                     try {
                         model_code = await fileToText(formData["modelFile"]);
-                        code = model_code;
+                        setCode(model_code);
                     } except Exception as e {
                         console.error(e);
                     }
@@ -143,26 +159,26 @@ def:pub NewProject -> Any {
             }
             if (not model_code or not model_code.trim()) and not model_file_b64 {
                 toast.error("Failed to load model code from file");
-                isSubmitting = False;
-                submitStage = "";
+                setIsSubmitting(False);
+                setSubmitStage("");
                 return;
             }
 
             weights_b64 = "";
             if formData["weightsFile"] {
-                submitStage = "Encoding weights";
+                setSubmitStage("Encoding weights");
                 weights_b64 = await fileToBase64(formData["weightsFile"]);
             }
 
             validation_b64 = "";
             validation_name = "";
             if formData["validationZip"] {
-                submitStage = "Encoding validation set";
+                setSubmitStage("Encoding validation set");
                 validation_b64 = await fileToBase64(formData["validationZip"]);
                 validation_name = formData["validationZip"].name;
             }
 
-            submitStage = "Creating project";
+            setSubmitStage("Creating project");
             resp = await __jacSpawn(
                 "CreateProject",
                 "",
@@ -193,20 +209,20 @@ def:pub NewProject -> Any {
             else None;
 
             if result and result["success"] {
-                submitStage = "Finalizing";
+                setSubmitStage("Finalizing");
                 toast.success("Project created successfully");
                 navigate("/project/" + result["name"], {"replace": True});
             } else {
                 error_msg = result["error"] if result else "Failed to create project";
                 toast.error(error_msg);
-                isSubmitting = False;
-                submitStage = "";
+                setIsSubmitting(False);
+                setSubmitStage("");
             }
         } except Exception as e {
             console.error(e);
             toast.error("An error occurred while creating the project");
-            isSubmitting = False;
-            submitStage = "";
+            setIsSubmitting(False);
+            setSubmitStage("");
         }
     }
 
@@ -297,11 +313,11 @@ def:pub NewProject -> Any {
                             <div className="flex-1 relative">
                                 <ForgePythonEditor
                                     value={code}
-                                    onChange={lambda next_code: Any  -> None { code = str(
+                                    onChange={lambda next_code: Any  -> None { setCode(str(
                                         next_code
                                     )
                                     if next_code
-                                    else "";}}
+                                    else "");}}
                                     readOnly={isSubmitting}
                                     placeholder="# Paste your model code here or upload model.py"
                                 />
