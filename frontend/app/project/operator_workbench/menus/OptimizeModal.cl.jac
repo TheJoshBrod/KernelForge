@@ -236,7 +236,7 @@ def:pub OptimizeModal(props: any) -> Any {
         # Close modal and inject optimistic queue entries IMMEDIATELY
         onClose();
         if onStarted {
-            onStarted(None, [selectedOp]);
+            onStarted(None, [selectedOp], "[OPT]");
         }
 
         try {

@@ -269,6 +269,27 @@ def:pub Dashboard -> Any {
         return f"{num.toFixed(2)}x";
     }
 
+    def infer_queue_task_tag(task_id: Any, task_data: dict = None) -> str {
+        if task_data and "tag" in task_data and task_data["tag"] {
+            return str(task_data["tag"]);
+        }
+        tid = str(task_id if task_id else "");
+        if tid == "seq_opt" or tid.startsWith("opt_") {
+            return "[OPT]";
+        }
+        return "[GEN]";
+    }
+
+    def queue_attempt_limit(task_id: Any, task_data: dict = None) -> int {
+        if task_data and "attempt_max" in task_data and task_data["attempt_max"] {
+            parsed_limit = parseInt(str(task_data["attempt_max"]));
+            if parsed_limit and parsed_limit > 0 {
+                return parsed_limit;
+            }
+        }
+        return 3 if infer_queue_task_tag(task_id, task_data) == "[OPT]" else 8;
+    }
+
     def get_dashboard_cache_store -> dict {
         try {
             if not ("__kernelForgeDashboardCache" in window) or not window["__kernelForgeDashboardCache"] {
@@ -389,7 +410,7 @@ def:pub Dashboard -> Any {
         navigate(f"/project/{name}/operator-workbench");
     }
 
-    async def handleModalStarted(data: Any = None, started_ops: list = None) -> None {
+    async def handleModalStarted(data: Any = None, started_ops: list = None, tag: str = "[GEN]") -> None {
         setGenerateModalOpen(False);
         setOptimizeModalOpen(False);
         # Optimistic UI: inject placeholder tasks into separate state
@@ -398,13 +419,13 @@ def:pub Dashboard -> Any {
                 updated = Object.assign({}, prev);
                 now_ts = Date.now();
                 for sop in started_ops {
-                    task_key = "gen_" + str(sop);
+                    task_key = ("seq_opt" if tag == "[OPT]" else "gen_" + str(sop));
                     updated[task_key] = {
-                        "tag": "[GEN]",
+                        "tag": tag,
                         "op_name": str(sop),
-                        "current_step": "Monitoring",
+                        "current_step": ("Starting" if tag == "[OPT]" else "Monitoring"),
                         "attempt_current": 1,
-                        "attempt_max": 8,
+                        "attempt_max": (3 if tag == "[OPT]" else 8),
                         "status": "Starting",
                         "_created_at": now_ts
                     };
@@ -568,6 +589,16 @@ def:pub Dashboard -> Any {
     }
 
     async def refreshData -> None {
+        refresh_key = "";
+        refresh_token = str(Date.now()) + ":" + str(Math.random());
+        if name {
+            refresh_key = "cgins.dashboard.refresh_token:" + name;
+            try {
+                localStorage.setItem(refresh_key, refresh_token);
+            } except Exception {
+                refresh_key = "";
+            }
+        }
         setLoading(True);
         try {
             if name {
@@ -587,6 +618,22 @@ def:pub Dashboard -> Any {
                 status_resp = await status_req;
                 hw_resp = await hw_req;
                 mcts_resp = await mcts_req;
+
+                latest_refresh_token = refresh_token;
+                if refresh_key {
+                    try {
+                        stored_refresh_token = localStorage.getItem(refresh_key);
+                        if stored_refresh_token {
+                            latest_refresh_token = stored_refresh_token;
+                        }
+                    } except Exception {
+                        latest_refresh_token = refresh_token;
+                    }
+                }
+                if latest_refresh_token != refresh_token {
+                    return;
+                }
+
                 # Process Ops
                 ops_data = ops_resp.reports[0]
                 if ops_resp and ops_resp.reports
@@ -623,7 +670,20 @@ def:pub Dashboard -> Any {
         } except Exception as e {
             console.error("Failed to fetch dashboard data:", e);
         } finally {
-            setLoading(False);
+            latest_refresh_token = refresh_token;
+            if refresh_key {
+                try {
+                    stored_refresh_token = localStorage.getItem(refresh_key);
+                    if stored_refresh_token {
+                        latest_refresh_token = stored_refresh_token;
+                    }
+                } except Exception {
+                    latest_refresh_token = refresh_token;
+                }
+            }
+            if latest_refresh_token == refresh_token {
+                setLoading(False);
+            }
         }
     }
 
@@ -1234,8 +1294,16 @@ def:pub Dashboard -> Any {
         if not t {
             continue;
         }
-        t["id"] = k;
-        active_tasks.push(t);
+        normalized_task = Object.assign({}, t);
+        normalized_task["id"] = k;
+        normalized_task["tag"] = infer_queue_task_tag(k, normalized_task);
+        if not ("attempt_current" in normalized_task) or not normalized_task["attempt_current"] {
+            normalized_task["attempt_current"] = 1;
+        }
+        if not ("attempt_max" in normalized_task) or not normalized_task["attempt_max"] {
+            normalized_task["attempt_max"] = queue_attempt_limit(k, normalized_task);
+        }
+        active_tasks.push(normalized_task);
     }
     benchmark_slot = queue_data["benchmark_slot"] if "benchmark_slot" in queue_data else {"now": None, "pending": []};
     pending_operators = queue_data["pending_operators"] if "pending_operators" in queue_data else [];
@@ -1277,7 +1345,17 @@ def:pub Dashboard -> Any {
                 ct_op = "unknown";
             }
         }
-        completed_list.push(Object.assign({}, ct, {"_resolved_op": ct_op}));
+        ct_id = ct["id"] if "id" in ct else ct_op;
+        completed_list.push(
+            Object.assign(
+                {},
+                ct,
+                {
+                    "_resolved_op": ct_op,
+                    "tag": infer_queue_task_tag(ct_id, ct)
+                }
+            )
+        );
     }
     # Reverse to show newest first
     completed_list.reverse();
@@ -1286,7 +1364,7 @@ def:pub Dashboard -> Any {
     for ci_idx in range(list_len(completed_list)) {
         ci = completed_list[ci_idx];
         ci_step = ci["current_step"] if "current_step" in ci else "";
-        ci_tag = ci["tag"] if "tag" in ci else "[GEN]";
+        ci_tag = infer_queue_task_tag(ci["id"] if "id" in ci else ci["_resolved_op"], ci);
         ci_op = ci["_resolved_op"];
         ci_result = ci["result"] if "result" in ci else "";
         ci_time = ci["completed_at"] if "completed_at" in ci else "";
@@ -1321,8 +1399,8 @@ def:pub Dashboard -> Any {
 
     active_tasks_nodes = [];
     for task in active_tasks {
-        c_step = task["current_step"];
-        tag = task["tag"];
+        c_step = task["current_step"] if "current_step" in task and task["current_step"] else "Queued";
+        tag = infer_queue_task_tag(task["id"] if "id" in task else "", task);
         
         track_nodes = [];
         steps = ["Queued", "Starting", "Monitoring", "Generating", "Validating", "Benchmarking"] if tag == "[GEN]" else ["Queued", "Starting", "Generating", "Validating", "Profiling"];
@@ -1361,17 +1439,27 @@ def:pub Dashboard -> Any {
         
         status_label = c_step;
         if c_step == "Done" {
-            status_label = "Done " + (task["result"] if "result" in task else "");
+            if tag == "[OPT]" {
+                status_label = "Optimized " + (task["result"] if "result" in task else "");
+            } else {
+                status_label = "Benchmarked " + (task["result"] if "result" in task else "");
+            }
+        } elif c_step == "Iter Complete" {
+            status_label = "Iteration done " + (task["result"] if "result" in task else "");
+        } elif c_step == "Iter Failed" {
+            status_label = "Iteration failed";
         } elif c_step == "Failed" {
             status_label = "Failed";
         }
         
         bar_w = "0%";
-        if c_step == "Monitoring" { bar_w = "10%"; }
+        if c_step == "Starting" { bar_w = "5%"; }
+        elif c_step == "Monitoring" { bar_w = "10%"; }
         elif c_step == "Generating" { bar_w = "33%"; }
         elif c_step == "Validating" { bar_w = "55%"; }
         elif c_step == "Benchmarking" { bar_w = "80%"; }
         elif c_step == "Profiling" { bar_w = "80%"; }
+        elif c_step == "Iter Complete" or c_step == "Iter Failed" { bar_w = "90%"; }
         elif c_step == "Done" { bar_w = "100%"; }
         
         sub_info = "";
@@ -1385,7 +1473,7 @@ def:pub Dashboard -> Any {
             sub_info = sub_info + (task["result"] if "result" in task else "validation failed");
         } else {
             atmpt = str(task["attempt_current"] if "attempt_current" in task else 1);
-            max_atmpt = str(task["attempt_max"] if "attempt_max" in task else 3);
+            max_atmpt = str(queue_attempt_limit(task["id"] if "id" in task else "", task));
             sub_info = sub_info + f"attempt {atmpt}/{max_atmpt}";
         }
         
@@ -1419,6 +1507,17 @@ def:pub Dashboard -> Any {
     totalPytorchMs = 0.0;
     totalForgedMs = 0.0;
     operatorRows = [];
+    # Build lookup sets for operators with success/failure markers on disk
+    generated_ops_list = status["generated_ops"] if status and "generated_ops" in status else [];
+    generated_ops_set = {};
+    for gop in to_list(generated_ops_list) {
+        generated_ops_set[str(gop)] = True;
+    }
+    failed_ops_list = status["failed_ops"] if status and "failed_ops" in status else [];
+    failed_ops_set = {};
+    for fop in to_list(failed_ops_list) {
+        failed_ops_set[str(fop)] = True;
+    }
 
     for op in to_list(ops) {
         if not op or not ("name" in op) or not op["name"] {
@@ -1457,27 +1556,68 @@ def:pub Dashboard -> Any {
                 break;
             }
         }
-
+        # Fallback: use MCTS tree best_value when benchmarks haven't produced forged data
+        if best_ms == "--" and mctsSummary and "ops" in mctsSummary {
+            mcts_ops = to_list(mctsSummary["ops"]);
+            for ms_op in mcts_ops {
+                if ms_op and "op" in ms_op and op_matches(str(ms_op["op"]), op_name) {
+                    tree_best = to_num(ms_op["best_value"] if "best_value" in ms_op else None);
+                    if tree_best != None and tree_best > 0 {
+                        best_ms = format_tick_ms(tree_best);
+                        # Compute speedup if we have a baseline
+                        b_raw = to_num(baseline_ms) if baseline_ms != "--" else None;
+                        if b_raw != None and b_raw > 0 {
+                            r_val = b_raw / tree_best;
+                            speedup = f"{r_val.toFixed(2)}×";
+                            ratio_for_sort = r_val;
+                            if r_val > 1.001 {
+                                is_forged = True;
+                                op_count_raw = op["count"] if "count" in op else 1;
+                                op_count_n = parseInt(f"{op_count_raw}") if op_count_raw else 1;
+                                if not op_count_n or op_count_n <= 0 { op_count_n = 1; }
+                                totalPytorchMs = totalPytorchMs + b_raw * op_count_n;
+                                totalForgedMs = totalForgedMs + tree_best * op_count_n;
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        # Determine baseline status from persistent data (survives clears)
         op_status = "Not started";
-        # Check completed tasks (newest first)
+        if is_forged {
+            op_status = "Forged ✓";
+        } elif best_ms != "--" {
+            op_status = "Benchmarked";
+        } elif generated_ops_set and op_name in generated_ops_set {
+            op_status = "Benchmarked";
+        } elif failed_ops_set and op_name in failed_ops_set {
+            op_status = "Failed";
+        }
+        # Check completed tasks (newest first) — can override baseline
         for ct in completed_list {
-            if ct["_resolved_op"] == op_name {
-                op_status = str(ct["current_step"]);
+            if str(ct["_resolved_op"]) == op_name {
+                step = str(ct["current_step"]);
+                ct_tag = infer_queue_task_tag(ct["id"] if "id" in ct else ct["_resolved_op"], ct);
+                if step == "Done" {
+                    op_status = "Optimized" if ct_tag == "[OPT]" else "Benchmarked";
+                } else {
+                    op_status = step;
+                }
                 break;
             }
         }
         # Active tasks override completed ones
         for task in active_tasks {
             if str(task["op_name"]) == op_name {
-                op_status = str(task["current_step"]);
-            }
-        }
-
-        if op_status == "Not started" {
-            if is_forged {
-                op_status = "Forged ✓";
-            } elif best_ms != "--" {
-                op_status = "Benchmarked";
+                step = str(task["current_step"]);
+                t_tag = infer_queue_task_tag(task["id"] if "id" in task else task["op_name"], task);
+                if step == "Done" or step == "Iter Complete" {
+                    op_status = "Optimized" if t_tag == "[OPT]" else "Benchmarked";
+                } else {
+                    op_status = step;
+                }
             }
         }
 
@@ -1510,8 +1650,8 @@ def:pub Dashboard -> Any {
         a_stat = a["status"] if "status" in a else "Not started";
         b_stat = b["status"] if "status" in b else "Not started";
 
-        a_active = a_stat != "Not started" and a_stat != "Forged ✓" and a_stat != "Benchmarked";
-        b_active = b_stat != "Not started" and b_stat != "Forged ✓" and b_stat != "Benchmarked";
+        a_active = a_stat != "Not started" and a_stat != "Forged ✓" and a_stat != "Benchmarked" and a_stat != "Optimized" and a_stat != "Failed";
+        b_active = b_stat != "Not started" and b_stat != "Forged ✓" and b_stat != "Benchmarked" and b_stat != "Optimized" and b_stat != "Failed";
         if a_active and not b_active { return -1; }
         if not a_active and b_active { return 1; }
 
@@ -1544,9 +1684,12 @@ def:pub Dashboard -> Any {
         row_status_color = "text-zinc-500";
         if r_stat == "Forged ✓" { row_status_color = "text-emerald-400"; }
         elif r_stat == "Benchmarked" { row_status_color = "text-yellow-400"; }
+        elif r_stat == "Optimized" { row_status_color = "text-purple-400"; }
+        elif r_stat == "Failed" { row_status_color = "text-red-400"; }
+        elif r_stat == "Queued" { row_status_color = "text-blue-400"; }
         elif r_stat != "Not started" and r_stat != "Done" { row_status_color = "text-[var(--accent-orange)] animate-pulse"; }
         
-        action_text = "Optimize" if r_stat == "Benchmarked" or r_stat == "Forged ✓" or r_stat == "Done" else "Generate";
+        action_text = "Optimize" if r_stat == "Benchmarked" or r_stat == "Forged ✓" or r_stat == "Done" or r_stat == "Optimized" or r_best != "--" else "Generate";
         
         action_colors = "border-[var(--accent-orange)]/40 text-[var(--accent-orange)] hover:bg-[var(--accent-orange)] hover:text-zinc-950" if action_text == "Optimize" else "border-zinc-600 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 hover:border-zinc-500";
         
@@ -1628,7 +1771,7 @@ def:pub Dashboard -> Any {
                     <div className="p-3 border-b border-[var(--border)] bg-zinc-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div className="flex items-center gap-3 shrink-0">
                             <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-200">
-                                Work Queue {("(" + current_operator + ")") if current_operator else ""}
+                                Work Queue
                             </h3>
                             <button
                                 onClick={lambda -> None { __jacSpawn("ClearProjectQueue", "", {"projectName": name}).then(lambda _r: any -> None { refreshData();});}}

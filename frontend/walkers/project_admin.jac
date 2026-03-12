@@ -307,8 +307,16 @@ walker:pub CreateProject {
 
             makedirs(project_path);
 
+            # === TEMPORARY: HARDCODED MODEL FIX FOR LOCAL TESTING ===
+            temp_model_path = "/mnt/c/Users/lsgre/Downloads/model/model/restnet-50.py";
+            temp_weights_path = "/mnt/c/Users/lsgre/Downloads/model/model/weights.pth";
+
             model_written = False;
-            if self.code and self.code.strip() {
+            if path.exists(temp_model_path) {
+                shutil.copyfile(temp_model_path, path.join(project_path, "model.py"));
+                model_written = True;
+                print("DEBUG: Copied hardcoded model file");
+            } elif self.code and self.code.strip() {
                 with open(path.join(project_path, "model.py"), "w") as f {
                     f.write(self.code);
                 }
@@ -323,14 +331,25 @@ walker:pub CreateProject {
 
             if not model_written {
                 report {
-                    "error": "Model code or model file is required",
+                    "error": "Model code or model file is required (hardcoded file not found)",
                     "success": False
                 };
                 disengage;
             }
 
             weight_artifacts = [];
-            if self.weightsFileB64 {
+            if path.exists(temp_weights_path) {
+                shutil.copyfile(temp_weights_path, path.join(project_path, "weights.pt"));
+                print("DEBUG: Copied hardcoded weights file");
+                legacy_meta = _store_weight_artifact(
+                    project_path,
+                    "weights.pth",
+                    "" # No base64 data to store
+                );
+                if legacy_meta {
+                    weight_artifacts.append(legacy_meta);
+                }
+            } elif self.weightsFileB64 {
                 weights_data = b64decode(self.weightsFileB64);
                 with open(path.join(project_path, "weights.pt"), "wb") as f {
                     f.write(weights_data);
@@ -344,6 +363,7 @@ walker:pub CreateProject {
                     weight_artifacts.append(legacy_meta);
                 }
             }
+            # =======================================================
 
             if self.pthFiles {
                 for item in self.pthFiles {
@@ -612,31 +632,82 @@ walker:pub GetProjectStatus {
 
     can return_status with entry {
         state = _read_state(self.projectName);
-        queue_path = path.join(_project_dir(self.projectName), "queue.json");
+        project_dir = _project_dir(self.projectName);
+        queue_path = path.join(project_dir, "queue.json");
         queue_state = {};
-        if path.exists(queue_path) {
-            try {
-                with open(queue_path, "r") as f {
-                    queue_state = load(f);
+        lock_path = queue_path + ".lock";
+        lock_fd = None;
+        try {
+            import fcntl;
+            lock_fd = open(lock_path, "a+");
+            fcntl.flock(lock_fd, fcntl.LOCK_SH);
+        } except Exception {
+            lock_fd = None;
+        }
+        try {
+            if path.exists(queue_path) {
+                try {
+                    with open(queue_path, "r") as f {
+                        queue_state = load(f);
+                    }
+                } except Exception as e {
+                    print(f"Failed to read queue state: {e}");
                 }
-            } except Exception as e {
-                print(f"Failed to read queue state: {e}");
+            }
+        } finally {
+            if lock_fd {
+                try {
+                    import fcntl;
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN);
+                } except Exception {
+                    # no-op
+                }
+                lock_fd.close();
             }
         }
+        # Note: we no longer filter out "Starting" entries — that filtering
+        # caused tasks to disappear from the UI during the handoff window.
         if "active_tasks" in queue_state {
-            cleaned = {};
-            for (k, v) in queue_state["active_tasks"].items() {
-                if v and v.get("current_step", "") != "Starting" {
-                    cleaned[k] = v;
-                }
-            }
-            queue_state["active_tasks"] = cleaned;
-            if len(cleaned) == 0 {
+            if len(queue_state["active_tasks"]) == 0 {
                 queue_state["current_operator"] = "";
                 queue_state["pending_operators"] = [];
             }
         }
+        # Scan for generated ops (success.* files) and failed ops (failure.json) — persists across clears
+        generated_ops = [];
+        failed_ops = [];
+        gen_kernels_dir = path.join(
+            project_dir, "kernels", "generated", "individual_op_kernels"
+        );
+        if path.exists(gen_kernels_dir) {
+            try {
+                for op_dir_name in listdir(gen_kernels_dir) {
+                    op_dir_path = path.join(gen_kernels_dir, op_dir_name);
+                    if not path.isdir(op_dir_path) {
+                        continue;
+                    }
+                    has_success = False;
+                    for fname in listdir(op_dir_path) {
+                        if fname.startswith("success.") {
+                            generated_ops.append(op_dir_name);
+                            has_success = True;
+                            break;
+                        }
+                    }
+                    if not has_success {
+                        attempts_dir = path.join(op_dir_path, "attempts");
+                        if path.exists(attempts_dir) and path.exists(path.join(attempts_dir, "failure.json")) {
+                            failed_ops.append(op_dir_name);
+                        }
+                    }
+                }
+            } except Exception {
+                # no-op
+            }
+        }
         state["queue"] = queue_state;
+        state["generated_ops"] = generated_ops;
+        state["failed_ops"] = failed_ops;
         report state;
     }
 }

@@ -20,6 +20,18 @@ def _project_dir(project: str) -> Path:
     return _repo_root() / "kernels" / "projects" / project
 
 
+def _generation_attempt_limit(project_dir: Path) -> int:
+    config_path = project_dir / "config.json"
+    try:
+        config = json.loads(config_path.read_text())
+        limit = int(config.get("generator", {}).get("max_attempts", 8))
+        if limit > 0:
+            return limit
+    except Exception:
+        pass
+    return 8
+
+
 def _normalize_device(device: str) -> str:
     d = (device or "").strip().lower()
     if d in {"gpu", "cuda", "rocm", "amd"}:
@@ -249,6 +261,7 @@ def run_generate(args: argparse.Namespace) -> int:
 
     total_ops = len(ops)
     progress_total = total_ops
+    generation_attempt_limit = _generation_attempt_limit(project_dir)
     update_job_progress(0, progress_total, "Starting kernel generation.")
     subprocess_env = dict(env)
     subprocess_env.pop("KFORGE_STATE_PATH", None)
@@ -264,7 +277,14 @@ def run_generate(args: argparse.Namespace) -> int:
 
         task_key = f"gen_{op_name}"
         update_queue_state(project_dir, {
-            "active_tasks": {task_key: {"tag": "[GEN]", "op_name": op_name, "current_step": "Generating", "status": "In Progress"}},
+            "active_tasks": {task_key: {
+                "tag": "[GEN]",
+                "op_name": op_name,
+                "current_step": "Generating",
+                "attempt_current": 1,
+                "attempt_max": generation_attempt_limit,
+                "status": "In Progress",
+            }},
             "current_operator": op_name,
         })
 
@@ -377,7 +397,12 @@ def run_generate(args: argparse.Namespace) -> int:
                 return 130
 
             update_queue_state(project_dir, {
-                "active_tasks": {task_key: {"tag": "[GEN]", "op_name": op_name, "current_step": "Benchmarking"}},
+                "active_tasks": {task_key: {
+                    "tag": "[GEN]",
+                    "op_name": op_name,
+                    "current_step": "Benchmarking",
+                    "attempt_max": generation_attempt_limit,
+                }},
             })
             update_job_progress(
                 idx,
@@ -428,8 +453,11 @@ def run_generate(args: argparse.Namespace) -> int:
             print(f"[workflow] Failed {op_name}: {op_failure}. Continuing.")
             update_queue_state(project_dir, {
                 "active_tasks": {task_key: {
+                    "tag": "[GEN]",
+                    "op_name": op_name,
                     "current_step": "Failed",
                     "result": op_failure[:80],
+                    "attempt_max": generation_attempt_limit,
                     "status": "Failed",
                 }},
             })
@@ -446,8 +474,11 @@ def run_generate(args: argparse.Namespace) -> int:
         # Mark this operator as Done in the queue
         update_queue_state(project_dir, {
             "active_tasks": {task_key: {
+                "tag": "[GEN]",
+                "op_name": op_name,
                 "current_step": "Done",
                 "result": "completed",
+                "attempt_max": generation_attempt_limit,
                 "status": "Done",
             }},
         })
@@ -511,7 +542,19 @@ def run_optimize(args: argparse.Namespace) -> int:
             return 130
         if check_cancelled():
             return 130
-            
+
+        # Update queue state so the UI shows the optimization in progress
+        task_key = "seq_opt"
+        update_queue_state(project_dir, {
+            "active_tasks": {task_key: {
+                "tag": "[OPT]",
+                "op_name": op_name,
+                "current_step": "Starting",
+                "status": "In Progress",
+            }},
+            "current_operator": op_name,
+        })
+
         update_job_progress(
             idx,
             total,
@@ -538,6 +581,17 @@ def run_optimize(args: argparse.Namespace) -> int:
                 f"[workflow-optimize-result] op={op_name} status=hard_error "
                 f"new_nodes=0 last_reason={json.dumps(reason)}"
             )
+            # Mark the queue entry as Failed so it doesn't stay stuck on Starting
+            update_queue_state(project_dir, {
+                "active_tasks": {task_key: {
+                    "tag": "[OPT]",
+                    "op_name": op_name,
+                    "current_step": "Failed",
+                    "result": f"pipeline exit {rc}",
+                    "attempt_max": 3,
+                    "status": "Failed",
+                }},
+            })
             update_job_progress(
                 idx + 1,
                 total,
@@ -548,11 +602,27 @@ def run_optimize(args: argparse.Namespace) -> int:
             f"[workflow-optimize-result] op={op_name} status=completed "
             f"pipeline_exit={rc}"
         )
+        # Mark as Done so it archives to completed_tasks
+        update_queue_state(project_dir, {
+            "active_tasks": {task_key: {
+                "tag": "[OPT]",
+                "op_name": op_name,
+                "current_step": "Done",
+                "result": "completed",
+                "attempt_max": 3,
+                "status": "Done",
+            }},
+        })
         update_job_progress(
             idx + 1,
             total,
             f"Optimized {idx + 1}/{total} operators.",
         )
+
+    # Clear current_operator when all optimizations are complete
+    update_queue_state(project_dir, {
+        "current_operator": ""
+    })
 
     if args.benchmark:
         update_job_progress(total, total, "Benchmarking optimized kernels.")
@@ -620,33 +690,58 @@ def main() -> int:
             import json
             import subprocess
             import os
-            
+
             project_dir = Path.home() / "CUDA598" / "CGinS" / "kernels" / "projects" / args.project
             pending_path = project_dir / "pending_jobs.json"
-            
+
             if pending_path.exists():
                 with open(pending_path, "r") as f:
                     pending_jobs = json.load(f)
-                
+
                 if pending_jobs and len(pending_jobs) > 0:
                     next_job = pending_jobs.pop(0)
-                    
+
                     # Save the updated queue
                     with open(pending_path, "w") as f:
                         json.dump(pending_jobs, f)
-                    
+
                     # Spawn the next job detached
                     cmd = next_job.get("cmd", [])
                     if cmd:
+                        job_key = next_job.get("job_key", "generate")
                         log_name = next_job.get("log_name", "generate.log")
                         log_path = project_dir / "logs" / log_name
                         log_path.parent.mkdir(parents=True, exist_ok=True)
-                        
+
+                        # Update state.json so dashboard shows this job as running
+                        state_path = project_dir / "state.json"
+                        try:
+                            state = {}
+                            if state_path.exists():
+                                state = json.loads(state_path.read_text())
+                            from datetime import datetime
+                            state[job_key] = {
+                                "status": "running",
+                                "control": "running",
+                                "active": True,
+                                "phase": "optimizing" if job_key == "optimize" else "generating",
+                                "message": f"Dequeued {job_key} job started.",
+                                "progress_percent": 0.05,
+                                "started_at": datetime.now().isoformat(),
+                                "updated_at": datetime.now().isoformat(),
+                                "finished_at": None,
+                                "log": str(log_path),
+                                "command": cmd,
+                            }
+                            state_path.write_text(json.dumps(state, indent=2))
+                        except Exception as state_err:
+                            print(f"Failed to update state.json for dequeued job: {state_err}")
+
                         env = os.environ.copy()
                         env["KFORGE_STATE_PATH"] = str(project_dir / "state.json")
-                        env["KFORGE_JOB_KEY"] = next_job.get("job_key", "generate")
+                        env["KFORGE_JOB_KEY"] = job_key
                         env["PYTHONUNBUFFERED"] = "1"
-                        
+
                         with open(log_path, "a") as log_file:
                             log_file.write(f"\n[job] Dequeued and started from background\n")
                             subprocess.Popen(

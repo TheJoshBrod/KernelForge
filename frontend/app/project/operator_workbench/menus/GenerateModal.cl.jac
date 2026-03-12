@@ -220,18 +220,30 @@ def:pub GenerateModal(props: any) -> Any {
 
     # Update default target device if current selection is invalid
     useEffect(
-        lambda -> None { current_valid = False;for dev in available_devices {
+        lambda -> None {
+        # Don't reset device until hwInfo has actually loaded — otherwise
+        # the first render (hwInfo=null → available=[Triton only]) will
+        # overwrite the user's saved preference with "triton".
+        hw_loaded = hwInfo and (("cuda_available" in hwInfo) or ("mps_available" in hwInfo));
+        if not hw_loaded and not selected_gpu_info {
+            return;
+        }
+        current_valid = False;
+        for dev in available_devices {
             if dev["value"] == targetDevice {
                 current_valid = True;
                 break;
             }
-        }if not current_valid and available_devices.length > 0 {
-            setTargetDevice(available_devices[0]["value"]);
         }
-        # Persist selection to localStorage
-        try {
-            localStorage.setItem("kforge_target_device", targetDevice);
-        } except Exception {}},
+        if not current_valid and available_devices.length > 0 {
+            setTargetDevice(available_devices[0]["value"]);
+            # Don't persist auto-reset — keep user's saved preference
+        } else {
+            # Only persist when the current device IS valid (explicit user choice)
+            try {
+                localStorage.setItem("kforge_target_device", targetDevice);
+            } except Exception {}
+        }},
         [hwInfo, targetDevice]
     );
 
@@ -269,7 +281,7 @@ def:pub GenerateModal(props: any) -> Any {
         # (before the blocking server call)
         onClose();
         if onStarted {
-            onStarted(None, [selectedOp]);
+            onStarted(None, [selectedOp], "[GEN]");
         }
 
         try {

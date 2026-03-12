@@ -64,6 +64,8 @@ def update_queue_state(proj_base_dir: Path, updates: dict):
             state["current_operator"] = updates["current_operator"]
 
         # Auto-archive Done/Failed tasks from active_tasks
+        # Note: "Iter Complete" and "Iter Failed" are NOT archived — they are
+        # intermediate states used during multi-iteration optimization loops.
         done_keys = []
         for k, v in state["active_tasks"].items():
             step = v.get("current_step", "")
@@ -74,6 +76,12 @@ def update_queue_state(proj_base_dir: Path, updates: dict):
             archived["id"] = k
             archived["completed_at"] = int(time.time() * 1000)
             state["completed_tasks"].append(archived)
+            # Remove completed op from pending_operators
+            completed_op = archived.get("op_name", "")
+            if completed_op and "pending_operators" in state:
+                state["pending_operators"] = [
+                    p for p in state["pending_operators"] if p != completed_op
+                ]
         # Cap completed list at 200 entries
         if len(state["completed_tasks"]) > 200:
             state["completed_tasks"] = state["completed_tasks"][-200:]
@@ -911,11 +919,11 @@ Examples:
         operators_to_process = [d for d in proj_dir.iterdir() if d.is_dir()]
         print(f"Processing all operators ({len(operators_to_process)} found)")
 
-    # Initialize queue status
+    # Initialize queue status — preserve existing active_tasks so we don't
+    # wipe entries written by _write_initial_queue_state before pipeline.py starts.
     proj_base_dir = proj_dir.parent
     update_queue_state(proj_base_dir, {
         "pending_operators": [d.name for d in operators_to_process],
-        "active_tasks": {},
         "benchmark_slot": {"now": None, "pending": []},
         "current_operator": ""
     })
@@ -972,7 +980,9 @@ Examples:
             op_last_reason = ""
             task_key = "seq_opt"
             retry_limit = getattr(settings, 'retry_limit', 3)
-            for i in range(args.max_iterations):
+            total_iters = args.max_iterations
+            for i in range(total_iters):
+                is_last = (i == total_iters - 1)
                 # Select parent node then optimize off of it
                 parent_node = mcts.choose_optimization(paths)
                 update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
@@ -984,7 +994,7 @@ Examples:
                     "parent_ref": f"kernel_{parent_node.id}",
                     "status": "In Progress",
                     "iter_current": i + 1,
-                    "iter_max": args.max_iterations,
+                    "iter_max": total_iters,
                 }}})
                 new_node, failure_reason = optimize(
                     backend, gpu_specs, paths, parent_node, ssh_config, model=model_name,
@@ -999,22 +1009,28 @@ Examples:
                         op_new_nodes += 1
                         op_last_reason = ""
                         speedup = parent_node.value / new_node.value if new_node.value > 0 else 1.0
+                        # Use "Done" only on last iteration to trigger archiving;
+                        # otherwise use "Iter Complete" which is NOT auto-archived.
+                        step_name = "Done" if is_last else "Iter Complete"
                         update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
-                            "current_step": "Done",
+                            "current_step": step_name,
                             "result": f"{speedup:.2f}x",
-                            "status": "Done",
+                            "status": step_name,
                         }}})
                     else:
+                        step_name = "Failed" if is_last else "Iter Failed"
+                        display_step = step_name if is_last else "Validating"
                         update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
-                            "current_step": "Failed",
+                            "current_step": display_step,
                             "result": "validation failed",
-                            "status": "Failed",
+                            "status": step_name,
                         }}})
                 else:
+                    step_name = "Failed" if is_last else "Iter Failed"
                     update_queue_state(proj_base_dir, {"active_tasks": {task_key: {
-                        "current_step": "Failed",
+                        "current_step": step_name,
                         "result": "no kernel produced",
-                        "status": "Failed",
+                        "status": step_name,
                     }}})
 
                 if (i + 1) % 10 == 0:

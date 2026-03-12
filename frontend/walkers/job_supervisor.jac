@@ -27,6 +27,47 @@ def:pub _project_dir(name: str) -> str {
     return path.join(_projects_base_dir(), name);
 }
 
+def _generator_attempt_limit(project_name: str, fallback: int = 8) -> int {
+    cfg_path = path.join(_project_dir(project_name), "config.json");
+    try {
+        if path.exists(cfg_path) {
+            with open(cfg_path, "r") as f {
+                cfg = load(f);
+            }
+            if cfg and "generator" in cfg and "max_attempts" in cfg["generator"] {
+                limit = int(cfg["generator"]["max_attempts"]);
+                if limit > 0 {
+                    return limit;
+                }
+            }
+        }
+    } except Exception {
+        # no-op
+    }
+    return fallback;
+}
+
+def _queue_task_entry(
+    project_name: str,
+    op_name: Any,
+    tag: str,
+    current_step: str = "",
+    status: str = ""
+) -> dict {
+    is_opt = tag == "[OPT]";
+    step = current_step if current_step else ("Starting" if is_opt else "Monitoring");
+    state_text = status if status else "Starting";
+    attempt_limit = 3 if is_opt else _generator_attempt_limit(project_name);
+    return {
+        "tag": tag,
+        "op_name": str(op_name),
+        "current_step": step,
+        "attempt_current": 1,
+        "attempt_max": attempt_limit,
+        "status": state_text
+    };
+}
+
 def:pub _migrate_legacy_projects() -> None {
     projects_dir = _projects_base_dir();
     legacy_roots = [
@@ -376,6 +417,14 @@ def:pub _normalize_job_flags(project_name: str, state: dict, state_path: str) ->
             and (not ("progress_percent" in job) or job["progress_percent"] is None) {
                 job["progress_percent"] = 1.0;
             }
+            if (status_raw == "completed" or status_raw == "success")
+            and (
+                not ("result" in job)
+                or not job["result"]
+                or str(job["result"]).strip().lower() == "error"
+            ) {
+                job["result"] = "completed";
+            }
             changed = True;
             continue;
         }
@@ -453,6 +502,7 @@ def:pub _normalize_job_flags(project_name: str, state: dict, state_path: str) ->
                 job["active"] = False;
                 job["phase"] = "done";
                 job["progress_percent"] = 1.0;
+                job["result"] = "completed";
                 if _has_benchmark_outputs_after(project_name, started_at) {
                     if not ("message" in job) or not job["message"] {
                         job["message"] = "Kernel generation and benchmark completed.";
@@ -1206,61 +1256,113 @@ def:pub _start_job(project_name: str, job_key: str, cmd: list, log_name: str) ->
     return {"success": True, "pid": proc.pid, "log": log_path};
 }
 
-def:pub _write_initial_queue_state(project_name: str, ops_list: list, tag: str) -> None {
+def:pub _write_initial_queue_state(
+    project_name: str,
+    ops_list: list,
+    tag: str,
+    initial_step: str = "",
+    initial_status: str = "",
+    update_current_operator: bool = True
+) -> None {
     queue_path = path.join(_project_dir(project_name), "queue.json");
-    active_tasks = {};
+    lock_path = queue_path + ".lock";
+    new_tasks = {};
     if tag == "[OPT]" {
         # Sequential optimize mode uses "seq_opt" as the task key — match it
         if len(ops_list) > 0 {
-            active_tasks["seq_opt"] = {
-                "tag": "[OPT]",
-                "op_name": str(ops_list[0]),
-                "current_step": "Starting",
-                "attempt_current": 1,
-                "attempt_max": 3,
-                "status": "Starting"
-            };
+            new_tasks["seq_opt"] = _queue_task_entry(
+                project_name,
+                ops_list[0],
+                "[OPT]",
+                initial_step,
+                initial_status
+            );
         }
     } else {
         for op in ops_list {
-            active_tasks["gen_" + str(op)] = {
-                "tag": "[GEN]",
-                "op_name": str(op),
-                "current_step": "Monitoring",
-                "attempt_current": 1,
-                "attempt_max": 1,
-                "status": "Starting"
-            };
+            new_tasks["gen_" + str(op)] = _queue_task_entry(
+                project_name,
+                op,
+                "[GEN]",
+                initial_step,
+                initial_status
+            );
         }
     }
-    # Preserve existing completed_tasks history
-    existing_completed = [];
+    lock_fd = None;
     try {
-        if path.exists(queue_path) {
-            with open(queue_path, "r") as f {
-                existing = load(f);
-                if existing and "completed_tasks" in existing {
-                    existing_completed = existing["completed_tasks"];
+        import fcntl;
+        lock_fd = open(lock_path, "w");
+        fcntl.flock(lock_fd, fcntl.LOCK_EX);
+    } except Exception {
+        lock_fd = None;
+    }
+    try {
+        # Read existing queue state so we MERGE rather than overwrite
+        existing_state = {};
+        try {
+            if path.exists(queue_path) {
+                with open(queue_path, "r") as f {
+                    existing_state = load(f);
                 }
             }
+        } except Exception {
+            existing_state = {};
         }
-    } except Exception {
-        # If we can't read, start fresh
-        existing_completed = [];
-    }
-    queue_data = {
-        "pending_operators": [str(o) for o in ops_list],
-        "active_tasks": active_tasks,
-        "benchmark_slot": {"now": None, "pending": []},
-        "current_operator": str(ops_list[0]) if len(ops_list) > 0 else "",
-        "completed_tasks": existing_completed
-    };
-    try {
-        with open(queue_path, "w") as f {
-            dump(queue_data, f);
+        # Merge: keep existing active_tasks and add new ones without clobbering
+        # unrelated metadata written by the live backend.
+        existing_active = existing_state.get("active_tasks", {}) if existing_state else {};
+        for (task_key, task_data) in new_tasks.items() {
+            if task_key in existing_active and existing_active[task_key] {
+                merged_task = existing_active[task_key];
+                merged_task.update(task_data);
+                existing_active[task_key] = merged_task;
+            } else {
+                existing_active[task_key] = task_data;
+            }
         }
-    } except Exception as e {
-        print(f"Failed to write initial queue state: {e}");
+        existing_completed = existing_state.get("completed_tasks", []) if existing_state else [];
+        existing_pending = existing_state.get("pending_operators", []) if existing_state else [];
+        # Merge pending operators (add new ones not already in list)
+        pending_set = {};
+        for p in existing_pending {
+            pending_set[str(p)] = True;
+        }
+        merged_pending = list(existing_pending);
+        for o in ops_list {
+            if str(o) not in pending_set {
+                merged_pending.append(str(o));
+            }
+        }
+        current_operator = (
+            str(ops_list[0])
+            if update_current_operator and len(ops_list) > 0
+            else (existing_state.get("current_operator", "") if existing_state else "")
+        );
+        queue_data = {
+            "pending_operators": merged_pending,
+            "active_tasks": existing_active,
+            "benchmark_slot": existing_state.get("benchmark_slot", {"now": None, "pending": []}) if existing_state else {"now": None, "pending": []},
+            "current_operator": current_operator,
+            "completed_tasks": existing_completed
+        };
+        try {
+            with open(queue_path, "w") as f {
+                dump(queue_data, f);
+            }
+        } except Exception as e {
+            print(f"Failed to write initial queue state: {e}");
+        }
+    } finally {
+        if lock_fd {
+            try {
+                import fcntl;
+                fcntl.flock(lock_fd, fcntl.LOCK_UN);
+            } except Exception {
+                # no-op
+            }
+            lock_fd.close();
+        }
     }
 }
 

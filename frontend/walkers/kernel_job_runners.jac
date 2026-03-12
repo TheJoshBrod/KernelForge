@@ -132,32 +132,14 @@ walker:pub StartGenerate {
         result = _start_job(self.projectName, "generate", cmd, "generate.log");
         if result and "success" in result and result["success"] {
             if "queued" in result and result["queued"] {
-                # Add to queue.json as "Queued"
-                queue_path = path.join(_project_dir(self.projectName), "queue.json");
-                try {
-                    queue_data = {"active_tasks": {}, "pending_operators": []};
-                    if path.exists(queue_path) {
-                        with open(queue_path, "r") as f {
-                            queue_data = load(f);
-                        }
-                    }
-                    if not ("active_tasks" in queue_data) { queue_data["active_tasks"] = {}; }
-                    for op in ops_list {
-                        queue_data["active_tasks"]["gen_" + str(op)] = {
-                            "tag": "[GEN]",
-                            "op_name": str(op),
-                            "current_step": "Queued",
-                            "attempt_current": 1,
-                            "attempt_max": 1,
-                            "status": "queued"
-                        };
-                    }
-                    with open(queue_path, "w") as f {
-                        dump(queue_data, f);
-                    }
-                } except Exception as e {
-                    print(f"Failed to write queued state: {e}");
-                }
+                _write_initial_queue_state(
+                    self.projectName,
+                    ops_list,
+                    "[GEN]",
+                    "Queued",
+                    "queued",
+                    False
+                );
             } else {
                 _write_initial_queue_state(self.projectName, ops_list, "[GEN]");
             }
@@ -247,30 +229,14 @@ walker:pub StartOptimize {
         result = _start_job(self.projectName, "optimize", cmd, "optimize.log");
         if result and "success" in result and result["success"] {
             if "queued" in result and result["queued"] {
-                # Add to queue.json as "Queued"
-                queue_path = path.join(_project_dir(self.projectName), "queue.json");
-                try {
-                    queue_data = {"active_tasks": {}, "pending_operators": []};
-                    if path.exists(queue_path) {
-                        with open(queue_path, "r") as f {
-                            queue_data = load(f);
-                        }
-                    }
-                    if not ("active_tasks" in queue_data) { queue_data["active_tasks"] = {}; }
-                    queue_data["active_tasks"]["seq_opt"] = {
-                        "tag": "[OPT]",
-                        "op_name": str(ops_list[0]) if len(ops_list) > 0 else "unknown",
-                        "current_step": "Queued",
-                        "attempt_current": 1,
-                        "attempt_max": 3,
-                        "status": "queued"
-                    };
-                    with open(queue_path, "w") as f {
-                        dump(queue_data, f);
-                    }
-                } except Exception as e {
-                    print(f"Failed to write queued state: {e}");
-                }
+                _write_initial_queue_state(
+                    self.projectName,
+                    ops_list,
+                    "[OPT]",
+                    "Queued",
+                    "queued",
+                    False
+                );
             } else {
                 _write_initial_queue_state(self.projectName, ops_list, "[OPT]");
             }
@@ -336,21 +302,36 @@ walker:pub ClearProjectQueue {
                     state = load(f);
                 }
             }
+            # Cancel running processes by setting their state to cancelled
             existing = state.get("active_tasks", {}) if state else {};
-            kept = {};
             for (k, v) in existing.items() {
                 step = v.get("current_step", "") if v else "";
                 if step in active_steps {
-                    kept[k] = v;
+                    # Try to cancel via state.json
+                    try {
+                        _update_job_state(self.projectName, "generate", {"control": "cancelled", "status": "cancelled"});
+                        _update_job_state(self.projectName, "optimize", {"control": "cancelled", "status": "cancelled"});
+                    } except Exception {
+                        # best effort
+                    }
                 }
             }
-            state["active_tasks"] = kept;
+            state["active_tasks"] = {};
             state["pending_operators"] = [];
             state["current_operator"] = "";
             state["benchmark_slot"] = {"now": None, "pending": []};
-            state["completed_tasks"] = [];
+            # Preserve completed_tasks — clearing them is handled by
+            # the separate ClearCompletedTasks walker.
+            # state["completed_tasks"] is intentionally NOT cleared here.
             with open(queue_path, "w") as f {
                 dump(state, f);
+            }
+            # Also clear pending jobs file
+            pending_path = path.join(_project_dir(self.projectName), "pending_jobs.json");
+            if path.exists(pending_path) {
+                with open(pending_path, "w") as f {
+                    dump([], f);
+                }
             }
             report {"success": True};
         } except Exception as e {
@@ -364,16 +345,26 @@ walker:pub ClearCompletedTasks {
 
     can run with entry {
         queue_path = path.join(_project_dir(self.projectName), "queue.json");
+        lock_path = queue_path + ".lock";
         try {
-            state = {};
-            if path.exists(queue_path) {
-                with open(queue_path, "r") as f {
-                    state = load(f);
+            # Use file lock to prevent race with update_queue_state
+            import fcntl;
+            lock_fd = open(lock_path, "w");
+            fcntl.flock(lock_fd, fcntl.LOCK_EX);
+            try {
+                state = {};
+                if path.exists(queue_path) {
+                    with open(queue_path, "r") as f {
+                        state = load(f);
+                    }
                 }
-            }
-            state["completed_tasks"] = [];
-            with open(queue_path, "w") as f {
-                dump(state, f);
+                state["completed_tasks"] = [];
+                with open(queue_path, "w") as f {
+                    dump(state, f);
+                }
+            } finally {
+                fcntl.flock(lock_fd, fcntl.LOCK_UN);
+                lock_fd.close();
             }
             report {"success": True};
         } except Exception as e {
