@@ -16,6 +16,7 @@ def:pub NewKernel(props: any) -> Any {
     hasTree = props.hasTree if props and "hasTree" in props else False;
     gpuMismatch = props.gpuMismatch if props and "gpuMismatch" in props else False;
     onGpuMismatch = props.onGpuMismatch if props and "onGpuMismatch" in props else None;
+    onUploadSuccess = props.onUploadSuccess if props and "onUploadSuccess" in props else None;
 
     params = useParams();
     resolvedProjectName = projectName or params.projectName;
@@ -139,7 +140,7 @@ def:pub NewKernel(props: any) -> Any {
             <UploadModal
                 isOpen={uploadModalOpen}
                 onClose={lambda -> None { setUploadModalOpen(False);}}
-                onSuccess={lambda -> None { setIsOpen(False);}}
+                onSuccess={lambda -> None { setIsOpen(False); if onUploadSuccess { onUploadSuccess(); }}}
                 projectName={resolvedProjectName}
                 opName={resolvedOpName}
             />

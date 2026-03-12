@@ -712,6 +712,7 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         hasTree={hasTree}
                         gpuMismatch={gpuMismatch}
                         onGpuMismatch={lambda -> None { setGpuMismatchModalOpen(True);}}
+                        onUploadSuccess={lambda -> None {}}
                     />
                 </div>
             </div>

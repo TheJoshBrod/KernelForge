@@ -1,6 +1,6 @@
 """Home Page Component"""
 
-import from react { useEffect }
+import from react { useEffect, useState }
 import from "react-router-dom" { useNavigate }
 import from ...components.backdrops.EmberBackground { EmberBackground }
 import from ...components.ui.GlowButton { GlowButton }
@@ -9,21 +9,37 @@ import from ...components.SplashScreen { SplashScreen }
 
 def:pub Home -> Any {
     navigate = useNavigate();
-    has projects: list = [],
-        loading: bool = True,
-        splashDone: bool = (sessionStorage.getItem("splash_shown") == "true"),
-        searchQuery: str = "",
-        projectToDelete: str = "";
+
+    projects_state = useState([]);
+    projects = projects_state[0];
+    setProjects = projects_state[1];
+
+    loading_state = useState(True);
+    loading = loading_state[0];
+    setLoading = loading_state[1];
+
+    splash_done_state = useState(sessionStorage.getItem("splash_shown") == "true");
+    splashDone = splash_done_state[0];
+    setSplashDone = splash_done_state[1];
+
+    search_query_state = useState("");
+    searchQuery = search_query_state[0];
+    setSearchQuery = search_query_state[1];
+
+    project_to_delete_state = useState("");
+    projectToDelete = project_to_delete_state[0];
+    setProjectToDelete = project_to_delete_state[1];
 
     async def confirmDelete -> None {
         if not projectToDelete { return; }
+        deletingName = projectToDelete;
+        setProjectToDelete("");
+        setProjects(projects.filter(lambda p: any -> bool { return p["name"] != deletingName; }));
         try {
-            await __jacSpawn("DeleteProject", "", {"projectName": projectToDelete});
-            await fetchProjects();
+            await __jacSpawn("DeleteProject", "", {"projectName": deletingName});
         } except Exception as e {
             console.error("Failed to delete project:", e);
-        } finally {
-            projectToDelete = "";
+            await fetchProjects();
         }
     }
 
@@ -37,9 +53,9 @@ def:pub Home -> Any {
             else None;
 
             if data and data["projects"] {
-                projects = data["projects"];
+                setProjects(data["projects"]);
             } else {
-                projects = [];
+                setProjects([]);
             }
         } except Exception as e {
             console.error("Failed to fetch projects", e);
@@ -52,12 +68,12 @@ def:pub Home -> Any {
                 await Reflect.construct(Promise, [sleeper]);
                 sessionStorage.setItem("splash_shown", "true");
             }
-            loading = False;
-            splashDone = True;
+            setLoading(False);
+            setSplashDone(True);
         }
     }
 
-    useEffect(lambda -> None { 
+    useEffect(lambda -> None {
         fetchProjects();
         document.title = "Kernel Forge";
     }, []);
@@ -98,16 +114,17 @@ def:pub Home -> Any {
             if innerProj {
                 projName = innerProj["name"];
                 clickHandler = lambda ignore: any  -> None { navigate(
-                    "/project/" + projName
+                    "/project/" + ignore.currentTarget.getAttribute("data-projname")
                 );};
                 deleteHandler = lambda e: any -> None {
                     e.stopPropagation();
-                    projectToDelete = projName;
+                    setProjectToDelete(e.currentTarget.getAttribute("data-projname"));
                 };
 
                 projectList.append(
                     <div key={projName} className="flex w-full mb-2 bg-[var(--surface)] border-l-2 border-transparent hover:border-[var(--accent)] transition-all clip-anvil overflow-hidden">
                         <button
+                            data-projname={projName}
                             onClick={clickHandler}
                             className="group flex-1 text-left p-4 flex items-center justify-between gap-4 hover:bg-[var(--surface-0)] transition-colors"
                         >
@@ -124,6 +141,7 @@ def:pub Home -> Any {
                             </span>
                         </button>
                         <button
+                            data-projname={projName}
                             onClick={deleteHandler}
                             className="p-4 px-6 bg-red-500/10 hover:bg-red-500/20 text-red-500/70 hover:text-red-500 transition-all border-l border-red-500/20"
                             title="Delete Project"
@@ -150,7 +168,7 @@ def:pub Home -> Any {
                     </p>
                     <div className="flex justify-end gap-4">
                         <button
-                            onClick={lambda -> None { projectToDelete = ""; }}
+                            onClick={lambda -> None { setProjectToDelete(""); }}
                             className="px-4 py-2 border border-[var(--border)] text-[var(--text-muted)] hover:text-white hover:border-[var(--text-muted)] transition-colors font-mono uppercase tracking-widest text-sm"
                         >
                             Cancel
@@ -224,7 +242,7 @@ def:pub Home -> Any {
                             type="text"
                             placeholder="SEARCH PROJECTS..."
                             value={searchQuery}
-                            onChange={lambda e: any  -> None { searchQuery = e.target.value;}}
+                            onChange={lambda e: any  -> None { setSearchQuery(e.target.value);}}
                             className="w-full bg-[var(--bg-darker)] border border-[var(--border)] rounded-sm px-4 py-2 text-sm text-[var(--text-light)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/20 transition-all font-mono uppercase"
                         />
                         <button
