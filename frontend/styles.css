@@ -2446,20 +2446,21 @@ video {
 }
 
 /* === Custom Scrollbar === */
-.custom-scrollbar::-webkit-scrollbar {
+*::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-track {
+*::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb {
+*::-webkit-scrollbar-thumb {
   background-color: rgba(255, 255, 255, 0.1);
   border-radius: 20px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+*::-webkit-scrollbar-thumb:hover {
   background-color: rgba(255, 255, 255, 0.2);
 }
 
@@ -2605,22 +2606,4 @@ video {
   border-radius: 50%;
   box-shadow: 0 0 10px var(--ember-red);
   animation: ember-rise linear infinite;
-}
-
-/* Scrollbar tuning for charcoal theme */
-.charcoal-scrollbar::-webkit-scrollbar {
-  width: 8px;
-}
-
-.charcoal-scrollbar::-webkit-scrollbar-track {
-  background: #121417;
-}
-
-.charcoal-scrollbar::-webkit-scrollbar-thumb {
-  background: #363b42;
-  border-radius: 2px;
-}
-
-.charcoal-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: var(--accent-copper);
 }

@@ -1966,6 +1966,9 @@ def:pub Dashboard -> Any {
         }
     }
 
+    projectBackend = status["backend"] if status and "backend" in status else "CUDA";
+
+
     return
         <div className="p-6 md:p-8 max-w-7xl mx-auto space-y-6">
             <DashboardHeader
@@ -1974,6 +1977,7 @@ def:pub Dashboard -> Any {
                 opsCount={list_len(to_list(ops))}
                 modelSpeedupRatio={modelSpeedupRatio}
                 hardwareStatus={hardwareStatus}
+                projectBackend={projectBackend}
                 forgedTooltipPos={forgedTooltipPos}
                 setForgedTooltipPos={setForgedTooltipPos}
             />

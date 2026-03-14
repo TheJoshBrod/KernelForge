@@ -349,7 +349,7 @@ def:pub OptimizeModal(props: any) -> Any {
         <Modal isOpen={isOpen} onClose={close_modal} title="Optimize Kernel">
             <div className="p-6 space-y-6">
                 <div className="space-y-4">
-                    <div className="space-y-2">
+                    <div className="space-y-1">
                         <label
                             className="text-sm font-medium text-zinc-300 flex items-center gap-2"
                         >
@@ -397,7 +397,7 @@ def:pub OptimizeModal(props: any) -> Any {
                             else "Project missing from route context."}
                         </p>
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-1">
                         <label
                             className="text-sm font-medium text-zinc-300 flex items-center gap-2"
                         >
@@ -469,7 +469,7 @@ def:pub OptimizeModal(props: any) -> Any {
                 </div>
                 if active_ssh
                 else <span/>}
-                <div className="pt-6 flex justify-end gap-3 border-t border-zinc-800">
+                <div className="pt-4 flex justify-end gap-3 border-t border-zinc-800">
                     <button
                         onClick={close_modal}
                         className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"

@@ -158,12 +158,45 @@ You will be provided with:
   - Decorated with `@triton.jit`
   - Takes raw pointers (from tensors), scalar arguments, and `tl.constexpr` block sizes
   - Always compute and use `mask` for boundary safety
-  - Never use Python control flow inside the kernel (use `tl.where` instead of `if`)
+  - Never use Python control flow over runtime tensor values (use `tl.where`). Python if/for with compile-time scalars or constexpr values IS allowed.
 
 - **General:**
   - Always handle float32, float16, and bfloat16 transparently
   - Never allocate GPU memory inside the kernel
   - Never include `main()`, logging, prints, or extra blocks
+
+-----------------------------------------------
+ UNSUPPORTED CONSTRUCTS — WILL CAUSE COMPILE ERROR
+-----------------------------------------------
+The following are NOT supported inside `@triton.jit` kernels:
+
+- `tl.any()` — DOES NOT EXIST. Replace with `tl.reduce_or(mask)` (1D) or restructure
+  using masking. Preferred pattern: just use masking — `tl.where(mask, value, 0.0)` —
+  and always call `tl.store` with the mask. A store to a False-mask lane is a no-op.
+- `continue` / `break` inside kernel loops — NOT supported. Never emit these.
+  Replace early-exit patterns with unconditional masked operations.
+- `while` loops — NOT supported. Use `for _ in range(N)`.
+- Data-dependent `if` over tensor/pointer values — NOT supported.
+  Use `tl.where(cond, a, b)` for element-wise selection.
+- `try` / `except` — NOT supported inside kernels.
+
+Correct pattern for "skip if nothing valid":
+```python
+# WRONG — do not do this:
+for i in range(N):
+    if not any_valid:
+        continue
+    tl.store(...)
+
+# CORRECT — always use masking, stores to False lanes are no-ops:
+for i in range(N):
+    valid = (i < limit)
+    val = tl.load(ptr + i, mask=valid, other=0.0)
+    acc += tl.where(valid, val, 0.0)
+tl.store(out_ptr + offsets, acc, mask=output_mask)
+```
+
+Python `if` with compile-time scalar/constexpr conditions IS supported (e.g., `if DIM == 2:`).
 
 -----------------------------------------------
 Output a complete valid `kernel.py` implementation following ALL rules above.

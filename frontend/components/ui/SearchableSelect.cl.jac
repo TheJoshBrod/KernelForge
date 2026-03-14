@@ -1,6 +1,7 @@
 """Searchable Select Component"""
 
 import from react { useState, useEffect, useRef }
+import from "react-dom" { createPortal }
 import from .Icons { ChevronDownIcon, SearchIcon, CheckIcon }
 
 def:pub SearchableSelect(props: any) -> Any {
@@ -21,6 +22,36 @@ def:pub SearchableSelect(props: any) -> Any {
     setSearchTerm = searchTermState[1];
 
     wrapperRef = useRef(None);
+    portalRef = useRef(None);
+    coordsState = useState({"top": 0, "left": 0, "width": 0});
+    coords = coordsState[0];
+    setCoords = coordsState[1];
+
+    def updateCoords -> None {
+        if wrapperRef.current {
+            rect = wrapperRef.current.getBoundingClientRect();
+            setCoords({
+                "top": rect.bottom,
+                "left": rect.left,
+                "width": rect.width
+            });
+        }
+    }
+
+    useEffect(
+        lambda -> None {
+            if isOpen {
+                updateCoords();
+                window.addEventListener("scroll", updateCoords, True);
+                window.addEventListener("resize", updateCoords);
+            }
+            return lambda -> None {
+                window.removeEventListener("scroll", updateCoords, True);
+                window.removeEventListener("resize", updateCoords);
+            };
+        },
+        [isOpen]
+    );
 
     # Filter options
     filteredOptions = options.filter(
@@ -33,7 +64,9 @@ def:pub SearchableSelect(props: any) -> Any {
     # Handle outside click to close
     useEffect(
         lambda -> Any { def handleClickOutside(event: any) -> None {
-            if wrapperRef.current and not wrapperRef.current.contains(event.target) {
+            in_wrapper = wrapperRef.current and wrapperRef.current.contains(event.target);
+            in_portal = portalRef.current and portalRef.current.contains(event.target);
+            if not in_wrapper and not in_portal {
                 setIsOpen(False);
             }
         } document.addEventListener("mousedown", handleClickOutside);return lambda -> None { document.removeEventListener(
@@ -73,9 +106,17 @@ def:pub SearchableSelect(props: any) -> Any {
                 </span>
                 <ChevronDownIcon className="w-4 h-4 text-zinc-500"/>
             </div>
-            {(
+            {createPortal(
                 <div
-                    className="absolute z-50 w-full mt-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl max-h-60 overflow-hidden flex flex-col"
+                    ref={portalRef}
+                    style={{
+                        "position": "fixed",
+                        "top": coords.top,
+                        "left": coords.left,
+                        "width": coords.width,
+                        "zIndex": 9999
+                    }}
+                    className="mt-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl max-h-[400px] overflow-hidden flex flex-col"
                 >
                     <div className="p-2 border-b border-zinc-800">
                         <div
@@ -95,7 +136,7 @@ def:pub SearchableSelect(props: any) -> Any {
                             />
                         </div>
                     </div>
-                    <div className="overflow-y-auto flex-1">
+                    <div className="overflow-y-auto flex-1 custom-scrollbar">
                         {(
                             filteredOptions.map(
                                 lambda (option: any) -> Any { isSelected = option[
@@ -129,10 +170,9 @@ def:pub SearchableSelect(props: any) -> Any {
                             No results found
                         </div>}
                     </div>
-                </div>
-            )
-            if isOpen
-            else null}
+                </div>,
+                document.body
+            ) if isOpen else null}
         </div>
     );
 }

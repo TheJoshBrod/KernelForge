@@ -51,6 +51,14 @@ def summarize_issue_with_traceback(
 
         Do NOT suggest modifying Python call sites or argument conversion logic.
         Only Triton-side fixes are relevant.
+
+        Do NOT suggest using:
+        - `continue` or `break` inside the kernel (not supported in Triton JIT)
+        - `tl.any()` or `tl.all()` (do not exist in tl namespace)
+        - `while` loops (not supported — use `for _ in range(N)`)
+        - Data-dependent `if` over tensor values (use `tl.where` instead)
+        For early-exit patterns, always recommend removing the exit and using masked operations.
+        For any/all checks, recommend `tl.reduce_or(mask)` or restructuring with tl.where.
         """
 
 
