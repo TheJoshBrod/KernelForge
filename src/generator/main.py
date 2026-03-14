@@ -386,6 +386,8 @@ def validate_with_retries(
                 "current_step": "Generating",
                 "attempt_current": attempt + 1,
                 "attempt_max": max_attempts,
+                "op_name": op_key,
+                "tag": "[GEN]",
             }}})
 
         # Generate kernel
@@ -482,6 +484,8 @@ def validate_with_retries(
         if _proj_base_dir and _task_key:
             update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
                 "current_step": "Validating",
+                "op_name": op_key,
+                "tag": "[GEN]",
             }}})
 
         # Validate all inputs at once using backend
@@ -535,6 +539,8 @@ def validate_with_retries(
                 update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
                     "current_step": "Done",
                     "status": "Done",
+                    "op_name": op_key,
+                    "tag": "[GEN]",
                 }}})
             return True, "", "success"
 
@@ -544,6 +550,8 @@ def validate_with_retries(
             "current_step": "Failed",
             "status": "Failed",
             "result": result_msg,
+            "op_name": op_key,
+            "tag": "[GEN]",
         }}})
     return False, last_feedback, last_stage
 

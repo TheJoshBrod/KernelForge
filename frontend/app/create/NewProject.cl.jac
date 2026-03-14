@@ -50,12 +50,17 @@ def:pub NewProject -> Any {
         "Cleaning the workspace"
     ];
 
-    code_state = useState("");
+    # Resume state if returning from settings
+    persisted_state = window["__kf_new_project_state"] if "__kf_new_project_state" in window and window["__kf_new_project_state"] else {};
+    initial_code = persisted_state["code"] if "code" in persisted_state else "";
+    initial_project_name = persisted_state["projectName"] if "projectName" in persisted_state else "";
+
+    code_state = useState(initial_code);
     code = code_state[0];
     setCode = code_state[1];
 
     form_data_state = useState({
-        "projectName": "",
+        "projectName": initial_project_name,
         "modelFile": None,
         "weightsFile": None,
         "validationZip": None
@@ -74,6 +79,61 @@ def:pub NewProject -> Any {
     stage_index_state = useState(0);
     stageIndex = stage_index_state[0];
     setStageIndex = stage_index_state[1];
+
+    # Backend Selection Logic
+    selected_backend_state = useState("");
+    selectedBackend = selected_backend_state[0];
+    setSelectedBackend = selected_backend_state[1];
+
+    selected_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
+    compatible_backends = [];
+    if selected_gpu_info {
+        hint = selected_gpu_info["backend_hint"] if "backend_hint" in selected_gpu_info else "";
+        if hint == "cuda" {
+            compatible_backends = [{"label": "Triton", "value": "triton"}, {"label": "CUDA", "value": "cuda"}];
+        } elif hint == "rocm" {
+            compatible_backends = [{"label": "Triton", "value": "triton"}];
+        } elif hint == "metal" {
+            compatible_backends = [{"label": "Metal", "value": "metal"}];
+        }
+    } else {
+        hwInfo = config_ctx.hwInfo if "hwInfo" in config_ctx else {};
+        if hwInfo and "cuda_available" in hwInfo and hwInfo["cuda_available"] {
+            compatible_backends = [{"label": "Triton", "value": "triton"}, {"label": "CUDA", "value": "cuda"}];
+        } elif hwInfo and "mps_available" in hwInfo and hwInfo["mps_available"] {
+            compatible_backends = [{"label": "Metal", "value": "metal"}];
+        }
+    }
+
+    useEffect(
+        lambda -> None {
+            if compatible_backends.length > 0 {
+                valid = False;
+                for b in compatible_backends {
+                    if b["value"] == selectedBackend {
+                        valid = True;
+                        break;
+                    }
+                }
+                if not valid {
+                    setSelectedBackend(compatible_backends[0]["value"]);
+                }
+            } else {
+                setSelectedBackend("");
+            }
+        },
+        [selected_gpu_info, config_ctx.hwInfo, selectedBackend]
+    );
+
+    useEffect(
+        lambda -> None {
+            window["__kf_new_project_state"] = {
+                "projectName": formData["projectName"],
+                "code": code
+            };
+        },
+        [formData["projectName"], code]
+    );
 
     def handleInputChange(field: str, value: Any) -> None {
         newFormData = {
@@ -185,6 +245,7 @@ def:pub NewProject -> Any {
                 {
                     "projectName": formData["projectName"].trim(),
                     "selectedGpuInfo": config["selected_gpu_info"] if config and "selected_gpu_info" in config else None,
+                    "selectedBackend": selectedBackend,
                     "code": model_code,
                     "modelFileB64": model_file_b64,
                     "modelFileName": (
@@ -211,6 +272,7 @@ def:pub NewProject -> Any {
             if result and result["success"] {
                 setSubmitStage("Finalizing");
                 toast.success("Project created successfully");
+                window["__kf_new_project_state"] = None;
                 navigate("/project/" + result["name"], {"replace": True});
             } else {
                 error_msg = result["error"] if result else "Failed to create project";
@@ -353,6 +415,50 @@ def:pub NewProject -> Any {
                                         />
                                     </div>
                                     <div className="space-y-2">
+                                        <div className="flex justify-between items-center">
+                                            <label
+                                                className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
+                                            >
+                                                Target & Backend Options
+                                            </label>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs text-zinc-400">
+                                                    Target: <span className="text-amber-400 font-medium">{selected_gpu_info["name"] if selected_gpu_info and "name" in selected_gpu_info else "Local GPU"}</span>
+                                                </span>
+                                                <a 
+                                                    onClick={lambda -> None { navigate("/settings/gpu", {"state": {"return_to": "/new-project"}}); }}
+                                                    className="text-[10px] text-zinc-500 hover:text-indigo-400 cursor-pointer underline flex items-center"
+                                                >
+                                                    Change GPU
+                                                </a>
+                                            </div>
+                                        </div>
+                                        {<div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+                                            <p className="text-sm text-red-400">
+                                                No compatible backend found for this GPU. Supported backends: CUDA, Triton, Metal.
+                                            </p>
+                                        </div>
+                                        if compatible_backends.length == 0
+                                        else <div className="relative">
+                                            <select
+                                                value={selectedBackend}
+                                                onChange={lambda e: any -> None { setSelectedBackend(e.target.value); }}
+                                                className="w-full h-12 bg-[#1a1c21] border border-[var(--border)] hover:border-[var(--border-strong)] rounded-lg px-4 text-[13px] text-zinc-300 font-medium focus:outline-none focus:ring-2 focus:ring-orange-400/30 appearance-none shadow-inner"
+                                            >
+                                                {compatible_backends.map(
+                                                    lambda item: dict -> Any { return
+                                                        <option key={item["value"]} value={item["value"]} className="bg-[#1a1c21] text-zinc-300 py-2">
+                                                            {item["label"]}
+                                                        </option>;
+                                                    }
+                                                )}
+                                            </select>
+                                            <div className="absolute inset-y-0 right-0 flex items-center px-4 pointer-events-none">
+                                                <svg className="w-4 h-4 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                            </div>
+                                        </div>}
+                                    </div>
+                                    <div className="space-y-2">
                                         <label
                                             className="text-xs font-semibold text-zinc-500 uppercase tracking-wider"
                                         >
@@ -443,7 +549,7 @@ def:pub NewProject -> Any {
                                     <div className="pt-6">
                                         <button
                                             onClick={lambda e: any  -> None { handleCreate();}}
-                                            disabled={isSubmitting}
+                                            disabled={isSubmitting or compatible_backends.length == 0}
                                             className="w-full h-12 bg-[var(--accent-orange)] hover:bg-[var(--molten-gold-dark)] text-zinc-950 font-bold rounded-lg transition-all shadow-[0_10px_24px_rgba(225,112,85,0.28)] hover:shadow-[0_12px_28px_rgba(232,168,56,0.26)] disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
                                             {"Creating..." if isSubmitting else "Create Project"}

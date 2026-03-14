@@ -348,6 +348,7 @@ walker:pub CreateProject {
     has projectName: str,
         code: str,
         selectedGpuInfo: dict = {},
+        selectedBackend: str = "",
         modelFileB64: str = "",
         modelFileName: str = "model.py",
         weightsFileB64: str = "",
@@ -465,6 +466,7 @@ walker:pub CreateProject {
                 "base_name": base_name,
                 "validation_dir": validation_dir,
                 "created_at": datetime.now().isoformat(),
+                "backend": self.selectedBackend if self.selectedBackend else target_device,
                 "generator": {
                     "skip_ops": [],
                     "only_ops": [],
@@ -473,7 +475,7 @@ walker:pub CreateProject {
                     "use_baseline_as_template": True,
                     "max_attempts": 8,
                     "extra_validation_cases": 1,
-                    "target_device": target_device
+                    "target_device": self.selectedBackend if self.selectedBackend else target_device
                 },
                 "profile": {"allow_ops": [], "skip_ops": [], "skip_prefixes": []},
                 "artifacts": {"weights": weight_artifacts}
@@ -728,6 +730,21 @@ walker:pub GetProjectStatus {
         if "current_gpu_name" in mismatch_info {
             state["current_gpu_name"] = mismatch_info["current_gpu_name"];
         }
+
+        # Retrieve backend from config
+        cfg_path = path.join(_project_dir(self.projectName), "config.json");
+        config_data = {};
+        if path.exists(cfg_path) {
+            try {
+                with open(cfg_path, "r") as f {
+                    config_data = load(f);
+                }
+            } except Exception as e {
+                print(f"Failed to read project config: {e}");
+            }
+        }
+        state["backend"] = config_data["backend"] if "backend" in config_data else (config_data["generator"]["target_device"] if "generator" in config_data and "target_device" in config_data["generator"] else "cuda");
+
         report state;
     }
 }

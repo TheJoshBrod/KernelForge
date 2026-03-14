@@ -9,6 +9,7 @@ def:pub DashboardHeader(props: any) -> Any {
     opsCount = props.opsCount;
     modelSpeedupRatio = props.modelSpeedupRatio;
     hardwareStatus = props.hardwareStatus;
+    projectBackend = props.projectBackend;
     forgedTooltipPos = props.forgedTooltipPos;
     setForgedTooltipPos = props.setForgedTooltipPos;
 
@@ -77,9 +78,11 @@ def:pub DashboardHeader(props: any) -> Any {
                 <div className="w-px h-8 bg-[var(--border)] hidden sm:block"></div>
                 <div className="flex flex-col">
                     <span className="text-[9px] uppercase tracking-[0.16em] text-zinc-500 mb-1">
-                        Selected GPU
+                        Target & Backend
                     </span>
-                    <span className="text-xs font-semibold text-zinc-300" title={hardwareStatus}>{hardwareStatus}</span>
+                    <span className="text-xs font-semibold text-zinc-300" title={hardwareStatus}>
+                        {hardwareStatus} <span className="text-zinc-500 mx-1">|</span> <span className="text-indigo-400 capitalize">{projectBackend if projectBackend else "CUDA"}</span>
+                    </span>
                 </div>
             </div>
         </div>;

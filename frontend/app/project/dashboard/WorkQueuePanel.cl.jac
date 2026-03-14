@@ -119,13 +119,18 @@ def:pub WorkQueuePanel(props: any) -> Any {
 
         task_id_str = str(task["id"]);
         node_label = task_id_str if not task_id_str.startsWith("seq_opt_") else "";
+        op_display = str(task["op_name"]) if "op_name" in task and task["op_name"] else (
+            task_id_str.slice(8) if task_id_str.startsWith("seq_opt_") else (
+                task_id_str.slice(4) if task_id_str.startsWith("gen_") else task_id_str
+            )
+        );
 
         active_tasks_nodes.push(
             <div key={task["id"]} className="p-4 bg-[var(--surface-0)] hover:bg-[var(--surface-1)] transition-colors">
                 <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-3 font-mono text-xs">
                         <span className={"font-semibold " + ("text-emerald-400" if tag == "[GEN]" else "text-blue-400")}>{tag}</span>
-                        <span className="text-zinc-200">{task["op_name"] + (" · node " + node_label if node_label else "")}</span>
+                        <span className="text-zinc-200">{op_display + (" · node " + node_label if node_label else "")}</span>
                     </div>
                     <div className="flex items-center gap-3">
                         {<div className="w-24 h-1.5 bg-zinc-900 rounded overflow-hidden">

@@ -50,6 +50,7 @@ def:pub GenerateModal(props: any) -> Any {
 
     # Config State
     default_llm = "";
+    selected_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
     api_keys = config["api_keys"] if config and "api_keys" in config else {};
     provider_options = [];
     if api_keys and "openai" in api_keys and api_keys["openai"] {
@@ -79,10 +80,6 @@ def:pub GenerateModal(props: any) -> Any {
     llm_model_state = useState(default_llm);
     llmModel = llm_model_state[0];
     setLlmModel = llm_model_state[1];
-
-    target_device_state = useState("cuda");
-    targetDevice = target_device_state[0];
-    setTargetDevice = target_device_state[1];
 
     # Model List State
     models_state = useState([]);
@@ -191,58 +188,6 @@ def:pub GenerateModal(props: any) -> Any {
         [isOpen, resolvedProjectName]
     );
 
-    # Determine available devices
-    hwInfo = config_ctx.hwInfo if "hwInfo" in config_ctx else {};
-    selected_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
-
-    cuda_ok = False;
-    mps_ok = False;
-    if selected_gpu_info {
-        hint = selected_gpu_info["backend_hint"] if "backend_hint" in selected_gpu_info else "cuda";
-        cuda_ok = hint == "cuda" or hint == "rocm";
-        mps_ok = hint == "metal";
-    } else {
-        cuda_ok = hwInfo and "cuda_available" in hwInfo and hwInfo["cuda_available"];
-        mps_ok = hwInfo and "mps_available" in hwInfo and hwInfo["mps_available"];
-    }
-    available_devices = [{"label": "Triton", "value": "triton"}];
-    if cuda_ok {
-        available_devices.splice(0, 0, {"label": "CUDA", "value": "cuda"});
-    } elif mps_ok {
-        available_devices.splice(0, 0, {"label": "MPS", "value": "mps"});
-    }
-
-    # Update default target device if current selection is invalid
-    useEffect(
-        lambda -> None { current_valid = False;for dev in available_devices {
-            if dev["value"] == targetDevice {
-                current_valid = True;
-                break;
-            }
-        }if not current_valid and available_devices.length > 0 {
-            setTargetDevice(available_devices[0]["value"]);
-        }},
-        [hwInfo, targetDevice]
-    );
-
-    provider_option_nodes = [];
-    for p in provider_options {
-        provider_option_nodes.push(
-            <option key={p["value"]} value={p["value"]}>
-                {p["label"]}
-            </option>
-        );
-    }
-
-    available_device_nodes = [];
-    for d in available_devices {
-        available_device_nodes.push(
-            <option key={d["value"]} value={d["value"]}>
-                {d["label"]}
-            </option>
-        );
-    }
-
     def handleModelChange(model_id: str) -> None {
         setLlmModel(model_id);
         for m in models {
@@ -279,7 +224,6 @@ def:pub GenerateModal(props: any) -> Any {
                 "projectName": resolvedProjectName,
                 "ops": [selectedOp],
                 "benchmark": True,
-                "targetDevice": targetDevice,
                 "ssh_connections": ssh_conns,
                 "active_ssh_index": active_ssh
             };
@@ -321,9 +265,9 @@ def:pub GenerateModal(props: any) -> Any {
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Generate New Kernel">
-            <div className="p-6 space-y-6">
+            <div className="p-5 space-y-4">
                 <div className="space-y-4">
-                    <div className="space-y-2">
+                    <div className="space-y-1">
                         <label
                             className="text-sm font-medium text-zinc-300 flex items-center gap-2"
                         >
@@ -371,7 +315,7 @@ def:pub GenerateModal(props: any) -> Any {
                             else "Project missing from route context."}
                         </p>
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-1">
                         <label
                             className="text-sm font-medium text-zinc-300 flex items-center gap-2"
                         >
@@ -400,27 +344,8 @@ def:pub GenerateModal(props: any) -> Any {
                             Select model from{" " + str(list_len(models))} available
                         </p>}
                     </div>
-                    <div className="grid grid-cols-1 gap-4">
-                        <div className="space-y-2">
-                            <label
-                                className="text-sm font-medium text-zinc-300 flex items-center gap-2"
-                            >
-                                <SettingsIcon className="w-4 h-4 text-amber-400"/>
-                                Target Device
-                            </label>
-                            <select
-                                value={targetDevice}
-                                onChange={lambda e: any  -> None { setTargetDevice(
-                                    e.target.value
-                                );}}
-                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                            >
-                                {available_device_nodes}
-                            </select>
-                        </div>
-                    </div>
                 </div>
-                <div className="pt-6 flex justify-end gap-3 border-t border-zinc-800">
+                <div className="pt-4 flex justify-end gap-3 border-t border-zinc-800">
                     <button
                         onClick={onClose}
                         className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"
