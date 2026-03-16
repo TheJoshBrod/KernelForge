@@ -622,17 +622,21 @@ def _pid_is_alive(pid_val: Any) -> bool {
     if pid <= 0 {
         return False;
     }
+    # Avoid Linux-specific /proc probing on other platforms. Keep the existing Linux
+    # behavior when procfs is available so zombies are treated as not alive there.
     try {
-        proc_stat = path.join("/proc", str(pid), "stat");
-        if path.exists(proc_stat) {
-            with open(proc_stat, "r") as f {
-                raw = f.read().strip();
-            }
-            close_idx = raw.rfind(")");
-            if close_idx >= 0 and close_idx + 2 < len(raw) {
-                proc_state = raw[close_idx + 2];
-                if proc_state == "Z" {
-                    return False;
+        if sys.platform.startswith("linux") {
+            proc_stat = path.join("/proc", str(pid), "stat");
+            if path.exists(proc_stat) {
+                with open(proc_stat, "r") as f {
+                    raw = f.read().strip();
+                }
+                close_idx = raw.rfind(")");
+                if close_idx >= 0 and close_idx + 2 < len(raw) {
+                    proc_state = raw[close_idx + 2];
+                    if proc_state == "Z" {
+                        return False;
+                    }
                 }
             }
         }
