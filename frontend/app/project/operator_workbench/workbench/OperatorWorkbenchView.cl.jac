@@ -321,21 +321,16 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         {"projectName": decode_param(resolvedProjectName), "currentGpuInfo": gpu_info_ref.current}
                     );
                     data = resp.reports[0] if resp and resp.reports else {};
-                    opt_job = data["optimize"] if data and "optimize" in data else {};
-                    is_active = bool(opt_job["active"])
-                        if opt_job and "active" in opt_job and opt_job["active"]
-                        else False;
-                    status_raw = str(opt_job["status"] or "").toLowerCase()
-                        if opt_job and "status" in opt_job
-                        else "";
-                    setIsOptimizing(is_active or status_raw == "running");
                     queue_data = data["queue"] if data and "queue" in data else {};
                     active_tasks_data = queue_data["active_tasks"] if "active_tasks" in queue_data else {};
                     active_tasks_list = [];
+                    cur_op = canonical_op_param(resolvedOpName);
                     for tk in Object.keys(active_tasks_data) {
                         t = active_tasks_data[tk];
                         is_gen_or_opt = tk.startsWith("gen_") or (t and "tag" in t and (t["tag"] == "[OPT]" or t["tag"] == "[GEN]")) or tk == "seq_opt" or (t and "parent_ref" in t);
-                        if is_gen_or_opt {
+                        task_op = t["op_name"] if t and "op_name" in t and t["op_name"] else "";
+                        op_matches = not task_op or task_op == cur_op;
+                        if is_gen_or_opt and op_matches {
                             step = t["current_step"] if "current_step" in t else "";
                             status = t["status"] if "status" in t else "";
                             if step and step != "Done" and status != "Done" {
@@ -355,6 +350,7 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         }
                     }
                     setActiveGenTasks(active_tasks_list);
+                    setIsOptimizing(active_tasks_list.length > 0);
                     mismatch = data["gpu_mismatch"] if data and "gpu_mismatch" in data else False;
                     setGpuMismatch(mismatch);
                     if mismatch and "benchmarked_gpu_name" in data {
@@ -485,6 +481,26 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     };
 
     if isOptimizing and hasTree {
+        # Build map of parent_id -> rightmost real-child x so pending nodes
+        # are placed to the right of existing children instead of overlapping.
+        node_pos_map = {};
+        for n in nodes { node_pos_map[str(n.id)] = n.position.x; }
+        parent_child_max_x = {};
+        for e in edges {
+            src = str(e.source);
+            tgt = str(e.target);
+            if tgt in node_pos_map {
+                tx = node_pos_map[tgt];
+                if src in parent_child_max_x {
+                    if tx > parent_child_max_x[src] {
+                        parent_child_max_x[src] = tx;
+                    }
+                } else {
+                    parent_child_max_x[src] = tx;
+                }
+            }
+        }
+
         parent_pending_counts = {};
         for tinfo in activeGenTasks {
             pending_parent_id = None;
@@ -512,10 +528,15 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                 task_id = tinfo["id"] if "id" in tinfo else str(offset_idx);
                 node_id = f"pending-node-{task_id}";
 
+                # Place pending node after the rightmost real child, or below
+                # the parent if no real children exist yet.
+                base_x = (parent_child_max_x[key] + 140) if key in parent_child_max_x else pending_parent_x;
+                pending_x = base_x + offset_idx * 140;
+
                 step_label = tinfo["step"] if "step" in tinfo and tinfo["step"] else "Working...";
                 displayNodes.push({
                     "id": node_id,
-                    "position": {"x": pending_parent_x + offset_idx * 140, "y": child_y},
+                    "position": {"x": pending_x, "y": child_y},
                     "data": {"label": step_label},
                     "className": "pending-kernel-node",
                     "style": pending_style,
