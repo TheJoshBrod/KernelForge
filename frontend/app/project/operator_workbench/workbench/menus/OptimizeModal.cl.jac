@@ -21,7 +21,9 @@ def:pub OptimizeModal(props: any) -> Any {
     onStarted = props.onStarted;
     projectName = props.projectName;
     opName = props.opName;
+    modalSession = props.modalSession if props and "modalSession" in props else None;
     hasTree = props.hasTree if props and "hasTree" in props else True;
+    hasProjectWork = bool(props.hasProjectWork) if props and "hasProjectWork" in props and props.hasProjectWork else False;
     params = useParams();
     resolvedProjectName = projectName or params.projectName or "";
     routeOpName = params.opName if params and "opName" in params else "";
@@ -43,6 +45,9 @@ def:pub OptimizeModal(props: any) -> Any {
     is_working_state = useState(False);
     isWorking = is_working_state[0];
     setIsWorking = is_working_state[1];
+    submit_armed_state = useState(False);
+    submitArmed = submit_armed_state[0];
+    setSubmitArmed = submit_armed_state[1];
 
     selected_op_state = useState(opName or routeOpName or "");
     selectedOp = selected_op_state[0];
@@ -177,13 +182,24 @@ def:pub OptimizeModal(props: any) -> Any {
     );
 
     useEffect(
-        lambda -> None { if isOpen {
+        lambda -> Any { arm_timer = None;if isOpen {
+            setIsWorking(False);
+            setSubmitArmed(False);
             if opName or routeOpName {
                 setSelectedOp(opName or routeOpName or "");
             }
-        }},
+            arm_timer = setTimeout(lambda -> None { setSubmitArmed(True);}, 200);
+        } else {
+            setSubmitArmed(False);
+        }return lambda -> None { if arm_timer { clearTimeout(arm_timer); }};},
         [isOpen, opName, routeOpName]
     );
+
+    def close_modal -> None {
+        if onClose {
+            onClose(modalSession);
+        }
+    }
 
     useEffect(
         lambda -> None { if isOpen and resolvedProjectName {
@@ -221,6 +237,9 @@ def:pub OptimizeModal(props: any) -> Any {
     }
 
     async def handleOptimize -> None {
+        if not submitArmed {
+            return;
+        }
         if not hasTree and selectedOp == (opName or routeOpName or "") {
             alert(
                 "No optimization tree yet for this operator. Generate a new root first."
@@ -237,7 +256,20 @@ def:pub OptimizeModal(props: any) -> Any {
         }
 
         setIsWorking(True);
+        submitId = "";
         try {
+            submitId = "opt-" + str(Date.now()) + "-" + selectedOp;
+            optimisticQueued = bool(hasProjectWork);
+            if onStarted {
+                onStarted({
+                    "_tag": "[OPT]",
+                    "_op": selectedOp,
+                    "_workers": int(workers),
+                    "_queued": optimisticQueued,
+                    "_optimistic": True,
+                    "_submit_id": submitId
+                });
+            }
             payload = {
                 "projectName": resolvedProjectName,
                 "ops": [selectedOp],
@@ -266,24 +298,51 @@ def:pub OptimizeModal(props: any) -> Any {
             resp = await __jacSpawn("StartOptimize", "", payload);
             data = resp.reports[0] if resp and resp.reports else {};
             if data and "success" in data and not data["success"] {
+                if onStarted and submitId {
+                    onStarted({"_rollback_submit_id": submitId});
+                }
                 err = data["error"]
                 if "error" in data
                 else "Failed to queue optimization.";
                 alert(err);
-            } else {
-                onClose();
+            } elif data and "queued" in data and data["queued"] {
                 if onStarted {
-                    onStarted({"_tag": "[OPT]", "_op": selectedOp, "_workers": int(workers)});
+                    onStarted({
+                        "_tag": "[OPT]",
+                        "_op": selectedOp,
+                        "_workers": int(workers),
+                        "_queued": True,
+                        "_submit_id": submitId,
+                        "_message": (
+                            data["message"]
+                            if "message" in data and data["message"]
+                            else "Optimization queued."
+                        )
+                    });
                 }
+                close_modal();
+            } elif data and "skipped" in data and data["skipped"] {
+                if onStarted and submitId {
+                    onStarted({"_rollback_submit_id": submitId});
+                }
+                msg = data["message"]
+                if "message" in data
+                else "Optimization already in progress.";
+                alert(msg);
+            } else {
+                if onStarted {
+                    onStarted({"_tag": "[OPT]", "_op": selectedOp, "_workers": int(workers), "_submit_id": submitId});
+                }
+                close_modal();
             }
         } except Exception as e {
+            if onStarted and submitId {
+                onStarted({"_rollback_submit_id": submitId});
+            }
             console.error("Failed to start optimization:", e);
             alert("Failed to start optimization.");
         } finally {
             setIsWorking(False);
-            if onComplete {
-                onComplete();
-            }
         }
     }
 
@@ -292,7 +351,7 @@ def:pub OptimizeModal(props: any) -> Any {
     }
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Optimize Kernel">
+        <Modal isOpen={isOpen} onClose={close_modal} title="Optimize Kernel">
             <div className="p-6 space-y-6">
                 <div className="space-y-4">
                     <div className="space-y-2">
@@ -435,7 +494,7 @@ def:pub OptimizeModal(props: any) -> Any {
                 else <span/>}
                 <div className="pt-6 flex justify-end gap-3 border-t border-zinc-800">
                     <button
-                        onClick={onClose}
+                        onClick={close_modal}
                         className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"
                         disabled={isWorking}
                     >
@@ -443,14 +502,20 @@ def:pub OptimizeModal(props: any) -> Any {
                     </button>
                     <button
                         onClick={handleOptimize}
-                        disabled={isWorking}
+                        disabled={isWorking or not submitArmed}
                         className={"px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-all shadow-lg hover:shadow-indigo-500/20 flex items-center gap-2 " + (
-                            "opacity-50 cursor-not-allowed" if isWorking else ""
+                            "opacity-50 cursor-not-allowed"
+                            if isWorking or not submitArmed
+                            else ""
                         )}
                     >
-                        {"Starting..." if isWorking else "Start Optimization"}
+                        {
+                            "Starting..."
+                            if isWorking
+                            else ("Preparing..." if not submitArmed else "Start Optimization")
+                        }
                         <ZapIcon
-                            className={"w-4 h-4 " + ("opacity-0" if isWorking else "")}
+                            className={"w-4 h-4 " + ("opacity-0" if isWorking or not submitArmed else "")}
                         />
                     </button>
                 </div>
