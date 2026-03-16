@@ -50,7 +50,7 @@ def:pub AboutSettings(props: any) -> Any {
                                 <DiscordIcon className="w-6 h-6"/>
                             </a>
                             <a
-                                href="https://github.com/TheJoshBrod/KernelForge"
+                                href="https://github.com/TheJoshBrod/CGinS"
                                 target="_blank"
                                 rel="noreferrer"
                                 className="text-white/50 hover:text-white transition-all duration-300 hover:scale-110 hover:-translate-y-1 hover:drop-shadow-[0_0_12px_rgba(255,255,255,0.6)]"
