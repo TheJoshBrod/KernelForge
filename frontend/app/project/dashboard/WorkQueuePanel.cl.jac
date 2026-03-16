@@ -436,7 +436,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
                             <span className="text-zinc-500 uppercase tracking-wider text-[10px]">GPU Slot:</span>
                         </div>
                         <span className="text-zinc-200 font-semibold">{benchmarkSlot["now"] if benchmarkSlot["now"] else "idle"}</span>
-                        {<span className="text-zinc-500">· Next: <span className="text-zinc-400">{", ".join(pendingOperators)}</span></span> if list_len(pendingOperators) > 0 else <span></span>}
+                        {<span className="text-zinc-500">· Next: <span className="text-zinc-400">{to_list(pendingOperators).join(", ")}</span></span> if list_len(pendingOperators) > 0 else <span></span>}
                     </div> if activePoll else <span></span>}
                 </div>
                 <div className="divide-y divide-[var(--border)] max-h-[400px] overflow-y-auto">

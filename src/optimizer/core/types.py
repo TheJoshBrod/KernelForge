@@ -33,7 +33,6 @@ class GPUSpecs(BaseModel):
     memory_bus_width_bits: int = 0
     peak_memory_bandwidth_gbps: float = 0.0
     warps_per_sm: int = 0
-    tensor_cores_available: bool = False
 
     # Optional telemetry
     memory_total_mb: Optional[int] = None

@@ -76,7 +76,6 @@ def _get_torch_cuda_specs(device_index: int = 0) -> GPUSpecs:
         memory_bus_width_bits=0,
         peak_memory_bandwidth_gbps=0.0,
         warps_per_sm=0,
-        tensor_cores_available=cc_major >= 7,
     )
 
 
@@ -136,7 +135,6 @@ def _get_rocm_specs(device_index: int = 0) -> GPUSpecs:
         memory_bus_width_bits=0,
         peak_memory_bandwidth_gbps=0.0,
         warps_per_sm=0,
-        tensor_cores_available='gfx9' in arch_str,  # CDNA matrix cores
     )
 
 
@@ -353,7 +351,6 @@ def get_specs():
             "memory_bus_width_bits": 0,
             "peak_memory_bandwidth_gbps": 0.0,
             "warps_per_sm": 0,
-            "tensor_cores_available": cc_major >= 7,
         }
 
         # Try pynvml for richer data

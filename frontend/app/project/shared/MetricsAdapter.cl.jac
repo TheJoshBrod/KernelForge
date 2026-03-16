@@ -27,20 +27,23 @@ def:pub to_list(items: Any) -> list {
     } except Exception {
     # no-op
     }
+    # Object.values before for...of: JAC's except Exception only catches JAC exceptions,
+    # not native JS TypeError. for...of on a plain object throws TypeError which is re-thrown.
+    # Object.values handles plain dicts safely and must come first.
+    try {
+        vals = Object.values(items);
+        if vals and vals.length >= 0 {
+            return vals;
+        }
+    } except Exception {
+    # no-op
+    }
     try {
         for item in items {
             normalized.push(item);
         }
         if normalized.length > 0 {
             return normalized;
-        }
-    } except Exception {
-    # no-op
-    }
-    try {
-        vals = Object.values(items);
-        if vals and vals.length >= 0 {
-            return vals;
         }
     } except Exception {
     # no-op

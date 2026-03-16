@@ -67,8 +67,10 @@ def:pub Dashboard -> Any {
     status_poll_busy_ref = useRef(False);
     metrics_poll_busy_ref = useRef(False);
     mcts_poll_busy_ref = useRef(False);
+    ops_poll_busy_ref = useRef(False);
     last_metrics_poll_ms_ref = useRef(0);
     last_mcts_poll_ms_ref = useRef(0);
+    last_ops_poll_ms_ref = useRef(0);
 
     hardware_info_state = useState({});
     hardwareInfo = hardware_info_state[0];
@@ -888,22 +890,29 @@ def:pub Dashboard -> Any {
     }
 
     async def refreshData -> None {
-        setLoading(True);
+        # Only show the loading skeleton when nothing is rendered yet.
+        # ops/speedData are from the current render's closure -- by the time
+        # useEffect fires, useLayoutEffect has already run and populated them
+        # from cache (or reset them to []), so this check is always fresh.
+        has_cached_data = list_len(ops) > 0 or list_len(speedData) > 0;
+        if not has_cached_data {
+            setLoading(True);
+        }
         try {
             if name {
                 status_seq = next_status_request_seq();
+                # Fire all five requests in parallel so total wait is max(all five)
+                # instead of max(three) + metrics + mcts sequentially.
                 status_req = __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": config["selected_gpu_info"] if config and "selected_gpu_info" in config else None});
                 ops_req = __jacSpawn("GetProjectOps", "", {"projectName": name});
                 hw_req = __jacSpawn("DetectHardware", "", {});
+                metrics_req = __jacSpawn("GetProjectMetrics", "", {"projectName": name});
+                mcts_req = __jacSpawn("GetProjectMctsSummary", "", {"projectName": name});
                 status_resp = await status_req;
                 ops_resp = await ops_req;
                 hw_resp = await hw_req;
-                metrics_resp = await __jacSpawn(
-                    "GetProjectMetrics", "", {"projectName": name}
-                );
-                mcts_resp = await __jacSpawn(
-                    "GetProjectMctsSummary", "", {"projectName": name}
-                );
+                metrics_resp = await metrics_req;
+                mcts_resp = await mcts_req;
                 # Process Status first so queue updates are not blocked by metrics.
                 status_data = status_resp.reports[0]
                 if status_resp and status_resp.reports
@@ -955,6 +964,11 @@ def:pub Dashboard -> Any {
 
     useLayoutEffect(
         lambda -> None { if name {
+            # Always reset data for the incoming project so that refreshData's
+            # has_cached_data check never sees stale data from a previous project.
+            # React batches these with the cache writes below, so no flash occurs.
+            setOps([]);
+            setSpeedData([]);
             cached = read_dashboard_cache(name);
             if cached {
                 if "operator_usage" in cached {
@@ -1087,6 +1101,27 @@ def:pub Dashboard -> Any {
                     lambda e: any  -> None {
                     mcts_poll_busy_ref.current = False;
                     # console.error("Failed to poll mcts summary:", e);
+                    }
+                );
+                }
+                profile_is_active = data and "profile" in data and data["profile"] and "active" in data["profile"] and data["profile"]["active"];
+                if profile_is_active
+                and not ops_poll_busy_ref.current
+                and now_ms - int(last_ops_poll_ms_ref.current) >= 5000 {
+                    ops_poll_busy_ref.current = True;
+                    last_ops_poll_ms_ref.current = now_ms;
+                    __jacSpawn("GetProjectOps", "", {"projectName": name}).then(
+                    lambda o_resp: any -> None { o_data = o_resp.reports[0]
+                    if o_resp and o_resp.reports
+                    else {};
+                    ops_list = to_list(o_data["ops"] if o_data and "ops" in o_data else []);
+                    if ops_list.length > 0 {
+                        setOps(ops_list);
+                    }
+                    ops_poll_busy_ref.current = False;}
+                ).catch(
+                    lambda e: any -> None {
+                    ops_poll_busy_ref.current = False;
                     }
                 );
                 }
@@ -2022,6 +2057,7 @@ def:pub Dashboard -> Any {
                     onOpenActionModal={openActionModal}
                     onOpenBenchLog={lambda -> None { setBenchLogOpen(True);}}
                     loading={loading}
+                    profiling={profile_active}
                     gpuMismatch={gpuMismatch}
                 />
             </div>
