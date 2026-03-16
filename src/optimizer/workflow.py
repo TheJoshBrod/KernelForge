@@ -10,14 +10,15 @@ from pathlib import Path
 from src.progress import check_cancelled, update_job_progress, wait_if_paused
 from src.optimizer.tree_store import publish_generated_root
 from src.optimizer.pipeline import update_queue_state
+from src.projects.paths import project_dir as canonical_project_dir, repo_root as canonical_repo_root
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return canonical_repo_root()
 
 
 def _project_dir(project: str) -> Path:
-    return _repo_root() / "kernels" / "projects" / project
+    return canonical_project_dir(project)
 
 
 def _normalize_device(device: str) -> str:

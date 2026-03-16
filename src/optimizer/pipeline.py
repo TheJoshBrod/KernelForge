@@ -13,6 +13,7 @@ import torch
 
 from src.config import ensure_llm_config, load_project_config
 from src.progress import check_cancelled
+from src.projects.paths import projects_root, repo_root as canonical_repo_root
 
 import src.optimizer.core.generator as generator
 import src.optimizer.core.mcts as mcts
@@ -25,7 +26,7 @@ from src.optimizer.backends.triton import TritonBackend
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return canonical_repo_root()
 
 def _default_queue_state() -> dict:
     return {
@@ -73,9 +74,7 @@ def update_queue_state(proj_base_dir: Path, updates: dict):
 
 
 def _projects_base_dir() -> Path:
-    base = _repo_root() / "kernels" / "projects"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
+    return projects_root()
 
 
 def _generated_kernels_root(optional_proj_name: str | None = None) -> Path:

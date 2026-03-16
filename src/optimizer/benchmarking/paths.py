@@ -3,11 +3,13 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from src.projects.paths import projects_root, repo_root as canonical_repo_root
+
 _MIGRATED_LEGACY_PROJECTS = False
 
 
 def repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return canonical_repo_root()
 
 
 def _migrate_legacy_projects(root: Path) -> None:
@@ -71,7 +73,7 @@ def project_dir_for_name(project_name: str, create: bool = False) -> Path:
     root = repo_root()
     _migrate_legacy_projects(root)
 
-    primary = root / "kernels" / "projects" / project_name
+    primary = projects_root(create=create) / project_name
 
     if primary.exists():
         return primary

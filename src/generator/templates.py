@@ -1,7 +1,9 @@
 from pathlib import Path
 
+from src.projects.paths import repo_root
 
-BASELINE_ROOT = Path(__file__).resolve().parents[2] / "kernels" / "generated" / "individual_op_kernels"
+
+BASELINE_ROOT = repo_root() / "kernels" / "generated" / "individual_op_kernels"
 
 
 def _normalize_op_name(op_name: str) -> str:

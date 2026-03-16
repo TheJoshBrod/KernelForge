@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from src.llm.runtime_config import resolve_runtime_env
+from src.projects.paths import config_path as app_config_path, data_root, repo_root
 
 
 def _find_config_path() -> Path | None:
@@ -12,10 +13,16 @@ def _find_config_path() -> Path | None:
         if candidate.exists():
             return candidate
 
-    repo_root = Path(__file__).resolve().parents[1]
+    candidate = app_config_path()
+    if candidate.exists():
+        return candidate
+
+    root = repo_root()
     candidates = [
-        repo_root / "frontend" / "config.json",
-        repo_root / "config.json",
+        root / "frontend" / "config.json",
+        root / "config.json",
+        data_root() / "frontend" / "config.json",
+        data_root() / "config.json",
     ]
     for candidate in candidates:
         if candidate.exists():

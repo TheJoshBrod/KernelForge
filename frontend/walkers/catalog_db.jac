@@ -6,7 +6,7 @@ import from datetime { datetime }
 import os;
 import sqlite3;
 
-import from .globals { repo_root }
+import from .globals { data_root }
 
 def:pub _ensure_dir(dir_path: str) -> None {
     if not path.exists(dir_path) {
@@ -15,12 +15,7 @@ def:pub _ensure_dir(dir_path: str) -> None {
 }
 
 def:pub _projects_base_dir() -> str {
-    data_dir = (
-        os.environ["KFORGE_DATA_DIR"]
-        if "KFORGE_DATA_DIR" in os.environ and os.environ["KFORGE_DATA_DIR"]
-        else path.join(repo_root, "kernels")
-    );
-    projects_dir = path.join(data_dir, "projects");
+    projects_dir = path.join(data_root, "projects");
     _ensure_dir(projects_dir);
     return projects_dir;
 }

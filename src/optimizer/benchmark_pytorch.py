@@ -6,7 +6,8 @@ import argparse
 import os
 import subprocess
 import sys
-from pathlib import Path
+
+from src.projects.paths import repo_root
 
 
 def main() -> int:
@@ -18,7 +19,6 @@ def main() -> int:
         print("[benchmark_pytorch] --project is required")
         return 1
 
-    repo_root = Path(__file__).resolve().parents[2]
     cmd = [
         sys.executable,
         "-m",
@@ -26,9 +26,8 @@ def main() -> int:
         "--project",
         args.project,
     ]
-    return subprocess.run(cmd, cwd=str(repo_root)).returncode
+    return subprocess.run(cmd, cwd=str(repo_root())).returncode
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
