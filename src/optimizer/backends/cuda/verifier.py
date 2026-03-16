@@ -52,6 +52,15 @@ def summarize_issue_with_traceback(
 
         Do NOT suggest modifying Python call sites, pybind11 bindings, or argument conversion logic.
         Only CUDA-side fixes are relevant.
+
+        When the error contains Output Mismatch diagnostics:
+        - If output contains Inf values: first check numeric overflow before assuming algorithmic error.
+          Reduced-precision types (fp16, bf16) saturate at finite limits; accumulating in the same
+          type causes overflow. Fix: use a float or double accumulator and cast back at the end.
+        - If output contains NaN values: check for uninitialized shared memory, division by zero,
+          or operations on uninitialized accumulators.
+        - Compare Input dtype vs Output dtype: a mismatch often indicates a missing cast.
+        - Do not assume a wrong algorithm until precision and casting issues are ruled out.
         """
 
 
@@ -256,12 +265,39 @@ def _validate_worker_loop(q_in, q_out):
                         if not is_correct:
                             all_valid = False
                             if torch.is_tensor(output_generated) and torch.is_tensor(ground_truth):
-                                diff = torch.abs(output_generated - ground_truth)
-                                analysis_msg = (
-                                    f"[Output Mismatch {entry_file.name}]\n"
-                                    f"Max diff: {diff.max().item():.6f}\n"
-                                    f"Mean diff: {diff.mean().item():.6f}\n"
-                                )
+                                out_f = output_generated.float()
+                                gt_f = ground_truth.float()
+
+                                inf_count = torch.isinf(output_generated).sum().item()
+                                nan_count = torch.isnan(output_generated).sum().item()
+
+                                diag = [f"[Output Mismatch {entry_file.name}]"]
+                                diag.append(f"Output: dtype={output_generated.dtype}, shape={list(output_generated.shape)}")
+                                diag.append(f"Expected: dtype={ground_truth.dtype}, shape={list(ground_truth.shape)}")
+
+                                if inf_count > 0:
+                                    diag.append(f"WARNING: {int(inf_count)} Inf values in output - possible numeric overflow")
+                                    finite_out = out_f[torch.isfinite(out_f)]
+                                    if finite_out.numel() > 0:
+                                        diag.append(f"  Finite output range: [{finite_out.min().item():.4g}, {finite_out.max().item():.4g}]")
+                                    diag.append(f"  Expected range: [{gt_f.min().item():.4g}, {gt_f.max().item():.4g}]")
+                                elif nan_count > 0:
+                                    diag.append(f"WARNING: {int(nan_count)} NaN values in output")
+                                else:
+                                    diff = torch.abs(out_f - gt_f)
+                                    diag.append(f"Max diff: {diff.max().item():.6f}, Mean diff: {diff.mean().item():.6f}")
+                                    diag.append(f"Output range: [{out_f.min().item():.4g}, {out_f.max().item():.4g}]")
+
+                                for i, arg in enumerate(normalized_args):
+                                    if torch.is_tensor(arg):
+                                        diag.append(f"Input[{i}]: dtype={arg.dtype}, shape={list(arg.shape)}")
+
+                                scalar_kw = {k: v for k, v in (entry.get("kwargs") or {}).items()
+                                             if not torch.is_tensor(v)}
+                                if scalar_kw:
+                                    diag.append(f"Kwargs: {scalar_kw}")
+
+                                analysis_msg = "\n".join(diag) + "\n"
                             else:
                                 analysis_msg = (
                                     f"[Output Mismatch {entry_file.name}]\n"

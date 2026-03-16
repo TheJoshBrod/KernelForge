@@ -349,7 +349,6 @@ def main():
                 derived = {
                     "peak_memory_bandwidth_gbps": memory_bandwidth_gbps,
                     "warps_per_sm": cuda_info["max_threads_per_sm"] // cuda_info["warp_size"],
-                    "tensor_cores_available": cc_major >= 7,
                 }
                 
                 result = {**nvml_info, **cuda_info, **derived}

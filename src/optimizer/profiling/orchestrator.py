@@ -189,16 +189,6 @@ def get_device_specs(device_index: int = 0, mode: str = "fast") -> GPUSpecs:
     warp_size = int(gpu.get("warp_size") or (64 if vendor == "amd" else 32))
     num_sms = int(gpu.get("num_sms") or 0)
 
-    tensor_cores_available = False
-    if vendor == "nvidia":
-        try:
-            tensor_cores_available = int(float(compute_capability)) >= 7
-        except Exception:
-            tensor_cores_available = False
-    elif vendor == "amd":
-        cc_l = compute_capability.lower()
-        tensor_cores_available = ("gfx9" in cc_l) or ("gfx11" in cc_l) or ("cdna" in cc_l)
-
     # Collected directly from torch device properties
     regs_per_sm = int(gpu.get("regs_per_sm") or 0)
     max_threads_per_sm = int(gpu.get("max_threads_per_sm") or 0)
@@ -253,7 +243,6 @@ def get_device_specs(device_index: int = 0, mode: str = "fast") -> GPUSpecs:
         memory_bus_width_bits=0,
         peak_memory_bandwidth_gbps=0.0,
         warps_per_sm=(max_threads_per_sm // warp_size) if warp_size and max_threads_per_sm else 0,
-        tensor_cores_available=tensor_cores_available,
         memory_total_mb=gpu.get("memory_total_mb"),
         memory_used_mb=gpu.get("memory_used_mb"),
         utilization_percent=gpu.get("utilization_percent"),
