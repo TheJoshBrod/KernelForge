@@ -1858,7 +1858,6 @@ def:pub Dashboard -> Any {
             if fb_val != None and fb_val > 0 {
                 b_val_raw = fb_val;
                 baseline_ms = format_tick_ms(fb_val);
-                totalAllPytorchMs = totalAllPytorchMs + fb_val * op_count_n;
             }
         }
 
