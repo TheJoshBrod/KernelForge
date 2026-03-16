@@ -1,10 +1,10 @@
 [package]
-name = "frontend"
-version = "0.1.0"
-description = "A Tauri desktop app built with Jac"
-authors = ["you"]
-license = ""
-repository = ""
+name = "kernel-forge-desktop"
+version = "1.0.0"
+description = "Kernel Forge desktop application"
+authors = ["dhravidk <dhravid@umich.edu>"]
+license = "MIT"
+repository = "https://github.com/TheJoshBrod/CGinS"
 edition = "2021"
 
 [build-dependencies]
@@ -12,6 +12,7 @@ tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
 tauri = { version = "2.0", features = [] }
+tauri-plugin-updater = "2.10.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

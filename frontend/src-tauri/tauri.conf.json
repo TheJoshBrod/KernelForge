@@ -1,7 +1,7 @@
 {
-  "productName": "frontend",
+  "productName": "Kernel Forge",
   "version": "1.0.0",
-  "identifier": "com.frontend",
+  "identifier": "com.kernelforge.desktop",
   "build": {
     "devUrl": "http://localhost:5173",
     "frontendDist": "../.jac/client/dist"
@@ -14,10 +14,39 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/icon.png"
+    ],
+    "resources": [
+      "../main.jac",
+      "../jac.toml",
+      "../app",
+      "../assets",
+      "../components",
+      "../context",
+      "../styles.css",
+      "../mascot.png",
+      "../walkers",
+      "../../src",
+      "../../kernels/generated",
+      "../../requirements.txt",
+      "../../run_cast.py",
+      "../../.venv",
+      "binaries/jac-sidecar.sh",
+      "binaries/jac-sidecar.bat"
     ]
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/TheJoshBrod/CGinS/releases/latest/download/latest.json"
+      ],
+      "pubkey": "updater.pub",
+      "windows": {
+        "installMode": "basicUi"
+      }
+    }
+  }
 }

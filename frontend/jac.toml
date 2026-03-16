@@ -52,12 +52,12 @@ lib_imports = [
 
 # Desktop target configuration (Tauri)
 [desktop]
-name = "frontend"
-identifier = "com.frontend"
+name = "Kernel Forge"
+identifier = "com.kernelforge.desktop"
 version = "1.0.0"
 
 [desktop.window]
-title = "frontend"
+title = "Kernel Forge"
 width = 1200
 height = 800
 min_width = 800
