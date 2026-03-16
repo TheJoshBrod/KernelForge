@@ -628,7 +628,10 @@ def:pub Dashboard -> Any {
                 else {};
                 if metrics_data {
                     if "operator_usage" in metrics_data {
-                        setOps(to_list(metrics_data["operator_usage"]));
+                        usage_list = to_list(metrics_data["operator_usage"]);
+                        if usage_list.length > 0 {
+                            setOps(usage_list);
+                        }
                     }
                     setSpeedData(get_metrics_speed_source(metrics_data));
                 }
@@ -1345,6 +1348,15 @@ def:pub Dashboard -> Any {
                     }
                 }
                 break;
+            }
+        }
+        # Fallback: use profile_ms from GetProjectOps if speedData had no match
+        if b_val_raw == None and "profile_ms" in op {
+            fb_val = to_num(op["profile_ms"]);
+            if fb_val != None and fb_val > 0 {
+                b_val_raw = fb_val;
+                baseline_ms = format_tick_ms(fb_val);
+                totalAllPytorchMs = totalAllPytorchMs + fb_val * op_count_n;
             }
         }
 
