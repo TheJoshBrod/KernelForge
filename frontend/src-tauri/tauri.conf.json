@@ -1,0 +1,23 @@
+{
+  "productName": "frontend",
+  "version": "1.0.0",
+  "identifier": "com.frontend",
+  "build": {
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../.jac/client/dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ]
+  },
+  "plugins": {}
+}
