@@ -67,8 +67,10 @@ def:pub Dashboard -> Any {
     status_poll_busy_ref = useRef(False);
     metrics_poll_busy_ref = useRef(False);
     mcts_poll_busy_ref = useRef(False);
+    ops_poll_busy_ref = useRef(False);
     last_metrics_poll_ms_ref = useRef(0);
     last_mcts_poll_ms_ref = useRef(0);
+    last_ops_poll_ms_ref = useRef(0);
 
     hardware_info_state = useState({});
     hardwareInfo = hardware_info_state[0];
@@ -1090,6 +1092,27 @@ def:pub Dashboard -> Any {
                     }
                 );
                 }
+                profile_is_active = data and "profile" in data and data["profile"] and "active" in data["profile"] and data["profile"]["active"];
+                if profile_is_active
+                and not ops_poll_busy_ref.current
+                and now_ms - int(last_ops_poll_ms_ref.current) >= 5000 {
+                    ops_poll_busy_ref.current = True;
+                    last_ops_poll_ms_ref.current = now_ms;
+                    __jacSpawn("GetProjectOps", "", {"projectName": name}).then(
+                    lambda o_resp: any -> None { o_data = o_resp.reports[0]
+                    if o_resp and o_resp.reports
+                    else {};
+                    ops_list = to_list(o_data["ops"] if o_data and "ops" in o_data else []);
+                    if ops_list.length > 0 {
+                        setOps(ops_list);
+                    }
+                    ops_poll_busy_ref.current = False;}
+                ).catch(
+                    lambda e: any -> None {
+                    ops_poll_busy_ref.current = False;
+                    }
+                );
+                }
                 log_job_key = "";
                 if data and "generate" in data and data["generate"] and "active" in data["generate"] and data["generate"]["active"] {
                     log_job_key = "generate";
@@ -2022,6 +2045,7 @@ def:pub Dashboard -> Any {
                     onOpenActionModal={openActionModal}
                     onOpenBenchLog={lambda -> None { setBenchLogOpen(True);}}
                     loading={loading}
+                    profiling={profile_active}
                     gpuMismatch={gpuMismatch}
                 />
             </div>

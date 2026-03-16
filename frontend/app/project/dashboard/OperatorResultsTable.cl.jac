@@ -10,6 +10,7 @@ def:pub OperatorResultsTable(props: any) -> Any {
     onOpenActionModal = props.onOpenActionModal;
     onOpenBenchLog = props.onOpenBenchLog;
     loading = props.loading if props.loading else False;
+    profiling = props.profiling if props and "profiling" in props else False;
     gpuMismatch = props.gpuMismatch if props and "gpuMismatch" in props else False;
 
     [sortColumn, setSortColumn] = useState("display_order");
@@ -132,7 +133,7 @@ def:pub OperatorResultsTable(props: any) -> Any {
         elif is_benchmarked { row_status_color = "text-yellow-400"; }
         elif r_stat != "Not started" { row_status_color = "text-[var(--accent-orange)] animate-pulse"; }
 
-        status_label = (r_stat + " —") if is_benchmarked else r_stat;
+        status_label = (r_stat + ":") if is_benchmarked else r_stat;
         speedup_color = "text-emerald-400 font-semibold" if r_is_forged else ("text-yellow-400" if is_benchmarked else "text-zinc-500");
 
         action_text = "Optimize" if r_can_optimize_action else "Generate";
@@ -235,9 +236,12 @@ def:pub OperatorResultsTable(props: any) -> Any {
                         {operatorRowsNodes if list_len(operatorRowsNodes) > 0 else (skeletonNodes if loading else [])}
                     </tbody>
                 </table>
+                {<div className="p-8 text-center text-xs text-zinc-500 font-mono animate-pulse">
+                    Profiling in progress...
+                </div> if list_len(operatorRowsNodes) == 0 and not loading and profiling else <span></span>}
                 {<div className="p-8 text-center text-xs text-zinc-500 font-mono">
                     No operators discovered yet. Profile the model to find operators.
-                </div> if list_len(operatorRowsNodes) == 0 and not loading else <span></span>}
+                </div> if list_len(operatorRowsNodes) == 0 and not loading and not profiling else <span></span>}
             </div>
         </div>;
 }
