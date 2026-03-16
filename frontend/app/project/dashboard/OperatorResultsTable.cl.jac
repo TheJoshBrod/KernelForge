@@ -12,8 +12,8 @@ def:pub OperatorResultsTable(props: any) -> Any {
     loading = props.loading if props.loading else False;
     gpuMismatch = props.gpuMismatch if props and "gpuMismatch" in props else False;
 
-    [sortColumn, setSortColumn] = useState("ratio");
-    [sortDirection, setSortDirection] = useState("desc");
+    [sortColumn, setSortColumn] = useState("display_order");
+    [sortDirection, setSortDirection] = useState("asc");
 
     def handleSort(column: str) -> None {
         if sortColumn == column {
@@ -41,7 +41,10 @@ def:pub OperatorResultsTable(props: any) -> Any {
         valA = None;
         valB = None;
 
-        if sortColumn == "name" {
+        if sortColumn == "display_order" {
+            valA = a["display_order"] if "display_order" in a else 0;
+            valB = b["display_order"] if "display_order" in b else 0;
+        } elif sortColumn == "name" {
             valA = a["short"] if "short" in a else "";
             valB = b["short"] if "short" in b else "";
         } elif sortColumn == "baseline" {
@@ -111,26 +114,32 @@ def:pub OperatorResultsTable(props: any) -> Any {
         if not r {
             continue;
         }
-        r_stat = r["status"] if "status" in r else "Not started";
+        raw_r_stat = r["status"] if "status" in r else "Not started";
+        r_stat = "Benchmarked" if raw_r_stat == "Done" else raw_r_stat;
         r_short = r["short"] if "short" in r else "";
         r_baseline = r["baseline"] if "baseline" in r else "--";
         r_best = r["best"] if "best" in r else "--";
         r_speedup = r["speedup"] if "speedup" in r else "--";
         r_is_forged = r["is_forged"] if "is_forged" in r else False;
         r_name = r["name"] if "name" in r else "";
+        r_can_optimize_action = bool(r["can_optimize_action"]) if "can_optimize_action" in r and r["can_optimize_action"] else False;
+        r_action_disabled = bool(r["action_disabled"]) if "action_disabled" in r and r["action_disabled"] else False;
 
         is_benchmarked = r_stat == "Benchmarked";
         row_status_color = "text-zinc-500";
-        if r_stat == "Forged ✓" { row_status_color = "text-emerald-400"; }
+        if r_stat == "Failed" { row_status_color = "text-red-400"; }
+        elif r_stat == "Forged ✓" { row_status_color = "text-emerald-400"; }
         elif is_benchmarked { row_status_color = "text-yellow-400"; }
         elif r_stat != "Not started" { row_status_color = "text-[var(--accent-orange)] animate-pulse"; }
 
         status_label = (r_stat + " —") if is_benchmarked else r_stat;
         speedup_color = "text-emerald-400 font-semibold" if r_is_forged else ("text-yellow-400" if is_benchmarked else "text-zinc-500");
 
-        action_text = "Optimize" if r_stat == "Benchmarked" or r_stat == "Forged ✓" else "Generate";
+        action_text = "Optimize" if r_can_optimize_action else "Generate";
         action_colors = "border-[var(--accent-orange)]/40 text-[var(--accent-orange)] hover:bg-[var(--accent-orange)] hover:text-zinc-950" if action_text == "Optimize" else "border-zinc-600 text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 hover:border-zinc-500";
-        gpu_disabled_class = " opacity-40" if gpuMismatch else "";
+        action_disabled = gpuMismatch or r_action_disabled;
+        disabled_btn_class = " opacity-40 cursor-not-allowed pointer-events-none hover:bg-transparent hover:text-current hover:border-current";
+        gpu_disabled_class = disabled_btn_class if action_disabled else "";
         action_btn_class = f"px-2 py-0.5 bg-transparent border rounded text-[10px] uppercase font-semibold transition-colors {action_colors}{gpu_disabled_class}";
 
         r_runtime_pct = r["runtime_pct"] if "runtime_pct" in r else "--";
@@ -153,12 +162,28 @@ def:pub OperatorResultsTable(props: any) -> Any {
                 <td className="py-2.5 px-4 font-mono text-xs">
                     <span className={row_status_color}>{status_label}</span>
                 </td>
-                <td className="py-2 px-4 font-mono text-xs pr-4">
+                <td className="py-2 px-4 font-mono text-xs pr-4" onClick={lambda e: any -> None { e.stopPropagation(); }}>
                     <button
                         data-opname={r_name}
                         data-action={action_text}
-                        onClick={lambda e: any -> None { e.stopPropagation(); onOpenActionModal(e, e.currentTarget.getAttribute("data-opname"), e.currentTarget.getAttribute("data-action")); }}
+                        onClick={lambda e: any -> None {
+                            e.stopPropagation();
+                            if action_disabled {
+                                return;
+                            }
+                            onOpenActionModal(
+                                e,
+                                e.currentTarget.getAttribute("data-opname"),
+                                e.currentTarget.getAttribute("data-action")
+                            );
+                        }}
                         className={action_btn_class}
+                        disabled={action_disabled}
+                        title={
+                            "This operator already has queued or active work."
+                            if r_action_disabled
+                            else ("Current GPU does not match the benchmarked GPU." if gpuMismatch else action_text)
+                        }
                     >
                         {action_text}
                     </button>
