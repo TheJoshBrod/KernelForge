@@ -1,0 +1,32 @@
+#!/bin/bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+UPDATER_KEY_PATH="${KFORGE_TAURI_UPDATER_KEY_PATH:-$HOME/.config/kernel-forge-desktop/updater.key}"
+
+if [[ ! -f "$ROOT_DIR/.venv/bin/activate" ]]; then
+  echo "Missing repo venv at $ROOT_DIR/.venv" >&2
+  exit 1
+fi
+
+if [[ ! -f "$HOME/.cargo/env" ]]; then
+  echo "Missing Rust cargo environment at $HOME/.cargo/env" >&2
+  exit 1
+fi
+
+cd "$ROOT_DIR/frontend"
+. "$ROOT_DIR/.venv/bin/activate"
+jac build main.jac
+
+cd "$ROOT_DIR/frontend/src-tauri"
+. "$HOME/.cargo/env"
+
+if [[ ! -f "$UPDATER_KEY_PATH" ]]; then
+  echo "Missing updater signing key: $UPDATER_KEY_PATH" >&2
+  echo "Run ./scripts/desktop/generate-updater-keys.sh first." >&2
+  exit 1
+fi
+
+export TAURI_SIGNING_PRIVATE_KEY_PATH="$UPDATER_KEY_PATH"
+
+cargo tauri build

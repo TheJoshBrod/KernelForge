@@ -1,0 +1,19 @@
+{
+  "version": "{{VERSION}}",
+  "notes": "{{NOTES}}",
+  "pub_date": "{{PUB_DATE}}",
+  "platforms": {
+    "linux-x86_64": {
+      "signature": "{{LINUX_SIGNATURE}}",
+      "url": "{{LINUX_URL}}"
+    },
+    "darwin-x86_64": {
+      "signature": "{{DARWIN_SIGNATURE}}",
+      "url": "{{DARWIN_URL}}"
+    },
+    "windows-x86_64": {
+      "signature": "{{WINDOWS_SIGNATURE}}",
+      "url": "{{WINDOWS_URL}}"
+    }
+  }
+}
