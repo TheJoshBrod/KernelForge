@@ -20,6 +20,8 @@ def:pub GenerateModal(props: any) -> Any {
     onStarted = props.onStarted;
     projectName = props.projectName;
     opName = props.opName;
+    modalSession = props.modalSession if props and "modalSession" in props else None;
+    hasProjectWork = bool(props.hasProjectWork) if props and "hasProjectWork" in props and props.hasProjectWork else False;
     params = useParams();
     resolvedProjectName = projectName or params.projectName or "";
     routeOpName = params.opName if params and "opName" in params else "";
@@ -30,6 +32,9 @@ def:pub GenerateModal(props: any) -> Any {
     is_working_state = useState(False);
     isWorking = is_working_state[0];
     setIsWorking = is_working_state[1];
+    submit_armed_state = useState(False);
+    submitArmed = submit_armed_state[0];
+    setSubmitArmed = submit_armed_state[1];
 
     selected_op_state = useState(opName or routeOpName or "");
     selectedOp = selected_op_state[0];
@@ -157,13 +162,24 @@ def:pub GenerateModal(props: any) -> Any {
     );
 
     useEffect(
-        lambda -> None { if isOpen {
+        lambda -> Any { arm_timer = None;if isOpen {
+            setIsWorking(False);
+            setSubmitArmed(False);
             if opName or routeOpName {
                 setSelectedOp(opName or routeOpName or "");
             }
-        }},
+            arm_timer = setTimeout(lambda -> None { setSubmitArmed(True);}, 200);
+        } else {
+            setSubmitArmed(False);
+        }return lambda -> None { if arm_timer { clearTimeout(arm_timer); }};},
         [isOpen, opName, routeOpName]
     );
+
+    def close_modal -> None {
+        if onClose {
+            onClose(modalSession);
+        }
+    }
 
     useEffect(
         lambda -> None { if isOpen and resolvedProjectName {
@@ -254,6 +270,9 @@ def:pub GenerateModal(props: any) -> Any {
     }
 
     async def handleGenerate -> None {
+        if not submitArmed {
+            return;
+        }
         if not resolvedProjectName {
             alert("Missing project.");
             return;
@@ -264,7 +283,19 @@ def:pub GenerateModal(props: any) -> Any {
         }
 
         setIsWorking(True);
+        submitId = "";
         try {
+            submitId = "gen-" + str(Date.now()) + "-" + selectedOp;
+            optimisticQueued = bool(hasProjectWork);
+            if onStarted {
+                onStarted({
+                    "_tag": "[GEN]",
+                    "_op": selectedOp,
+                    "_queued": optimisticQueued,
+                    "_optimistic": True,
+                    "_submit_id": submitId
+                });
+            }
             ssh_conns = config["ssh_connections"] if config and "ssh_connections" in config else [];
             active_ssh = config["active_ssh_index"] if config and "active_ssh_index" in config else -1;
             # If the selected GPU is local, do not forward SSH credentials
@@ -294,24 +325,50 @@ def:pub GenerateModal(props: any) -> Any {
             resp = await __jacSpawn("StartGenerate", "", payload);
             data = resp.reports[0] if resp and resp.reports else {};
             if data and "success" in data and not data["success"] {
+                if onStarted and submitId {
+                    onStarted({"_rollback_submit_id": submitId});
+                }
                 err = data["error"]
                 if "error" in data
                 else "Failed to queue generation.";
                 alert(err);
-            } else {
-                onClose();
+            } elif data and "queued" in data and data["queued"] {
                 if onStarted {
-                    onStarted({"_tag": "[GEN]", "_op": selectedOp});
+                    onStarted({
+                        "_tag": "[GEN]",
+                        "_op": selectedOp,
+                        "_queued": True,
+                        "_submit_id": submitId,
+                        "_message": (
+                            data["message"]
+                            if "message" in data and data["message"]
+                            else "Generation queued."
+                        )
+                    });
                 }
+                close_modal();
+            } elif data and "skipped" in data and data["skipped"] {
+                if onStarted and submitId {
+                    onStarted({"_rollback_submit_id": submitId});
+                }
+                msg = data["message"]
+                if "message" in data
+                else "Generation already in progress.";
+                alert(msg);
+            } else {
+                if onStarted {
+                    onStarted({"_tag": "[GEN]", "_op": selectedOp, "_submit_id": submitId});
+                }
+                close_modal();
             }
         } except Exception as e {
+            if onStarted and submitId {
+                onStarted({"_rollback_submit_id": submitId});
+            }
             console.error("Failed to start generation:", e);
             alert("Failed to start generation.");
         } finally {
             setIsWorking(False);
-            if onComplete {
-                onComplete();
-            }
         }
     }
 
@@ -320,7 +377,7 @@ def:pub GenerateModal(props: any) -> Any {
     }
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Generate New Kernel">
+        <Modal isOpen={isOpen} onClose={close_modal} title="Generate New Kernel">
             <div className="p-6 space-y-6">
                 <div className="space-y-4">
                     <div className="space-y-2">
@@ -422,7 +479,7 @@ def:pub GenerateModal(props: any) -> Any {
                 </div>
                 <div className="pt-6 flex justify-end gap-3 border-t border-zinc-800">
                     <button
-                        onClick={onClose}
+                        onClick={close_modal}
                         className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"
                         disabled={isWorking}
                     >
@@ -430,14 +487,20 @@ def:pub GenerateModal(props: any) -> Any {
                     </button>
                     <button
                         onClick={handleGenerate}
-                        disabled={isWorking}
+                        disabled={isWorking or not submitArmed}
                         className={"px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-all shadow-lg hover:shadow-indigo-500/20 flex items-center gap-2 " + (
-                            "opacity-50 cursor-not-allowed" if isWorking else ""
+                            "opacity-50 cursor-not-allowed"
+                            if isWorking or not submitArmed
+                            else ""
                         )}
                     >
-                        {"Starting..." if isWorking else "Start Generation"}
+                        {
+                            "Starting..."
+                            if isWorking
+                            else ("Preparing..." if not submitArmed else "Start Generation")
+                        }
                         <PlusIcon
-                            className={"w-4 h-4 " + ("opacity-0" if isWorking else "")}
+                            className={"w-4 h-4 " + ("opacity-0" if isWorking or not submitArmed else "")}
                         />
                     </button>
                 </div>

@@ -64,6 +64,32 @@ def:pub normalize_op_name(value: Any) -> str {
     return text.replace(".", "_").replace("/", "_");
 }
 
+def canonical_op_name(value: Any) -> str {
+    text = normalize_op_name(value);
+    if not text {
+        return "";
+    }
+    prefixes = [
+        "torch_nn_functional_",
+        "torch_nn_",
+        "torch_functional_",
+        "torch_",
+        "aten_"
+    ];
+    changed = True;
+    while changed and text {
+        changed = False;
+        for prefix in prefixes {
+            if text.startsWith(prefix) and text.length > prefix.length {
+                text = text.substring(prefix.length);
+                changed = True;
+                break;
+            }
+        }
+    }
+    return text;
+}
+
 def:pub op_matches(candidate: Any, target: Any) -> bool {
     cand = normalize_op_name(candidate);
     wanted = normalize_op_name(target);
@@ -78,6 +104,19 @@ def:pub op_matches(candidate: Any, target: Any) -> bool {
     }
     if cand.startsWith(wanted + "_") {
         return True;
+    }
+    cand_canonical = canonical_op_name(candidate);
+    wanted_canonical = canonical_op_name(target);
+    if cand_canonical and wanted_canonical {
+        if cand_canonical == wanted_canonical {
+            return True;
+        }
+        if wanted_canonical.startsWith(cand_canonical + "_") {
+            return True;
+        }
+        if cand_canonical.startsWith(wanted_canonical + "_") {
+            return True;
+        }
     }
     return False;
 }

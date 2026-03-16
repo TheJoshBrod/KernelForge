@@ -10,6 +10,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
     currentOperator = props.currentOperator;
     benchmarkSlot = props.benchmarkSlot;
     pendingOperators = props.pendingOperators;
+    queuedJobs = props.queuedJobs if "queuedJobs" in props else [];
     onClearQueue = props.onClearQueue;
     isStarting = props.isStarting if "isStarting" in props else False;
     startingTag = props.startingTag if "startingTag" in props else "";
@@ -20,6 +21,46 @@ def:pub WorkQueuePanel(props: any) -> Any {
     modal_state = useState(False);
     modal_open = modal_state[0];
     setModalOpen = modal_state[1];
+
+    def derive_task_id(task: any) -> str {
+        return str(task["id"]) if task and "id" in task and task["id"] else "";
+    }
+
+    def derive_task_tag(task: any) -> str {
+        task_id_str = derive_task_id(task);
+        if task and "tag" in task and task["tag"] {
+            tag_text = str(task["tag"]).trim();
+            if tag_text and tag_text != "undefined" and tag_text != "null" {
+                return tag_text;
+            }
+        }
+        return "[GEN]" if task_id_str.startsWith("gen_") else "[OPT]";
+    }
+
+    def derive_task_op(task: any) -> str {
+        if task and "op_name" in task and task["op_name"] {
+            op_text = str(task["op_name"]).trim();
+            if op_text and op_text != "undefined" and op_text != "null" {
+                return op_text;
+            }
+        }
+        task_id_str = derive_task_id(task);
+        if task_id_str.startsWith("gen_") {
+            return task_id_str.substring(4);
+        }
+        if task_id_str.startsWith("seq_opt_") {
+            return task_id_str.substring(8);
+        }
+        return task_id_str;
+    }
+
+    def derive_task_kernel(task: any) -> str {
+        if task and "kernel_id" in task and task["kernel_id"] {
+            return str(task["kernel_id"]);
+        }
+        task_id_str = derive_task_id(task);
+        return task_id_str if task_id_str else "unknown";
+    }
 
     # Active queue: in-progress tasks only
     in_progress = [];
@@ -57,7 +98,21 @@ def:pub WorkQueuePanel(props: any) -> Any {
     active_tasks_nodes = [];
     for task in in_progress {
         c_step = task["current_step"];
-        tag = task["tag"];
+        task_id_str = str(task["id"]) if "id" in task and task["id"] else "";
+        tag = task["tag"]
+        if "tag" in task and task["tag"]
+        else (
+            "[GEN]"
+            if task_id_str.startsWith("gen_")
+            else "[OPT]"
+        );
+        op_label = str(task["op_name"])
+        if "op_name" in task and task["op_name"]
+        else (
+            task_id_str.substring(4)
+            if task_id_str.startsWith("gen_")
+            else (currentOperator if currentOperator else task_id_str)
+        );
 
         track_nodes = [];
         steps = ["Monitoring", "Generating", "Validating", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
@@ -102,28 +157,36 @@ def:pub WorkQueuePanel(props: any) -> Any {
         if "iter_current" in task and "iter_max" in task {
             sub_info = f"candidate {task['iter_current']}/{task['iter_max']} · ";
         }
-        if tag == "[OPT]" and "parent_ref" in task and task["parent_ref"] {
-            sub_info = sub_info + "parent: " + task["parent_ref"] + " · ";
-        }
         if c_step == "Failed" {
             sub_info = sub_info + (task["result"] if "result" in task else "validation failed");
         } elif c_step == "Generating" or c_step == "Validating" {
             atmpt = str(task["attempt_current"] if "attempt_current" in task else 1);
             max_atmpt = str(task["attempt_max"] if "attempt_max" in task else 3);
             sub_info = sub_info + f"attempt {atmpt}/{max_atmpt}";
+        } elif c_step == "Benchmarking" {
+            sub_info = sub_info + "running benchmark";
+        } elif c_step == "Profiling" {
+            sub_info = sub_info + "profiling candidate";
         } else {
             sub_info = sub_info + "queued";
         }
 
-        task_id_str = str(task["id"]);
-        node_label = task_id_str if not task_id_str.startsWith("seq_opt_") else "";
+        label_suffix = "";
+        if tag == "[OPT]" and "parent_ref" in task and task["parent_ref"] {
+            label_suffix = " · " + str(task["parent_ref"]);
+        } elif tag == "[OPT]"
+        and task_id_str
+        and not task_id_str.startsWith("seq_opt_")
+        and not task_id_str.startsWith("gen_") {
+            label_suffix = " · node " + task_id_str;
+        }
 
         active_tasks_nodes.push(
             <div key={task["id"]} className="p-4 bg-[var(--surface-0)] hover:bg-[var(--surface-1)] transition-colors">
                 <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-3 font-mono text-xs">
                         <span className={"font-semibold " + ("text-emerald-400" if tag == "[GEN]" else "text-blue-400")}>{tag}</span>
-                        <span className="text-zinc-200">{task["op_name"] + (" · node " + node_label if node_label else "")}</span>
+                        <span className="text-zinc-200">{op_label + label_suffix}</span>
                     </div>
                     <div className="flex items-center gap-3">
                         {<div className="w-24 h-1.5 bg-zinc-900 rounded overflow-hidden">
@@ -144,14 +207,51 @@ def:pub WorkQueuePanel(props: any) -> Any {
         );
     }
 
+    queued_job_nodes = [];
+    q_idx = 0;
+    for job in to_list(queuedJobs) {
+        q_id = str(job["queue_id"]) if "queue_id" in job and job["queue_id"] else ("queued-" + str(q_idx));
+        q_tag = job["tag"]
+        if "tag" in job and job["tag"]
+        else (
+            "[GEN]"
+            if "job_key" in job and str(job["job_key"]) == "generate"
+            else "[OPT]"
+        );
+        q_ops = to_list(job["ops_list"] if "ops_list" in job else []);
+        q_label = "pending job";
+        if q_ops.length == 1 {
+            q_label = str(q_ops[0]);
+        } elif q_ops.length > 1 {
+            q_label = str(q_ops[0]) + " +" + str(q_ops.length - 1) + " more";
+        }
+        q_job_name = str(job["job_key"]) if "job_key" in job and job["job_key"] else "job";
+        queued_job_nodes.push(
+            <div key={q_id} className="px-4 py-2.5 flex items-center justify-between bg-zinc-950/30">
+                <div className="flex items-center gap-3 font-mono text-xs min-w-0">
+                    <span className={"font-semibold " + ("text-emerald-400" if q_tag == "[GEN]" else "text-blue-400")}>{q_tag}</span>
+                    <span className="text-zinc-300 truncate">{q_label}</span>
+                </div>
+                <span className="font-mono text-[10px] text-zinc-500 flex-shrink-0 ml-3">{q_job_name + " queued #" + str(q_idx + 1)}</span>
+            </div>
+        );
+        q_idx = q_idx + 1;
+    }
+
     # ---- Completed section: group by op, show best of each batch ----
     op_group_keys = [];
     op_groups = {};
     for task in completed {
-        op = str(task["op_name"]);
+        op = derive_task_op(task);
+        if not op {
+            continue;
+        }
+        task_tag = derive_task_tag(task);
         if not (op in op_groups) {
             op_group_keys.push(op);
-            op_groups[op] = {"best_task": None, "best_ms": None, "any_done": False, "tag": task["tag"]};
+            op_groups[op] = {"best_task": None, "best_ms": None, "any_done": False, "tag": task_tag};
+        } elif task_tag == "[OPT]" and op_groups[op]["tag"] != "[OPT]" {
+            op_groups[op]["tag"] = task_tag;
         }
         if task["current_step"] == "Done" {
             op_groups[op]["any_done"] = True;
@@ -200,7 +300,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
             perf_label = "done";
         }
         if best_task != None and best_ms != None {
-            display_kid = best_task["kernel_id"] if "kernel_id" in best_task else best_task["id"];
+            display_kid = derive_task_kernel(best_task);
             perf_label = f"Kernel {display_kid} · {Number(best_ms).toFixed(4)} ms";
         }
 
@@ -219,10 +319,13 @@ def:pub WorkQueuePanel(props: any) -> Any {
     # ---- View completed jobs modal: all individual tasks ----
     modal_list_rows = [];
     for task in completed {
-        mt_op = str(task["op_name"]);
+        mt_op = derive_task_op(task);
+        if not mt_op {
+            continue;
+        }
         mt_step = task["current_step"];
-        mt_id = task["kernel_id"] if "kernel_id" in task else task["id"];
-        mt_tag = task["tag"];
+        mt_id = derive_task_kernel(task);
+        mt_tag = derive_task_tag(task);
         mt_v = to_num(task["value_ms"] if "value_ms" in task else None);
 
         # Get pytorch_ms for color
@@ -304,7 +407,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
         queue_label = "Work Queue (" + currentOperator + ")";
     }
 
-    show_empty = in_progress.length == 0 and completed.length == 0 and not isStarting;
+    show_empty = in_progress.length == 0 and completed.length == 0 and queued_job_nodes.length == 0 and not isStarting;
 
     return
         <div>
@@ -340,6 +443,13 @@ def:pub WorkQueuePanel(props: any) -> Any {
                     {<div className="p-8 text-center text-xs text-zinc-200 font-mono">Queue empty</div> if show_empty else <span/>}
                     {starting_placeholder_nodes if isStarting and in_progress.length == 0 else <span/>}
                     {active_tasks_nodes if in_progress.length > 0 else <span/>}
+                    {<div>
+                        <div className="px-4 py-1.5 bg-zinc-900/50 border-t border-[var(--border)] flex items-center justify-between">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-600">Queued Jobs</span>
+                            <span className="text-[10px] text-zinc-700 font-mono">{queued_job_nodes.length} queued</span>
+                        </div>
+                        {queued_job_nodes}
+                    </div> if queued_job_nodes.length > 0 else <span/>}
                     {<div>
                         <div className="px-4 py-1.5 bg-zinc-900/50 border-t border-[var(--border)] flex items-center justify-between">
                             <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-600">Completed</span>

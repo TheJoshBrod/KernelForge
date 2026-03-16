@@ -11,7 +11,8 @@ import from .job_supervisor {
     _read_state,
     _update_job_state,
     _start_job,
-    _write_initial_queue_state,
+    _queue_or_start_job,
+    _append_queue_debug,
     _read_log_excerpt,
     _detect_hardware
 }
@@ -88,12 +89,23 @@ walker:pub StartGenerate {
         workers: int = 1;
 
     can run with entry {
-        # Get relevant directories for project 
+        _append_queue_debug(
+            self.projectName,
+            "StartGenerate",
+            "walker entry",
+            {"ops": self.ops}
+        );
+        ops_list = [];
+        for o in self.ops {
+            if o {
+                ops_list.append(str(o));
+            }
+        }
+        # Get relevant directories for project
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
         out_dir = path.join(_project_dir(self.projectName), "kernels", "generated");
         _ensure_dir(out_dir);
 
-        
         target_device = str(self.targetDevice).lower() if self.targetDevice else "cuda";
         if not self.targetDevice {
             cfg_path = path.join(_project_dir(self.projectName), "config.json");
@@ -115,13 +127,6 @@ walker:pub StartGenerate {
         if target_device not in ["cuda", "mps", "metal", "triton", "cpu"] {
             report {"success": False, "error": f"Unsupported target device: {target_device}"};
             disengage;
-        }
-        
-        ops_list = [];
-        for o in self.ops {
-            if o {
-                ops_list.append(str(o));
-            }
         }
         if len(ops_list) == 0 and path.exists(io_dir) {
             for op_name in listdir(io_dir) {
@@ -184,10 +189,23 @@ walker:pub StartGenerate {
         if self.benchmark {
             _write_benchmarked_gpu(self.projectName, _resolve_current_gpu_info());
         }
-        result = _start_job(self.projectName, "generate", cmd, "generate.log");
-        if result and "success" in result and result["success"] {
-            _write_initial_queue_state(self.projectName, ops_list, "[GEN]");
-        }
+        result = _queue_or_start_job(
+            self.projectName,
+            "generate",
+            cmd,
+            "generate.log",
+            {
+                "ops_list": ops_list,
+                "tag": "[GEN]",
+                "workers": 1
+            }
+        );
+        _append_queue_debug(
+            self.projectName,
+            "StartGenerate",
+            "walker report",
+            result if result else {}
+        );
         report result;
     }
 }
@@ -204,13 +222,19 @@ walker:pub StartOptimize {
         workers: int = 4;
 
     can run with entry {
-        io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
+        _append_queue_debug(
+            self.projectName,
+            "StartOptimize",
+            "walker entry",
+            {"ops": self.ops, "workers": self.workers}
+        );
         ops_list = [];
         for o in self.ops {
             if o {
                 ops_list.append(str(o));
             }
         }
+        io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
         if len(ops_list) == 0 and path.exists(io_dir) {
             for op_name in listdir(io_dir) {
                 op_dir = path.join(io_dir, op_name);
@@ -267,36 +291,23 @@ walker:pub StartOptimize {
             }
         }
         _write_benchmarked_gpu(self.projectName, _resolve_current_gpu_info());
-        result = _start_job(self.projectName, "optimize", cmd, "optimize.log");
-        if result and "success" in result and result["success"] {
-            if self.workers <= 1 {
-                # Sequential: write placeholder with matching key so the pipeline
-                # merges its first update into the same entry (no duplicate row).
-                _write_initial_queue_state(self.projectName, ops_list, "[OPT]");
-            } else {
-                # Parallel: node IDs unknown until subprocess starts, so no
-                # placeholder.  Clear any stale active_tasks from prior runs so
-                # they don't appear alongside the new node entries.
-                queue_path = path.join(_project_dir(self.projectName), "queue.json");
-                try {
-                    q_state = {};
-                    if path.exists(queue_path) {
-                        with open(queue_path, "r") as f {
-                            q_state = load(f);
-                        }
-                    }
-                    q_state["active_tasks"] = {};
-                    q_state["benchmark_slot"] = {"now": None, "pending": []};
-                    q_state["current_operator"] = str(ops_list[0]) if len(ops_list) > 0 else "";
-                    q_state["pending_operators"] = [str(o) for o in ops_list];
-                    with open(queue_path, "w") as f {
-                        dump(q_state, f);
-                    }
-                } except Exception as e {
-                    print(f"Failed to reset queue for parallel optimize: {e}");
-                }
+        result = _queue_or_start_job(
+            self.projectName,
+            "optimize",
+            cmd,
+            "optimize.log",
+            {
+                "ops_list": ops_list,
+                "tag": "[OPT]",
+                "workers": self.workers
             }
-        }
+        );
+        _append_queue_debug(
+            self.projectName,
+            "StartOptimize",
+            "walker report",
+            result if result else {}
+        );
         report result;
     }
 }

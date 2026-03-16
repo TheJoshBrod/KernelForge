@@ -38,10 +38,20 @@ def:pub NewKernel(props: any) -> Any {
     generate_modal_open_state = useState(False);
     generateModalOpen = generate_modal_open_state[0];
     setGenerateModalOpen = generate_modal_open_state[1];
+    generate_modal_session_state = useState(0);
+    generateModalSession = generate_modal_session_state[0];
+    setGenerateModalSession = generate_modal_session_state[1];
+    generate_modal_session_ref = useRef(0);
 
     optimize_modal_open_state = useState(False);
     optimizeModalOpen = optimize_modal_open_state[0];
     setOptimizeModalOpen = optimize_modal_open_state[1];
+    optimize_modal_session_state = useState(0);
+    optimizeModalSession = optimize_modal_session_state[0];
+    setOptimizeModalSession = optimize_modal_session_state[1];
+    optimize_modal_session_ref = useRef(0);
+    generate_modal_session_ref.current = generateModalSession;
+    optimize_modal_session_ref.current = optimizeModalSession;
 
     menu_ref = useRef(None);
 
@@ -62,7 +72,48 @@ def:pub NewKernel(props: any) -> Any {
         []
     );
 
-    on_complete = lambda data: anyNone  -> None { setIsOpen(False);};
+    on_complete = lambda data: anyNone  -> None {
+        if data and "_queued" in data and data["_queued"] and "_message" in data and data["_message"] {
+            alert(str(data["_message"]));
+        }
+        setIsOpen(False);
+    };
+
+    def closeGenerateModal(session_id: any = None) -> None {
+        if session_id is not None and session_id != "" {
+            try {
+                if int(session_id) != int(generate_modal_session_ref.current) {
+                    return;
+                }
+            } except Exception {
+            # no-op
+            }
+        }
+        setGenerateModalOpen(False);
+    }
+
+    def closeOptimizeModal(session_id: any = None) -> None {
+        if session_id is not None and session_id != "" {
+            try {
+                if int(session_id) != int(optimize_modal_session_ref.current) {
+                    return;
+                }
+            } except Exception {
+            # no-op
+            }
+        }
+        setOptimizeModalOpen(False);
+    }
+
+    def closeGenerateModalAndMenu(session_id: any = None) -> None {
+        closeGenerateModal(session_id);
+        setIsOpen(False);
+    }
+
+    def closeOptimizeModalAndMenu(session_id: any = None) -> None {
+        closeOptimizeModal(session_id);
+        setIsOpen(False);
+    }
 
     # Trigger Handlers
     def handle_upload_click -> None {
@@ -89,6 +140,7 @@ def:pub NewKernel(props: any) -> Any {
             if onGpuMismatch { onGpuMismatch(); }
             return;
         }
+        setGenerateModalSession(lambda p: any -> any { return p + 1; });
         setGenerateModalOpen(True);
         setIsOpen(False);
     }
@@ -103,6 +155,7 @@ def:pub NewKernel(props: any) -> Any {
             if onGpuMismatch { onGpuMismatch(); }
             return;
         }
+        setOptimizeModalSession(lambda p: any -> any { return p + 1; });
         setOptimizeModalOpen(True);
         setIsOpen(False);
     }
@@ -144,22 +197,30 @@ def:pub NewKernel(props: any) -> Any {
                 projectName={resolvedProjectName}
                 opName={resolvedOpName}
             />
-            <GenerateModal
+            {<GenerateModal
+                key={"new-kernel-generate-modal-" + str(generateModalSession)}
                 isOpen={generateModalOpen}
-                onClose={lambda -> None { setGenerateModalOpen(False);}}
-                onComplete={lambda -> None { setIsOpen(False);}}
+                modalSession={generateModalSession}
+                onClose={closeGenerateModal}
+                onComplete={closeGenerateModalAndMenu}
                 onStarted={on_complete}
                 projectName={resolvedProjectName}
                 opName={resolvedOpName}
             />
-            <OptimizeModal
+            if generateModalOpen
+            else <span/>}
+            {<OptimizeModal
+                key={"new-kernel-optimize-modal-" + str(optimizeModalSession)}
                 isOpen={optimizeModalOpen}
-                onClose={lambda -> None { setOptimizeModalOpen(False);}}
-                onComplete={lambda -> None { setIsOpen(False);}}
+                modalSession={optimizeModalSession}
+                onClose={closeOptimizeModal}
+                onComplete={closeOptimizeModalAndMenu}
                 onStarted={on_complete}
                 projectName={resolvedProjectName}
                 opName={resolvedOpName}
                 hasTree={resolvedHasTree}
             />
+            if optimizeModalOpen
+            else <span/>}
         </div>;
 }

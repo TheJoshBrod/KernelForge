@@ -1,21 +1,16 @@
-import json
 import os
 import time
 from pathlib import Path
 
+from src.optimizer.benchmarking.state import (
+    read_json_file,
+    update_job_state as update_locked_job_state,
+)
+
 
 def _load_state(state_path: Path) -> dict:
-    if state_path.exists():
-        try:
-            return json.loads(state_path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-    return {}
-
-
-def _save_state(state_path: Path, state: dict) -> None:
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    state = read_json_file(state_path, {})
+    return state if isinstance(state, dict) else {}
 
 
 def update_job_progress(current: int, total: int, message: str | None = None) -> None:
@@ -26,19 +21,16 @@ def update_job_progress(current: int, total: int, message: str | None = None) ->
 
     try:
         state_file = Path(state_path)
-        state = _load_state(state_file)
-        job_state = dict(state.get(job_key, {}))
         progress = {
             "current": int(current),
             "total": int(total),
             "percent": (float(current) / float(total)) if total else 0.0,
             "updated_at": time.time(),
         }
-        job_state["progress"] = progress
+        updates = {"progress": progress}
         if message:
-            job_state["message"] = message
-        state[job_key] = job_state
-        _save_state(state_file, state)
+            updates["message"] = message
+        update_locked_job_state(state_file, job_key, updates)
     except Exception:
         return
 
@@ -51,11 +43,7 @@ def update_job_usage(usage: dict) -> None:
 
     try:
         state_file = Path(state_path)
-        state = _load_state(state_file)
-        job_state = dict(state.get(job_key, {}))
-        job_state["usage"] = usage or {}
-        state[job_key] = job_state
-        _save_state(state_file, state)
+        update_locked_job_state(state_file, job_key, {"usage": usage or {}})
     except Exception:
         return
 

@@ -384,6 +384,20 @@ def:pub _normalize_job_flags(project_name: str, state: dict, state_path: str) ->
             status_raw == "running" or status_raw == "queued" or status_raw == "paused"
         )
         and not has_live_pid {
+            if _job_launch_in_grace(job) {
+                if not ("control" in job) or not job["control"] {
+                    job["control"] = "running";
+                    changed = True;
+                }
+                if not ("active" in job) or not job["active"] {
+                    job["active"] = True;
+                    changed = True;
+                }
+                if _refresh_running_job_state(project_name, job_key, job) {
+                    changed = True;
+                }
+                continue;
+            }
             started_at = (
                 str(job["started_at"])
                 if "started_at" in job and job["started_at"]
@@ -628,6 +642,32 @@ def _pid_is_alive(pid_val: Any) -> bool {
     try {
         os.kill(pid, 0);
         return True;
+    } except Exception {
+        return False;
+    }
+}
+
+def _job_launch_in_grace(job: dict, grace_seconds: float = 15.0) -> bool {
+    if not job {
+        return False;
+    }
+    recent_at = (
+        str(job["updated_at"])
+        if "updated_at" in job and job["updated_at"]
+        else (
+            str(job["started_at"])
+            if "started_at" in job and job["started_at"]
+            else ""
+        )
+    );
+    if not recent_at {
+        return False;
+    }
+    try {
+        age_seconds = (
+            datetime.now() - datetime.fromisoformat(recent_at)
+        ).total_seconds();
+        return age_seconds >= 0 and age_seconds < grace_seconds;
     } except Exception {
         return False;
     }
@@ -1055,6 +1095,517 @@ def:pub _refresh_running_job_state(project_name: str, job_key: str, job: dict) -
     return bool(changed);
 }
 
+def _default_queue_state() -> dict {
+    return {
+        "active_tasks": {},
+        "pending_operators": [],
+        "current_operator": "",
+        "benchmark_slot": {"now": None, "pending": []},
+        "job_queue": [],
+        "launching_job": {}
+    };
+}
+
+def _launching_job_active(queue_state: dict, grace_seconds: float = 30.0) -> bool {
+    if not queue_state {
+        return False;
+    }
+    launch = (
+        queue_state["launching_job"]
+        if "launching_job" in queue_state and queue_state["launching_job"]
+        else {}
+    );
+    if not launch {
+        return False;
+    }
+    started_at = (
+        str(launch["started_at"])
+        if "started_at" in launch and launch["started_at"]
+        else ""
+    );
+    if not started_at {
+        return False;
+    }
+    try {
+        age_seconds = (
+            datetime.now() - datetime.fromisoformat(started_at)
+        ).total_seconds();
+        return age_seconds >= 0 and age_seconds < grace_seconds;
+    } except Exception {
+        return False;
+    }
+}
+
+def:pub _mark_job_launching(
+    project_name: str,
+    job_key: str,
+    ops_list: list = [],
+    tag: str = ""
+) -> None {
+    q_state = _read_queue_state(project_name);
+    q_state["launching_job"] = {
+        "job_key": job_key,
+        "ops_list": [str(op) for op in ops_list if op],
+        "tag": str(tag) if tag else "",
+        "started_at": datetime.now().isoformat()
+    };
+    _write_queue_state(project_name, q_state);
+    _append_queue_debug(
+        project_name,
+        "launch",
+        "marked job launching",
+        {
+            "job_key": job_key,
+            "ops_list": [str(op) for op in ops_list if op],
+            "tag": str(tag) if tag else ""
+        }
+    );
+}
+
+def:pub _clear_job_launching(project_name: str, job_key: str = "") -> None {
+    q_state = _read_queue_state(project_name);
+    launch = (
+        q_state["launching_job"]
+        if "launching_job" in q_state and q_state["launching_job"]
+        else {}
+    );
+    if not launch {
+        return;
+    }
+    launch_key = str(launch["job_key"]) if "job_key" in launch and launch["job_key"] else "";
+    if job_key and launch_key and launch_key != str(job_key) {
+        return;
+    }
+    q_state["launching_job"] = {};
+    _write_queue_state(project_name, q_state);
+    _append_queue_debug(
+        project_name,
+        "launch",
+        "cleared launching marker",
+        {"job_key": launch_key}
+    );
+}
+
+def _append_queue_debug(
+    project_name: str,
+    source: str,
+    message: str,
+    payload: dict = {}
+) -> None {
+    try {
+        logs_dir = path.join(_project_dir(project_name), "logs");
+        _ensure_dir(logs_dir);
+        log_path = path.join(logs_dir, "queue_debug.log");
+        line = (
+            datetime.now().isoformat()
+            + " | "
+            + str(source)
+            + " | "
+            + str(message)
+        );
+        if payload and len(payload) > 0 {
+            line = line + " | " + dumps(payload);
+        }
+        with open(log_path, "a") as f {
+            f.write(line + "\n");
+        }
+    } except Exception as e {
+        print(f"Failed to append queue debug log: {e}");
+    }
+}
+
+def _terminal_queue_tasks(active_tasks: dict) -> dict {
+    preserved = {};
+    if not active_tasks {
+        return preserved;
+    }
+    for task_key in active_tasks {
+        task = active_tasks[task_key];
+        if not task {
+            continue;
+        }
+        current_step = (
+            str(task["current_step"])
+            if "current_step" in task and task["current_step"]
+            else ""
+        );
+        if current_step == "Done" or current_step == "Failed" {
+            preserved[str(task_key)] = task;
+        }
+    }
+    return preserved;
+}
+
+def:pub _read_queue_state(project_name: str) -> dict {
+    queue_path = path.join(_project_dir(project_name), "queue.json");
+    state = _default_queue_state();
+    if not path.exists(queue_path) {
+        return state;
+    }
+    try {
+        with open(queue_path, "r") as f {
+            raw = load(f);
+        }
+        if raw {
+            for key in raw {
+                state[key] = raw[key];
+            }
+        }
+    } except Exception as e {
+        print(f"Failed to read queue state: {e}");
+    }
+    if not ("job_queue" in state) or not state["job_queue"] {
+        state["job_queue"] = [];
+    }
+    if not ("launching_job" in state) or not state["launching_job"] {
+        state["launching_job"] = {};
+    }
+    return state;
+}
+
+def:pub _write_queue_state(project_name: str, queue_state: dict) -> None {
+    queue_path = path.join(_project_dir(project_name), "queue.json");
+    state = _default_queue_state();
+    if queue_state {
+        for key in queue_state {
+            state[key] = queue_state[key];
+        }
+    }
+    if not ("job_queue" in state) or not state["job_queue"] {
+        state["job_queue"] = [];
+    }
+    if not ("launching_job" in state) or not state["launching_job"] {
+        state["launching_job"] = {};
+    }
+    try {
+        tmp_path = (
+            queue_path
+            + "."
+            + str(os.getpid())
+            + "."
+            + str(int(datetime.now().timestamp() * 1000))
+            + ".tmp"
+        );
+        with open(tmp_path, "w") as f {
+            dump(state, f, indent=2);
+        }
+        os.replace(tmp_path, queue_path);
+    } except Exception as e {
+        print(f"Failed to write queue state: {e}");
+    }
+}
+
+def _job_is_active(job: dict) -> bool {
+    if not job {
+        return False;
+    }
+    if "active" in job and job["active"] {
+        return True;
+    }
+    status_text = (
+        str(job["status"]).strip().lower()
+        if "status" in job and job["status"]
+        else ""
+    );
+    return (
+        status_text == "running"
+        or status_text == "queued"
+        or status_text == "paused"
+    );
+}
+
+def _queue_has_running_work(queue_state: dict) -> bool {
+    if not queue_state {
+        return False;
+    }
+    if _launching_job_active(queue_state) {
+        return True;
+    }
+    if "current_operator" in queue_state and queue_state["current_operator"] {
+        return True;
+    }
+    active_tasks = queue_state["active_tasks"] if "active_tasks" in queue_state and queue_state["active_tasks"] else {};
+    for task_key in active_tasks {
+        task = active_tasks[task_key];
+        current_step = (
+            str(task["current_step"])
+            if task and "current_step" in task and task["current_step"]
+            else ""
+        );
+        if current_step != "Done" and current_step != "Failed" {
+            return True;
+        }
+    }
+    return False;
+}
+
+def _queue_has_backlog(queue_state: dict) -> bool {
+    if not queue_state {
+        return False;
+    }
+    if "job_queue" in queue_state and queue_state["job_queue"] and len(queue_state["job_queue"]) > 0 {
+        return True;
+    }
+    return False;
+}
+
+def:pub _get_active_project_job(project_name: str, include_backlog: bool = True) -> dict {
+    state = _read_state(project_name);
+    for job_key in ["profile", "generate", "optimize", "benchmark"] {
+        job = state[job_key] if state and job_key in state else {};
+        if _job_is_active(job) {
+            return {
+                "jobKey": job_key,
+                "message": f"{job_key} job already in progress."
+            };
+        }
+    }
+    queue_state = _read_queue_state(project_name);
+    if _queue_has_running_work(queue_state) {
+        return {
+            "jobKey": "queue",
+            "message": "project work already in progress."
+        };
+    }
+    if include_backlog and _queue_has_backlog(queue_state) {
+        return {
+            "jobKey": "queue",
+            "message": "project queue already has pending jobs."
+        };
+    }
+    return {};
+}
+
+def _apply_job_queue_state(project_name: str, job_request: dict) -> None {
+    job_key = str(job_request["job_key"]) if "job_key" in job_request and job_request["job_key"] else "";
+    tag = str(job_request["tag"]) if "tag" in job_request and job_request["tag"] else "";
+    ops_list = [];
+    raw_ops = job_request["ops_list"] if "ops_list" in job_request and job_request["ops_list"] else [];
+    for op in raw_ops {
+        if op {
+            ops_list.append(str(op));
+        }
+    }
+    if job_key == "generate" {
+        _write_initial_queue_state(project_name, ops_list, tag if tag else "[GEN]");
+        return;
+    }
+    if job_key != "optimize" {
+        return;
+    }
+
+    workers = 1;
+    try {
+        workers = int(job_request["workers"]) if "workers" in job_request else 1;
+    } except Exception {
+        workers = 1;
+    }
+    if workers <= 1 {
+        _write_initial_queue_state(project_name, ops_list, tag if tag else "[OPT]");
+        return;
+    }
+
+    q_state = _read_queue_state(project_name);
+    q_state["active_tasks"] = _terminal_queue_tasks(
+        q_state["active_tasks"] if "active_tasks" in q_state else {}
+    );
+    q_state["benchmark_slot"] = {"now": None, "pending": []};
+    q_state["current_operator"] = str(ops_list[0]) if len(ops_list) > 0 else "";
+    q_state["pending_operators"] = [str(o) for o in ops_list];
+    q_state["launching_job"] = {};
+    _write_queue_state(project_name, q_state);
+}
+
+def:pub _enqueue_project_job(project_name: str, job_request: dict) -> dict {
+    q_state = _read_queue_state(project_name);
+    job_queue = q_state["job_queue"] if "job_queue" in q_state and q_state["job_queue"] else [];
+
+    request_copy = {};
+    for key in job_request {
+        request_copy[key] = job_request[key];
+    }
+    queue_id = (
+        str(request_copy["job_key"]) + ":" + str(int(datetime.now().timestamp() * 1000))
+    );
+    request_copy["queue_id"] = queue_id;
+    request_copy["enqueued_at"] = datetime.now().isoformat();
+    job_queue.append(request_copy);
+    q_state["job_queue"] = job_queue;
+    _write_queue_state(project_name, q_state);
+    _append_queue_debug(
+        project_name,
+        "enqueue",
+        "queued job",
+        {
+            "job_key": request_copy["job_key"] if "job_key" in request_copy else "",
+            "queue_id": queue_id,
+            "queue_len": len(job_queue),
+            "active_tasks": (
+                len(q_state["active_tasks"])
+                if "active_tasks" in q_state and q_state["active_tasks"]
+                else 0
+            ),
+            "current_operator": (
+                q_state["current_operator"]
+                if "current_operator" in q_state
+                else ""
+            )
+        }
+    );
+    return {"position": len(job_queue), "job": request_copy};
+}
+
+def:pub _queue_or_start_job(
+    project_name: str,
+    job_key: str,
+    cmd: list,
+    log_name: str,
+    job_request: dict = {}
+) -> dict {
+    active_job = _get_active_project_job(project_name);
+    request = {};
+    for key in job_request {
+        request[key] = job_request[key];
+    }
+    request["job_key"] = job_key;
+    request["cmd"] = cmd;
+    request["log_name"] = log_name;
+    _append_queue_debug(
+        project_name,
+        "queue_or_start",
+        "received request",
+        {
+            "job_key": job_key,
+            "active_job": active_job["jobKey"] if active_job and "jobKey" in active_job else "",
+            "ops_list": request["ops_list"] if "ops_list" in request else []
+        }
+    );
+
+    if active_job {
+        queued = _enqueue_project_job(project_name, request);
+        if "jobKey" in active_job and active_job["jobKey"] == "queue" {
+            _start_next_queued_job(project_name);
+        }
+        _append_queue_debug(
+            project_name,
+            "queue_or_start",
+            "return queued",
+            {
+                "job_key": job_key,
+                "position": queued["position"] if "position" in queued else 0
+            }
+        );
+        return {
+            "success": True,
+            "queued": True,
+            "reason": "queued",
+            "message": (
+                f"Queued {job_key} job behind "
+                + str(active_job["jobKey"] if "jobKey" in active_job else "active")
+                + "."
+            ),
+            "position": queued["position"] if "position" in queued else 1,
+            "jobKey": job_key
+        };
+    }
+
+    _mark_job_launching(
+        project_name,
+        job_key,
+        request["ops_list"] if "ops_list" in request else [],
+        str(request["tag"]) if "tag" in request and request["tag"] else ""
+    );
+    try {
+        result = _start_job(project_name, job_key, cmd, log_name);
+        if result
+        and "success" in result and result["success"]
+        and not ("skipped" in result and result["skipped"]) {
+            _apply_job_queue_state(project_name, request);
+        }
+        _append_queue_debug(
+            project_name,
+            "queue_or_start",
+            "return start result",
+            {
+                "job_key": job_key,
+                "success": bool(result["success"]) if result and "success" in result else False,
+                "skipped": bool(result["skipped"]) if result and "skipped" in result else False,
+                "pid": result["pid"] if result and "pid" in result else None
+            }
+        );
+        return result;
+    } finally {
+        _clear_job_launching(project_name, job_key);
+    }
+}
+
+def:pub _start_next_queued_job(project_name: str) -> dict {
+    active_job = _get_active_project_job(project_name, False);
+    if active_job {
+        return {
+            "success": False,
+            "reason": "busy",
+            "jobKey": active_job["jobKey"] if "jobKey" in active_job else ""
+        };
+    }
+
+    q_state = _read_queue_state(project_name);
+    job_queue = q_state["job_queue"] if "job_queue" in q_state and q_state["job_queue"] else [];
+    if len(job_queue) == 0 {
+        return {"success": False, "reason": "empty"};
+    }
+
+    next_job = job_queue[0];
+    next_key = str(next_job["job_key"]) if "job_key" in next_job and next_job["job_key"] else "";
+    next_cmd = next_job["cmd"] if "cmd" in next_job and next_job["cmd"] else [];
+    next_log = str(next_job["log_name"]) if "log_name" in next_job and next_job["log_name"] else (next_key + ".log");
+    if not next_key or len(next_cmd) == 0 {
+        return {"success": False, "reason": "invalid_job"};
+    }
+
+    result = _start_job(project_name, next_key, next_cmd, next_log);
+    if result
+    and "success" in result and result["success"]
+    and not ("skipped" in result and result["skipped"]) {
+        remaining = [];
+        idx = 0;
+        for queued_job in job_queue {
+            if idx == 0 {
+                idx = idx + 1;
+                continue;
+            }
+            remaining.append(queued_job);
+            idx = idx + 1;
+        }
+        q_state["job_queue"] = remaining;
+        _write_queue_state(project_name, q_state);
+        _apply_job_queue_state(project_name, next_job);
+        result["queued_from_queue"] = True;
+        _append_queue_debug(
+            project_name,
+            "start_next",
+            "started queued job",
+            {
+                "job_key": next_key,
+                "queue_remaining": len(remaining),
+                "pid": result["pid"] if "pid" in result else None
+            }
+        );
+    } else {
+        _append_queue_debug(
+            project_name,
+            "start_next",
+            "failed to start queued job",
+            {
+                "job_key": next_key,
+                "success": bool(result["success"]) if result and "success" in result else False,
+                "skipped": bool(result["skipped"]) if result and "skipped" in result else False
+            }
+        );
+    }
+    return result;
+}
+
 def:pub _start_job(project_name: str, job_key: str, cmd: list, log_name: str) -> dict {
     state = _read_state(project_name);
     current = state[job_key] if state and job_key in state else {};
@@ -1070,7 +1621,7 @@ def:pub _start_job(project_name: str, job_key: str, cmd: list, log_name: str) ->
         or current_status == "queued"
         or current_status == "paused"
     )
-    and _pid_is_alive(current_pid) {
+    and (_pid_is_alive(current_pid) or _job_launch_in_grace(current)) {
         return {
             "success": True,
             "skipped": True,
@@ -1168,7 +1719,6 @@ def:pub _start_job(project_name: str, job_key: str, cmd: list, log_name: str) ->
 }
 
 def:pub _write_initial_queue_state(project_name: str, ops_list: list, tag: str) -> None {
-    queue_path = path.join(_project_dir(project_name), "queue.json");
     active_tasks = {};
     if tag == "[OPT]" {
         # Key must match pipeline's task_key = f"seq_opt_{op_name}" so the
@@ -1196,19 +1746,19 @@ def:pub _write_initial_queue_state(project_name: str, ops_list: list, tag: str) 
             };
         }
     }
-    queue_data = {
-        "pending_operators": [str(o) for o in ops_list],
-        "active_tasks": active_tasks,
-        "benchmark_slot": {"now": None, "pending": []},
-        "current_operator": str(ops_list[0]) if len(ops_list) > 0 else ""
-    };
-    try {
-        with open(queue_path, "w") as f {
-            dump(queue_data, f);
-        }
-    } except Exception as e {
-        print(f"Failed to write initial queue state: {e}");
+    queue_data = _read_queue_state(project_name);
+    merged_tasks = _terminal_queue_tasks(
+        queue_data["active_tasks"] if "active_tasks" in queue_data else {}
+    );
+    for task_key in active_tasks {
+        merged_tasks[str(task_key)] = active_tasks[task_key];
     }
+    queue_data["pending_operators"] = [str(o) for o in ops_list];
+    queue_data["active_tasks"] = merged_tasks;
+    queue_data["benchmark_slot"] = {"now": None, "pending": []};
+    queue_data["current_operator"] = str(ops_list[0]) if len(ops_list) > 0 else "";
+    queue_data["launching_job"] = {};
+    _write_queue_state(project_name, queue_data);
 }
 
 def:pub _start_job_container(

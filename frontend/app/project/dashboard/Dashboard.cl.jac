@@ -1,6 +1,6 @@
 """Dashboard Page"""
 
-import from react { useEffect, useLayoutEffect, useState }
+import from react { useEffect, useLayoutEffect, useRef, useState }
 import from "react-router-dom" { useNavigate, useParams }
 import from recharts {
     BarChart,
@@ -19,6 +19,7 @@ import from ..shared.MetricsAdapter {
     to_list,
     list_len,
     op_matches,
+    normalize_op_name,
     get_metrics_speed_source,
     build_dashboard_metrics_view,
     compute_speed_kpis
@@ -61,6 +62,13 @@ def:pub Dashboard -> Any {
     status_state = useState({});
     status = status_state[0];
     setStatus = status_state[1];
+    status_request_seq_ref = useRef(0);
+    status_applied_seq_ref = useRef(0);
+    status_poll_busy_ref = useRef(False);
+    metrics_poll_busy_ref = useRef(False);
+    mcts_poll_busy_ref = useRef(False);
+    last_metrics_poll_ms_ref = useRef(0);
+    last_mcts_poll_ms_ref = useRef(0);
 
     hardware_info_state = useState({});
     hardwareInfo = hardware_info_state[0];
@@ -77,14 +85,26 @@ def:pub Dashboard -> Any {
     generate_modal_open_state = useState(False);
     generateModalOpen = generate_modal_open_state[0];
     setGenerateModalOpen = generate_modal_open_state[1];
+    generate_modal_session_state = useState(0);
+    generateModalSession = generate_modal_session_state[0];
+    setGenerateModalSession = generate_modal_session_state[1];
+    generate_modal_session_ref = useRef(0);
 
     optimize_modal_open_state = useState(False);
     optimizeModalOpen = optimize_modal_open_state[0];
     setOptimizeModalOpen = optimize_modal_open_state[1];
+    optimize_modal_session_state = useState(0);
+    optimizeModalSession = optimize_modal_session_state[0];
+    setOptimizeModalSession = optimize_modal_session_state[1];
+    optimize_modal_session_ref = useRef(0);
 
     modal_op_name_state = useState("");
     modalOpName = modal_op_name_state[0];
     setModalOpName = modal_op_name_state[1];
+    generate_modal_session_ref.current = generateModalSession;
+    optimize_modal_session_ref.current = optimizeModalSession;
+    op_display_order_ref = useRef({});
+    next_op_display_order_ref = useRef(0);
 
     bench_log_loading_state = useState(False);
     benchLogLoading = bench_log_loading_state[0];
@@ -142,6 +162,10 @@ def:pub Dashboard -> Any {
     starting_hint_state = useState({"tag": "", "op": "", "workers": 1});
     startingHint = starting_hint_state[0];
     setStartingHint = starting_hint_state[1];
+
+    optimistic_queue_jobs_state = useState([]);
+    optimisticQueueJobs = optimistic_queue_jobs_state[0];
+    setOptimisticQueueJobs = optimistic_queue_jobs_state[1];
 
     clear_signal_state = useState(0);
     clearSignal = clear_signal_state[0];
@@ -337,6 +361,128 @@ def:pub Dashboard -> Any {
         return raw == "running" or raw == "queued" or raw == "paused";
     }
 
+    def next_status_request_seq -> int {
+        next_seq = int(status_request_seq_ref.current) + 1;
+        status_request_seq_ref.current = next_seq;
+        return next_seq;
+    }
+
+    def apply_status_if_current(seq: int, payload: dict) -> bool {
+        applied_seq = int(status_applied_seq_ref.current) if status_applied_seq_ref.current else 0;
+        if seq < applied_seq {
+            return False;
+        }
+        status_applied_seq_ref.current = seq;
+        setStatus(payload or {});
+        return True;
+    }
+
+    def apply_local_status_patch(payload: dict) -> None {
+        seq = next_status_request_seq();
+        status_applied_seq_ref.current = seq;
+        setStatus(payload or {});
+    }
+
+    def queue_job_identity(job: any) -> str {
+        job_key = (
+            str(job["job_key"])
+            if job and "job_key" in job and job["job_key"]
+            else (
+                "optimize"
+                if job and "tag" in job and job["tag"] == "[OPT]"
+                else "generate"
+            )
+        );
+        tag = (
+            str(job["tag"])
+            if job and "tag" in job and job["tag"]
+            else ("[OPT]" if job_key == "optimize" else "[GEN]")
+        );
+        ops_list = to_list(job["ops_list"]) if job and "ops_list" in job else [];
+        op_name = str(ops_list[0]) if list_len(ops_list) > 0 else "";
+        return job_key + "|" + tag + "|" + op_name;
+    }
+
+    def appendOptimisticQueueJob(job: dict) -> None {
+        next_jobs = [];
+        submit_id = str(job["submit_id"]) if job and "submit_id" in job and job["submit_id"] else "";
+        replaced = False;
+        for existing in to_list(optimisticQueueJobs) {
+            existing_submit_id = (
+                str(existing["submit_id"])
+                if existing and "submit_id" in existing and existing["submit_id"]
+                else ""
+            );
+            if submit_id and existing_submit_id == submit_id {
+                next_jobs.push(job);
+                replaced = True;
+            } else {
+                next_jobs.push(existing);
+            }
+        }
+        if not replaced {
+            next_jobs.push(job);
+        }
+        setOptimisticQueueJobs(next_jobs);
+    }
+
+    def removeOptimisticQueueJob(submit_id: str) -> None {
+        if not submit_id {
+            return;
+        }
+        next_jobs = [];
+        for existing in to_list(optimisticQueueJobs) {
+            existing_submit_id = (
+                str(existing["submit_id"])
+                if existing and "submit_id" in existing and existing["submit_id"]
+                else ""
+            );
+            if existing_submit_id != str(submit_id) {
+                next_jobs.push(existing);
+            }
+        }
+        setOptimisticQueueJobs(next_jobs);
+    }
+
+    def clearStartingIfSubmit(submit_id: str) -> None {
+        if not submit_id {
+            return;
+        }
+        current_submit_id = (
+            str(startingHint["submit_id"])
+            if startingHint and "submit_id" in startingHint and startingHint["submit_id"]
+            else ""
+        );
+        if postSubmitActive and current_submit_id == str(submit_id) {
+            setPostSubmitActive(False);
+            setStartingHint({"tag": "", "op": "", "workers": 1});
+            window["__kf_post_submit"] = None;
+        }
+    }
+
+    async def refreshStatusOnly -> None {
+        try {
+            if not name {
+                return;
+            }
+            status_seq = next_status_request_seq();
+            status_resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": config["selected_gpu_info"] if config and "selected_gpu_info" in config else None});
+            status_data = status_resp.reports[0] if status_resp and status_resp.reports else {};
+            status_applied = apply_status_if_current(status_seq, status_data or {});
+            if status_applied and status_data and "gpu_mismatch" in status_data {
+                setGpuMismatch(status_data["gpu_mismatch"]);
+                setBenchmarkedGpuName(status_data["benchmarked_gpu_name"] if "benchmarked_gpu_name" in status_data else "");
+            } elif status_applied {
+                setGpuMismatch(False);
+            }
+            if name {
+                persist_dashboard_cache(name);
+            }
+        } except Exception as e {
+            console.error("Failed to fetch project status:", e);
+        }
+    }
+
     def get_profile_poll_ms -> int {
         profile_job = status["profile"] if status and "profile" in status else {};
         gen_job = status["generate"] if status and "generate" in status else {};
@@ -352,11 +498,95 @@ def:pub Dashboard -> Any {
         return 15000;
     }
 
+    def queue_state_has_op_lock(queue_state: any, op_name: str) -> bool {
+        if not queue_state or not op_name {
+            return False;
+        }
+        active_tasks_map = queue_state["active_tasks"] if "active_tasks" in queue_state and queue_state["active_tasks"] else {};
+        for task_key in Object.keys(active_tasks_map) {
+            task = active_tasks_map[task_key];
+            task_step = (
+                str(task["current_step"])
+                if task and "current_step" in task and task["current_step"]
+                else ""
+            );
+            if task_step == "Done" or task_step == "Failed" {
+                continue;
+            }
+            task_op = "";
+            if task and "op_name" in task and task["op_name"] {
+                task_op = str(task["op_name"]);
+            } elif str(task_key).startsWith("gen_") {
+                task_op = str(task_key).substring(4);
+            } elif str(task_key).startsWith("seq_opt_") {
+                task_op = str(task_key).substring(8);
+            }
+            if task_op and op_matches(task_op, op_name) {
+                return True;
+            }
+        }
+        for queued_job in to_list(queue_state["job_queue"] if "job_queue" in queue_state else []) {
+            for queued_op in to_list(queued_job["ops_list"] if queued_job and "ops_list" in queued_job else []) {
+                if queued_op and op_matches(str(queued_op), op_name) {
+                    return True;
+                }
+            }
+        }
+        return False;
+    }
+
+    def optimistic_queue_has_op_lock(op_name: str) -> bool {
+        if not op_name {
+            return False;
+        }
+        for queued_job in to_list(optimisticQueueJobs) {
+            for queued_op in to_list(queued_job["ops_list"] if queued_job and "ops_list" in queued_job else []) {
+                if queued_op and op_matches(str(queued_op), op_name) {
+                    return True;
+                }
+            }
+        }
+        if (
+            postSubmitActive
+            and startingHint
+            and "op" in startingHint
+            and startingHint["op"]
+            and op_matches(str(startingHint["op"]), op_name)
+        ) {
+            return True;
+        }
+        return False;
+    }
+
+    def get_stable_op_display_order(op_name: str) -> int {
+        stable_key = str(name or "") + "|" + normalize_op_name(op_name);
+        order_map = op_display_order_ref.current if op_display_order_ref.current else {};
+        if not (stable_key in order_map) {
+            next_order = int(next_op_display_order_ref.current) if next_op_display_order_ref.current else 0;
+            order_map[stable_key] = next_order;
+            op_display_order_ref.current = order_map;
+            next_op_display_order_ref.current = next_order + 1;
+        }
+        return int(order_map[stable_key]);
+    }
+
     async def openActionModal(e: any, opName: str, action: str) -> None {
         e.stopPropagation();
+        if queue_state_has_op_lock(status["queue"] if status and "queue" in status else {}, opName) or optimistic_queue_has_op_lock(opName) {
+            setForgeNotice("This operator already has queued or active work.");
+            return;
+        }
         live_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
         live_resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": live_gpu_info});
         live_data = live_resp.reports[0] if live_resp and live_resp.reports else {};
+        if queue_state_has_op_lock(live_data["queue"] if live_data and "queue" in live_data else {}, opName) or optimistic_queue_has_op_lock(opName) {
+            if live_data and "gpu_mismatch" in live_data {
+                setGpuMismatch(live_data["gpu_mismatch"]);
+                setBenchmarkedGpuName(live_data["benchmarked_gpu_name"] if "benchmarked_gpu_name" in live_data else "");
+            }
+            setForgeNotice("This operator already has queued or active work.");
+            return;
+        }
         live_mismatch = live_data["gpu_mismatch"] if live_data and "gpu_mismatch" in live_data else False;
         if live_mismatch {
             setGpuMismatch(True);
@@ -366,10 +596,38 @@ def:pub Dashboard -> Any {
         }
         setModalOpName(opName);
         if action == "Optimize" {
+            setOptimizeModalSession(lambda p: any -> any { return p + 1; });
             setOptimizeModalOpen(True);
         } else {
+            setGenerateModalSession(lambda p: any -> any { return p + 1; });
             setGenerateModalOpen(True);
         }
+    }
+
+    def closeGenerateModal(session_id: any = None) -> None {
+        if session_id is not None and session_id != "" {
+            try {
+                if int(session_id) != int(generate_modal_session_ref.current) {
+                    return;
+                }
+            } except Exception {
+            # no-op
+            }
+        }
+        setGenerateModalOpen(False);
+    }
+
+    def closeOptimizeModal(session_id: any = None) -> None {
+        if session_id is not None and session_id != "" {
+            try {
+                if int(session_id) != int(optimize_modal_session_ref.current) {
+                    return;
+                }
+            } except Exception {
+            # no-op
+            }
+        }
+        setOptimizeModalOpen(False);
     }
 
     def openWorkbench(opName: str = "") -> None {
@@ -385,26 +643,61 @@ def:pub Dashboard -> Any {
 
     async def handleModalStarted(hint: any) -> None {
         setQueueManuallyCleared(False);
-        setGenerateModalOpen(False);
-        setOptimizeModalOpen(False);
         hint_tag = hint["_tag"] if hint and "_tag" in hint else "";
         hint_op = hint["_op"] if hint and "_op" in hint else "";
         hint_workers = hint["_workers"] if hint and "_workers" in hint else 1;
-        setStartingHint({"tag": hint_tag, "op": hint_op, "workers": hint_workers});
+        hint_submit_id = hint["_submit_id"] if hint and "_submit_id" in hint else "";
+        hint_queued = bool(hint["_queued"]) if hint and "_queued" in hint and hint["_queued"] else False;
+        hint_optimistic = bool(hint["_optimistic"]) if hint and "_optimistic" in hint and hint["_optimistic"] else False;
+        rollback_submit_id = hint["_rollback_submit_id"] if hint and "_rollback_submit_id" in hint else "";
+        if rollback_submit_id {
+            removeOptimisticQueueJob(str(rollback_submit_id));
+            clearStartingIfSubmit(str(rollback_submit_id));
+            setTimeout(lambda -> None { refreshStatusOnly();}, 150);
+            return;
+        }
+        if hint_queued {
+            queue_msg = hint["_message"]
+            if hint and "_message" in hint and hint["_message"]
+            else "Job queued.";
+            appendOptimisticQueueJob({
+                "queue_id": "local-" + (str(hint_submit_id) if hint_submit_id else str(Date.now())),
+                "submit_id": str(hint_submit_id) if hint_submit_id else "",
+                "job_key": "optimize" if hint_tag == "[OPT]" else "generate",
+                "tag": hint_tag,
+                "ops_list": [hint_op] if hint_op else []
+            });
+            clearStartingIfSubmit(str(hint_submit_id));
+            setForgeNotice(queue_msg);
+            if not hint_optimistic {
+                setTimeout(lambda -> None { refreshStatusOnly();}, 300);
+            }
+            return;
+        }
+        removeOptimisticQueueJob(str(hint_submit_id));
+        if hint_optimistic {
+            setStartingHint({"tag": hint_tag, "op": hint_op, "workers": hint_workers, "submit_id": hint_submit_id});
+            setPostSubmitActive(True);
+            window["__kf_post_submit"] = {"tag": hint_tag, "op": hint_op, "workers": hint_workers, "submit_id": hint_submit_id, "expiry": Date.now() + 120000};
+            setTimeout(lambda -> None { clearStartingIfSubmit(str(hint_submit_id));}, 120000);
+            return;
+        }
+        setStartingHint({"tag": hint_tag, "op": hint_op, "workers": hint_workers, "submit_id": hint_submit_id});
         setPostSubmitActive(True);
         # Persist across navigation (Dashboard unmounts/remounts when switching tabs).
-        window["__kf_post_submit"] = {"tag": hint_tag, "op": hint_op, "workers": hint_workers, "expiry": Date.now() + 120000};
+        window["__kf_post_submit"] = {"tag": hint_tag, "op": hint_op, "workers": hint_workers, "submit_id": hint_submit_id, "expiry": Date.now() + 120000};
         # Hard fallback: cancel after 120s if tasks never appear (e.g. job errored).
         # The useEffect below cancels it earlier once real tasks are visible.
-        setTimeout(lambda -> None { setPostSubmitActive(False); window["__kf_post_submit"] = None;}, 120000);
+        setTimeout(lambda -> None { clearStartingIfSubmit(str(hint_submit_id));}, 120000);
         # Kick off a single fast status RPC so polling doesn't have to wait
         # a full interval before showing the first real task.
+        status_seq = next_status_request_seq();
         status_resp = await __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": config["selected_gpu_info"] if config and "selected_gpu_info" in config else None});
         status_data = status_resp.reports[0] if status_resp and status_resp.reports else {};
         if status_data {
-            setStatus(status_data);
+            apply_status_if_current(status_seq, status_data);
         }
-        refreshData();
+        setTimeout(lambda -> None { refreshStatusOnly();}, 300);
     }
 
     async def handleClearQueue -> None {
@@ -598,22 +891,30 @@ def:pub Dashboard -> Any {
         setLoading(True);
         try {
             if name {
-                # Spawn all requests concurrently
+                status_seq = next_status_request_seq();
+                status_req = __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": config["selected_gpu_info"] if config and "selected_gpu_info" in config else None});
                 ops_req = __jacSpawn("GetProjectOps", "", {"projectName": name});
-                metrics_req = __jacSpawn(
+                hw_req = __jacSpawn("DetectHardware", "", {});
+                status_resp = await status_req;
+                ops_resp = await ops_req;
+                hw_resp = await hw_req;
+                metrics_resp = await __jacSpawn(
                     "GetProjectMetrics", "", {"projectName": name}
                 );
-                status_req = __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": config["selected_gpu_info"] if config and "selected_gpu_info" in config else None});
-                hw_req = __jacSpawn("DetectHardware", "", {});
-                mcts_req = __jacSpawn(
+                mcts_resp = await __jacSpawn(
                     "GetProjectMctsSummary", "", {"projectName": name}
                 );
-                # Await all responses
-                ops_resp = await ops_req;
-                metrics_resp = await metrics_req;
-                status_resp = await status_req;
-                hw_resp = await hw_req;
-                mcts_resp = await mcts_req;
+                # Process Status first so queue updates are not blocked by metrics.
+                status_data = status_resp.reports[0]
+                if status_resp and status_resp.reports
+                else {};
+                status_applied = apply_status_if_current(status_seq, status_data or {});
+                if status_applied and status_data and "gpu_mismatch" in status_data {
+                    setGpuMismatch(status_data["gpu_mismatch"]);
+                    setBenchmarkedGpuName(status_data["benchmarked_gpu_name"] if "benchmarked_gpu_name" in status_data else "");
+                } elif status_applied {
+                    setGpuMismatch(False);
+                }
                 # Process Ops
                 ops_data = ops_resp.reports[0]
                 if ops_resp and ops_resp.reports
@@ -631,17 +932,6 @@ def:pub Dashboard -> Any {
                         setOps(to_list(metrics_data["operator_usage"]));
                     }
                     setSpeedData(get_metrics_speed_source(metrics_data));
-                }
-                # Process Status
-                status_data = status_resp.reports[0]
-                if status_resp and status_resp.reports
-                else {};
-                setStatus(status_data or {});
-                if status_data and "gpu_mismatch" in status_data {
-                    setGpuMismatch(status_data["gpu_mismatch"]);
-                    setBenchmarkedGpuName(status_data["benchmarked_gpu_name"] if "benchmarked_gpu_name" in status_data else "");
-                } else {
-                    setGpuMismatch(False);
                 }
                 # Process Hardware
                 hw_data = hw_resp.reports[0] if hw_resp and hw_resp.reports else {};
@@ -696,7 +986,38 @@ def:pub Dashboard -> Any {
     _ep_bench = status["benchmark"] if status and "benchmark" in status else {};
     _ep_queue_data = status["queue"] if status and "queue" in status else {};
     _ep_active_tasks = _ep_queue_data["active_tasks"] if "active_tasks" in _ep_queue_data else {};
-    has_queue_work = Object.keys(_ep_active_tasks).length > 0;
+    _ep_job_queue = _ep_queue_data["job_queue"] if "job_queue" in _ep_queue_data else [];
+    merged_job_queue = [];
+    for real_job in to_list(_ep_job_queue) {
+        merged_job_queue.push(real_job);
+    }
+    for local_job in to_list(optimisticQueueJobs) {
+        local_identity = queue_job_identity(local_job);
+        found_match = False;
+        for real_job in to_list(_ep_job_queue) {
+            if queue_job_identity(real_job) == local_identity {
+                found_match = True;
+                break;
+            }
+        }
+        if not found_match {
+            merged_job_queue.push(local_job);
+        }
+    }
+    has_active_queue_tasks = False;
+    for active_task_key in Object.keys(_ep_active_tasks) {
+        active_task = _ep_active_tasks[active_task_key];
+        active_task_step = (
+            str(active_task["current_step"])
+            if active_task and "current_step" in active_task and active_task["current_step"]
+            else ""
+        );
+        if active_task_step != "Done" and active_task_step != "Failed" {
+            has_active_queue_tasks = True;
+            break;
+        }
+    }
+    has_queue_work = has_active_queue_tasks or list_len(merged_job_queue) > 0;
     any_job_active = postSubmitActive or forgeBusy or has_queue_work or is_job_active(_ep_profile) or is_job_active(_ep_gen) or is_job_active(_ep_opt) or is_job_active(_ep_bench);
 
     # Capture current GPU info for polling closure (must be in deps so closure stays fresh)
@@ -705,18 +1026,30 @@ def:pub Dashboard -> Any {
     # Auto-refresh status (faster while active, slower while idle)
     useEffect(
         lambda -> Any { poll_ms = 500 if any_job_active else 15000;timer = setInterval(
-            lambda -> None { __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": _poll_gpu_info}).then(
+            lambda -> None {
+                if not name or status_poll_busy_ref.current {
+                    return;
+                }
+                status_poll_busy_ref.current = True;
+                status_seq = next_status_request_seq();
+                __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": _poll_gpu_info}).then(
                 lambda resp: any  -> None { data = resp.reports[0]
                 if resp and resp.reports
                 else {};
-                setStatus(data or {});
-                if data and "gpu_mismatch" in data {
+                status_applied = apply_status_if_current(status_seq, data or {});
+                if status_applied and data and "gpu_mismatch" in data {
                     setGpuMismatch(data["gpu_mismatch"]);
                     setBenchmarkedGpuName(data["benchmarked_gpu_name"] if "benchmarked_gpu_name" in data else "");
-                } else {
+                } elif status_applied {
                     setGpuMismatch(False);
                 }
-                __jacSpawn("GetProjectMetrics", "", {"projectName": name}).then(
+                now_ms = Date.now();
+                if not any_job_active
+                and not metrics_poll_busy_ref.current
+                and now_ms - int(last_metrics_poll_ms_ref.current) >= 5000 {
+                    metrics_poll_busy_ref.current = True;
+                    last_metrics_poll_ms_ref.current = now_ms;
+                    __jacSpawn("GetProjectMetrics", "", {"projectName": name}).then(
                     lambda c_resp: any  -> None { c_data = c_resp.reports[0]
                     if c_resp and c_resp.reports
                     else {};
@@ -726,23 +1059,34 @@ def:pub Dashboard -> Any {
                         }
                         setSpeedData(get_metrics_speed_source(c_data));
                         persist_dashboard_cache(name);
-                    }}
+                    }
+                    metrics_poll_busy_ref.current = False;}
                 ).catch(
                     lambda e: any  -> None {
+                    metrics_poll_busy_ref.current = False;
                     # console.error("Failed to poll project metrics:", e);
                     }
                 );
-                __jacSpawn("GetProjectMctsSummary", "", {"projectName": name}).then(
+                }
+                if not any_job_active
+                and not mcts_poll_busy_ref.current
+                and now_ms - int(last_mcts_poll_ms_ref.current) >= 5000 {
+                    mcts_poll_busy_ref.current = True;
+                    last_mcts_poll_ms_ref.current = now_ms;
+                    __jacSpawn("GetProjectMctsSummary", "", {"projectName": name}).then(
                     lambda m_resp: any  -> None { m_data = m_resp.reports[0]
                     if m_resp and m_resp.reports
                     else {};
                     setMctsSummary(m_data or {});
-                    persist_dashboard_cache(name);}
+                    persist_dashboard_cache(name);
+                    mcts_poll_busy_ref.current = False;}
                 ).catch(
                     lambda e: any  -> None {
+                    mcts_poll_busy_ref.current = False;
                     # console.error("Failed to poll mcts summary:", e);
                     }
                 );
+                }
                 log_job_key = "";
                 if data and "generate" in data and data["generate"] and "active" in data["generate"] and data["generate"]["active"] {
                     log_job_key = "generate";
@@ -764,9 +1108,11 @@ def:pub Dashboard -> Any {
                 } else {
                     setLogTail([]);
                     setActiveLogKey("");
-                }}
+                }
+                status_poll_busy_ref.current = False;}
             ).catch(
                 lambda e: any  -> None {
+                status_poll_busy_ref.current = False;
                 # console.error("Failed to poll project status:", e);
                 }
             );},
@@ -802,7 +1148,12 @@ def:pub Dashboard -> Any {
             try {
                 stored = window["__kf_post_submit"] if "__kf_post_submit" in window else None;
                 if stored and stored["expiry"] > Date.now() {
-                    setStartingHint({"tag": stored["tag"], "op": stored["op"], "workers": stored["workers"] if "workers" in stored else 1});
+                    setStartingHint({
+                        "tag": stored["tag"],
+                        "op": stored["op"],
+                        "workers": stored["workers"] if "workers" in stored else 1,
+                        "submit_id": stored["submit_id"] if "submit_id" in stored else ""
+                    });
                     setPostSubmitActive(True);
                 }
             } except Exception {}
@@ -812,8 +1163,47 @@ def:pub Dashboard -> Any {
 
     # Cancel the "starting" indicator the moment real queue tasks appear.
     useEffect(
-        lambda -> None { if postSubmitActive and has_queue_work { setPostSubmitActive(False); setStartingHint({"tag": "", "op": ""}); window["__kf_post_submit"] = None; } },
-        [postSubmitActive, has_queue_work]
+        lambda -> None { if postSubmitActive and has_active_queue_tasks { setPostSubmitActive(False); setStartingHint({"tag": "", "op": "", "workers": 1, "submit_id": ""}); window["__kf_post_submit"] = None; } },
+        [postSubmitActive, has_active_queue_tasks]
+    );
+
+    useEffect(
+        lambda -> None {
+            next_jobs = [];
+            for local_job in to_list(optimisticQueueJobs) {
+                local_identity = queue_job_identity(local_job);
+                matched = False;
+                for real_job in to_list(_ep_job_queue) {
+                    if queue_job_identity(real_job) == local_identity {
+                        matched = True;
+                        break;
+                    }
+                }
+                if not matched {
+                    for task in to_list(_ep_active_tasks) {
+                        task_id = str(task["id"]) if task and "id" in task and task["id"] else "";
+                        task_tag = (
+                            str(task["tag"])
+                            if task and "tag" in task and task["tag"]
+                            else ("[GEN]" if task_id.startsWith("gen_") else "[OPT]")
+                        );
+                        task_job_key = "optimize" if task_tag == "[OPT]" else "generate";
+                        task_op = str(task["op_name"]) if task and "op_name" in task and task["op_name"] else "";
+                        if local_identity == task_job_key + "|" + task_tag + "|" + task_op {
+                            matched = True;
+                            break;
+                        }
+                    }
+                }
+                if not matched {
+                    next_jobs.push(local_job);
+                }
+            }
+            if list_len(next_jobs) != list_len(optimisticQueueJobs) {
+                setOptimisticQueueJobs(next_jobs);
+            }
+        },
+        [_ep_job_queue, _ep_active_tasks, optimisticQueueJobs]
     );
 
     async def fetchSystemInfo -> None {
@@ -1283,6 +1673,59 @@ def:pub Dashboard -> Any {
         forge_detail = "Idle";
     }
 
+    def derive_task_tag(task: any) -> str {
+        task_id = str(task["id"]) if task and "id" in task and task["id"] else "";
+        if task and "tag" in task and task["tag"] {
+            tag_text = str(task["tag"]).trim();
+            if tag_text and tag_text != "undefined" and tag_text != "null" {
+                return tag_text;
+            }
+        }
+        return "[GEN]" if task_id.startsWith("gen_") else "[OPT]";
+    }
+
+    def derive_task_op_name(task: any) -> str {
+        if task and "op_name" in task and task["op_name"] {
+            op_text = str(task["op_name"]).trim();
+            if op_text and op_text != "undefined" and op_text != "null" {
+                return op_text;
+            }
+        }
+        task_id = str(task["id"]) if task and "id" in task and task["id"] else "";
+        if task_id.startsWith("gen_") {
+            return task_id.substring(4);
+        }
+        if task_id.startsWith("seq_opt_") {
+            return task_id.substring(8);
+        }
+        return "";
+    }
+
+    def find_queue_summary_for_op(queue_summary: dict, op_name: str) -> dict {
+        direct_key = normalize_op_name(op_name);
+        if direct_key and direct_key in queue_summary and queue_summary[direct_key] {
+            return queue_summary[direct_key];
+        }
+        for summary_key in Object.keys(queue_summary) {
+            if op_matches(summary_key, op_name) {
+                return queue_summary[summary_key];
+            }
+        }
+        return {};
+    }
+
+    def queued_job_contains_op(job: any, op_name: str) -> bool {
+        if not job or not op_name {
+            return False;
+        }
+        for queued_op in to_list(job["ops_list"] if "ops_list" in job else []) {
+            if queued_op and op_matches(str(queued_op), op_name) {
+                return True;
+            }
+        }
+        return False;
+    }
+
     queue_data = status["queue"] if status and "queue" in status else {};
     active_tasks_dict = queue_data["active_tasks"] if "active_tasks" in queue_data else {};
     active_tasks = [];
@@ -1294,6 +1737,7 @@ def:pub Dashboard -> Any {
     benchmark_slot = queue_data["benchmark_slot"] if "benchmark_slot" in queue_data else {"now": None, "pending": []};
     pending_operators = queue_data["pending_operators"] if "pending_operators" in queue_data else [];
     current_operator = queue_data["current_operator"] if "current_operator" in queue_data else "";
+    queued_jobs = merged_job_queue;
     # While the user has manually cleared the queue, pass empty arrays so
     # WorkQueuePanel shows nothing regardless of stale poll responses.
     active_tasks_for_queue = [] if queueManuallyCleared else active_tasks;
@@ -1303,6 +1747,66 @@ def:pub Dashboard -> Any {
     totalForgedMs = 0.0;
     totalAllPytorchMs = 0.0;
     operatorRows = [];
+    queue_summary_by_op = {};
+    locked_op_names = [];
+
+    for task in active_tasks {
+        task_op_name = derive_task_op_name(task);
+        task_key = normalize_op_name(task_op_name);
+        if not task_key {
+            continue;
+        }
+        if not (task_key in queue_summary_by_op) {
+            queue_summary_by_op[task_key] = {
+                "active_step": "",
+                "has_failed": False,
+                "has_gen_done": False,
+                "has_opt_done": False,
+                "best_gen_ms": None,
+                "best_opt_ms": None
+            };
+        }
+        entry = queue_summary_by_op[task_key];
+        task_step = str(task["current_step"]) if task and "current_step" in task and task["current_step"] else "";
+        task_tag = derive_task_tag(task);
+        if not task_step {
+            continue;
+        }
+        if task_step != "Done" and task_step != "Failed" {
+            entry["active_step"] = task_step;
+            if task_op_name {
+                locked_op_names.push(task_op_name);
+            }
+            continue;
+        }
+        if task_step == "Failed" {
+            entry["has_failed"] = True;
+            continue;
+        }
+        task_value_ms = to_num(task["value_ms"] if task and "value_ms" in task else None);
+        if task_tag == "[OPT]" {
+            entry["has_opt_done"] = True;
+            if task_value_ms != None and (entry["best_opt_ms"] == None or task_value_ms < entry["best_opt_ms"]) {
+                entry["best_opt_ms"] = task_value_ms;
+            }
+        } else {
+            entry["has_gen_done"] = True;
+            if task_value_ms != None and (entry["best_gen_ms"] == None or task_value_ms < entry["best_gen_ms"]) {
+                entry["best_gen_ms"] = task_value_ms;
+            }
+        }
+    }
+
+    for queued_job in to_list(queued_jobs) {
+        for queued_op in to_list(queued_job["ops_list"] if queued_job and "ops_list" in queued_job else []) {
+            if queued_op {
+                locked_op_names.push(str(queued_op));
+            }
+        }
+    }
+    if postSubmitActive and startingHint and "op" in startingHint and startingHint["op"] {
+        locked_op_names.push(str(startingHint["op"]));
+    }
 
     for op in to_list(ops) {
         if not op or not ("name" in op) or not op["name"] {
@@ -1321,6 +1825,18 @@ def:pub Dashboard -> Any {
         is_forged = False;
         ratio_for_sort = 0.0;
         b_val_raw = None;
+        metrics_best_raw = None;
+        op_queue_summary = find_queue_summary_for_op(queue_summary_by_op, op_name);
+        queue_gen_best_raw = (
+            to_num(op_queue_summary["best_gen_ms"])
+            if op_queue_summary and "best_gen_ms" in op_queue_summary
+            else None
+        );
+        queue_opt_best_raw = (
+            to_num(op_queue_summary["best_opt_ms"])
+            if op_queue_summary and "best_opt_ms" in op_queue_summary
+            else None
+        );
 
         for sd in to_list(speedData) {
             if sd and "name" in sd and op_matches(str(sd["name"]), op_name) {
@@ -1329,42 +1845,77 @@ def:pub Dashboard -> Any {
                 if b_val != None { baseline_ms = format_tick_ms(b_val); }
 
                 f_val = to_num(sd["forged"] if "forged" in sd else None);
-                if f_val != None { best_ms = format_tick_ms(f_val); }
-
-                if b_val != None and b_val > 0 {
-                    totalAllPytorchMs = totalAllPytorchMs + b_val * op_count_n;
-                    if f_val != None and f_val > 0 {
-                        r_val = b_val / f_val;
-                        speedup = f"{r_val.toFixed(2)}×";
-                        ratio_for_sort = r_val;
-                        if r_val > 1.001 {
-                            is_forged = True;
-                            totalPytorchMs = totalPytorchMs + b_val * op_count_n;
-                            totalForgedMs = totalForgedMs + f_val * op_count_n;
-                        }
-                    }
-                }
+                metrics_best_raw = f_val;
                 break;
             }
         }
 
-        op_status = "Not started";
-        for task in active_tasks {
-            if str(task["op_name"]) == op_name {
-                op_status = str(task["current_step"]);
+        if b_val_raw != None and b_val_raw > 0 {
+            totalAllPytorchMs = totalAllPytorchMs + b_val_raw * op_count_n;
+        }
+
+        display_best_raw = metrics_best_raw;
+        if display_best_raw == None {
+            display_best_raw = queue_opt_best_raw if queue_opt_best_raw != None else queue_gen_best_raw;
+        }
+        if display_best_raw != None {
+            best_ms = format_tick_ms(display_best_raw);
+        }
+
+        if b_val_raw != None and b_val_raw > 0 and display_best_raw != None and display_best_raw > 0 {
+            display_ratio = b_val_raw / display_best_raw;
+            speedup = f"{display_ratio.toFixed(2)}×";
+            ratio_for_sort = display_ratio;
+        }
+
+        forged_best_raw = metrics_best_raw if metrics_best_raw != None else queue_opt_best_raw;
+        if b_val_raw != None and b_val_raw > 0 and forged_best_raw != None and forged_best_raw > 0 {
+            forged_ratio = b_val_raw / forged_best_raw;
+            if forged_ratio > 1.001 {
+                is_forged = True;
+                totalPytorchMs = totalPytorchMs + b_val_raw * op_count_n;
+                totalForgedMs = totalForgedMs + forged_best_raw * op_count_n;
             }
         }
 
-        if op_status == "Not started" {
+        op_status = (
+            str(op_queue_summary["active_step"])
+            if op_queue_summary and "active_step" in op_queue_summary and op_queue_summary["active_step"]
+            else ""
+        );
+        if not op_status {
             if is_forged {
                 op_status = "Forged ✓";
-            } elif best_ms != "--" {
+            } elif (
+                display_best_raw != None
+                or (op_queue_summary and "has_gen_done" in op_queue_summary and op_queue_summary["has_gen_done"])
+                or (op_queue_summary and "has_opt_done" in op_queue_summary and op_queue_summary["has_opt_done"])
+            ) {
                 op_status = "Benchmarked";
+            } elif op_queue_summary and "has_failed" in op_queue_summary and op_queue_summary["has_failed"] {
+                op_status = "Failed";
+            } else {
+                op_status = "Not started";
             }
         }
 
         if is_forged {
             forgedCount += 1;
+        }
+
+        can_optimize_action = (
+            is_forged
+            or display_best_raw != None
+            or (op_queue_summary and "has_gen_done" in op_queue_summary and op_queue_summary["has_gen_done"])
+            or (op_queue_summary and "has_opt_done" in op_queue_summary and op_queue_summary["has_opt_done"])
+        );
+
+        has_row_queue_lock = False;
+        for locked_op_name in locked_op_names {
+            if locked_op_name and op_matches(locked_op_name, op_name) {
+                has_row_queue_lock = True;
+                break;
+            }
         }
 
         operatorRows.push({
@@ -1376,8 +1927,11 @@ def:pub Dashboard -> Any {
             "status": op_status,
             "ratio": ratio_for_sort,
             "is_forged": is_forged,
+            "can_optimize_action": can_optimize_action,
+            "action_disabled": has_row_queue_lock,
             "call_count": op_count_n,
-            "baseline_raw": b_val_raw
+            "baseline_raw": b_val_raw,
+            "display_order": get_stable_op_display_order(op_name)
         });
     }
 
@@ -1412,32 +1966,6 @@ def:pub Dashboard -> Any {
         }
     }
 
-    operatorRows.sort(lambda a: dict, b: dict -> int {
-        if not a and not b { return 0; }
-        if not a { return 1; }
-        if not b { return -1; }
-
-        a_stat = a["status"] if "status" in a else "Not started";
-        b_stat = b["status"] if "status" in b else "Not started";
-
-        a_active = a_stat != "Not started" and a_stat != "Forged ✓" and a_stat != "Benchmarked";
-        b_active = b_stat != "Not started" and b_stat != "Forged ✓" and b_stat != "Benchmarked";
-        if a_active and not b_active { return -1; }
-        if not a_active and b_active { return 1; }
-
-        a_forged = a["is_forged"] if "is_forged" in a else False;
-        b_forged = b["is_forged"] if "is_forged" in b else False;
-        if a_forged and not b_forged { return -1; }
-        if not a_forged and b_forged { return 1; }
-
-        a_ratio = a["ratio"] if "ratio" in a else 0.0;
-        b_ratio = b["ratio"] if "ratio" in b else 0.0;
-        if a_ratio > b_ratio { return -1; }
-        if a_ratio < b_ratio { return 1; }
-
-        return 0;
-    });
-
     return
         <div className="p-6 md:p-8 max-w-7xl mx-auto space-y-6">
             <DashboardHeader
@@ -1468,6 +1996,7 @@ def:pub Dashboard -> Any {
                     currentOperator={current_operator}
                     benchmarkSlot={benchmark_slot}
                     pendingOperators={pending_operators}
+                    queuedJobs={queued_jobs}
                     speedData={speedData}
                     mctsSummary={mctsSummary}
                     onClearQueue={handleClearQueue}
@@ -1482,22 +2011,32 @@ def:pub Dashboard -> Any {
                     gpuMismatch={gpuMismatch}
                 />
             </div>
-            <GenerateModal
+            {<GenerateModal
+                key={"generate-modal-" + str(generateModalSession)}
                 isOpen={generateModalOpen}
-                onClose={lambda -> None { setGenerateModalOpen(False);}}
-                onComplete={lambda -> None { setGenerateModalOpen(False);}}
+                modalSession={generateModalSession}
+                onClose={closeGenerateModal}
+                onComplete={closeGenerateModal}
                 onStarted={handleModalStarted}
+                hasProjectWork={any_job_active}
                 projectName={name}
                 opName={modalOpName}
             />
-            <OptimizeModal
+            if generateModalOpen
+            else <span/>}
+            {<OptimizeModal
+                key={"optimize-modal-" + str(optimizeModalSession)}
                 isOpen={optimizeModalOpen}
-                onClose={lambda -> None { setOptimizeModalOpen(False);}}
-                onComplete={lambda -> None { setOptimizeModalOpen(False);}}
+                modalSession={optimizeModalSession}
+                onClose={closeOptimizeModal}
+                onComplete={closeOptimizeModal}
                 onStarted={handleModalStarted}
+                hasProjectWork={any_job_active}
                 projectName={name}
                 opName={modalOpName}
             />
+            if optimizeModalOpen
+            else <span/>}
             <GpuMismatchModal
                 isOpen={gpuMismatchModalOpen}
                 onClose={lambda -> None { setGpuMismatchModalOpen(False);}}
