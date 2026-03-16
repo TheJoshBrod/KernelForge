@@ -49,6 +49,12 @@ Rules:
         prompt = ""
         with open("src/generator/prompts/TritonGeneratorSystemPrompt.md") as f:
             prompt = f.read()
+        try:
+            import triton as _triton
+            triton_version = _triton.__version__
+        except Exception:
+            triton_version = "unknown"
+        prompt = f"Target runtime: OpenAI Triton {triton_version}\n\n" + prompt
     return prompt
 
 
@@ -590,6 +596,13 @@ Error/feedback:
 Repair instructions:
 - Keep the launch() signature EXACTLY the same — do NOT change argument order or types.
 - Only modify the @triton.jit kernel body.
+- FORBIDDEN in kernel launch: `.data_ptr()` — NEVER pass `tensor.data_ptr()` to the kernel.
+  Pass the tensor object directly. Triton infers the pointer type from the tensor's dtype.
+  Passing a raw int64 from .data_ptr() causes "Unsupported ptr type" errors.
+- FORBIDDEN as type annotations: `tl.pointer`, `tl.float32_ptr`, `tl.uint64` — none exist.
+  Do NOT annotate pointer parameters. Only annotate `tl.constexpr` for compile-time constants.
+- FORBIDDEN: `tl.broadcast(tensor, (A, B))` with a tuple shape — causes `'tuple_type' has no
+  attribute 'is_block'`. Use `t[:, None]` and `t[None, :]` for 2D broadcasting instead.
 - FORBIDDEN inside @triton.jit: `continue`, `break`, `while`, `tl.any()`, `tl.all()`,
   data-dependent `if` over tensor values, `try`/`except`.
 - For early-exit patterns: remove them entirely and use masked operations instead.

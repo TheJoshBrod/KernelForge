@@ -244,7 +244,7 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
         inputs = load_batch(batch_files)
 
         # Warmup (only for this batch, discarded)
-        for _ in range(5):
+        for _ in range(25):
             for args, kwargs in inputs:
                 try:
                     module.launch(*args, **kwargs)
@@ -258,25 +258,25 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
             end = torch.cuda.Event(enable_timing=True)
             for args, kwargs in inputs:
                 start.record()
-                for _ in range(10):
+                for _ in range(100):
                     try:
                         module.launch(*args, **kwargs)
                     except TypeError:
                         module.launch(*args)
                 end.record()
                 torch.cuda.synchronize()
-                elapsed_ms = start.elapsed_time(end) / 10
+                elapsed_ms = start.elapsed_time(end) / 100
                 timings.append(elapsed_ms)
         else:
             for args, kwargs in inputs:
                 start_time = time.perf_counter()
-                for _ in range(10):
+                for _ in range(100):
                     try:
                         module.launch(*args, **kwargs)
                     except TypeError:
                         module.launch(*args)
                 _sync_device(target_device)
-                elapsed_ms = (time.perf_counter() - start_time) * 1000.0 / 10
+                elapsed_ms = (time.perf_counter() - start_time) * 1000.0 / 100
                 timings.append(elapsed_ms)
 
         # Profile run (for detailed metrics)

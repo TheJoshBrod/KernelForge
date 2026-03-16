@@ -122,6 +122,14 @@ You will be provided with:
   - Compute grid dimensions based on output size and BLOCK_SIZE
   - Use `triton.cdiv(n, BLOCK_SIZE)` for ceiling division
   - Launch with `kernel_fn[grid](args...)`
+  - **CRITICAL — Passing Tensors**: Pass tensor objects DIRECTLY to the kernel. NEVER call `.data_ptr()`.
+    Triton infers the pointer type from the tensor dtype automatically.
+    ```python
+    # CORRECT:
+    my_kernel[grid](input, output, n_elements, BLOCK_SIZE=BLOCK_SIZE)
+    # WRONG — will cause "Unsupported ptr type" errors:
+    my_kernel[grid](input.data_ptr(), output.data_ptr(), n_elements, BLOCK_SIZE=BLOCK_SIZE)
+    ```
 
 - **constexpr Parameters**:
   - Compile-time constants (like BLOCK_SIZE) must be annotated with `tl.constexpr`
@@ -170,6 +178,12 @@ You will be provided with:
 -----------------------------------------------
 The following are NOT supported inside `@triton.jit` kernels:
 
+- `.data_ptr()` in kernel launch — NEVER call `.data_ptr()` on tensors when passing to the
+  kernel. Pass the tensor object directly. `.data_ptr()` returns a raw int64 integer; Triton
+  cannot infer the pointer type from it and will raise "Unsupported ptr type".
+- `tl.pointer`, `tl.float32_ptr`, `tl.uint64` as pointer type annotations — NONE of these
+  exist in Triton. Do NOT annotate pointer parameters. Pass tensors directly and Triton
+  infers the pointer type. Only use `tl.constexpr` for compile-time constants.
 - `tl.any()` — DOES NOT EXIST. Replace with `tl.reduce_or(mask)` (1D) or restructure
   using masking. Preferred pattern: just use masking — `tl.where(mask, value, 0.0)` —
   and always call `tl.store` with the mask. A store to a False-mask lane is a no-op.
@@ -179,6 +193,17 @@ The following are NOT supported inside `@triton.jit` kernels:
 - Data-dependent `if` over tensor/pointer values — NOT supported.
   Use `tl.where(cond, a, b)` for element-wise selection.
 - `try` / `except` — NOT supported inside kernels.
+- `tl.broadcast(tensor, (SHAPE_A, SHAPE_B))` — passing a tuple shape to `tl.broadcast` is NOT
+  supported and causes `'tuple_type' object has no attribute 'is_block'`. For 2D indexing, use
+  `tl.expand_dims(t, axis)` or Python slice indexing: `t[:, None]` (adds axis at dim 1) and
+  `t[None, :]` (adds axis at dim 0). These broadcast automatically via Triton's type system.
+  ```python
+  # WRONG:
+  offs_oh_exp = tl.broadcast(offs_oh, (BLOCK_OH, BLOCK_OW))
+  # CORRECT:
+  offs_oh_exp = offs_oh[:, None]   # shape (BLOCK_OH, 1) — broadcasts to (BLOCK_OH, BLOCK_OW)
+  offs_ow_exp = offs_ow[None, :]   # shape (1, BLOCK_OW) — broadcasts to (BLOCK_OH, BLOCK_OW)
+  ```
 
 Correct pattern for "skip if nothing valid":
 ```python

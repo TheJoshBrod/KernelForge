@@ -53,6 +53,13 @@ def summarize_issue_with_traceback(
         Only Triton-side fixes are relevant.
 
         Do NOT suggest using:
+        - `.data_ptr()` when launching the kernel — tensors must be passed directly, NEVER as
+          raw pointers via .data_ptr(). Triton infers pointer types from the tensor dtype.
+          Passing int64 from .data_ptr() causes "Unsupported ptr type" errors.
+        - `tl.pointer`, `tl.float32_ptr`, `tl.uint64` as type annotations on pointer params —
+          none of these exist. Do NOT annotate pointer parameters at all. Only `tl.constexpr`.
+        - `tl.broadcast(tensor, (A, B))` with a tuple shape — this causes `'tuple_type' has no
+          attribute 'is_block'`. For 2D indexing use `t[:, None]` and `t[None, :]` instead.
         - `continue` or `break` inside the kernel (not supported in Triton JIT)
         - `tl.any()` or `tl.all()` (do not exist in tl namespace)
         - `while` loops (not supported — use `for _ in range(N)`)
