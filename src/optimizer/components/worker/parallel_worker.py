@@ -33,9 +33,9 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
         backend = MetalBackend()
     else:
         raise ValueError(f"Unknown backend type: {backend_type}")
-    
+
     worker_pid = os.getpid()
-    
+
     while True:
         try:
             task = task_queue.get(timeout=30)
@@ -44,8 +44,9 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
             parent_node, context = task
         except Exception:
             continue  # Timeout, check again
-        
+
         node_id = parent_node.id
+        dispatch_key = str(context.get("dispatch_key", f"opt_{node_id}"))
         tmp_dir = None
         
         try:
@@ -93,7 +94,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                      best_kernel_code = p1.read_text()
             
             if not best_kernel_code:
-                result_queue.put((node_id, None, "no_parent_code"))
+                result_queue.put((node_id, dispatch_key, None, "no_parent_code"))
                 continue
             
             # === GENERATION PHASE (CPU/Network bound) ===
@@ -122,17 +123,18 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
             sys_prompt = backend.get_sys_prompt()
             llm = GenModel(sys_prompt)
             
-            result_queue.put((node_id, {"step": "Generating", "attempt": 1}, "status_update"))
+            result_queue.put((node_id, dispatch_key, {"step": "Generating", "attempt": 1}, "status_update"))
             
             # Retry loop variables
             current_prompt = prompt
             is_valid = False
             validation_error = ""
             metrics = {} # To store Code, feedback etc
-            
+
             retry_limit = settings.retry_limit if hasattr(settings, 'retry_limit') else 3
-            
-            for attempt in range(retry_limit + 1):
+            max_attempts = retry_limit + 1
+
+            for attempt in range(max_attempts):
                 # 3. Chat & Extract Code
                 # For first attempt, current_prompt is the full prompt
                 # For retries, current_prompt is the error message (GenModel keeps history)
@@ -140,7 +142,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                 try:
                     response = llm.chat(current_prompt, model or settings.llm_model_name)
                 except Exception as e:
-                    result_queue.put((node_id, None, f"llm_error: {e}"))
+                    result_queue.put((node_id, dispatch_key, None, f"llm_error: {e}"))
                     break
 
                 feedback, code = generator.extract_feedback_and_code(response)
@@ -148,9 +150,9 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                 if code is None:
                     # If we can't extract code, treat as validation error and retry if possible
                     validation_error = "Failed to extract code from LLM response"
-                    if attempt < retry_limit:
+                    if attempt + 1 < max_attempts:
                         current_prompt = f"Error: {validation_error}. Please provide the full kernel code in a code block."
-                        result_queue.put((node_id, {"step": "Generating", "attempt": attempt + 2}, "status_update"))
+                        result_queue.put((node_id, dispatch_key, {"step": "Generating", "attempt": attempt + 2}, "status_update"))
                         continue
                     else:
                         break
@@ -159,27 +161,27 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                 (paths["tmp_dir"] / f"kernel{backend.kernel_extension}").write_text(code)
 
                 # 4. Validate
-                result_queue.put((node_id, {"step": "Validating", "attempt": attempt + 1}, "status_update"))
+                result_queue.put((node_id, dispatch_key, {"step": "Validating", "attempt": attempt + 1}, "status_update"))
                 is_valid, validation_error = backend.validate_kernel(code, paths)
-                
+
                 if is_valid:
                     break
-                
+
                 # If invalid, prepare for next attempt
-                if attempt < retry_limit:
+                if attempt + 1 < max_attempts:
                     print(f"[WORKER {worker_pid}] Attempt {attempt+1} failed: {validation_error[:100]}... Retrying.")
                     current_prompt = f"Compilation/Validation failed with error:\n{validation_error}\n\nPlease fix the code."
-                    result_queue.put((node_id, {"step": "Generating", "attempt": attempt + 2}, "status_update"))
-            
+                    result_queue.put((node_id, dispatch_key, {"step": "Generating", "attempt": attempt + 2}, "status_update"))
+
             # check final status
             if not is_valid:
-                result_queue.put((node_id, None, f"validation_failed_after_retries: {validation_error[:200]}"))
+                result_queue.put((node_id, dispatch_key, None, f"validation_failed_after_retries: {validation_error[:200]}"))
                 continue
 
             # 5. Profile (Exclusive GPU access)
             runtime_ms = float('inf')
-            
-            result_queue.put((node_id, {"step": "Profiling", "attempt": attempt + 1 if 'attempt' in locals() else 1}, "status_update"))
+
+            result_queue.put((node_id, dispatch_key, {"step": "Profiling", "attempt": attempt + 1 if 'attempt' in locals() else 1}, "status_update"))
             
             # Use lock if provided (for strict serialization of GPU kernels)
             if gpu_lock:
@@ -191,7 +193,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                  runtime_ms = stats.get('min_time_ms', float('inf'))
 
             if runtime_ms == float('inf'):
-                 result_queue.put((node_id, None, f"profiling_failed"))
+                 result_queue.put((node_id, dispatch_key, None, f"profiling_failed"))
                  continue
 
             # 6. Save Kernel
@@ -208,6 +210,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
             # Return success
             result_queue.put((
                 node_id,
+                dispatch_key,
                 {
                     "runtime_ms": runtime_ms,
                     "kernel_id": kernel_id,
@@ -226,7 +229,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
             import traceback
             print(f"[WORKER {worker_pid}] ERROR: {e}")
             traceback.print_exc()
-            result_queue.put((node_id, None, f"worker_error: {e}"))
+            result_queue.put((node_id, dispatch_key, None, f"worker_error: {e}"))
         finally:
             # Always cleanup temp directory
             if tmp_dir and tmp_dir.exists():

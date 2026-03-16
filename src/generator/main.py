@@ -324,6 +324,7 @@ def validate_with_retries(
         llm_model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
     
     attempts_total = codex_max_attempts if use_codex_generate else max_attempts
+    task_meta = {"tag": "[GEN]", "op_name": op_key}
 
     def _run_codex_repair(feedback: str, attempt_idx: int) -> tuple[bool, str, str]:
         # Note: This still uses base_prompt logic which isn't carried here perfectly
@@ -383,6 +384,7 @@ def validate_with_retries(
 
         if _proj_base_dir and _task_key:
             update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
+                **task_meta,
                 "current_step": "Generating",
                 "attempt_current": attempt + 1,
                 "attempt_max": max_attempts,
@@ -481,6 +483,7 @@ def validate_with_retries(
 
         if _proj_base_dir and _task_key:
             update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
+                **task_meta,
                 "current_step": "Validating",
             }}})
 
@@ -533,6 +536,7 @@ def validate_with_retries(
 
             if _proj_base_dir and _task_key:
                 update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
+                    **task_meta,
                     "current_step": "Done",
                     "status": "Done",
                 }}})
@@ -541,6 +545,7 @@ def validate_with_retries(
     if _proj_base_dir and _task_key:
         result_msg = f"{last_stage}: {last_feedback[:120]}" if last_feedback else last_stage
         update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
+            **task_meta,
             "current_step": "Failed",
             "status": "Failed",
             "result": result_msg,

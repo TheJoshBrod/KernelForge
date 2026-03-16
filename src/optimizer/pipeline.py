@@ -27,18 +27,29 @@ from src.optimizer.backends.triton import TritonBackend
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
+def _default_queue_state() -> dict:
+    return {
+        "active_tasks": {},
+        "benchmark_slot": {"now": None, "pending": []},
+        "pending_operators": [],
+        "current_operator": "",
+        "job_queue": [],
+        "launching_job": {},
+    }
+
 def update_queue_state(proj_base_dir: Path, updates: dict):
     from src.optimizer.benchmarking.locks import file_lock
     queue_path = proj_base_dir / "queue.json"
     lock_path = queue_path.with_suffix(".json.lock")
     with file_lock(lock_path):
+        state = _default_queue_state()
         if queue_path.exists():
             try:
-                state = json.loads(queue_path.read_text())
-            except:
-                state = {"active_tasks": {}, "benchmark_slot": {"now": None, "pending": []}, "pending_operators": [], "current_operator": ""}
-        else:
-            state = {"active_tasks": {}, "benchmark_slot": {"now": None, "pending": []}, "pending_operators": [], "current_operator": ""}
+                raw_state = json.loads(queue_path.read_text())
+                if isinstance(raw_state, dict):
+                    state.update(raw_state)
+            except Exception:
+                pass
         
         if "active_tasks" in updates:
             for k, v in updates["active_tasks"].items():
@@ -55,7 +66,9 @@ def update_queue_state(proj_base_dir: Path, updates: dict):
         if "current_operator" in updates:
             state["current_operator"] = updates["current_operator"]
         
-        queue_path.write_text(json.dumps(state, indent=2))
+        tmp_path = queue_path.with_name(f"{queue_path.name}.{os.getpid()}.tmp")
+        tmp_path.write_text(json.dumps(state, indent=2))
+        tmp_path.replace(queue_path)
 
 
 
@@ -598,6 +611,8 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                 "gpu_specs": gpu_specs,
                 "paths": paths,
             }
+            dispatch_key = f"opt_{node.id}_{nodes_dispatched + 1}"
+            context["dispatch_key"] = dispatch_key
             
             task_queue.put((node, context))
             in_flight_ids.add(node.id)
@@ -607,16 +622,16 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
             
             proj_base_dir = paths["proj_dir"].parent.parent
             queue_entry = {
-                "id": str(node.id),
+                "id": dispatch_key,
                 "tag": "[OPT]",
                 "op_name": paths["io_dir"].name,
                 "current_step": "Generating",
                 "attempt_current": 1,
-                "attempt_max": settings.retry_limit if hasattr(settings, 'retry_limit') else 3,
+                "attempt_max": (settings.retry_limit + 1) if hasattr(settings, 'retry_limit') else 4,
                 "parent_ref": f"kernel_{node.id}",
                 "status": "In Progress"
             }
-            update_queue_state(proj_base_dir, {"active_tasks": {str(node.id): queue_entry}})
+            update_queue_state(proj_base_dir, {"active_tasks": {dispatch_key: queue_entry}})
             
             elapsed = time.time() - start_time
             print(f"[DISPATCH] Node {node.id} ({nodes_dispatched}/{max_iterations}) | In-flight: {len(in_flight_ids)} | {elapsed:.0f}s")
@@ -625,7 +640,7 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
         results_collected = False
         while True:
             try:
-                node_id, result_data, status = result_queue.get(timeout=0.2)
+                node_id, dispatch_key, result_data, status = result_queue.get(timeout=0.2)
             except queue.Empty:
                 break
             except Exception as e:
@@ -664,7 +679,7 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                     print(f"[SUCCESS] Node {node_id} -> {kernel_id} | {runtime_ms:.4f}ms | {speedup:.2f}x | Done: {nodes_completed}")
                 
                 update_queue_state(proj_base_dir, {
-                    "active_tasks": {str(node_id): {"current_step": "Done", "result": f"{speedup:.2f}x", "status": "Done", "value_ms": float(runtime_ms), "kernel_id": kernel_id}},
+                    "active_tasks": {dispatch_key: {"current_step": "Done", "result": f"{speedup:.2f}x", "status": "Done", "value_ms": float(runtime_ms), "kernel_id": kernel_id}},
                     "benchmark_slot": {"now": None, "pending": []}
                 })
             elif status == "status_update":
@@ -673,12 +688,12 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                 bm_slot = {}
                 if step_name == "Profiling":
                     bm_slot = {"benchmark_slot": {"now": f"{paths['io_dir'].name} · kernel_{node_id}", "pending": []}}
-                update_queue_state(proj_base_dir, {"active_tasks": {str(node_id): update_dict}, **bm_slot})
+                update_queue_state(proj_base_dir, {"active_tasks": {dispatch_key: update_dict}, **bm_slot})
             else:
                 nodes_failed += 1
                 error_label = status[:50] if isinstance(status, str) else "Failed"
                 update_queue_state(proj_base_dir, {
-                    "active_tasks": {str(node_id): {"current_step": "Failed", "result": error_label, "status": "Failed"}},
+                    "active_tasks": {dispatch_key: {"current_step": "Failed", "result": error_label, "status": "Failed"}},
                     "benchmark_slot": {"now": None, "pending": []}
                 })
                 print(f"[FAILED] Node {node_id}: {status}")
@@ -947,8 +962,9 @@ Examples:
     })
 
     # Process each operator
-    for op_dir_path in operators_to_process:
+    for op_index, op_dir_path in enumerate(operators_to_process):
         op_name = op_dir_path.name
+        remaining_ops = [d.name for d in operators_to_process[op_index + 1:]]
         print(f"\n{'='*40}")
         print(f"Optimizing: {op_name}")
         print(f"{'='*40}")
@@ -958,6 +974,10 @@ Examples:
         if not io_dir.exists():
             reason = f"IO directory not found at {io_dir}"
             print(f"  Skipping {op_name}: {reason}")
+            update_queue_state(proj_base_dir, {
+                "current_operator": "",
+                "pending_operators": remaining_ops,
+            })
             print(
                 f"[optimize-result] op={op_name} status=hard_error "
                 f"new_nodes=0 last_reason={json.dumps(_compact_reason(reason))}"
@@ -965,7 +985,8 @@ Examples:
             continue
             
         update_queue_state(proj_base_dir, {
-            "current_operator": op_name
+            "current_operator": op_name,
+            "pending_operators": remaining_ops,
         })
 
         # Paths for optimization
@@ -1003,6 +1024,7 @@ Examples:
             update_queue_state(proj_base_dir, {
                 "active_tasks": {},
                 "current_operator": "",
+                "pending_operators": remaining_ops,
                 "benchmark_slot": {"now": None, "pending": []},
             })
             print(
@@ -1073,6 +1095,7 @@ Examples:
                     print(f"  Progress: {i+1}/{args.max_iterations} iterations")
             update_queue_state(proj_base_dir, {
                 "current_operator": "",
+                "pending_operators": remaining_ops,
             })
             if op_new_nodes > 0:
                 print(
@@ -1086,6 +1109,12 @@ Examples:
                     f"[optimize-result] op={op_name} status=no_improvement "
                     f"new_nodes=0 last_reason={json.dumps(_compact_reason(op_last_reason))}"
                 )
+
+    update_queue_state(proj_base_dir, {
+        "pending_operators": [],
+        "current_operator": "",
+        "benchmark_slot": {"now": None, "pending": []},
+    })
     
 if __name__ == "__main__":
     main()

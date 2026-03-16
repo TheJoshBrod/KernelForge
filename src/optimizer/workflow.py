@@ -277,6 +277,11 @@ def run_generate(args: argparse.Namespace) -> int:
         )
 
         generated_op_dir = out_dir / "individual_op_kernels" / op_name
+        task_key = "gen_" + op_name
+        task_meta = {
+            "tag": "[GEN]",
+            "op_name": op_name,
+        }
         op_failure: str | None = None
         can_benchmark = False
         reused_existing = False
@@ -329,6 +334,11 @@ def run_generate(args: argparse.Namespace) -> int:
             ]
             if args.remote:
                 gen_cmd += ["--remote", args.remote]
+            update_queue_state(project_dir, {"active_tasks": {task_key: {
+                **task_meta,
+                "current_step": "Generating",
+                "status": "In Progress",
+            }}})
             # Pass KFORGE state env through so attempt-level progress messages
             # from generator/main.py reach the dashboard.
             rc = _run(gen_cmd, root, env)
@@ -405,7 +415,8 @@ def run_generate(args: argparse.Namespace) -> int:
                 op_name,
             ]
             # C2: signal benchmarking phase so the UI progress bar advances
-            update_queue_state(project_dir, {"active_tasks": {"gen_" + op_name: {
+            update_queue_state(project_dir, {"active_tasks": {task_key: {
+                **task_meta,
                 "current_step": "Benchmarking",
                 "status": "In Progress",
             }}})
@@ -413,7 +424,8 @@ def run_generate(args: argparse.Namespace) -> int:
             if rc != 0:
                 failure_msg = f"benchmark failed (exit {rc})"
                 op_failure = f"{op_failure}; {failure_msg}" if op_failure else failure_msg
-                update_queue_state(project_dir, {"active_tasks": {"gen_" + op_name: {
+                update_queue_state(project_dir, {"active_tasks": {task_key: {
+                    **task_meta,
                     "current_step": "Failed",
                     "status": "Failed",
                     "result": failure_msg[:200],
@@ -421,7 +433,8 @@ def run_generate(args: argparse.Namespace) -> int:
             else:
                 kernel_ms, backend = _load_kernel_benchmark(project_dir, op_name)
                 # C1: write benchmark timing so completed section can show value_ms
-                update_queue_state(project_dir, {"active_tasks": {"gen_" + op_name: {
+                update_queue_state(project_dir, {"active_tasks": {task_key: {
+                    **task_meta,
                     "current_step": "Done",
                     "status": "Done",
                     "value_ms": kernel_ms,
@@ -444,6 +457,12 @@ def run_generate(args: argparse.Namespace) -> int:
                     )
 
         if op_failure:
+            update_queue_state(project_dir, {"active_tasks": {task_key: {
+                **task_meta,
+                "current_step": "Failed",
+                "status": "Failed",
+                "result": op_failure[:200],
+            }}})
             failed_ops.append((op_name, op_failure))
             print(f"[workflow] Failed {op_name}: {op_failure}. Continuing.")
             update_job_progress(
@@ -528,10 +547,22 @@ def run_optimize(args: argparse.Namespace) -> int:
 
     for idx, op_name in enumerate(ops):
         if not wait_if_paused():
+            update_queue_state(project_dir, {
+                "pending_operators": [],
+                "current_operator": "",
+            })
             return 130
         if check_cancelled():
+            update_queue_state(project_dir, {
+                "pending_operators": [],
+                "current_operator": "",
+            })
             return 130
 
+        update_queue_state(project_dir, {
+            "current_operator": op_name,
+            "pending_operators": ops[idx + 1:],
+        })
         update_job_progress(
             idx,
             total,
@@ -560,6 +591,10 @@ def run_optimize(args: argparse.Namespace) -> int:
                 f"[workflow-optimize-result] op={op_name} status=hard_error "
                 f"new_nodes=0 last_reason={json.dumps(reason)}"
             )
+            update_queue_state(project_dir, {
+                "pending_operators": [],
+                "current_operator": "",
+            })
             update_job_progress(
                 idx + 1,
                 total,
@@ -587,8 +622,16 @@ def run_optimize(args: argparse.Namespace) -> int:
         ]
         rc = _run(bench_cmd, root, env)
         if rc != 0:
+            update_queue_state(project_dir, {
+                "pending_operators": [],
+                "current_operator": "",
+            })
             return rc
 
+    update_queue_state(project_dir, {
+        "pending_operators": [],
+        "current_operator": "",
+    })
     update_job_progress(total, total, "Kernel optimization completed.")
     return 0
 
