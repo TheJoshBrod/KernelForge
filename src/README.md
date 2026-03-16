@@ -15,7 +15,7 @@ src/
 │   ├── pipeline.py             # Optimization pipeline (MCTS-driven)
 │   ├── benchmarking/           # Baseline + optimized benchmarking pipeline
 │   ├── core/                   # MCTS core types/logic
-│   └── backends/               # CUDA/Triton/Metal backend abstractions
+│   └── backends/               # CUDA and Triton backend abstractions (Metal is a skeleton)
 └── progress.py                 # Job progress + pause/cancel helpers via state.json
 ```
 
