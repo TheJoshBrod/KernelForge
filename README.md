@@ -209,8 +209,8 @@ kernels/projects/<project_name>/
 ## Further reading
 
 - `docs/system-architecture.md`: generator and optimizer pipeline in detail
-- `docs/motivation.md`: design rationale
 - `docs/FileFormat.md`: `.anvil` and `.cast` format specification
+- `docs/cast-runtime.md`: `run_cast.py` CLI reference and known limitations
 - `docs/profiling/`: profiling API and architecture
 - `src/README.md`: backend source layout
 - `frontend/README.md`: frontend walker API

@@ -45,7 +45,7 @@ python -m src.optimizer.workflow <profile|generate|optimize|benchmark> ...
 
 Frontend orchestration is implemented in:
 
-- `frontend/walkers/project.jac`
+- `frontend/walkers/kernel_job_runners.jac`
 
 ## Robustness rules
 

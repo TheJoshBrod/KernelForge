@@ -12,12 +12,12 @@ This phase acts as an automated "developer loop" that iteratively writes and fix
 2.  **LLM Generation**:
     -   The system prompts an LLM (Claude, Gemini, OpenAI, or Ollama) with the operator signature and input metadata.
     -   The LLM generates a candidate CUDA kernel (`kernel.cu`) and a C++ launch signature.
-    -   *Source: [`src/generator/generator.py`](../src/generator/generator.py)*
+    -   *Source: `src/generator/generator.py`*
 3.  **Verification Loop**:
     -   **JIT Compilation**: The generated code is dynamically compiled using `torch.utils.cpp_extension.load_inline`. Compile-time errors are captured immediately.
     -   **Runtime Validation**: The compiled kernel is executed with the captured input tensors. Its output is compared against the ground-truth PyTorch output using `torch.allclose`.
     -   **Feedback**: usage errors (tracebacks) or numerical mismatches are fed back to the LLM to generate a fix.
-    -   *Source: [`src/generator/verifier.py`](../src/generator/verifier.py)*
+    -   *Source: `src/optimizer/backends/cuda/verifier.py` and `src/optimizer/backends/triton/verifier.py`*
 
 **Output:** A base "correct" kernel that is functionally equivalent to the PyTorch implementation but not yet optimized.
 
@@ -37,7 +37,7 @@ This phase treats code optimization as a search problem, utilizing **Monte Carlo
 3.  **Iterative Refinement**:
     -   **Generation**: The LLM is given the parent kernel's code and its entire optimization history (lineage of changes). It is prompted to apply a specific speedup strategy (e.g., "tiling," "loop unrolling," "vectorized memory access").
     -   **Profiling**: The new kernel is compiled and benchmarked on the actual hardware to measure `mean_time_ms`.
-    -   *Source: [`src/optimizer/components/hardware/profiler.py`](../src/optimizer/components/hardware/profiler.py)*
+    -   *Source: `src/optimizer/backends/cuda/profiler.py` and `src/optimizer/backends/triton/profiler.py`*
 4.  **Tree Update**:
     -   The new kernel is saved as a child node with its performance metrics (speedup vs. parent).
     -   The results propagate up the tree to influence future selection decisions.
