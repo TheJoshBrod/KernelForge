@@ -25,10 +25,15 @@ import from .job_supervisor {
     _all_projects_dirs,
     _migrate_legacy_projects,
     _detect_hardware,
+    _get_active_project_job,
+    _queue_has_backlog,
+    _queue_has_running_work,
     _start_job,
     _find_optimized_dir,
     _normalize_metric_op_name,
-    _read_state
+    _read_state,
+    _read_queue_state,
+    _start_next_queued_job
 }
 
 # --- Private helpers ---
@@ -697,17 +702,17 @@ walker:pub GetProjectStatus {
         currentGpuInfo: dict = {};
 
     can return_status with entry {
+        _start_next_queued_job(self.projectName);
         state = _read_state(self.projectName);
-        queue_path = path.join(_project_dir(self.projectName), "queue.json");
-        queue_state = {};
-        if path.exists(queue_path) {
-            try {
-                with open(queue_path, "r") as f {
-                    queue_state = load(f);
-                }
-            } except Exception as e {
-                print(f"Failed to read queue state: {e}");
-            }
+        queue_state = _read_queue_state(self.projectName);
+        if (
+            not _get_active_project_job(self.projectName, False)
+            and _queue_has_backlog(queue_state)
+            and not _queue_has_running_work(queue_state)
+        ) {
+            _start_next_queued_job(self.projectName);
+            state = _read_state(self.projectName);
+            queue_state = _read_queue_state(self.projectName);
         }
         if "active_tasks" in queue_state {
             cleaned = {};
