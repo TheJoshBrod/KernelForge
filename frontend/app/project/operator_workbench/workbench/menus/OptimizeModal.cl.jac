@@ -6,7 +6,6 @@ import from ......components.ui.Icons {
     ZapIcon,
     BrainIcon,
     ActivityIcon,
-    TimerIcon,
     ChevronDownIcon,
     SettingsIcon
 }
@@ -101,10 +100,6 @@ def:pub OptimizeModal(props: any) -> Any {
     iterations_state = useState(5);
     iterations = iterations_state[0];
     setIterations = iterations_state[1];
-
-    patience_state = useState(2);
-    patience = patience_state[0];
-    setPatience = patience_state[1];
 
     workers_state = useState(4);
     workers = workers_state[0];
@@ -274,13 +269,13 @@ def:pub OptimizeModal(props: any) -> Any {
                 "projectName": resolvedProjectName,
                 "ops": [selectedOp],
                 "iterations": int(iterations),
-                "patience": int(patience),
+                "patience": 2,
                 "minImproveMs": 0.0,
                 "minSpeedupPct": 0.0,
                 "workers": int(workers),
                 "optimizer_config": {
                     "iterations": int(iterations),
-                    "patience": int(patience)
+                    "patience": 2
                 }
             };
 
@@ -354,7 +349,7 @@ def:pub OptimizeModal(props: any) -> Any {
         <Modal isOpen={isOpen} onClose={close_modal} title="Optimize Kernel">
             <div className="p-6 space-y-6">
                 <div className="space-y-4">
-                    <div className="space-y-2">
+                    <div className="space-y-1">
                         <label
                             className="text-sm font-medium text-zinc-300 flex items-center gap-2"
                         >
@@ -402,7 +397,7 @@ def:pub OptimizeModal(props: any) -> Any {
                             else "Project missing from route context."}
                         </p>
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-1">
                         <label
                             className="text-sm font-medium text-zinc-300 flex items-center gap-2"
                         >
@@ -454,24 +449,6 @@ def:pub OptimizeModal(props: any) -> Any {
                             <label
                                 className="text-sm font-medium text-zinc-300 flex items-center gap-2"
                             >
-                                <TimerIcon className="w-4 h-4 text-amber-400"/>
-                                Patience
-                            </label>
-                            <input
-                                type="number"
-                                value={patience}
-                                onChange={lambda e: any  -> None { setPatience(
-                                    e.target.value
-                                );}}
-                                min="1"
-                                max="10"
-                                className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <label
-                                className="text-sm font-medium text-zinc-300 flex items-center gap-2"
-                            >
                                 <SettingsIcon className="w-4 h-4 text-purple-400"/>
                                 Parallel Workers
                             </label>
@@ -492,7 +469,7 @@ def:pub OptimizeModal(props: any) -> Any {
                 </div>
                 if active_ssh
                 else <span/>}
-                <div className="pt-6 flex justify-end gap-3 border-t border-zinc-800">
+                <div className="pt-4 flex justify-end gap-3 border-t border-zinc-800">
                     <button
                         onClick={close_modal}
                         className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"

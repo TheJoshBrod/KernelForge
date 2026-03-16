@@ -267,13 +267,13 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
         inputs = load_batch(batch_files)
 
         # Profile each input using triton.testing.do_bench
-        # return_mode="min" gives the minimum timing across reps — most stable signal
+        # return_mode="mean" matches how CUDA kernel profiling averages reps per entry
         for args, kwargs in inputs:
             ms = triton.testing.do_bench(
                 lambda a=args: module.launch(*a),
                 warmup=25,
                 rep=100,
-                return_mode="min",
+                return_mode="mean",
             )
             timings.append(ms)
 

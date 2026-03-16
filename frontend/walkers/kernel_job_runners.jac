@@ -81,7 +81,7 @@ walker:pub StartGenerate {
         ops: list = [],
         benchmark: bool = False,
         iterations: int = 0,
-        targetDevice: str = "cuda",
+        targetDevice: str = "",
         ssh_connections: list = [],
         active_ssh_index: int = -1,
         llmModel: str = "",
@@ -114,7 +114,9 @@ walker:pub StartGenerate {
                     with open(cfg_path, "r") as f {
                         project_cfg = load(f);
                     }
-                    if project_cfg
+                    if project_cfg and "backend" in project_cfg and project_cfg["backend"] {
+                        target_device = str(project_cfg["backend"]).lower();
+                    } elif project_cfg
                     and "generator" in project_cfg
                     and "target_device" in project_cfg["generator"] {
                         target_device = str(project_cfg["generator"]["target_device"]).lower();

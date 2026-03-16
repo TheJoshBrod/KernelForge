@@ -929,7 +929,10 @@ def:pub Dashboard -> Any {
                 else {};
                 if metrics_data {
                     if "operator_usage" in metrics_data {
-                        setOps(to_list(metrics_data["operator_usage"]));
+                        usage_list = to_list(metrics_data["operator_usage"]);
+                        if usage_list.length > 0 {
+                            setOps(usage_list);
+                        }
                     }
                     setSpeedData(get_metrics_speed_source(metrics_data));
                 }
@@ -1849,6 +1852,14 @@ def:pub Dashboard -> Any {
                 break;
             }
         }
+        # Fallback: use profile_ms from GetProjectOps if speedData had no match
+        if b_val_raw == None and "profile_ms" in op {
+            fb_val = to_num(op["profile_ms"]);
+            if fb_val != None and fb_val > 0 {
+                b_val_raw = fb_val;
+                baseline_ms = format_tick_ms(fb_val);
+            }
+        }
 
         if b_val_raw != None and b_val_raw > 0 {
             totalAllPytorchMs = totalAllPytorchMs + b_val_raw * op_count_n;
@@ -1966,6 +1977,8 @@ def:pub Dashboard -> Any {
         }
     }
 
+    projectBackend = status["backend"] if status and "backend" in status else "CUDA";
+
     return
         <div className="p-6 md:p-8 max-w-7xl mx-auto space-y-6">
             <DashboardHeader
@@ -1974,6 +1987,7 @@ def:pub Dashboard -> Any {
                 opsCount={list_len(to_list(ops))}
                 modelSpeedupRatio={modelSpeedupRatio}
                 hardwareStatus={hardwareStatus}
+                projectBackend={projectBackend}
                 forgedTooltipPos={forgedTooltipPos}
                 setForgedTooltipPos={setForgedTooltipPos}
             />

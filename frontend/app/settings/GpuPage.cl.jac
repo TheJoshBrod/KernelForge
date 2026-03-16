@@ -1,13 +1,14 @@
 """GPU Settings Page"""
 
 import from react { useState, useEffect }
-import from "react-router-dom" { useNavigate }
+import from "react-router-dom" { useNavigate, useLocation }
 import from ...components.backdrops.EmberBackground { EmberBackground }
 import from ...components.ui.LoadingScreen { LoadingScreen }
 import from ...context.ConfigContext { useConfig }
 
 def:pub GpuPage -> Any {
     navigate = useNavigate();
+    location = useLocation();
     config_ctx = useConfig();
     config = config_ctx.config;
     setConfig = config_ctx.setConfig;
@@ -106,7 +107,12 @@ def:pub GpuPage -> Any {
     }
 
     def handleReturn -> None {
-        navigate("/settings");
+        return_to = location.state["return_to"] if location.state and "return_to" in location.state else None;
+        if return_to and str(return_to).startsWith("/") {
+            navigate(str(return_to));
+        } else {
+            navigate("/settings");
+        }
     }
 
     if loading {

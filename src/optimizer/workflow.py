@@ -419,6 +419,8 @@ def run_generate(args: argparse.Namespace) -> int:
                 **task_meta,
                 "current_step": "Benchmarking",
                 "status": "In Progress",
+                "op_name": op_name,
+                "tag": "[GEN]",
             }}})
             rc = _run(bench_cmd, root, subprocess_env)
             if rc != 0:
@@ -429,6 +431,8 @@ def run_generate(args: argparse.Namespace) -> int:
                     "current_step": "Failed",
                     "status": "Failed",
                     "result": failure_msg[:200],
+                    "op_name": op_name,
+                    "tag": "[GEN]",
                 }}})
             else:
                 kernel_ms, backend = _load_kernel_benchmark(project_dir, op_name)
@@ -438,6 +442,9 @@ def run_generate(args: argparse.Namespace) -> int:
                     "current_step": "Done",
                     "status": "Done",
                     "value_ms": kernel_ms,
+                    "kernel_id": "0",
+                    "op_name": op_name,
+                    "tag": "[GEN]",
                 }}})
                 publish_result = publish_generated_root(
                     project_dir,

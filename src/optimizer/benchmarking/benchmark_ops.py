@@ -181,12 +181,12 @@ def _run_call(func, args: Any, kwargs: dict[str, Any]):
     return func(args, **kwargs)
 
 
-def _measure_pytorch(func, entries: list[tuple[Any, dict[str, Any]]], device: str, repeats: int = 10) -> float:
+def _measure_pytorch(func, entries: list[tuple[Any, dict[str, Any]]], device: str, repeats: int = 100) -> float:
     if not entries:
         return 0.0
 
     warmup_entries = entries[: min(3, len(entries))]
-    for _ in range(3):
+    for _ in range(25):
         for args, kwargs in warmup_entries:
             d_args = _move_to_device(args, device)
             d_kwargs = _move_to_device(kwargs, device)
@@ -237,37 +237,61 @@ def _measure_pytorch(func, entries: list[tuple[Any, dict[str, Any]]], device: st
 
 
 def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
+    # Primary: improvement_log.json (legacy path)
     log_file = op_dir / "improvement_log.json"
-    if not log_file.exists():
-        return None, "missing", ""
-    try:
-        data = json.loads(log_file.read_text(encoding="utf-8"))
-        if not isinstance(data, list) or not data:
-            return None, "missing", ""
-        best = None
-        best_ms = None
-        for entry in data:
-            results = entry.get("results") if isinstance(entry, dict) else None
-            if not isinstance(results, dict):
-                continue
-            ms = results.get("min_time_ms")
-            if ms is None:
-                continue
-            try:
-                ms_val = float(ms)
-            except Exception:
-                continue
-            if best_ms is None or ms_val < best_ms:
-                best_ms = ms_val
-                best = entry
-        if best_ms is None:
-            return None, "missing", ""
-        backend = ""
-        if isinstance(best, dict):
-            backend = str(best.get("backend") or best.get("provider") or "")
-        return best_ms, "ok", backend
-    except Exception:
-        return None, "error", ""
+    if log_file.exists():
+        try:
+            data = json.loads(log_file.read_text(encoding="utf-8"))
+            if isinstance(data, list) and data:
+                best = None
+                best_ms = None
+                for entry in data:
+                    results = entry.get("results") if isinstance(entry, dict) else None
+                    if not isinstance(results, dict):
+                        continue
+                    ms = results.get("mean_time_ms")
+                    if ms is None:
+                        continue
+                    try:
+                        ms_val = float(ms)
+                    except Exception:
+                        continue
+                    if best_ms is None or ms_val < best_ms:
+                        best_ms = ms_val
+                        best = entry
+                if best_ms is not None:
+                    backend = ""
+                    if isinstance(best, dict):
+                        backend = str(best.get("backend") or best.get("provider") or "")
+                    return best_ms, "ok", backend
+        except Exception:
+            pass
+
+    # Fallback: nodes.db (active path — stores mean_time_ms as value)
+    db_file = op_dir / "nodes.db"
+    if db_file.exists():
+        try:
+            import sqlite3 as _sqlite3
+            conn = _sqlite3.connect(str(db_file))
+            row = conn.execute(
+                "SELECT MIN(value) FROM nodes WHERE value IS NOT NULL AND value > 0"
+            ).fetchone()
+            conn.close()
+            if row and row[0] is not None:
+                ms_val = float(row[0])
+                # Read backend from generated_root.json if present
+                backend = ""
+                meta = op_dir / "generated_root.json"
+                if meta.exists():
+                    try:
+                        backend = json.loads(meta.read_text(encoding="utf-8")).get("backend", "")
+                    except Exception:
+                        pass
+                return ms_val, "ok", str(backend)
+        except Exception:
+            pass
+
+    return None, "missing", ""
 
 
 def _profile_generated_kernel_ms(
@@ -295,7 +319,7 @@ def _profile_generated_kernel_ms(
                 {"tmp_dir": generated_dir, "io_dir": io_op_dir},
                 baseline=True,
             )
-            ms = stats.get("min_time_ms") if isinstance(stats, dict) else None
+            ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
             if ms is None:
                 return None, "generated_profile_missing", "cuda"
             return float(ms), "ok", "cuda"
@@ -306,7 +330,23 @@ def _profile_generated_kernel_ms(
             return None, "generated_profile_error", "cuda"
 
     if (generated_dir / "success.triton").exists():
-        return None, "unsupported_generated_backend", "triton"
+        if io_op_dir is None or not io_op_dir.exists():
+            return None, "missing_io_entries", "triton"
+        if not (generated_dir / "kernel.py").exists():
+            return None, "missing_kernel_source", "triton"
+        try:
+            from src.optimizer.backends.triton import TritonBackend
+
+            stats = TritonBackend().profile_kernel(
+                {"tmp_dir": generated_dir, "io_dir": io_op_dir},
+                baseline=True,
+            )
+            ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
+            if ms is None:
+                return None, "generated_profile_missing", "triton"
+            return float(ms), "ok", "triton"
+        except Exception as e:
+            return None, "generated_profile_error", "triton"
     if (generated_dir / "success.mps").exists():
         return None, "unsupported_generated_backend", "mps"
     if (generated_dir / "success.cpu").exists():
@@ -500,7 +540,7 @@ def main() -> int:
             func = _get_pytorch_func(op_name)
 
             entry_sig = _entry_signature(entries) if entries else "summary_only"
-            cache_key = f"{runtime_fingerprint}:{op_name}:{entry_sig}"
+            cache_key = f"{runtime_fingerprint}:{op_name}:{entry_sig}:warmup=25,reps=100"
             pytorch_ms = cache.get(cache_key)
             baseline_source = "cache" if pytorch_ms is not None else ""
             if pytorch_ms is None:
