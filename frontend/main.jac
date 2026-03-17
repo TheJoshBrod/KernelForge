@@ -23,6 +23,7 @@ import from walkers.project_admin {
     CreateProject,
     DeleteProject,
     GetProjects,
+    TouchProject,
     GetProjectOps,
     GetProjectStatus,
     GetProjectBenchmarks,

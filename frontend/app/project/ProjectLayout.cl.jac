@@ -13,6 +13,7 @@ def:pub ProjectLayout -> Any {
         lambda -> None {
             if projectName {
                 document.title = f"{projectName} - Kernel Forge";
+                __jacSpawn("TouchProject", "", {"projectName": projectName});
             } else {
                 document.title = "Kernel Forge";
             }
