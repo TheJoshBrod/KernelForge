@@ -2,7 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CANDIDATES=(
+CANDIDATES=()
+
+if [ -n "${KFORGE_REPO_ROOT:-}" ]; then
+  CANDIDATES+=("$KFORGE_REPO_ROOT")
+fi
+
+CANDIDATES+=(
   "$(cd "$SCRIPT_DIR/../../.." 2>/dev/null && pwd)"
   "$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)"
 )

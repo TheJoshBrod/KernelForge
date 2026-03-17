@@ -17,9 +17,12 @@ const PRODUCT_TITLE: &str = "Kernel Forge";
 const GITHUB_REPO: &str = "TheJoshBrod/CGinS";
 const GITHUB_RELEASES_URL: &str = "https://github.com/TheJoshBrod/CGinS/releases";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-const BUILD_SHA: &str = option_env!("KFORGE_BUILD_SHA").unwrap_or("dev");
 const CONFIGURED_BASE_URL: &str = "";
 const SIDECAR_STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
+
+fn build_sha() -> &'static str {
+    option_env!("KFORGE_BUILD_SHA").unwrap_or("dev")
+}
 
 fn find_existing_path(candidates: &[PathBuf]) -> Option<PathBuf> {
     for candidate in candidates {
@@ -162,7 +165,7 @@ fn configure_child_env(
     cmd.current_dir(frontend_root);
     cmd.env("KFORGE_DESKTOP", "1");
     cmd.env("KFORGE_APP_VERSION", APP_VERSION);
-    cmd.env("KFORGE_BUILD_SHA", BUILD_SHA);
+    cmd.env("KFORGE_BUILD_SHA", build_sha());
     cmd.env("KFORGE_GITHUB_REPO", GITHUB_REPO);
     cmd.env("KFORGE_DATA_DIR", &data_dir);
     cmd.env("KFORGE_CONFIG_PATH", config_dir.join("config.json"));
@@ -207,7 +210,7 @@ fn find_and_start_sidecar(app: &tauri::AppHandle) -> Result<(), Box<dyn std::err
             Command::new(&sidecar_path)
         }
     } else if sidecar_path.extension().and_then(|s| s.to_str()) == Some("sh") {
-        let mut command = Command::new("sh");
+        let mut command = Command::new("bash");
         command.arg(&sidecar_path);
         command
     } else {
@@ -257,21 +260,24 @@ fn wait_for_sidecar_port(child: &mut Child) -> Result<u16, Box<dyn std::error::E
 
     std::thread::spawn(move || {
         let reader = BufReader::new(stdout);
+        let mut sent_port = false;
         for line in reader.lines() {
             match line {
                 Ok(line) => {
                     eprintln!("[sidecar] {}", line);
-                    if let Some(port_str) = line.strip_prefix("JAC_SIDECAR_PORT=") {
-                        match port_str.trim().parse::<u16>() {
-                            Ok(port) => {
-                                let _ = sender.send(Ok(port));
-                                return;
-                            }
-                            Err(error) => {
-                                let _ = sender.send(Err(format!(
-                                    "Jac sidecar reported an invalid port: {error}"
-                                )));
-                                return;
+                    if !sent_port {
+                        if let Some(port_str) = line.strip_prefix("JAC_SIDECAR_PORT=") {
+                            match port_str.trim().parse::<u16>() {
+                                Ok(port) => {
+                                    let _ = sender.send(Ok(port));
+                                    sent_port = true;
+                                }
+                                Err(error) => {
+                                    let _ = sender.send(Err(format!(
+                                        "Jac sidecar reported an invalid port: {error}"
+                                    )));
+                                    return;
+                                }
                             }
                         }
                     }
@@ -283,9 +289,11 @@ fn wait_for_sidecar_port(child: &mut Child) -> Result<u16, Box<dyn std::error::E
             }
         }
 
-        let _ = sender.send(Err(
-            "Jac sidecar exited before reporting its port".to_string()
-        ));
+        if !sent_port {
+            let _ = sender.send(Err(
+                "Jac sidecar exited before reporting its port".to_string()
+            ));
+        }
     });
 
     match receiver.recv_timeout(SIDECAR_STARTUP_TIMEOUT) {
@@ -319,14 +327,12 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            if let Err(error) = find_and_start_sidecar(app.handle()) {
-                eprintln!("Warning: Could not start sidecar: {}", error);
-            }
+            find_and_start_sidecar(app.handle())?;
 
             let desktop_payload = serde_json::json!({
                 "desktop": true,
                 "version": APP_VERSION,
-                "commit": BUILD_SHA,
+                "commit": build_sha(),
                 "github_repo": GITHUB_REPO,
                 "releases_url": GITHUB_RELEASES_URL,
             });
@@ -356,8 +362,8 @@ fn main() {
             builder.build()?;
             Ok(())
         })
-        .on_window_event(|_window, event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 stop_sidecar();
             }
         })

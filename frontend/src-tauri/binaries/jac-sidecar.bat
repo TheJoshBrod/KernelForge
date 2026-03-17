@@ -2,6 +2,14 @@
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
+if defined KFORGE_REPO_ROOT (
+  if exist "%KFORGE_REPO_ROOT%\.venv\Scripts\python.exe" (
+    set "PYTHONPATH=%KFORGE_REPO_ROOT%;%PYTHONPATH%"
+    "%KFORGE_REPO_ROOT%\.venv\Scripts\python.exe" -m jac_client.plugin.src.targets.desktop.sidecar.main %*
+    exit /b %ERRORLEVEL%
+  )
+)
+
 set "REPO_ROOT=%SCRIPT_DIR%..\..\.."
 if exist "%REPO_ROOT%\.venv\Scripts\python.exe" (
   set "PYTHONPATH=%REPO_ROOT%;%PYTHONPATH%"
