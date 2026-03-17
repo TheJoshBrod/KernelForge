@@ -13,21 +13,28 @@ from pathlib import Path
 
 
 def detect_base_url() -> str:
-    proc_text = os.popen(
-        "pgrep -af 'kernel-forge-desktop|kf-ui-server.py|jac_client.plugin.src.targets.desktop.sidecar.main'"
-    ).read()
-    match = re.search(
-        r"kf-ui-server\.py --bind 127\.0\.0\.1 --port (\d+).*--api-base-url (http://127\.0\.0\.1:\d+)",
-        proc_text,
+    pattern = re.compile(
+        r"kf-ui-server\.py --bind 127\.0\.0\.1 --port (\d+).*--api-base-url (http://127\.0\.0\.1:\d+)"
     )
-    if not match:
-        raise SystemExit(
-            "Could not find a running desktop UI server. Start kernel-forge-desktop first."
-        )
-    return f"http://127.0.0.1:{match.group(1)}"
+    for _ in range(20):
+        proc_text = os.popen(
+            "pgrep -af 'kernel-forge-desktop|kf-ui-server.py|jac_client.plugin.src.targets.desktop.sidecar.main'"
+        ).read()
+        match = pattern.search(proc_text)
+        if match:
+            return f"http://127.0.0.1:{match.group(1)}"
+        time.sleep(0.5)
+    raise SystemExit(
+        "Could not find a running desktop UI server. Start kernel-forge-desktop first."
+    )
 
 
 BASE_URL = detect_base_url()
+EXPECT_CUDA_RUNTIME = os.environ.get("KFORGE_EXPECT_CUDA_RUNTIME", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 print(f"[smoke] base_url={BASE_URL}", flush=True)
 
 
@@ -94,10 +101,17 @@ print(
     ),
     flush=True,
 )
+if EXPECT_CUDA_RUNTIME:
+    assert hw.get("cuda_available") is True, hw
+    gpu0 = hw.get("gpus", [None])[0] if hw.get("gpus") else None
+    assert gpu0 and gpu0.get("runtime_usable") is True, hw
+    assert hw.get("preferred_target") == "cuda", hw
 
 system = walker("GetSystemInfo", {})
 assert isinstance(system, dict), system
 print("[smoke] system info ok", flush=True)
+
+selected_backend = "cuda" if EXPECT_CUDA_RUNTIME else "cpu"
 
 project_name = f"Desktop Smoke {int(time.time())}"
 model_code = """\
@@ -123,7 +137,7 @@ try:
             "projectName": project_name,
             "code": model_code,
             "selectedGpuInfo": {},
-            "selectedBackend": "cpu",
+            "selectedBackend": selected_backend,
         },
     )
     assert create and create.get("success") is True, create
@@ -167,7 +181,7 @@ try:
 
     profile = final_status.get("profile", {}) if isinstance(final_status, dict) else {}
     assert str(profile.get("status", "")).lower() == "completed", final_status
-    assert str(final_status.get("backend", "")).lower() == "cpu", final_status
+    assert str(final_status.get("backend", "")).lower() == selected_backend, final_status
     assert polls_used <= 12, final_status
 
     log_payload = walker(
@@ -175,6 +189,10 @@ try:
         {"projectName": created_name, "jobKey": "profile", "lines": 40},
     )
     assert log_payload.get("lines"), log_payload
+    summary_path = project_dir / "io" / "summary.json"
+    assert summary_path.exists(), summary_path
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert str(summary.get("device", "")).lower() == selected_backend, summary
     print("[smoke] project lifecycle ok", flush=True)
 finally:
     if created_name:
