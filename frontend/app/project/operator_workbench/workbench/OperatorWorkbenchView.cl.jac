@@ -98,6 +98,10 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     activeGenTasks = active_gen_tasks_state[0];
     setActiveGenTasks = active_gen_tasks_state[1];
 
+    status_poll_ms_state = useState(12000);
+    statusPollMs = status_poll_ms_state[0];
+    setStatusPollMs = status_poll_ms_state[1];
+
     config_ctx = useConfig();
     config = config_ctx.config;
 
@@ -355,6 +359,8 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         }
                     }
                     setActiveGenTasks(active_tasks_list);
+                    fast_poll = is_active or status_raw == "running" or active_tasks_list.length > 0;
+                    setStatusPollMs(3000 if fast_poll else 12000);
                     mismatch = data["gpu_mismatch"] if data and "gpu_mismatch" in data else False;
                     setGpuMismatch(mismatch);
                     if mismatch and "benchmarked_gpu_name" in data {
@@ -363,13 +369,14 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                 } except Exception {
                     setIsOptimizing(False);
                     setActiveGenTasks([]);
+                    setStatusPollMs(12000);
                 }
             }
             pollStatus();
-            timer = setInterval(lambda -> None { pollStatus();}, 3000);
+            timer = setInterval(lambda -> None { pollStatus();}, statusPollMs);
             return lambda -> None { clearInterval(timer);};
         },
-        [resolvedProjectName]
+        [resolvedProjectName, statusPollMs]
     );
 
     onNodeClick = useCallback(

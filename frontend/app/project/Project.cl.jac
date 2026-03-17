@@ -29,6 +29,7 @@ def:pub Project -> Any {
     has ops: list = [],
         loading: bool = True,
         status: dict = {},
+        statusPollMs: int = 12000,
         exportPath: str = "",
         searchQuery: str = "",
         downloading: bool = False,
@@ -58,6 +59,50 @@ def:pub Project -> Any {
             return "torch.nn.functional." + raw_text.replace(prefix, "");
         }
         return raw_text.replace("_", ".");
+    }
+
+    def has_active_project_work(data: dict) -> bool {
+        if not data {
+            return False;
+        }
+        for key in ["profile", "generate", "optimize", "benchmark"] {
+            job = data[key] if key in data and data[key] else {};
+            if not job {
+                continue;
+            }
+            is_active = bool(job["active"]) if "active" in job and job["active"] else False;
+            status_raw = (
+                str(job["status"]).toLowerCase()
+                if "status" in job and job["status"]
+                else ""
+            );
+            if is_active or status_raw == "running" or status_raw == "queued" or status_raw == "paused" {
+                return True;
+            }
+        }
+        queue_data = data["queue"] if "queue" in data and data["queue"] else {};
+        if not queue_data {
+            return False;
+        }
+        active_tasks = queue_data["active_tasks"] if "active_tasks" in queue_data and queue_data["active_tasks"] else {};
+        if Object.keys(active_tasks).length > 0 {
+            return True;
+        }
+        pending_ops = queue_data["pending_operators"] if "pending_operators" in queue_data and queue_data["pending_operators"] else [];
+        if pending_ops.length > 0 {
+            return True;
+        }
+        queued_jobs = queue_data["job_queue"] if "job_queue" in queue_data and queue_data["job_queue"] else [];
+        if queued_jobs.length > 0 {
+            return True;
+        }
+        benchmark_slot = queue_data["benchmark_slot"] if "benchmark_slot" in queue_data and queue_data["benchmark_slot"] else {};
+        pending_bench = benchmark_slot["pending"] if "pending" in benchmark_slot and benchmark_slot["pending"] else [];
+        if ("now" in benchmark_slot and benchmark_slot["now"]) or pending_bench.length > 0 {
+            return True;
+        }
+        launching = queue_data["launching_job"] if "launching_job" in queue_data and queue_data["launching_job"] else {};
+        return Object.keys(launching).length > 0;
     }
 
     async def refreshOps -> None {
@@ -92,6 +137,7 @@ def:pub Project -> Any {
                 if resp and resp.reports and resp.reports.length > 0
                 else {};
                 status = data or {};
+                statusPollMs = 4000 if has_active_project_work(status) else 12000;
                 adv_job = data["generate"]
                 if data and "generate" in data
                 else {};
@@ -251,10 +297,10 @@ def:pub Project -> Any {
 
     useEffect(lambda -> None { refreshAll();detectHardware();}, [name]);
     useEffect(
-        lambda -> Any { timer = setInterval(lambda -> None { refreshStatus();}, 4000);return lambda -> None { clearInterval(
+        lambda -> Any { timer = setInterval(lambda -> None { refreshStatus();}, statusPollMs);return lambda -> None { clearInterval(
             timer
         );}; },
-        [name]
+        [name, statusPollMs]
     );
 
     async def handleProfile -> None {

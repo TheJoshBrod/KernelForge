@@ -954,6 +954,88 @@ def _read_optimize_result_status(log_path: str) -> str {
     return "";
 }
 
+def _running_job_progress(job: dict) -> float {
+    if not job {
+        return 0.0;
+    }
+    if "progress" in job
+    and job["progress"]
+    and "percent" in job["progress"]
+    and job["progress"]["percent"] is not None {
+        try {
+            return float(job["progress"]["percent"]);
+        } except Exception {
+            # fall back to progress_percent below
+        }
+    }
+    if "progress_percent" in job and job["progress_percent"] is not None {
+        try {
+            return float(job["progress_percent"]);
+        } except Exception {
+            return 0.0;
+        }
+    }
+    return 0.0;
+}
+
+def _finalize_running_job_if_ready(project_name: str, job_key: str, job: dict) -> bool {
+    if not job {
+        return False;
+    }
+    started_at = (
+        str(job["started_at"])
+        if "started_at" in job and job["started_at"]
+        else ""
+    );
+    progress_complete = _running_job_progress(job) >= 0.999;
+    if not progress_complete {
+        return False;
+    }
+
+    completed = False;
+    if job_key == "profile" {
+        completed = _has_profile_outputs(project_name);
+        if completed {
+            if not ("message" in job)
+            or not job["message"]
+            or str(job["message"]).strip().lower() == "finalizing results" {
+                job["message"] = "Profile and baseline benchmark completed.";
+            }
+        }
+    } elif job_key == "generate" {
+        completed = (
+            _has_generate_outputs_after(project_name, started_at)
+            or _has_optimize_outputs_after(project_name, started_at)
+            or _has_benchmark_outputs_after(project_name, started_at)
+        );
+        if completed and (not ("message" in job) or not job["message"]) {
+            job["message"] = "Kernel generation completed.";
+        }
+    } elif job_key == "optimize" {
+        completed = _has_optimize_outputs_after(project_name, started_at);
+        if completed and (not ("message" in job) or not job["message"]) {
+            job["message"] = "Kernel optimization completed.";
+        }
+    } elif job_key == "benchmark" {
+        completed = _has_benchmark_outputs_after(project_name, started_at);
+        if completed and (not ("message" in job) or not job["message"]) {
+            job["message"] = "Benchmark completed.";
+        }
+    }
+
+    if not completed {
+        return False;
+    }
+
+    job["status"] = "completed";
+    job["control"] = "idle";
+    job["active"] = False;
+    job["phase"] = "done";
+    job["progress_percent"] = 1.0;
+    job["updated_at"] = datetime.now().isoformat();
+    return True;
+}
+
 def:pub _refresh_running_job_state(project_name: str, job_key: str, job: dict) -> bool {
     if not job {
         return False;
@@ -1092,6 +1174,9 @@ def:pub _refresh_running_job_state(project_name: str, job_key: str, job: dict) -
             job["progress_percent"] = target_progress;
             changed = True;
         }
+    }
+    if _finalize_running_job_if_ready(project_name, job_key, job) {
+        changed = True;
     }
     if changed {
         job["updated_at"] = datetime.now().isoformat();
