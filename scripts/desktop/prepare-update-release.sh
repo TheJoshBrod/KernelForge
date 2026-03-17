@@ -27,15 +27,17 @@ Environment variables:
   KFORGE_TAURI_UPDATE_CHANNEL        Update channel name (default: main)
   KFORGE_TAURI_UPDATE_NOTES          Manifest notes (defaults to Release <version>)
   KFORGE_TAURI_UPDATE_OUTPUT_DIR      Output directory for staged artifacts (default: docs/desktop/releases)
+  KFORGE_TAURI_UPDATER_ENDPOINT      Current endpoint used by app (default: https://github.com/TheJoshBrod/CGinS/releases/latest/download/latest.json)
 EOF
 }
 
 VERSION=""
-BASE_URL="${KFORGE_TAURI_UPDATE_BASE_URL:-https://github.com/<org>/<repo>/releases/download}"
+BASE_URL="${KFORGE_TAURI_UPDATE_BASE_URL:-}"
 CHANNEL="${KFORGE_TAURI_UPDATE_CHANNEL:-main}"
 OUTPUT_DIR="${KFORGE_TAURI_UPDATE_OUTPUT_DIR:-$ROOT_DIR/docs/desktop/releases/$CHANNEL}"
 MANIFEST_OUTPUT=""
 NOTES="${KFORGE_TAURI_UPDATE_NOTES:-}"
+UPDATER_ENDPOINT="${KFORGE_TAURI_UPDATER_ENDPOINT:-https://github.com/TheJoshBrod/CGinS/releases/latest/download/latest.json}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -81,6 +83,18 @@ if [[ -z "$VERSION" ]]; then
   exit 1
 fi
 
+if [[ -z "$BASE_URL" ]]; then
+  echo "Missing update artifacts base URL." >&2
+  echo "Set --base-url or KFORGE_TAURI_UPDATE_BASE_URL." >&2
+  exit 1
+fi
+
+if [[ "$BASE_URL" == *"<"*">"* || "$BASE_URL" == *"{{"* && "$BASE_URL" == *"}}"* || "$BASE_URL" == *"\${"*"}"* ]]; then
+  echo "BASE_URL still looks templated. Replace placeholders before running." >&2
+  echo "Current value: $BASE_URL" >&2
+  exit 1
+fi
+
 if [[ -z "$NOTES" ]]; then
   NOTES="Release $VERSION"
 fi
@@ -122,11 +136,15 @@ find_artifact() {
 artifact_signature() {
   local artifact_path="$1"
   local sig_path="${artifact_path}.sig"
-  if [[ -n "$artifact_path" && -f "$sig_path" ]]; then
-    tr -d '\r\n' < "$sig_path"
-  else
-    printf 'TODO_SIGNATURE'
+  if [[ -z "$artifact_path" ]]; then
+    printf ''
+    return 0
   fi
+  if [[ ! -f "$sig_path" ]]; then
+    echo "Missing signature for $(basename "$artifact_path")" >&2
+    return 1
+  fi
+  tr -d '\r\n' < "$sig_path"
 }
 
 copy_artifact() {
@@ -154,7 +172,9 @@ fi
 if [[ -n "$LINUX_ARTIFACT_NAME" ]]; then
   LINUX_FILE="$(basename "$LINUX_ARTIFACT_NAME")"
   LINUX_URL="${BASE_URL%/}/$CHANNEL/$VERSION/$LINUX_FILE"
-  LINUX_SIGNATURE="$(artifact_signature "$LINUX_ARTIFACT_NAME")"
+  if ! LINUX_SIGNATURE="$(artifact_signature "$LINUX_ARTIFACT_NAME")"; then
+    exit 1
+  fi
   copy_artifact "$LINUX_ARTIFACT_NAME" "$LINUX_FILE"
 else
   LINUX_FILE="TODO_FILENAME"
@@ -165,7 +185,9 @@ fi
 if [[ -n "$DARWIN_ARTIFACT_NAME" ]]; then
   DARWIN_FILE="$(basename "$DARWIN_ARTIFACT_NAME")"
   DARWIN_URL="${BASE_URL%/}/$CHANNEL/$VERSION/$DARWIN_FILE"
-  DARWIN_SIGNATURE="$(artifact_signature "$DARWIN_ARTIFACT_NAME")"
+  if ! DARWIN_SIGNATURE="$(artifact_signature "$DARWIN_ARTIFACT_NAME")"; then
+    exit 1
+  fi
   copy_artifact "$DARWIN_ARTIFACT_NAME" "$DARWIN_FILE"
 else
   DARWIN_FILE="TODO_FILENAME"
@@ -176,7 +198,9 @@ fi
 if [[ -n "$WINDOWS_ARTIFACT_NAME" ]]; then
   WINDOWS_FILE="$(basename "$WINDOWS_ARTIFACT_NAME")"
   WINDOWS_URL="${BASE_URL%/}/$CHANNEL/$VERSION/$WINDOWS_FILE"
-  WINDOWS_SIGNATURE="$(artifact_signature "$WINDOWS_ARTIFACT_NAME")"
+  if ! WINDOWS_SIGNATURE="$(artifact_signature "$WINDOWS_ARTIFACT_NAME")"; then
+    exit 1
+  fi
   copy_artifact "$WINDOWS_ARTIFACT_NAME" "$WINDOWS_FILE"
 else
   WINDOWS_FILE="TODO_FILENAME"
@@ -231,7 +255,7 @@ Upload this manifest path to your updater endpoint, for example:
 
 With the current desktop config, publish the generated artifacts and latest.json
 to a GitHub release so this endpoint resolves:
-  https://github.com/TheJoshBrod/CGinS/releases/latest/download/latest.json
+  $UPDATER_ENDPOINT
 
 If you want channel-specific feeds later, change plugins.updater.endpoints in
 frontend/src-tauri/tauri.conf.json and publish a separate latest.json per channel.

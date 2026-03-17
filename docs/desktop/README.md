@@ -42,6 +42,8 @@ This script creates:
 
 The private key stays outside the repo. The committed `frontend/src-tauri/updater.pub`
 is what the desktop app uses to verify signed updates.
+`generate-updater-keys.sh` now fails fast if the output key path resolves inside
+the repository.
 
 ### 2) Build release artifacts
 
@@ -51,10 +53,15 @@ After signing key generation, run the normal build flow:
 ./scripts/desktop/build-linux.sh
 ```
 
-The build script exports `TAURI_SIGNING_PRIVATE_KEY_PATH` automatically from:
+The build script exports both `TAURI_SIGNING_PRIVATE_KEY_PATH` and
+`TAURI_SIGNING_PRIVATE_KEY` automatically from:
 
 - `KFORGE_TAURI_UPDATER_KEY_PATH`, or
 - `~/.config/kernel-forge-desktop/updater.key`
+
+The build script fails if the resolved signing key path points inside the repo.
+On Linux, `./scripts/desktop/build-linux.sh` now builds a `.deb` installer by default.
+Override bundle types with `KFORGE_TAURI_BUNDLES` if you explicitly want others.
 
 This helper flow expects the Tauri updater bundle output to be present under:
 
@@ -68,18 +75,26 @@ This helper flow expects the Tauri updater bundle output to be present under:
 ```bash
 ./scripts/desktop/prepare-update-release.sh \
   --version 1.2.3 \
-  --base-url https://github.com/<org>/<repo>/releases/download
+  --base-url https://github.com/TheJoshBrod/CGinS/releases/download
 ```
 
 Output staging directory defaults to:
 
 `docs/desktop/releases/main/<version>/`
 
-The command copies discovered bundle artifacts and generated signatures into that directory and creates:
+The command copies discovered bundle artifacts and required signatures into that directory and creates:
 
 `docs/desktop/releases/main/<version>/latest.json`
 
-If no artifact/signature is found for a platform, placeholders are left in the manifest for manual follow-up.
+If no artifact is found for a platform, placeholders are left in the manifest for manual follow-up.
+
+If an artifact is found but its signature file is missing, the script now fails fast and stops.
+
+`--base-url` must be a concrete URL; templated placeholders (for example `<org>` or `{{...}}`) fail immediately.
+
+The updater config currently points to:
+
+`https://github.com/TheJoshBrod/CGinS/releases/latest/download/latest.json`
 
 The manifest template used by the script is:
 

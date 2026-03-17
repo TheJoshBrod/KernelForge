@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 UPDATER_KEY_PATH="${KFORGE_TAURI_UPDATER_KEY_PATH:-$HOME/.config/kernel-forge-desktop/updater.key}"
+ROOT_DIR_ABS="$(realpath -m "$ROOT_DIR")"
+UPDATER_KEY_PATH_ABS="$(realpath -m "$UPDATER_KEY_PATH")"
+BUNDLE_TARGETS="${KFORGE_TAURI_BUNDLES:-deb}"
 
 if [[ ! -f "$ROOT_DIR/.venv/bin/activate" ]]; then
   echo "Missing repo venv at $ROOT_DIR/.venv" >&2
@@ -27,6 +30,13 @@ if [[ ! -f "$UPDATER_KEY_PATH" ]]; then
   exit 1
 fi
 
-export TAURI_SIGNING_PRIVATE_KEY_PATH="$UPDATER_KEY_PATH"
+if [[ "$UPDATER_KEY_PATH_ABS" == "$ROOT_DIR_ABS/"* ]]; then
+  echo "Signing key must not be inside repository." >&2
+  echo "Set KFORGE_TAURI_UPDATER_KEY_PATH to a path outside the project root." >&2
+  exit 1
+fi
 
-cargo tauri build
+export TAURI_SIGNING_PRIVATE_KEY_PATH="$UPDATER_KEY_PATH"
+export TAURI_SIGNING_PRIVATE_KEY="$UPDATER_KEY_PATH"
+
+cargo tauri build --bundles "$BUNDLE_TARGETS"
