@@ -3,6 +3,7 @@ src/optimizer/components/hardware/profiler.py
 Uses pynvml, pycuda, and torch to analyze GPU diagnostic statistics and architecture information.  
 """
 import glob
+import hashlib
 import os
 import time
 from pathlib import Path
@@ -57,6 +58,13 @@ def _to_str(x):
 # ******************
 
 
+_CRITICAL_GPU_FIELDS: dict = {
+    "compute_capability": lambda v: v != "0.0",
+    "num_sms": lambda v: v > 0,
+    "registers_per_block": lambda v: v > 0,
+}
+
+
 def get_gpu_specs(device_index: int = 0) -> GPUSpecs:
     """Retrieve GPU specs via the unified profiling orchestrator."""
     import re as _re
@@ -68,7 +76,22 @@ def get_gpu_specs(device_index: int = 0) -> GPUSpecs:
     # detection misfires.
     cc = str(gpu_spec.compute_capability or "").strip()
     if cc and _re.match(r"^\d+\.\d+$", cc):
-        os.environ["TORCH_CUDA_ARCH_LIST"] = cc
+        os.environ.setdefault("TORCH_CUDA_ARCH_LIST", cc)
+
+    missing = [
+        f for f, ok in _CRITICAL_GPU_FIELDS.items()
+        if not ok(getattr(gpu_spec, f))
+    ]
+    if missing:
+        import sys
+        print(
+            f"[KernelForge] WARNING: GPU detection returned zeroed fields: {missing}. "
+            "LLM optimization prompts will use degraded hardware context "
+            "(wrong arch advice, invalid occupancy estimates). "
+            "Check pycuda/NVML availability if this is unexpected. "
+            "Proceeding anyway.",
+            file=sys.stderr,
+        )
 
     return gpu_spec
 
@@ -87,10 +110,16 @@ def get_module(kernel_path: Path, baseline: bool):
         module: module object to run load_inline CUDA kernel in python
     """
 
-    # Sanity check to see if generated and validated (you're welcome future me.)
-    so_files = list(kernel_path.glob("*.so"))
-
     cuda_source = (kernel_path / "kernel.cu").read_text()
+
+    # Invalidate cached .so if kernel source has changed since it was built.
+    source_hash = hashlib.md5(cuda_source.encode()).hexdigest()[:16]
+    hash_file = kernel_path / ".source_hash"
+    so_files = list(kernel_path.glob("*.so"))
+    if so_files and hash_file.exists() and hash_file.read_text().strip() != source_hash:
+        for so in so_files:
+            so.unlink(missing_ok=True)
+        so_files = []
 
     # Extract function signature from CUDA code (same as in validator)
     import re
@@ -129,6 +158,7 @@ def get_module(kernel_path: Path, baseline: bool):
             verbose=False,
             with_cuda=False
         )
+    hash_file.write_text(source_hash)
     return module
 
 

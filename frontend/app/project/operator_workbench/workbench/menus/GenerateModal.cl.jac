@@ -12,6 +12,7 @@ import from ......components.ui.Icons {
 import from ......components.ui.SearchableSelect { SearchableSelect }
 import from ......components.ui.Modal { Modal }
 import from ......context.ConfigContext { useConfig }
+import from sonner { toast }
 
 def:pub GenerateModal(props: any) -> Any {
     isOpen = props.isOpen;
@@ -277,6 +278,9 @@ def:pub GenerateModal(props: any) -> Any {
                 else "Failed to queue generation.";
                 alert(err);
             } elif data and "queued" in data and data["queued"] {
+                if data and "gpu_warning" in data and data["gpu_warning"] {
+                    toast.warning(data["gpu_warning"]);
+                }
                 if onStarted {
                     onStarted({
                         "_tag": "[GEN]",
