@@ -27,8 +27,10 @@ const ROUTE_READY_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[cfg(target_os = "linux")]
 fn configure_linux_rendering_env() {
-    // Set these before GTK/WebKit initializes so systems without GBM access
-    // fall back to a software path instead of painting an empty webview.
+    // The WebKitGTK GBM / DMA-BUF path is unstable on this target, but fully
+    // forcing software rendering is noticeably slower. Default to the lighter
+    // WebKit-only workaround and reserve the full software path for explicit
+    // opt-in.
     unsafe {
         if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
@@ -36,12 +38,30 @@ fn configure_linux_rendering_env() {
         if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
             std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
         }
-        if std::env::var_os("GSK_RENDERER").is_none() {
-            std::env::set_var("GSK_RENDERER", "cairo");
+    }
+
+    let force_software = std::env::var_os("KFORGE_FORCE_SOFTWARE_RENDERING")
+        .map(|value| value == "1")
+        .unwrap_or(false);
+
+    if force_software {
+        unsafe {
+            if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+                std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+            }
+            if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+                std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+            }
+            if std::env::var_os("GSK_RENDERER").is_none() {
+                std::env::set_var("GSK_RENDERER", "cairo");
+            }
+            if std::env::var_os("LIBGL_ALWAYS_SOFTWARE").is_none() {
+                std::env::set_var("LIBGL_ALWAYS_SOFTWARE", "1");
+            }
         }
-        if std::env::var_os("LIBGL_ALWAYS_SOFTWARE").is_none() {
-            std::env::set_var("LIBGL_ALWAYS_SOFTWARE", "1");
-        }
+        eprintln!(
+            "Linux software rendering fallback enabled via KFORGE_FORCE_SOFTWARE_RENDERING=1"
+        );
     }
 }
 
