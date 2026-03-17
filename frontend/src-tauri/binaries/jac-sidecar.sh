@@ -14,6 +14,10 @@ CANDIDATES+=(
 )
 
 for ROOT in "${CANDIDATES[@]}"; do
+  if [ -x "$ROOT/.desktop-runtime/bin/python" ]; then
+    export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+    exec "$ROOT/.desktop-runtime/bin/python" -m jac_client.plugin.src.targets.desktop.sidecar.main "$@"
+  fi
   if [ -x "$ROOT/.venv/bin/python" ]; then
     export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
     exec "$ROOT/.venv/bin/python" -m jac_client.plugin.src.targets.desktop.sidecar.main "$@"
@@ -29,6 +33,6 @@ if [ "${KFORGE_ALLOW_SYSTEM_PYTHON:-0}" = "1" ]; then
   fi
 fi
 
-echo "Kernel Forge desktop could not find a bundled or repo .venv Python runtime." >&2
+echo "Kernel Forge desktop could not find a bundled desktop Python runtime." >&2
 echo "Set KFORGE_ALLOW_SYSTEM_PYTHON=1 only for local debugging if you need to bypass the packaged runtime." >&2
 exit 1

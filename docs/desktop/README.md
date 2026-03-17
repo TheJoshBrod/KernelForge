@@ -11,7 +11,8 @@ This repo now includes a Jac/Tauri desktop shell under `frontend/src-tauri`.
   - `KFORGE_CONFIG_PATH`
 - The desktop launcher injects build metadata, starts the Jac sidecar in a native window, and shows an in-app GitHub `main` update notice when the packaged commit falls behind upstream.
 - The Tauri updater path is configured for signed desktop releases via GitHub Releases, with `latest.json` expected at `https://github.com/TheJoshBrod/CGinS/releases/latest/download/latest.json`.
-- Desktop sidecar launch now prefers the repo or bundled `.venv` and fails fast unless `KFORGE_ALLOW_SYSTEM_PYTHON=1` is set for local debugging.
+- Desktop sidecar launch now prefers a dedicated repo or bundled `.desktop-runtime` and only falls back to repo `.venv` for local development compatibility.
+- `./scripts/desktop/prepare-runtime.sh` bootstraps the dedicated desktop runtime with a CUDA-capable Torch wheel channel instead of inheriting the repo CPU-only Torch install.
 
 ## Commands
 
@@ -26,6 +27,19 @@ Production build on Linux:
 ```bash
 ./scripts/desktop/build-linux.sh
 ```
+
+Bootstrap or refresh the dedicated desktop runtime explicitly:
+
+```bash
+./scripts/desktop/prepare-runtime.sh
+```
+
+Useful runtime environment overrides:
+
+- `KFORGE_TORCH_CHANNEL=cu130` to pick a different official Torch accelerator channel.
+- `KFORGE_TORCH_INDEX_URL=...` to override the Torch wheel index directly.
+- `KFORGE_DESKTOP_RUNTIME_REBUILD=1` to recreate `.desktop-runtime` from scratch.
+- `KFORGE_DESKTOP_RUNTIME_SYNC=1` to force a dependency refresh into an existing runtime.
 
 ## Updater release helpers
 
@@ -118,17 +132,14 @@ to a GitHub release so Tauri clients can reach `latest.json` from the configured
 
 ## Linux prerequisites
 
-The current desktop build on this machine is blocked by missing native GLib/GTK/WebKit development packages. The immediate error is:
-
-```text
-The system library `glib-2.0` required by crate `glib-sys` was not found.
-```
-
-Install the Linux prerequisites from the official Tauri docs for your distro, then rerun the build:
+Desktop builds need the normal Tauri Linux prerequisites and, for CUDA-capable
+desktop runtimes on NVIDIA systems, a compatible NVIDIA driver/runtime.
 
 - https://v2.tauri.app/start/prerequisites/
 
-On Ubuntu/Debian systems that usually means the GTK/WebKit/GLib development packages, not just Rust and Cargo.
+The runtime bootstrap script validates CUDA separately. On hosts with
+`nvidia-smi` available, `prepare-runtime.sh` will fail if the selected Torch
+channel still produces `torch.cuda.is_available() == false`.
 
 ## Expected runtime layout
 
@@ -137,6 +148,6 @@ For desktop builds, the Tauri bundle includes:
 - the Jac frontend project files from `frontend/`
 - Python backend sources from `src/`
 - baseline kernel templates from `kernels/generated/`
-- the repo `.venv` for sidecar startup
+- the dedicated `.desktop-runtime` for sidecar startup and job execution
 
 Mutable application state is expected to live outside the install directory via app-data paths injected by the Tauri launcher.

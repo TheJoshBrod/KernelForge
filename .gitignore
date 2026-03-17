@@ -29,6 +29,7 @@ env/
 venv/
 venv3/
 .venv/
+.desktop-runtime/
 .pytest_cache
 
 # JavaScript
@@ -75,4 +76,4 @@ projects/
 
 # KernelForge files
 *.cast
-*.anvil 
+*.anvil

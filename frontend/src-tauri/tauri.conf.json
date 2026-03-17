@@ -34,7 +34,7 @@
       "../../kernels/generated",
       "../../requirements.txt",
       "../../run_cast.py",
-      "../../.venv",
+      "../../.desktop-runtime",
       "binaries/kf-ui-server.py",
       "binaries/jac-sidecar.sh",
       "binaries/jac-sidecar.bat"

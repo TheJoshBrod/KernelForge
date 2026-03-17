@@ -213,12 +213,16 @@ fn runtime_root_from_module(module_path: &Path) -> PathBuf {
 fn python_bin_dir(runtime_root: &Path) -> Option<PathBuf> {
     let candidates = if cfg!(windows) {
         vec![
+            runtime_root.join(".desktop-runtime/Scripts"),
             runtime_root.join(".venv/Scripts"),
+            runtime_root.join("frontend/.desktop-runtime/Scripts"),
             runtime_root.join("frontend/.venv/Scripts"),
         ]
     } else {
         vec![
+            runtime_root.join(".desktop-runtime/bin"),
             runtime_root.join(".venv/bin"),
+            runtime_root.join("frontend/.desktop-runtime/bin"),
             runtime_root.join("frontend/.venv/bin"),
         ]
     };
@@ -234,13 +238,19 @@ fn python_bin_dir(runtime_root: &Path) -> Option<PathBuf> {
 fn python_executable(runtime_root: &Path) -> PathBuf {
     let candidates = if cfg!(windows) {
         vec![
+            runtime_root.join(".desktop-runtime/Scripts/python.exe"),
             runtime_root.join(".venv/Scripts/python.exe"),
+            runtime_root.join("frontend/.desktop-runtime/Scripts/python.exe"),
             runtime_root.join("frontend/.venv/Scripts/python.exe"),
         ]
     } else {
         vec![
+            runtime_root.join(".desktop-runtime/bin/python3"),
+            runtime_root.join(".desktop-runtime/bin/python"),
             runtime_root.join(".venv/bin/python3"),
             runtime_root.join(".venv/bin/python"),
+            runtime_root.join("frontend/.desktop-runtime/bin/python3"),
+            runtime_root.join("frontend/.desktop-runtime/bin/python"),
             runtime_root.join("frontend/.venv/bin/python3"),
             runtime_root.join("frontend/.venv/bin/python"),
         ]

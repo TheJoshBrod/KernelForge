@@ -8,6 +8,8 @@ if [[ ! -f "$ROOT_DIR/.venv/bin/activate" ]]; then
   exit 1
 fi
 
+"$ROOT_DIR/scripts/desktop/prepare-runtime.sh"
+
 cd "$ROOT_DIR/frontend"
 . "$ROOT_DIR/.venv/bin/activate"
 jac build main.jac

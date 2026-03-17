@@ -1,0 +1,36 @@
+# Desktop runtime dependencies.
+# Torch is installed separately by scripts/desktop/prepare-runtime.sh from an
+# explicit accelerator channel so the packaged desktop app does not silently
+# fall back to the CPU-only wheel from PyPI.
+
+# Core
+numpy
+pandas
+pyarrow
+pydantic-settings
+
+# LLM providers
+google-genai
+openai>=2.3.0
+ollama
+anthropic
+
+# ML / vision
+transformers
+pillow
+
+# Build / utils
+ninja
+python-dotenv
+
+jaseci
+
+# GPU / system
+nvidia-ml-py
+pycuda
+
+# Testing
+pytest
+
+# SSH
+paramiko
