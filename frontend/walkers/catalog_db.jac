@@ -111,6 +111,22 @@ def:pub _ensure_catalog_schema() -> None {
     } except Exception as e {
         print(f"Warning: failed to migrate project_metric_meta schema: {e}");
     }
+    try {
+        cursor.execute("PRAGMA table_info(projects)");
+        proj_cols = {};
+        for col in cursor.fetchall() {
+            if col and len(col) > 1 and col[1] {
+                proj_cols[str(col[1])] = True;
+            }
+        }
+        if not ("last_opened_at" in proj_cols) {
+            cursor.execute(
+                "ALTER TABLE projects ADD COLUMN last_opened_at TEXT"
+            );
+        }
+    } except Exception as e {
+        print(f"Warning: failed to migrate projects schema: {e}");
+    }
     conn.commit();
     conn.close();
 }
@@ -137,19 +153,40 @@ def:pub _upsert_project_catalog(project_name: str, project_path: str = "") -> No
     cursor = conn.cursor();
     created_at = now;
     cursor.execute(
-        "SELECT created_at FROM projects WHERE name = ?",
+        "SELECT created_at, last_opened_at FROM projects WHERE name = ?",
         (project_name,)
     );
     existing = cursor.fetchone();
     if existing and len(existing) > 0 and existing[0] {
         created_at = str(existing[0]);
     }
+    last_opened_at = None;
+    if existing and len(existing) > 1 and existing[1] {
+        last_opened_at = str(existing[1]);
+    }
     cursor.execute(
         """
-        INSERT OR REPLACE INTO projects(name, project_path, created_at, updated_at)
-        VALUES (?, ?, ?, ?)
+        INSERT OR REPLACE INTO projects(name, project_path, created_at, updated_at, last_opened_at)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (project_name, project_path, created_at, now)
+        (project_name, project_path, created_at, now, last_opened_at)
+    );
+    conn.commit();
+    conn.close();
+}
+
+def:pub _touch_project_last_opened(project_name: str) -> None {
+    if not project_name {
+        return;
+    }
+    _ensure_catalog_schema();
+    now = datetime.now().isoformat();
+    db_path = _catalog_db_path();
+    conn = sqlite3.connect(db_path);
+    cursor = conn.cursor();
+    cursor.execute(
+        "UPDATE projects SET last_opened_at = ? WHERE name = ?",
+        (now, project_name)
     );
     conn.commit();
     conn.close();
@@ -161,7 +198,11 @@ def:pub _load_project_catalog() -> list {
     conn = sqlite3.connect(db_path);
     cursor = conn.cursor();
     cursor.execute(
-        "SELECT name, project_path, created_at, updated_at FROM projects ORDER BY lower(name)"
+        """
+        SELECT name, project_path, created_at, updated_at, last_opened_at
+        FROM projects
+        ORDER BY last_opened_at IS NULL ASC, last_opened_at DESC, lower(name)
+        """
     );
     rows = cursor.fetchall();
     conn.close();
@@ -175,7 +216,8 @@ def:pub _load_project_catalog() -> list {
                 "name": str(row[0]),
                 "project_path": str(row[1]) if len(row) > 1 and row[1] else "",
                 "created_at": str(row[2]) if len(row) > 2 and row[2] else "",
-                "updated_at": str(row[3]) if len(row) > 3 and row[3] else ""
+                "updated_at": str(row[3]) if len(row) > 3 and row[3] else "",
+                "last_opened_at": str(row[4]) if len(row) > 4 and row[4] else ""
             }
         );
     }

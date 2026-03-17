@@ -1,7 +1,7 @@
 """Home Page Component"""
 
 import from react { useEffect, useState }
-import from "react-router-dom" { useNavigate }
+import from "react-router-dom" { useNavigate, useLocation }
 import from ...components.backdrops.EmberBackground { EmberBackground }
 import from ...components.ui.GlowButton { GlowButton }
 import from ...components.ui.Icons { KernelForgeLogo, SettingsIcon, ArrowRightIcon, GithubIcon, DiscordIcon, TrashIcon }
@@ -9,6 +9,7 @@ import from ...components.SplashScreen { SplashScreen }
 
 def:pub Home -> Any {
     navigate = useNavigate();
+    location = useLocation();
 
     projects_state = useState([]);
     projects = projects_state[0];
@@ -44,6 +45,22 @@ def:pub Home -> Any {
     }
 
     async def fetchProjects -> None {
+        cacheState = globalThis.__jacCacheState__;
+        if cacheState and cacheState["cache"] {
+            keysToDelete = [];
+            for k in Object.keys(cacheState["cache"]) {
+                if k.startsWith("walker:GetProjects") {
+                    keysToDelete.push(k);
+                }
+            }
+            for k in keysToDelete {
+                Reflect.deleteProperty(cacheState["cache"], k);
+                idx = cacheState["order"].indexOf(k);
+                if idx > -1 {
+                    cacheState["order"].splice(idx, 1);
+                }
+            }
+        }
         start: float = Date.now();
         try {
             resp = await __jacSpawn("GetProjects", "", {});
@@ -76,11 +93,13 @@ def:pub Home -> Any {
     useEffect(lambda -> None {
         fetchProjects();
         document.title = "Kernel Forge";
-    }, []);
+    }, [location.key]);
 
     # Filter Projects
+    projectLimit = 15 if searchQuery != "" else 10;
     filteredProjects = [];
     for p in projects {
+        if filteredProjects.length >= projectLimit { break; }
         try {
             if searchQuery == ""
             or p["name"].toLowerCase().includes(searchQuery.toLowerCase()) {

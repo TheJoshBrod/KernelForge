@@ -18,7 +18,8 @@ import from .catalog_db {
     _catalog_db_path,
     _ensure_catalog_schema,
     _upsert_project_catalog,
-    _load_project_catalog
+    _load_project_catalog,
+    _touch_project_last_opened
 }
 import from .job_supervisor {
     _project_dir,
@@ -582,6 +583,22 @@ walker:pub GetProjects {
         } except Exception as e {
             print(f"Error listing projects: {e}");
             report {"projects": []};
+        }
+    }
+}
+
+walker:pub TouchProject {
+    has projectName: str;
+
+    can touch_project with entry {
+        try {
+            if self.projectName {
+                _touch_project_last_opened(self.projectName);
+            }
+            report {"ok": True};
+        } except Exception as e {
+            print(f"TouchProject error: {e}");
+            report {"ok": False};
         }
     }
 }
