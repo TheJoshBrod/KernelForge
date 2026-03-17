@@ -28,30 +28,32 @@ const ROUTE_READY_TIMEOUT: Duration = Duration::from_secs(20);
 #[cfg(target_os = "linux")]
 fn configure_linux_rendering_env() {
     // The WebKitGTK GBM / DMA-BUF path is unstable on this target, but fully
-    // forcing software rendering is noticeably slower. Default to the lighter
-    // WebKit-only workaround and reserve the full software path for explicit
-    // opt-in.
+    // disabling compositing or forcing software rendering makes the app feel
+    // much slower. Keep the narrow DMA-BUF workaround as the default and leave
+    // harsher fallbacks opt-in.
     unsafe {
         if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         }
-        if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
-            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-        }
     }
 
+    let disable_compositing = std::env::var_os("KFORGE_DISABLE_WEBKIT_COMPOSITING")
+        .map(|value| value == "1")
+        .unwrap_or(false);
     let force_software = std::env::var_os("KFORGE_FORCE_SOFTWARE_RENDERING")
         .map(|value| value == "1")
         .unwrap_or(false);
 
-    if force_software {
+    if disable_compositing || force_software {
         unsafe {
-            if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-                std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-            }
             if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
                 std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
             }
+        }
+    }
+
+    if force_software {
+        unsafe {
             if std::env::var_os("GSK_RENDERER").is_none() {
                 std::env::set_var("GSK_RENDERER", "cairo");
             }
@@ -63,6 +65,18 @@ fn configure_linux_rendering_env() {
             "Linux software rendering fallback enabled via KFORGE_FORCE_SOFTWARE_RENDERING=1"
         );
     }
+
+    if disable_compositing && !force_software {
+        eprintln!("Linux WebKit compositing disabled via KFORGE_DISABLE_WEBKIT_COMPOSITING=1");
+    }
+
+    eprintln!(
+        "Linux render env: WEBKIT_DISABLE_DMABUF_RENDERER={:?} WEBKIT_DISABLE_COMPOSITING_MODE={:?} GSK_RENDERER={:?} LIBGL_ALWAYS_SOFTWARE={:?}",
+        std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER"),
+        std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE"),
+        std::env::var_os("GSK_RENDERER"),
+        std::env::var_os("LIBGL_ALWAYS_SOFTWARE"),
+    );
 }
 
 #[cfg(not(target_os = "linux"))]
