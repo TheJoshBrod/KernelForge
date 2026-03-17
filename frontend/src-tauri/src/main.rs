@@ -5,7 +5,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Write;
 use std::io::{BufRead, BufReader};
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{mpsc, Mutex};
@@ -14,6 +14,8 @@ use tauri::Manager;
 
 static SIDECAR_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 static API_BASE_URL: Mutex<Option<String>> = Mutex::new(None);
+static UI_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
+static UI_BASE_URL: Mutex<Option<String>> = Mutex::new(None);
 
 const PRODUCT_TITLE: &str = "Kernel Forge";
 const GITHUB_REPO: &str = "TheJoshBrod/CGinS";
@@ -22,6 +24,29 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CONFIGURED_BASE_URL: &str = "";
 const SIDECAR_STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const ROUTE_READY_TIMEOUT: Duration = Duration::from_secs(20);
+
+#[cfg(target_os = "linux")]
+fn configure_linux_rendering_env() {
+    // Set these before GTK/WebKit initializes so systems without GBM access
+    // fall back to a software path instead of painting an empty webview.
+    unsafe {
+        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+        if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        }
+        if std::env::var_os("GSK_RENDERER").is_none() {
+            std::env::set_var("GSK_RENDERER", "cairo");
+        }
+        if std::env::var_os("LIBGL_ALWAYS_SOFTWARE").is_none() {
+            std::env::set_var("LIBGL_ALWAYS_SOFTWARE", "1");
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn configure_linux_rendering_env() {}
 
 fn build_sha() -> &'static str {
     option_env!("KFORGE_BUILD_SHA").unwrap_or("dev")
@@ -63,6 +88,33 @@ fn find_sidecar_path(app: &tauri::AppHandle) -> Option<PathBuf> {
                     candidates.push(current.join("binaries/jac-sidecar"));
                     candidates.push(current.join("binaries/jac-sidecar.sh"));
                 }
+                if !current.pop() {
+                    break;
+                }
+            }
+        }
+    }
+
+    find_existing_path(&candidates)
+}
+
+fn find_ui_server_path(app: &tauri::AppHandle, runtime_root: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("binaries/kf-ui-server.py"));
+        candidates.push(resource_dir.join("_up_/binaries/kf-ui-server.py"));
+    }
+
+    candidates.push(runtime_root.join("frontend/src-tauri/binaries/kf-ui-server.py"));
+    candidates.push(runtime_root.join("src-tauri/binaries/kf-ui-server.py"));
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let mut current = exe_dir.to_path_buf();
+            loop {
+                candidates.push(current.join("src-tauri/binaries/kf-ui-server.py"));
+                candidates.push(current.join("binaries/kf-ui-server.py"));
                 if !current.pop() {
                     break;
                 }
@@ -143,6 +195,84 @@ fn python_bin_dir(runtime_root: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn python_executable(runtime_root: &Path) -> PathBuf {
+    let candidates = if cfg!(windows) {
+        vec![
+            runtime_root.join(".venv/Scripts/python.exe"),
+            runtime_root.join("frontend/.venv/Scripts/python.exe"),
+        ]
+    } else {
+        vec![
+            runtime_root.join(".venv/bin/python3"),
+            runtime_root.join(".venv/bin/python"),
+            runtime_root.join("frontend/.venv/bin/python3"),
+            runtime_root.join("frontend/.venv/bin/python"),
+        ]
+    };
+
+    for candidate in candidates {
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+
+    if cfg!(windows) {
+        PathBuf::from("python")
+    } else {
+        PathBuf::from("python3")
+    }
+}
+
+fn reserve_local_port() -> Result<u16, Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    Ok(port)
+}
+
+fn find_dist_path(
+    app: &tauri::AppHandle,
+    module_path: &Path,
+    runtime_root: &Path,
+) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("bundled-ui"));
+        candidates.push(resource_dir.join("dist"));
+        candidates.push(resource_dir.join("_up_/bundled-ui"));
+        candidates.push(resource_dir.join(".jac/client/dist"));
+        candidates.push(resource_dir.join("_up_/dist"));
+        candidates.push(resource_dir.join("_up_/.jac/client/dist"));
+    }
+
+    if let Some(frontend_root) = module_path.parent() {
+        candidates.push(frontend_root.join("src-tauri/bundled-ui"));
+        candidates.push(frontend_root.join(".jac/client/dist"));
+    }
+
+    candidates.push(runtime_root.join("frontend/src-tauri/bundled-ui"));
+    candidates.push(runtime_root.join("frontend/.jac/client/dist"));
+    candidates.push(runtime_root.join(".jac/client/dist"));
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let mut current = exe_dir.to_path_buf();
+            loop {
+                candidates.push(current.join("bundled-ui"));
+                candidates.push(current.join(".jac/client/dist"));
+                candidates.push(current.join("src-tauri/bundled-ui"));
+                candidates.push(current.join("frontend/.jac/client/dist"));
+                if !current.pop() {
+                    break;
+                }
+            }
+        }
+    }
+
+    find_existing_path(&candidates)
 }
 
 fn prepend_env_path(current: Option<&OsStr>, prefix: &Path) -> OsString {
@@ -327,16 +457,20 @@ fn shutdown_child(child: &mut Child) {
 }
 
 fn wait_for_route_ready(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    wait_for_http_path_ready(port, "/")
+}
+
+fn wait_for_http_path_ready(port: u16, path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let address = format!("127.0.0.1:{port}");
     let deadline = std::time::Instant::now() + ROUTE_READY_TIMEOUT;
+    let request = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
 
     while std::time::Instant::now() < deadline {
         match TcpStream::connect(&address) {
             Ok(mut stream) => {
                 stream.set_read_timeout(Some(Duration::from_secs(2)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-                stream
-                    .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")?;
+                stream.write_all(request.as_bytes())?;
 
                 let mut reader = BufReader::new(stream);
                 let mut status_line = String::new();
@@ -360,7 +494,54 @@ fn wait_for_route_ready(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     .into())
 }
 
-fn stop_sidecar() {
+fn start_ui_server(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let module_path = find_module_path(app).ok_or("Could not locate main.jac for the UI bundle")?;
+    let runtime_root = runtime_root_from_module(&module_path);
+    let dist_dir = find_dist_path(app, &module_path, &runtime_root)
+        .ok_or("Could not locate built UI dist directory")?;
+    let script_path =
+        find_ui_server_path(app, &runtime_root).ok_or("Could not locate the UI server script")?;
+    let api_base_url = {
+        let url = API_BASE_URL.lock().unwrap();
+        url.clone()
+            .ok_or("Jac sidecar base URL was not available for the UI server")?
+    };
+
+    let port = reserve_local_port()?;
+    let python = python_executable(&runtime_root);
+    let mut cmd = Command::new(python);
+    cmd.arg(&script_path)
+        .arg("--bind")
+        .arg("127.0.0.1")
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--dist-dir")
+        .arg(&dist_dir)
+        .arg("--api-base-url")
+        .arg(&api_base_url)
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit());
+
+    match cmd.spawn() {
+        Ok(child) => {
+            wait_for_http_path_ready(port, "/")?;
+            let base_url = format!("http://127.0.0.1:{port}/");
+            let mut process = UI_PROCESS.lock().unwrap();
+            *process = Some(child);
+            let mut url = UI_BASE_URL.lock().unwrap();
+            *url = Some(base_url);
+            Ok(())
+        }
+        Err(error) => Err(Box::new(error)),
+    }
+}
+
+fn stop_children() {
+    let mut ui_process = UI_PROCESS.lock().unwrap();
+    if let Some(mut child) = ui_process.take() {
+        shutdown_child(&mut child);
+    }
+
     let mut process = SIDECAR_PROCESS.lock().unwrap();
     if let Some(mut child) = process.take() {
         shutdown_child(&mut child);
@@ -369,10 +550,13 @@ fn stop_sidecar() {
 }
 
 fn main() {
+    configure_linux_rendering_env();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             find_and_start_sidecar(app.handle())?;
+            start_ui_server(app.handle())?;
 
             let desktop_payload = serde_json::json!({
                 "desktop": true,
@@ -381,35 +565,31 @@ fn main() {
                 "github_repo": GITHUB_REPO,
                 "releases_url": GITHUB_RELEASES_URL,
             });
-            let init_js = {
-                let url = API_BASE_URL.lock().unwrap();
+            let init_js = format!("globalThis.__KFORGE_DESKTOP_BUILD__ = {};", desktop_payload);
+
+            let webview_url = {
+                let url = UI_BASE_URL.lock().unwrap();
                 match &*url {
-                    Some(base_url) => format!(
-                        "globalThis.__JAC_API_BASE_URL__ = '{}'; globalThis.__KFORGE_DESKTOP_BUILD__ = {};",
-                        base_url,
-                        desktop_payload
-                    ),
-                    None => format!("globalThis.__KFORGE_DESKTOP_BUILD__ = {};", desktop_payload),
+                    Some(base_url) => tauri::WebviewUrl::External(base_url.parse()?),
+                    None => tauri::WebviewUrl::App("index.html".into()),
                 }
             };
 
-            let builder = tauri::WebviewWindowBuilder::new(
-                app,
-                "main",
-                tauri::WebviewUrl::App("index.html".into()),
-            )
-            .title(PRODUCT_TITLE)
-            .inner_size(1200.0, 800.0)
-            .min_inner_size(800.0, 600.0)
-            .resizable(true)
-            .initialization_script(&init_js);
+            let builder = tauri::WebviewWindowBuilder::new(app, "main", webview_url)
+                .title(PRODUCT_TITLE)
+                .inner_size(1200.0, 800.0)
+                .min_inner_size(800.0, 600.0)
+                .resizable(true)
+                .initialization_script(&init_js);
 
             builder.build()?;
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                stop_sidecar();
+            if window.label() == "main"
+                && matches!(event, tauri::WindowEvent::CloseRequested { .. })
+            {
+                stop_children();
             }
         })
         .run(tauri::generate_context!())

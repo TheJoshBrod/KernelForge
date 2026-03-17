@@ -8,13 +8,21 @@ if [[ ! -f "$ROOT_DIR/.venv/bin/activate" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$HOME/.cargo/env" ]]; then
-  echo "Missing Rust cargo environment at $HOME/.cargo/env" >&2
+cd "$ROOT_DIR/frontend"
+. "$ROOT_DIR/.venv/bin/activate"
+jac build main.jac
+"$ROOT_DIR/scripts/desktop/sync-bundled-ui.sh"
+
+cd "$ROOT_DIR/frontend/src-tauri"
+if ! command -v cargo >/dev/null 2>&1; then
+  if [[ -f "$HOME/.cargo/env" ]]; then
+    . "$HOME/.cargo/env"
+  fi
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "Missing Rust cargo toolchain on PATH." >&2
   exit 1
 fi
 
-cd "$ROOT_DIR/frontend"
-. "$ROOT_DIR/.venv/bin/activate"
-. "$HOME/.cargo/env"
-
-jac start main.jac --client desktop --dev
+cargo run

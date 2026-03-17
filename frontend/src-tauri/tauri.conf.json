@@ -20,6 +20,7 @@
       "icons/icon.png"
     ],
     "resources": [
+      "bundled-ui",
       "../main.jac",
       "../jac.toml",
       "../app",
@@ -34,6 +35,7 @@
       "../../requirements.txt",
       "../../run_cast.py",
       "../../.venv",
+      "binaries/kf-ui-server.py",
       "binaries/jac-sidecar.sh",
       "binaries/jac-sidecar.bat"
     ]

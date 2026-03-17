@@ -15,6 +15,7 @@ fi
 cd "$ROOT_DIR/frontend"
 . "$ROOT_DIR/.venv/bin/activate"
 jac build main.jac
+"$ROOT_DIR/scripts/desktop/sync-bundled-ui.sh"
 
 cd "$ROOT_DIR/frontend/src-tauri"
 if ! command -v cargo >/dev/null 2>&1; then
