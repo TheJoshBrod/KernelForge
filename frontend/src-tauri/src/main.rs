@@ -3,7 +3,9 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io::Write;
 use std::io::{BufRead, BufReader};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{mpsc, Mutex};
@@ -19,6 +21,7 @@ const GITHUB_RELEASES_URL: &str = "https://github.com/TheJoshBrod/CGinS/releases
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CONFIGURED_BASE_URL: &str = "";
 const SIDECAR_STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
+const ROUTE_READY_TIMEOUT: Duration = Duration::from_secs(20);
 
 fn build_sha() -> &'static str {
     option_env!("KFORGE_BUILD_SHA").unwrap_or("dev")
@@ -75,6 +78,8 @@ fn find_module_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     if let Ok(resource_dir) = app.path().resource_dir() {
         candidates.push(resource_dir.join("main.jac"));
         candidates.push(resource_dir.join("frontend/main.jac"));
+        candidates.push(resource_dir.join("_up_/main.jac"));
+        candidates.push(resource_dir.join("_up_/frontend/main.jac"));
     }
 
     if let Ok(exe_path) = std::env::current_exe() {
@@ -101,6 +106,11 @@ fn runtime_root_from_module(module_path: &Path) -> PathBuf {
 
     if module_dir.join("src").exists() {
         return module_dir;
+    }
+
+    let bundled_runtime_root = module_dir.join("_up_");
+    if bundled_runtime_root.join("src").exists() {
+        return bundled_runtime_root;
     }
 
     if module_dir.file_name().and_then(|name| name.to_str()) == Some("frontend") {
@@ -239,6 +249,7 @@ fn find_and_start_sidecar(app: &tauri::AppHandle) -> Result<(), Box<dyn std::err
             *process = Some(child);
 
             let base_url = format!("http://127.0.0.1:{discovered_port}");
+            wait_for_route_ready(discovered_port)?;
             let mut url = API_BASE_URL.lock().unwrap();
             *url = Some(base_url.clone());
             eprintln!("Sidecar started on {}", base_url);
@@ -313,6 +324,40 @@ fn wait_for_sidecar_port(child: &mut Child) -> Result<u16, Box<dyn std::error::E
 fn shutdown_child(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
+}
+
+fn wait_for_route_ready(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    let address = format!("127.0.0.1:{port}");
+    let deadline = std::time::Instant::now() + ROUTE_READY_TIMEOUT;
+
+    while std::time::Instant::now() < deadline {
+        match TcpStream::connect(&address) {
+            Ok(mut stream) => {
+                stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+                stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+                stream
+                    .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")?;
+
+                let mut reader = BufReader::new(stream);
+                let mut status_line = String::new();
+                if reader.read_line(&mut status_line).is_ok()
+                    && (status_line.starts_with("HTTP/1.1 200")
+                        || status_line.starts_with("HTTP/1.0 200"))
+                {
+                    return Ok(());
+                }
+            }
+            Err(_) => {}
+        }
+
+        std::thread::sleep(Duration::from_millis(250));
+    }
+
+    Err(format!(
+        "Jac sidecar did not serve the base route within {} seconds",
+        ROUTE_READY_TIMEOUT.as_secs()
+    )
+    .into())
 }
 
 fn stop_sidecar() {

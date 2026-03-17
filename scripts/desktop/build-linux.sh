@@ -12,17 +12,21 @@ if [[ ! -f "$ROOT_DIR/.venv/bin/activate" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$HOME/.cargo/env" ]]; then
-  echo "Missing Rust cargo environment at $HOME/.cargo/env" >&2
-  exit 1
-fi
-
 cd "$ROOT_DIR/frontend"
 . "$ROOT_DIR/.venv/bin/activate"
 jac build main.jac
 
 cd "$ROOT_DIR/frontend/src-tauri"
-. "$HOME/.cargo/env"
+if ! command -v cargo >/dev/null 2>&1; then
+  if [[ -f "$HOME/.cargo/env" ]]; then
+    . "$HOME/.cargo/env"
+  fi
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "Missing Rust cargo toolchain on PATH." >&2
+  exit 1
+fi
 
 if [[ ! -f "$UPDATER_KEY_PATH" ]]; then
   echo "Missing updater signing key: $UPDATER_KEY_PATH" >&2
@@ -38,5 +42,6 @@ fi
 
 export TAURI_SIGNING_PRIVATE_KEY_PATH="$UPDATER_KEY_PATH"
 export TAURI_SIGNING_PRIVATE_KEY="$UPDATER_KEY_PATH"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${KFORGE_TAURI_UPDATER_KEY_PASSWORD-}"
 
 cargo tauri build --bundles "$BUNDLE_TARGETS"
