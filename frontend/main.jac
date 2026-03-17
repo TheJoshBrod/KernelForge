@@ -91,23 +91,14 @@ cl {
         }
 
         try {
-            controller = AbortController();
-            timeout_id = window.setTimeout(lambda -> None { controller.abort(); }, 5000);
-            try {
-                resp = await fetch(
-                    f"https://api.github.com/repos/{repo}/branches/main",
-                    {
-                        "headers": {"Accept": "application/vnd.github+json"},
-                        "signal": controller.signal
-                    }
-                );
-            } finally {
-                window.clearTimeout(timeout_id);
-            }
-            if not resp or not resp.ok {
+            branch_resp = await fetch(
+                f"https://api.github.com/repos/{repo}/branches/main",
+                {"headers": {"Accept": "application/vnd.github+json"}}
+            );
+            if not branch_resp or not branch_resp.ok {
                 return;
             }
-            payload = await resp.json();
+            payload = await branch_resp.json();
             latest_sha = (
                 str(payload["commit"]["sha"])
                 if payload and "commit" in payload and payload["commit"] and "sha" in payload["commit"]
@@ -201,4 +192,5 @@ cl {
                 </ConfigProvider>
             </Router>;
     }
+
 }
