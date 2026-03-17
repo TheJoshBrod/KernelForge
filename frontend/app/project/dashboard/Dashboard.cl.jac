@@ -1368,23 +1368,35 @@ def:pub Dashboard -> Any {
         if conn and conn != "local" {
             hardwareStatus = f"{hardwareStatus} ({conn})";
         }
-        activeBackend = "CUDA";
+        if "runtime_usable" in display_gpu and display_gpu["runtime_usable"] {
+            hint = display_gpu["backend_hint"] if "backend_hint" in display_gpu else "cuda";
+            if hint == "metal" {
+                activeBackend = "MPS";
+            } elif hint == "xpu" {
+                activeBackend = "XPU";
+            } else {
+                activeBackend = "CUDA";
+            }
+        } else {
+            hardwareStatus = f"{hardwareStatus} [Detected, runtime unavailable]";
+            activeBackend = "CPU";
+        }
     } else {
         # Fallback to detection if we have no detailed GPU list
         if hardwareInfo
-        and "mps_available" in hardwareInfo
-        and hardwareInfo["mps_available"] {
+        and "preferred_target" in hardwareInfo
+        and hardwareInfo["preferred_target"] == "mps" {
             hardwareStatus = "MPS: Apple Silicon";
             activeBackend = "MPS";
-        } elif hardwareInfo and "cuda_available" in hardwareInfo {
-            if hardwareInfo["cuda_available"] {
+        } elif hardwareInfo
+        and "preferred_target" in hardwareInfo
+        and hardwareInfo["preferred_target"] == "cuda" {
                 gpu_name = hardwareInfo["device_name"] or "GPU";
                 hardwareStatus = f"CUDA: {gpu_name} (Auto)";
                 activeBackend = "CUDA";
-            } else {
-                hardwareStatus = "CPU Only";
-                activeBackend = "CPU";
-            }
+        } elif hardwareInfo and "gpu_present" in hardwareInfo and hardwareInfo["gpu_present"] {
+            hardwareStatus = "GPU Detected, CPU Runtime";
+            activeBackend = "CPU";
         } else {
             hardwareStatus = "Scanning...";
             activeBackend = "CPU";

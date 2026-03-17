@@ -86,8 +86,13 @@ def:pub NewProject -> Any {
     setSelectedBackend = selected_backend_state[1];
 
     selected_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
+    selected_gpu_usable = (
+        selected_gpu_info
+        and "runtime_usable" in selected_gpu_info
+        and selected_gpu_info["runtime_usable"]
+    );
     compatible_backends = [];
-    if selected_gpu_info {
+    if selected_gpu_info and selected_gpu_usable {
         hint = selected_gpu_info["backend_hint"] if "backend_hint" in selected_gpu_info else "";
         if hint == "cuda" {
             compatible_backends = [{"label": "Triton", "value": "triton"}, {"label": "CUDA", "value": "cuda"}];
@@ -98,9 +103,9 @@ def:pub NewProject -> Any {
         }
     } else {
         hwInfo = config_ctx.hwInfo if "hwInfo" in config_ctx else {};
-        if hwInfo and "cuda_available" in hwInfo and hwInfo["cuda_available"] {
+        if hwInfo and "preferred_target" in hwInfo and hwInfo["preferred_target"] == "cuda" {
             compatible_backends = [{"label": "Triton", "value": "triton"}, {"label": "CUDA", "value": "cuda"}];
-        } elif hwInfo and "mps_available" in hwInfo and hwInfo["mps_available"] {
+        } elif hwInfo and "preferred_target" in hwInfo and hwInfo["preferred_target"] == "mps" {
             compatible_backends = [{"label": "Metal", "value": "metal"}];
         }
     }

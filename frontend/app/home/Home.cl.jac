@@ -9,6 +9,12 @@ import from ...components.SplashScreen { SplashScreen }
 
 def:pub Home -> Any {
     navigate = useNavigate();
+    desktop_build = window["__KFORGE_DESKTOP_BUILD__"]
+    if "__KFORGE_DESKTOP_BUILD__" in window and window["__KFORGE_DESKTOP_BUILD__"]
+    else None;
+    min_splash_ms = 700
+    if desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
+    else 3000;
 
     projects_state = useState([]);
     projects = projects_state[0];
@@ -61,9 +67,9 @@ def:pub Home -> Any {
             console.error("Failed to fetch projects", e);
         } finally {
             elapsed = Date.now() - start;
-            if not splashDone and elapsed < 3000 {
+            if not splashDone and elapsed < min_splash_ms {
                 def sleeper(resolve: any, reject: any) -> None {
-                    setTimeout(resolve, 3000 - elapsed);
+                    setTimeout(resolve, min_splash_ms - elapsed);
                 }
                 await Reflect.construct(Promise, [sleeper]);
                 sessionStorage.setItem("splash_shown", "true");

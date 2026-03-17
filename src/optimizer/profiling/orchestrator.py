@@ -108,14 +108,68 @@ def _safe_mps_built() -> bool:
         return False
 
 
+def _runtime_backend_flags() -> Dict[str, bool]:
+    flags = {
+        "cuda": False,
+        "rocm": False,
+        "mps": False,
+        "xpu": False,
+    }
+    try:
+        import torch
+
+        cuda_available = bool(torch.cuda.is_available())
+        is_rocm = bool(getattr(torch.version, "hip", None))
+        if not is_rocm:
+            try:
+                cfg = torch.__config__.show()
+                is_rocm = "USE_ROCM=ON" in str(cfg)
+            except Exception:
+                is_rocm = False
+
+        if is_rocm:
+            flags["rocm"] = cuda_available
+        else:
+            flags["cuda"] = cuda_available
+
+        mps_backend = getattr(torch.backends, "mps", None)
+        flags["mps"] = bool(mps_backend and mps_backend.is_available())
+
+        xpu_backend = getattr(torch, "xpu", None)
+        flags["xpu"] = bool(xpu_backend and xpu_backend.is_available())
+    except Exception:
+        pass
+    return flags
+
+
+def _runtime_usable_for_backend(backend_hint: str, runtime_flags: Dict[str, bool]) -> bool:
+    backend = str(backend_hint or "cpu").lower()
+    if backend == "cuda":
+        return runtime_flags["cuda"]
+    if backend == "rocm":
+        return runtime_flags["rocm"]
+    if backend == "metal":
+        return runtime_flags["mps"]
+    if backend == "xpu":
+        return runtime_flags["xpu"]
+    return False
+
+
 def get_frontend_payload(mode: str = "fast", use_cache: bool = True) -> Dict[str, Any]:
     payload = get_profile(mode=mode, use_cache=use_cache)
     gpus_raw = payload.get("gpus", [])
+    runtime_flags = _runtime_backend_flags()
 
     gpus: List[Dict[str, Any]] = []
     for item in gpus_raw:
         gpu = dict(item)
         cc = gpu.get("compute_capability") or gpu.get("architecture") or "unknown"
+        runtime_usable = _runtime_usable_for_backend(gpu.get("backend_hint", "cpu"), runtime_flags)
+        runtime_reason = ""
+        if not runtime_usable and gpu.get("backend_hint") in {"cuda", "rocm", "metal", "xpu"}:
+            runtime_reason = (
+                "Hardware detected, but the current packaged runtime does not expose this backend."
+            )
         gpus.append(
             {
                 # Legacy fields expected by frontend pages
@@ -138,12 +192,15 @@ def get_frontend_payload(mode: str = "fast", use_cache: bool = True) -> Dict[str
                 "clock_mhz": gpu.get("clock_mhz"),
                 "driver_version": gpu.get("driver_version"),
                 "error": gpu.get("error"),
+                # Runtime capability fields
+                "runtime_usable": runtime_usable,
+                "runtime_reason": runtime_reason,
             }
         )
 
-    cuda_available = any(g.get("backend_hint") in {"cuda", "rocm"} for g in gpus)
-    mps_available = any(g.get("backend_hint") == "metal" for g in gpus)
-    xpu_available = any(g.get("backend_hint") == "xpu" for g in gpus)
+    cuda_available = runtime_flags["cuda"] or runtime_flags["rocm"]
+    mps_available = runtime_flags["mps"]
+    xpu_available = runtime_flags["xpu"]
 
     preferred_target = "cpu"
     if mps_available:
@@ -168,6 +225,8 @@ def get_frontend_payload(mode: str = "fast", use_cache: bool = True) -> Dict[str
         "device_name": gpus[0]["name"] if gpus else "",
         "cuda_version": _safe_cuda_version() if cuda_available else "",
         "mps_built": _safe_mps_built(),
+        "gpu_present": bool(gpus),
+        "runtime_acceleration_available": preferred_target != "cpu",
         # New convenience field
         "preferred_target": preferred_target,
     }
@@ -263,4 +322,3 @@ def get_device_specs(device_index: int = 0, mode: str = "fast") -> GPUSpecs:
         driver_version=gpu.get("driver_version"),
         error=gpu.get("error"),
     )
-

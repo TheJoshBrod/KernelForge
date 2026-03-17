@@ -231,15 +231,14 @@ def:pub Project -> Any {
             if resp and resp.reports and resp.reports.length > 0
             else {};
             hardwareInfo = data or {};
-            if hardwareInfo
-            and "mps_available" in hardwareInfo
-            and hardwareInfo["mps_available"] {
-                targetDevice = "mps";
-            } elif hardwareInfo and "cuda_available" in hardwareInfo {
-                if not hardwareInfo["cuda_available"] {
-                    targetDevice = "cpu";
-                } else {
+            if hardwareInfo and "preferred_target" in hardwareInfo {
+                preferred = hardwareInfo["preferred_target"] if hardwareInfo["preferred_target"] else "cpu";
+                if preferred == "mps" {
+                    targetDevice = "mps";
+                } elif preferred == "cuda" {
                     targetDevice = "cuda";
+                } else {
+                    targetDevice = "cpu";
                 }
             }
         } except Exception as e {
@@ -820,11 +819,12 @@ def:pub Project -> Any {
 
     hardwareStatus = "";
     if hardwareInfo
-    and "mps_available" in hardwareInfo
-    and hardwareInfo["mps_available"] {
+    and "preferred_target" in hardwareInfo
+    and hardwareInfo["preferred_target"] == "mps" {
         hardwareStatus = "MPS: Apple Silicon";
-    } elif hardwareInfo and "cuda_available" in hardwareInfo {
-        if hardwareInfo["cuda_available"] {
+    } elif hardwareInfo
+    and "preferred_target" in hardwareInfo
+    and hardwareInfo["preferred_target"] == "cuda" {
             gpu_name = hardwareInfo["device_name"]
             if "device_name" in hardwareInfo
             else "";
@@ -833,9 +833,10 @@ def:pub Project -> Any {
             else 0;
             suffix = f" x{count}" if count and count > 1 else "";
             hardwareStatus = f"CUDA: {gpu_name}{suffix}";
-        } else {
-            hardwareStatus = "CUDA not detected";
-        }
+    } elif hardwareInfo and "gpu_present" in hardwareInfo and hardwareInfo["gpu_present"] {
+        hardwareStatus = "GPU detected, runtime unavailable";
+    } else {
+        hardwareStatus = "CUDA not detected";
     }
 
     skeletonOps = [];
