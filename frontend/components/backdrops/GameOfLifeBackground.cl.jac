@@ -10,7 +10,7 @@ def:pub GameOfLifeBackground(className: str = "") -> Any {
             return;
         }ctx = canvas.getContext("2d");
         # Configuration
-        cellSize = 10;deadColor = "rgba(0, 0, 0, 0)";aliveColor = "rgba(134, 230, 169, 0.8)";frameCount = 0;tickInterval = 3;cols = 0;rows = 0;grid = [];
+        cellSize = 10;deadColor = "rgba(0, 0, 0, 0)";aliveColor = "rgba(134, 230, 169, 0.8)";frameCount = 0;tickInterval = 3;cols = 0;rows = 0;grid = [];animationId = 0;active = True;
         # Track reset state to prevent multiple timers
         resetPending = False;def createGrid() -> list {
             newGrid = [];
@@ -72,20 +72,25 @@ def:pub GameOfLifeBackground(className: str = "") -> Any {
             sum -= myGrid[y][x];
             return sum;
         } def update() -> None {
+            nonlocal animationId ;
+            nonlocal active ;
             nonlocal resetPending ;
             nonlocal frameCount ;
+            if not active {
+                return;
+            }
 
             # If we are already waiting for a reset, just keep drawing current state (or do nothing)
             if resetPending {
                 draw(grid);
-                requestAnimationFrame(update);
+                animationId = requestAnimationFrame(update);
                 return;
             }
 
             frameCount += 1;
             if frameCount % tickInterval != 0 {
                 draw(grid);
-                requestAnimationFrame(update);
+                animationId = requestAnimationFrame(update);
                 return;
             }
 
@@ -129,8 +134,8 @@ def:pub GameOfLifeBackground(className: str = "") -> Any {
             }
 
             draw(grid);
-            requestAnimationFrame(update);
-        } animationId = requestAnimationFrame(update);return lambda -> None { cancelAnimationFrame(
+            animationId = requestAnimationFrame(update);
+        } animationId = requestAnimationFrame(update);return lambda -> None { nonlocal active ;active = False;cancelAnimationFrame(
             animationId
         );window.removeEventListener("resize", resize);}; },
         []

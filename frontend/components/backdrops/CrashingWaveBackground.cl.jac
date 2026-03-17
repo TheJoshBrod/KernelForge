@@ -18,7 +18,7 @@ def:pub CrashingWaveBackground() -> Any {
             "#f0f9ff",
             "#ffffff"
         ];wetSandColors = ["#262626", "#171717"];  # Very dark to blend with BG
-        waterChars = ["~", "≈", "-", "=", "«"];foamChars = [
+        animationId = 0;active = True;waterChars = ["~", "≈", "-", "=", "«"];foamChars = [
             "*",
             "%",
             "#",
@@ -31,6 +31,11 @@ def:pub CrashingWaveBackground() -> Any {
             cols = Math.floor(canvas.width / fontSize);
             rows = Math.floor(canvas.height / fontSize);
         } resize();window.addEventListener("resize", resize);def draw() -> None {
+            nonlocal animationId ;
+            nonlocal active ;
+            if not active {
+                return;
+            }
             # Clear screen
             ctx.fillStyle = "#020617";  # Zinc-950 equivalent
             ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -124,8 +129,8 @@ def:pub CrashingWaveBackground() -> Any {
             }
 
             time += 1;
-            requestAnimationFrame(draw);
-        } animationId = requestAnimationFrame(draw);return lambda -> None { cancelAnimationFrame(
+            animationId = requestAnimationFrame(draw);
+        } animationId = requestAnimationFrame(draw);return lambda -> None { nonlocal active ;active = False;cancelAnimationFrame(
             animationId
         );window.removeEventListener("resize", resize);}; },
         []

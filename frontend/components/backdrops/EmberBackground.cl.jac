@@ -10,7 +10,7 @@ def:pub EmberBackground(className: str = "") -> Any {
             return;
         }ctx = canvas.getContext("2d");
         # Config
-        particleCount = 60;particles = [];def createParticle(
+        particleCount = 60;particles = [];animationId = 0;active = True;def createParticle(
             reset: bool = False
         ) -> dict {
             width = window.innerWidth;
@@ -37,6 +37,11 @@ def:pub EmberBackground(className: str = "") -> Any {
                 i += 1;
             }
         } resize();window.addEventListener("resize", resize);def draw() -> None {
+            nonlocal animationId ;
+            nonlocal active ;
+            if not active {
+                return;
+            }
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             time = Date.now() / 1000;
@@ -109,8 +114,8 @@ def:pub EmberBackground(className: str = "") -> Any {
             }
             ctx.shadowBlur = 0;
 
-            requestAnimationFrame(draw);
-        } animationId = requestAnimationFrame(draw);return lambda -> None { cancelAnimationFrame(
+            animationId = requestAnimationFrame(draw);
+        } animationId = requestAnimationFrame(draw);return lambda -> None { nonlocal active ;active = False;cancelAnimationFrame(
             animationId
         );window.removeEventListener("resize", resize);}; },
         []

@@ -12,7 +12,7 @@ def:pub Home -> Any {
     desktop_build = window["__KFORGE_DESKTOP_BUILD__"]
     if "__KFORGE_DESKTOP_BUILD__" in window and window["__KFORGE_DESKTOP_BUILD__"]
     else None;
-    min_splash_ms = 700
+    min_splash_ms = 250
     if desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
     else 3000;
 
@@ -27,6 +27,9 @@ def:pub Home -> Any {
     splash_done_state = useState(sessionStorage.getItem("splash_shown") == "true");
     splashDone = splash_done_state[0];
     setSplashDone = splash_done_state[1];
+    splash_visible_state = useState(sessionStorage.getItem("splash_shown") != "true");
+    splashVisible = splash_visible_state[0];
+    setSplashVisible = splash_visible_state[1];
 
     search_query_state = useState("");
     searchQuery = search_query_state[0];
@@ -76,6 +79,7 @@ def:pub Home -> Any {
             }
             setLoading(False);
             setSplashDone(True);
+            setTimeout(lambda -> None { setSplashVisible(False); }, 900);
         }
     }
 
@@ -195,7 +199,7 @@ def:pub Home -> Any {
         <main
             className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex flex-col items-center justify-center font-sans text-white"
         >
-            <SplashScreen exiting={splashDone}/>
+            {<SplashScreen exiting={splashDone}/> if splashVisible else None}
             <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
             <div className="noise-overlay opacity-30"></div>
             <EmberBackground className="absolute inset-0 z-0"/>
