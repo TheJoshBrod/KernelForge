@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +12,9 @@ from pathlib import Path
 from src.progress import check_cancelled, update_job_progress, wait_if_paused
 from src.optimizer.tree_store import publish_generated_root
 from src.optimizer.pipeline import update_queue_state
+from src.optimizer.config.settings import MIN_CUDA_VERSION
+
+_RESULT_TRUNCATE = 300
 
 
 def _repo_root() -> Path:
@@ -63,7 +68,69 @@ def _max_supported_cuda_capability() -> tuple[int, int] | None:
     return best
 
 
+def _fail_all_active_tasks(project_dir: Path, reason: str) -> None:
+    """Mark every active queue task as Failed with a given reason.
+
+    Called when a preflight check fails before per-task processing begins,
+    so tasks don't get stuck in 'In Progress' forever.
+    """
+    queue_path = project_dir / "queue.json"
+    if not queue_path.exists():
+        return
+    from src.optimizer.benchmarking.locks import file_lock
+    lock_path = queue_path.with_suffix(".json.lock")
+    try:
+        with file_lock(lock_path):
+            state = json.loads(queue_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    active = state.get("active_tasks", {})
+    if not active:
+        return
+    updates = {
+        k: {**v, "current_step": "Failed", "status": "Failed", "result": reason[:_RESULT_TRUNCATE]}
+        for k, v in active.items()
+        if v.get("current_step") not in ("Done", "Failed")
+    }
+    if updates:
+        update_queue_state(project_dir, {"active_tasks": updates})
+
+
+def _preflight_nvcc_version() -> tuple[bool, str]:
+    """Check that nvcc meets the minimum required version (11.8)."""
+    _MIN = MIN_CUDA_VERSION
+    nvcc = shutil.which("nvcc")
+    cuda_home = os.environ.get("CUDA_HOME", "")
+    if not nvcc and cuda_home:
+        candidate = Path(cuda_home) / "bin" / "nvcc"
+        if candidate.exists():
+            nvcc = str(candidate)
+    if not nvcc:
+        return False, (
+            "CUDA preflight failed: nvcc not found on PATH or in CUDA_HOME. "
+            "Ensure CUDA is installed and CUDA_HOME is set correctly."
+        )
+    try:
+        out = subprocess.check_output([nvcc, "--version"], stderr=subprocess.STDOUT).decode()
+    except Exception as e:
+        return False, f"CUDA preflight failed: could not run nvcc --version ({e})."
+    match = re.search(r"release (\d+)\.(\d+)", out)
+    if not match:
+        return False, f"CUDA preflight failed: could not parse nvcc version from: {out!r}"
+    major, minor = int(match.group(1)), int(match.group(2))
+    if (major, minor) < _MIN:
+        return False, (
+            f"CUDA preflight failed: nvcc {major}.{minor} is too old. "
+            f"Kernel Forge requires CUDA {_MIN[0]}.{_MIN[1]} or newer."
+        )
+    return True, ""
+
+
 def _preflight_cuda_target() -> tuple[bool, str]:
+    ok, reason = _preflight_nvcc_version()
+    if not ok:
+        return False, reason
+
     try:
         import torch
     except Exception as e:
@@ -114,9 +181,14 @@ def _preflight_cuda_target() -> tuple[bool, str]:
     return True, ""
 
 
-def _run(cmd: list[str], cwd: Path, env: dict[str, str]) -> int:
+def _run(cmd: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str]:
     print(f"[workflow] Running: {' '.join(cmd)}")
-    return subprocess.run(cmd, cwd=str(cwd), env=env).returncode
+    result = subprocess.run(cmd, cwd=str(cwd), env=env, capture_output=True, text=True)
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="")
+    return result.returncode, result.stderr.strip()
 
 
 def _ops_from_csv(raw: str) -> list[str]:
@@ -200,7 +272,8 @@ def run_profile(args: argparse.Namespace) -> int:
         cmd += ["--validation-b64-path", args.validation_b64_path]
     if args.validation_name_path:
         cmd += ["--validation-name-path", args.validation_name_path]
-    return _run(cmd, root, env)
+    rc, _ = _run(cmd, root, env)
+    return rc
 
 
 def run_benchmark(args: argparse.Namespace) -> int:
@@ -213,7 +286,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "--project",
         args.project,
     ]
-    return _run(cmd, root, env)
+    rc, _ = _run(cmd, root, env)
+    return rc
 
 
 def run_generate(args: argparse.Namespace) -> int:
@@ -235,18 +309,20 @@ def run_generate(args: argparse.Namespace) -> int:
 
     target_device = _normalize_device(args.target_device)
     env["KFORGE_TARGET_DEVICE"] = target_device
-    if target_device == "cuda":
-        ok, reason = _preflight_cuda_target()
-        if not ok:
-            print(f"[workflow] {reason}")
-            return 2
-        if reason:
-            print(f"[workflow] {reason}")
 
     project_dir = _project_dir(args.project)
     io_dir = project_dir / "io" / "individual_ops"
     out_dir = project_dir / "kernels" / "generated"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if target_device == "cuda" and not getattr(args, "remote", ""):
+        ok, reason = _preflight_cuda_target()
+        if not ok:
+            print(f"[workflow] {reason}")
+            _fail_all_active_tasks(project_dir, reason)
+            return 2
+        if reason:
+            print(f"[workflow] {reason}")
 
     ops = _ops_from_csv(args.ops)
     if not ops:
@@ -341,9 +417,10 @@ def run_generate(args: argparse.Namespace) -> int:
             }}})
             # Pass KFORGE state env through so attempt-level progress messages
             # from generator/main.py reach the dashboard.
-            rc = _run(gen_cmd, root, env)
+            rc, stderr = _run(gen_cmd, root, env)
             if rc != 0:
-                op_failure = f"generation command failed (exit {rc})"
+                detail = f": {stderr[:_RESULT_TRUNCATE]}" if stderr else ""
+                op_failure = f"generation command failed (exit {rc}){detail}"
             elif not _has_success_marker(generated_op_dir):
                 op_failure = "kernel failed validation/compile (missing success marker)"
             else:
@@ -382,9 +459,10 @@ def run_generate(args: argparse.Namespace) -> int:
                 opt_cmd += ["--parallel", "--workers", str(args.workers)]
             if args.remote:
                 opt_cmd += ["--remote", args.remote]
-            rc = _run(opt_cmd, root, subprocess_env)
+            rc, stderr = _run(opt_cmd, root, subprocess_env)
             if rc != 0:
-                failure_msg = f"optimization failed (exit {rc})"
+                detail = f": {stderr[:_RESULT_TRUNCATE]}" if stderr else ""
+                failure_msg = f"optimization failed (exit {rc}){detail}"
                 op_failure = f"{op_failure}; {failure_msg}" if op_failure else failure_msg
 
         if args.benchmark and can_benchmark:
@@ -422,15 +500,16 @@ def run_generate(args: argparse.Namespace) -> int:
                 "op_name": op_name,
                 "tag": "[GEN]",
             }}})
-            rc = _run(bench_cmd, root, subprocess_env)
+            rc, stderr = _run(bench_cmd, root, subprocess_env)
             if rc != 0:
-                failure_msg = f"benchmark failed (exit {rc})"
+                detail = f": {stderr[:_RESULT_TRUNCATE]}" if stderr else ""
+                failure_msg = f"benchmark failed (exit {rc}){detail}"
                 op_failure = f"{op_failure}; {failure_msg}" if op_failure else failure_msg
                 update_queue_state(project_dir, {"active_tasks": {task_key: {
                     **task_meta,
                     "current_step": "Failed",
                     "status": "Failed",
-                    "result": failure_msg[:200],
+                    "result": failure_msg[:_RESULT_TRUNCATE],
                     "op_name": op_name,
                     "tag": "[GEN]",
                 }}})
@@ -468,7 +547,7 @@ def run_generate(args: argparse.Namespace) -> int:
                 **task_meta,
                 "current_step": "Failed",
                 "status": "Failed",
-                "result": op_failure[:200],
+                "result": op_failure[:_RESULT_TRUNCATE],
             }}})
             failed_ops.append((op_name, op_failure))
             print(f"[workflow] Failed {op_name}: {op_failure}. Continuing.")
@@ -545,6 +624,17 @@ def run_optimize(args: argparse.Namespace) -> int:
 
     project_dir = _project_dir(args.project)
     io_dir = project_dir / "io" / "individual_ops"
+
+    target_device = _normalize_device(getattr(args, "target_device", "cuda") or "cuda")
+    if target_device == "cuda" and not getattr(args, "remote", ""):
+        ok, reason = _preflight_cuda_target()
+        if not ok:
+            print(f"[workflow] {reason}")
+            _fail_all_active_tasks(project_dir, reason)
+            return 2
+        if reason:
+            print(f"[workflow] {reason}")
+
     ops = _ops_from_csv(args.ops)
     if not ops:
         ops = _discover_ops(io_dir)
@@ -591,9 +681,9 @@ def run_optimize(args: argparse.Namespace) -> int:
             opt_cmd += ["--parallel", "--workers", str(args.workers)]
         if args.remote:
             opt_cmd += ["--remote", args.remote]
-        rc = _run(opt_cmd, root, env)
+        rc, stderr = _run(opt_cmd, root, env)
         if rc != 0:
-            reason = f"pipeline_exit_{rc}"
+            reason = f"pipeline_exit_{rc}" + (f": {stderr[:_RESULT_TRUNCATE]}" if stderr else "")
             print(
                 f"[workflow-optimize-result] op={op_name} status=hard_error "
                 f"new_nodes=0 last_reason={json.dumps(reason)}"
@@ -627,7 +717,7 @@ def run_optimize(args: argparse.Namespace) -> int:
             "--project",
             args.project,
         ]
-        rc = _run(bench_cmd, root, env)
+        rc, _ = _run(bench_cmd, root, env)
         if rc != 0:
             update_queue_state(project_dir, {
                 "pending_operators": [],

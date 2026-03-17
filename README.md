@@ -88,7 +88,7 @@ A GPU is not required on the local machine if you use remote execution over SSH.
 | Requirement | Notes |
 |-------------|-------|
 | NVIDIA GPU | Any CUDA-capable device |
-| CUDA Toolkit 12.0+ | Required for JIT kernel compilation |
+| CUDA Toolkit 11.8+ | Required for JIT kernel compilation |
 | NVIDIA driver ≥ 525 | Required for `nvidia-ml-py` profiling |
 | `ninja` | Faster JIT compilation (installed via `requirements.txt`) |
 

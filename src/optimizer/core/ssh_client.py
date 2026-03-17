@@ -1,11 +1,33 @@
 import os
 import paramiko
-import time
+import re
 import struct
 import pickle
+import time
 import traceback
 from pathlib import Path
-from src.optimizer.config.settings import settings
+from src.optimizer.config.settings import settings, MIN_CUDA_VERSION
+
+
+def _check_remote_nvcc(client: paramiko.SSHClient) -> None:
+    """Raise RuntimeError if the remote machine's nvcc is missing or below the minimum version."""
+    _, out, _ = execute_remote_command(client, "nvcc --version 2>&1 || echo NVCC_NOT_FOUND")
+    if "NVCC_NOT_FOUND" in out or not out.strip():
+        raise RuntimeError(
+            "nvcc not found on the remote machine. "
+            "Ensure CUDA is installed and nvcc is on the remote PATH."
+        )
+    match = re.search(r"release (\d+)\.(\d+)", out)
+    if not match:
+        raise RuntimeError(
+            f"Could not parse remote nvcc version from output: {out!r}"
+        )
+    major, minor = int(match.group(1)), int(match.group(2))
+    if (major, minor) < MIN_CUDA_VERSION:
+        raise RuntimeError(
+            f"Remote machine has CUDA {major}.{minor} which is too old. "
+            f"Kernel Forge requires CUDA {MIN_CUDA_VERSION[0]}.{MIN_CUDA_VERSION[1]} or newer."
+        )
 
 REQUIRED_PACKAGES = [
     "torch",
@@ -173,11 +195,14 @@ class RemoteWorkerClient:
             aux_files: Optional dict of {local_path: remote_filename} for additional dependencies (e.g. loader.py).
         """
         self.client = connect_ssh(ssh_config)
-        
+
         # 1. Bootstrap
         if not ensure_remote_setup(self.client):
             raise RuntimeError("Failed to bootstrap remote environment")
-            
+
+        # 1b. Verify remote CUDA version before doing anything else
+        _check_remote_nvcc(self.client)
+
         # 2. Upload worker script and dependencies
         files_to_upload = {
             str(worker_script_path): "worker.py"
