@@ -188,8 +188,9 @@ walker:pub StartGenerate {
                 print(f"Failed to write SSH config for remote generation: {e}");
             }
         }
+        gen_gpu_info = _resolve_current_gpu_info();
         if self.benchmark {
-            _write_benchmarked_gpu(self.projectName, _resolve_current_gpu_info());
+            _write_benchmarked_gpu(self.projectName, gen_gpu_info);
         }
         result = _queue_or_start_job(
             self.projectName,
@@ -202,6 +203,14 @@ walker:pub StartGenerate {
                 "workers": 1
             }
         );
+        if result {
+            gen_cc = str(gen_gpu_info["compute_capability"])
+                if gen_gpu_info and "compute_capability" in gen_gpu_info
+                else "";
+            if not gen_gpu_info or gen_cc in ["0.0", "N/A", ""] {
+                result["gpu_warning"] = "GPU specs could not be fully detected. LLM optimization prompts may use degraded hardware context. Check pycuda/NVML availability.";
+            }
+        }
         _append_queue_debug(
             self.projectName,
             "StartGenerate",
@@ -292,7 +301,8 @@ walker:pub StartOptimize {
                 print(f"Failed to write SSH config for remote optimization: {e}");
             }
         }
-        _write_benchmarked_gpu(self.projectName, _resolve_current_gpu_info());
+        opt_gpu_info = _resolve_current_gpu_info();
+        _write_benchmarked_gpu(self.projectName, opt_gpu_info);
         result = _queue_or_start_job(
             self.projectName,
             "optimize",
@@ -304,6 +314,14 @@ walker:pub StartOptimize {
                 "workers": self.workers
             }
         );
+        if result {
+            opt_cc = str(opt_gpu_info["compute_capability"])
+                if opt_gpu_info and "compute_capability" in opt_gpu_info
+                else "";
+            if not opt_gpu_info or opt_cc in ["0.0", "N/A", ""] {
+                result["gpu_warning"] = "GPU specs could not be fully detected. LLM optimization prompts may use degraded hardware context. Check pycuda/NVML availability.";
+            }
+        }
         _append_queue_debug(
             self.projectName,
             "StartOptimize",
