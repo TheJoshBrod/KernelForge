@@ -14,16 +14,60 @@ Design goal:
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass, fields
+from pathlib import Path
 from typing import Any
+
+MIN_CUDA_VERSION: tuple[int, int] = (11, 8)
+
+
+def _detect_cuda_home() -> str:
+    """Return the best available CUDA installation directory.
+
+    Resolution order:
+    1. CUDA_HOME env var (already set by the user or conda/venv activation)
+    2. nvcc on PATH - derive home from the binary location
+    3. /usr/local/cuda - canonical symlink on most Linux distros
+    4. Any /usr/local/cuda-* directory, preferring the newest version
+    5. Hardcoded fallback (original default)
+    """
+    if "CUDA_HOME" in os.environ:
+        return os.environ["CUDA_HOME"]
+
+    nvcc = shutil.which("nvcc")
+    if nvcc:
+        # nvcc lives at <cuda_home>/bin/nvcc
+        return str(Path(nvcc).resolve().parent.parent)
+
+    canonical = Path("/usr/local/cuda")
+    if canonical.exists():
+        return str(canonical)
+
+    def _ver(p: Path) -> list[int]:
+        try:
+            return [int(x) for x in p.name.split("-")[1].split(".")]
+        except Exception:
+            return [0]
+
+    versioned = sorted(Path("/usr/local").glob("cuda-*"), key=_ver, reverse=True)
+    if versioned:
+        return str(versioned[0])
+
+    return "/usr/local/cuda-12.1"
+
+
+_DEFAULT_CUDA_HOME = _detect_cuda_home()
 
 
 def _coerce_env_value(raw: str, typ: Any) -> Any:
-    if typ is int:
+    # `from __future__ import annotations` makes f.type a string, so compare by name.
+    type_name = typ if isinstance(typ, str) else getattr(typ, "__name__", "")
+    if type_name == "int":
         return int(raw)
-    if typ is float:
+    if type_name == "float":
         return float(raw)
-    if typ is bool:
+    if type_name == "bool":
         return raw.strip().lower() in ("1", "true", "yes", "y", "on")
     return raw
 
@@ -52,7 +96,7 @@ try:
         verifier_timeout_seconds: int = 300
         mcts_c_constant: float = 1.0
         llm_model_name: str = "anthropic/claude-sonnet-4-6"
-        cuda_home: str = "/usr/local/cuda-12.1"
+        cuda_home: str = _DEFAULT_CUDA_HOME
         retry_limit: int = 3
         ancestor_code_depth: int = 3
 
@@ -68,7 +112,7 @@ except Exception:
         verifier_timeout_seconds: int = 300
         mcts_c_constant: float = 1.0
         llm_model_name: str = "anthropic/claude-sonnet-4-6"
-        cuda_home: str = "/usr/local/cuda-12.1"
+        cuda_home: str = _DEFAULT_CUDA_HOME
         retry_limit: int = 3
         ancestor_code_depth: int = 3
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 import tempfile
 import zipfile
@@ -11,6 +12,8 @@ from typing import Any
 import torch
 from torch.utils.cpp_extension import load_inline
 
+from src.optimizer.config.settings import MIN_CUDA_VERSION
+
 
 def _extract_signature(code: str) -> str:
     match = re.search(r"(torch::Tensor\s+launch\s*\([^)]*\))", code)
@@ -19,11 +22,57 @@ def _extract_signature(code: str) -> str:
     return match.group(1) + ";"
 
 
+def _detect_cuda_home() -> str:
+    from src.optimizer.config.settings import _detect_cuda_home as _settings_detect_cuda_home
+    return _settings_detect_cuda_home()
+
+
+def _check_nvcc_version(cuda_home: str) -> None:
+    """Raise RuntimeError if the installed nvcc is below the minimum supported version."""
+    import subprocess
+
+    nvcc = Path(cuda_home) / "bin" / "nvcc"
+    if not nvcc.exists():
+        nvcc_path = shutil.which("nvcc")
+        if not nvcc_path:
+            raise RuntimeError(
+                f"nvcc not found in {cuda_home}/bin or on PATH. "
+                "Ensure CUDA is installed and CUDA_HOME is set correctly."
+            )
+        nvcc = Path(nvcc_path)
+
+    try:
+        out = subprocess.check_output([str(nvcc), "--version"], stderr=subprocess.STDOUT).decode()
+    except Exception as e:
+        raise RuntimeError(f"Failed to run nvcc --version: {e}") from e
+
+    match = re.search(r"release (\d+)\.(\d+)", out)
+    if not match:
+        raise RuntimeError(f"Could not parse nvcc version from output:\n{out}")
+
+    major, minor = int(match.group(1)), int(match.group(2))
+    if (major, minor) < MIN_CUDA_VERSION:
+        raise RuntimeError(
+            f"CUDA {major}.{minor} is too old. "
+            f"Kernel Forge requires CUDA {MIN_CUDA_VERSION[0]}.{MIN_CUDA_VERSION[1]} or newer. "
+            f"Detected nvcc at: {nvcc}"
+        )
+
+
+_cuda_env_ready: bool = False
+
+
 def ensure_cuda_env() -> None:
+    global _cuda_env_ready
+    if _cuda_env_ready:
+        return
     if "CUDA_HOME" not in os.environ:
-        os.environ["CUDA_HOME"] = "/usr/local/cuda-12.1"
+        os.environ["CUDA_HOME"] = _detect_cuda_home()
+    _check_nvcc_version(os.environ["CUDA_HOME"])
     python_bin = os.path.dirname(sys.executable)
-    os.environ["PATH"] = f"{python_bin}:{os.environ.get('PATH','')}"
+    if python_bin not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = f"{python_bin}:{os.environ.get('PATH','')}"
+    _cuda_env_ready = True
 
 
 def target_device() -> str:
@@ -59,7 +108,7 @@ def load_kernel(kernel_dir: Path, name: str | None = None, build_dir: Path | Non
 
     target_device = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
     if target_device in {"gpu", "cuda"} or target_device == "":
-        _ensure_cuda_env()
+        ensure_cuda_env()
         module = load_inline(
             name=module_name,
             cpp_sources=signature,
