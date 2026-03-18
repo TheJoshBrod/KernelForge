@@ -12,6 +12,7 @@ import from recharts {
     ResponsiveContainer
 }
 import from ....context.ConfigContext { useConfig }
+import from ....components.ui.DesktopRuntime { isDocumentVisible }
 import from ..operator_workbench.workbench.menus.GenerateModal { GenerateModal }
 import from ..operator_workbench.workbench.menus.OptimizeModal { OptimizeModal }
 import from ..shared.MetricsAdapter {
@@ -1026,11 +1027,45 @@ def:pub Dashboard -> Any {
     # Capture current GPU info for polling closure (must be in deps so closure stays fresh)
     _poll_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
 
+    useEffect(
+        lambda -> Any {
+            def handleVisibilityChange -> None {
+                if not isDocumentVisible() or not name or status_poll_busy_ref.current {
+                    return;
+                }
+                status_poll_busy_ref.current = True;
+                status_seq = next_status_request_seq();
+                __jacSpawn("GetProjectStatus", "", {"projectName": name, "currentGpuInfo": _poll_gpu_info}).then(
+                    lambda resp: any -> None {
+                        data = resp.reports[0] if resp and resp.reports else {};
+                        status_applied = apply_status_if_current(status_seq, data or {});
+                        if status_applied and data and "gpu_mismatch" in data {
+                            setGpuMismatch(data["gpu_mismatch"]);
+                            setBenchmarkedGpuName(data["benchmarked_gpu_name"] if "benchmarked_gpu_name" in data else "");
+                        } elif status_applied {
+                            setGpuMismatch(False);
+                        }
+                        status_poll_busy_ref.current = False;
+                    }
+                ).catch(
+                    lambda e: any -> None {
+                        status_poll_busy_ref.current = False;
+                    }
+                );
+            }
+            document.addEventListener("visibilitychange", handleVisibilityChange);
+            return lambda -> None { document.removeEventListener("visibilitychange", handleVisibilityChange); };
+        },
+        [name, _poll_gpu_info]
+    );
+
     # Auto-refresh status (faster while active, slower while idle)
     useEffect(
-        lambda -> Any { poll_ms = 500 if any_job_active else 15000;timer = setInterval(
+        lambda -> Any { poll_ms = 1500 if any_job_active else 20000;if not isDocumentVisible() {
+            poll_ms = 30000;
+        }timer = setInterval(
             lambda -> None {
-                if not name or status_poll_busy_ref.current {
+                if not name or status_poll_busy_ref.current or not isDocumentVisible() {
                     return;
                 }
                 status_poll_busy_ref.current = True;
@@ -1047,9 +1082,10 @@ def:pub Dashboard -> Any {
                     setGpuMismatch(False);
                 }
                 now_ms = Date.now();
-                if not any_job_active
+                if isDocumentVisible()
+                and not any_job_active
                 and not metrics_poll_busy_ref.current
-                and now_ms - int(last_metrics_poll_ms_ref.current) >= 5000 {
+                and now_ms - int(last_metrics_poll_ms_ref.current) >= 15000 {
                     metrics_poll_busy_ref.current = True;
                     last_metrics_poll_ms_ref.current = now_ms;
                     __jacSpawn("GetProjectMetrics", "", {"projectName": name}).then(
@@ -1071,9 +1107,10 @@ def:pub Dashboard -> Any {
                     }
                 );
                 }
-                if not any_job_active
+                if isDocumentVisible()
+                and not any_job_active
                 and not mcts_poll_busy_ref.current
-                and now_ms - int(last_mcts_poll_ms_ref.current) >= 5000 {
+                and now_ms - int(last_mcts_poll_ms_ref.current) >= 15000 {
                     mcts_poll_busy_ref.current = True;
                     last_mcts_poll_ms_ref.current = now_ms;
                     __jacSpawn("GetProjectMctsSummary", "", {"projectName": name}).then(
@@ -1100,7 +1137,7 @@ def:pub Dashboard -> Any {
                 } elif data and "benchmark" in data and data["benchmark"] and "active" in data["benchmark"] and data["benchmark"]["active"] {
                     log_job_key = "benchmark";
                 }
-                if log_job_key {
+                if isDocumentVisible() and log_job_key {
                     setActiveLogKey(log_job_key);
                     __jacSpawn("GetJobLog", "", {"projectName": name, "jobKey": log_job_key, "lines": 12}).then(
                         lambda l_resp: any -> None { l_data = l_resp.reports[0]

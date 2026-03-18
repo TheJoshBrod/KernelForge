@@ -3,6 +3,7 @@
 import from react { useState, useEffect, useCallback, useRef }
 import from "react-router-dom" { useNavigate, useParams }
 import from .....context.ConfigContext { useConfig }
+import from .....components.ui.DesktopRuntime { isDesktopBuild, isDocumentVisible }
 import from ...dashboard.GpuMismatchModal { GpuMismatchModal }
 import from "reactflow" { useNodesState, useEdgesState }
 import from .....components.ui.Icons { CodeIcon, ActivityIcon, ShieldCheckIcon }
@@ -36,6 +37,7 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     params = useParams();
     resolvedProjectName = projectName or params.projectName;
     resolvedOpName = opName or params.opName;
+    desktopBuild = isDesktopBuild();
 
     # ReactFlow State
     nodes_state = useNodesState([]);
@@ -276,10 +278,25 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     useEffect(
         lambda -> Any { if not liveUpdates {
             return lambda -> None {};
-        }timer = setInterval(lambda -> None { fetchData(False);}, 8000);return lambda -> None { clearInterval(
+        }timer = setInterval(lambda -> None { if not isDocumentVisible() {
+            return;
+        }fetchData(False);}, 15000 if desktopBuild else 12000);return lambda -> None { clearInterval(
             timer
         );}; },
-        [resolvedProjectName, resolvedOpName, liveUpdates]
+        [resolvedProjectName, resolvedOpName, liveUpdates, desktopBuild]
+    );
+
+    useEffect(
+        lambda -> Any {
+            def handleVisibilityChange -> None {
+                if isDocumentVisible() and liveUpdates {
+                    fetchData(False);
+                }
+            }
+            document.addEventListener("visibilitychange", handleVisibilityChange);
+            return lambda -> None { document.removeEventListener("visibilitychange", handleVisibilityChange); };
+        },
+        [liveUpdates, resolvedProjectName, resolvedOpName]
     );
 
     # When a gen task finishes (activeGenTasks shrinks), immediately re-fetch the tree
@@ -298,6 +315,9 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     # Inject CSS keyframe animation for the pending node blink (once on mount)
     useEffect(
         lambda -> Any {
+            if desktopBuild {
+                return lambda -> None {};
+            }
             style = document.createElement("style");
             style.id = "kforge-pending-anim";
             style.textContent = "@keyframes kf-pending { 0%, 100% { opacity: 0.85; } 50% { opacity: 0.08; } } .pending-kernel-node { animation: kf-pending 1.4s ease-in-out infinite; }";
@@ -360,7 +380,11 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                     }
                     setActiveGenTasks(active_tasks_list);
                     fast_poll = is_active or status_raw == "running" or active_tasks_list.length > 0;
-                    setStatusPollMs(3000 if fast_poll else 12000);
+                    if not isDocumentVisible() {
+                        setStatusPollMs(30000 if not fast_poll else 12000);
+                    } else {
+                        setStatusPollMs(5000 if fast_poll else 15000);
+                    }
                     mismatch = data["gpu_mismatch"] if data and "gpu_mismatch" in data else False;
                     setGpuMismatch(mismatch);
                     if mismatch and "benchmarked_gpu_name" in data {
@@ -369,11 +393,14 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                 } except Exception {
                     setIsOptimizing(False);
                     setActiveGenTasks([]);
-                    setStatusPollMs(12000);
+                    setStatusPollMs(30000 if not isDocumentVisible() else 15000);
                 }
             }
             pollStatus();
-            timer = setInterval(lambda -> None { pollStatus();}, statusPollMs);
+            poll_ms = 30000 if not isDocumentVisible() else statusPollMs;
+            timer = setInterval(lambda -> None { if not isDocumentVisible() {
+                return;
+            }pollStatus();}, poll_ms);
             return lambda -> None { clearInterval(timer);};
         },
         [resolvedProjectName, statusPollMs]
@@ -422,14 +449,14 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         "source": e.source,
                         "target": e.target,
                         "type": e.type,
-                        "animated": is_connected,
+                        "animated": is_connected if not desktopBuild else False,
                         "zIndex": 1 if is_connected else 0,
                         "style": {"stroke": "#ffa35b", "strokeWidth": 2} if is_connected else {"stroke": "#a4543e"}
                     });
                 }return new_edges; }
             );
         },
-        [selectedNodeId, setNodes, setEdges]
+        [selectedNodeId, setNodes, setEdges, desktopBuild]
     );
 
     selectedNodeData = rawNodes[selectedNodeId]
@@ -524,7 +551,7 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                     "id": node_id,
                     "position": {"x": pending_parent_x + offset_idx * 140, "y": child_y},
                     "data": {"label": step_label},
-                    "className": "pending-kernel-node",
+                    "className": "" if desktopBuild else "pending-kernel-node",
                     "style": pending_style,
                     "type": "default"
                 });
@@ -548,7 +575,7 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                 "id": f"pending-node-{task_id}",
                 "position": {"x": idx * 200, "y": 0},
                 "data": {"label": step_label},
-                "className": "pending-kernel-node",
+                "className": "" if desktopBuild else "pending-kernel-node",
                 "style": pending_style,
                 "type": "default"
             });

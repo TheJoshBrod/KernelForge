@@ -15,6 +15,7 @@ import from recharts {
     ResponsiveContainer
 }
 import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
+import from ...components.ui.DesktopRuntime { isDocumentVisible }
 import from ...components.ui.GlowButton { GlowButton }
 import from ...components.ui.Icons { KernelForgeLogo }
 import from ...components.ui.Modal { Modal }
@@ -137,11 +138,15 @@ def:pub Project -> Any {
                 if resp and resp.reports and resp.reports.length > 0
                 else {};
                 status = data or {};
-                statusPollMs = 4000 if has_active_project_work(status) else 12000;
+                if not isDocumentVisible() {
+                    statusPollMs = 60000;
+                } else {
+                    statusPollMs = 8000 if has_active_project_work(status) else 20000;
+                }
                 adv_job = data["generate"]
                 if data and "generate" in data
                 else {};
-                if adv_job and adv_job["status"] {
+                if isDocumentVisible() and adv_job and adv_job["status"] {
                     await refreshAdvLog();
                 }
             } else {
@@ -297,10 +302,27 @@ def:pub Project -> Any {
 
     useEffect(lambda -> None { refreshAll();detectHardware();}, [name]);
     useEffect(
-        lambda -> Any { timer = setInterval(lambda -> None { refreshStatus();}, statusPollMs);return lambda -> None { clearInterval(
+        lambda -> Any { def handleVisibilityChange -> None {
+            if isDocumentVisible() {
+                refreshStatus();
+            }
+        }document.addEventListener("visibilitychange", handleVisibilityChange);return lambda -> None { document.removeEventListener(
+            "visibilitychange", handleVisibilityChange
+        );}; },
+        [name]
+    );
+    useEffect(
+        lambda -> Any { timer = setInterval(
+            lambda -> None { refreshStatus();},
+            statusPollMs
+        );return lambda -> None { clearInterval(
             timer
         );}; },
         [name, statusPollMs]
+    );
+    useEffect(
+        lambda -> None { if isDocumentVisible() and name { refreshStatus(); } },
+        [name]
     );
 
     async def handleProfile -> None {
