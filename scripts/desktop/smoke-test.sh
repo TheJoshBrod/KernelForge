@@ -111,7 +111,9 @@ system = walker("GetSystemInfo", {})
 assert isinstance(system, dict), system
 print("[smoke] system info ok", flush=True)
 
-selected_backend = "cuda" if EXPECT_CUDA_RUNTIME else "cpu"
+selected_backend = str(hw.get("preferred_target") or "cpu").strip().lower()
+if selected_backend not in {"cuda", "cpu", "mps", "metal", "triton"}:
+    selected_backend = "cpu"
 
 project_name = f"Desktop Smoke {int(time.time())}"
 model_code = """\

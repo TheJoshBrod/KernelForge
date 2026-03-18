@@ -41,7 +41,7 @@ Useful runtime environment overrides:
 - `KFORGE_TORCH_INDEX_URL=...` to override the Torch wheel index directly.
 - `KFORGE_DESKTOP_RUNTIME_REBUILD=1` to recreate `.desktop-runtime` from scratch.
 - `KFORGE_DESKTOP_RUNTIME_SYNC=1` to force a dependency refresh into an existing runtime.
-- `KFORGE_DISABLE_DMABUF_RENDERER=1` to fall back from the fast Linux WebKit DMA-BUF path if your machine renders incorrectly.
+- `KFORGE_ENABLE_DMABUF_RENDERER=1` to opt back into the faster Linux WebKit DMA-BUF path on machines where it paints correctly.
 - `KFORGE_DISABLE_WEBKIT_COMPOSITING=1` to force the slower non-composited Linux fallback.
 - `KFORGE_FORCE_SOFTWARE_RENDERING=1` to force the slowest software-rendered Linux fallback when debugging graphics issues.
 

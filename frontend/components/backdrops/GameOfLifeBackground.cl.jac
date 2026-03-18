@@ -1,9 +1,21 @@
 """Game of Life Background Component"""
 
 import from react { useEffect, useRef }
+import from ..ui.DesktopRuntime { isDesktopBuild }
 
 def:pub GameOfLifeBackground(className: str = "") -> Any {
     canvasRef = useRef(None);
+    isDesktop = isDesktopBuild();
+
+    baseClass = "app-life-canvas";
+    if className {
+        baseClass = baseClass + f" {className}";
+    }
+
+    if isDesktop {
+        return
+            <div className={baseClass + " app-backdrop-static app-backdrop-static--grid"}/>;
+    }
 
     useEffect(
         lambda -> Any { canvas = canvasRef.current;if not canvas {
@@ -135,11 +147,6 @@ def:pub GameOfLifeBackground(className: str = "") -> Any {
         );window.removeEventListener("resize", resize);}; },
         []
     );
-
-    baseClass = "app-life-canvas";
-    if className {
-        baseClass = baseClass + f" {className}";
-    }
 
     return
         <canvas ref={canvasRef} className={baseClass}/>;

@@ -1,9 +1,21 @@
 """Ember / Spark Background Component"""
 
 import from react { useEffect, useRef }
+import from ..ui.DesktopRuntime { isDesktopBuild }
 
 def:pub EmberBackground(className: str = "") -> Any {
     canvasRef = useRef(None);
+    isDesktop = isDesktopBuild();
+
+    baseClass = "app-life-canvas";  # Keeping base class for absolute positioning
+    if className {
+        baseClass = baseClass + f" {className}";
+    }
+
+    if isDesktop {
+        return
+            <div className={baseClass + " app-backdrop-static app-backdrop-static--ember"}/>;
+    }
 
     useEffect(
         lambda -> Any { canvas = canvasRef.current;if not canvas {
@@ -115,11 +127,6 @@ def:pub EmberBackground(className: str = "") -> Any {
         );window.removeEventListener("resize", resize);}; },
         []
     );
-
-    baseClass = "app-life-canvas";  # Keeping base class for absolute positioning
-    if className {
-        baseClass = baseClass + f" {className}";
-    }
 
     return
         <canvas ref={canvasRef} className={baseClass}/>;

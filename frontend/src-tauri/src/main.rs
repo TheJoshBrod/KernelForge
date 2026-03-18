@@ -27,15 +27,14 @@ const ROUTE_READY_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[cfg(target_os = "linux")]
 fn configure_linux_rendering_env() {
-    // Keep the fastest Linux WebKit path as the default. On this machine, the
-    // broad DMA-BUF/compositing fallbacks remove the blank-window risk but make
-    // the exact origin/main UI unacceptably slow. Leave those fallback modes
-    // opt-in for machines that still need them.
-    let disable_dmabuf = std::env::var_os("KFORGE_DISABLE_DMABUF_RENDERER")
+    // On this machine the default DMA-BUF path loads the page and runs JavaScript
+    // but fails to paint the surface. Make the safer renderer path the default
+    // and leave the faster DMA-BUF path opt-in for hosts where it works.
+    let enable_dmabuf = std::env::var_os("KFORGE_ENABLE_DMABUF_RENDERER")
         .map(|value| value == "1")
         .unwrap_or(false);
 
-    if disable_dmabuf {
+    if !enable_dmabuf {
         unsafe {
             if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
                 std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
@@ -76,8 +75,10 @@ fn configure_linux_rendering_env() {
         eprintln!("Linux WebKit compositing disabled via KFORGE_DISABLE_WEBKIT_COMPOSITING=1");
     }
 
-    if disable_dmabuf {
-        eprintln!("Linux DMA-BUF renderer disabled via KFORGE_DISABLE_DMABUF_RENDERER=1");
+    if enable_dmabuf {
+        eprintln!("Linux DMA-BUF renderer explicitly enabled via KFORGE_ENABLE_DMABUF_RENDERER=1");
+    } else {
+        eprintln!("Linux DMA-BUF renderer disabled by default");
     }
 
     eprintln!(

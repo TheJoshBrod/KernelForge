@@ -10,6 +10,18 @@ import from ...components.SplashScreen { SplashScreen }
 def:pub Home -> Any {
     navigate = useNavigate();
     location = useLocation();
+    desktop_build = window["__KFORGE_DESKTOP_BUILD__"]
+    if "__KFORGE_DESKTOP_BUILD__" in window and window["__KFORGE_DESKTOP_BUILD__"]
+    else None;
+    min_splash_ms = 250
+    if desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
+    else 3000;
+    splash_exit_ms = 180
+    if desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
+    else 900;
+    isDesktop = bool(
+        desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
+    );
 
     projects_state = useState([]);
     projects = projects_state[0];
@@ -22,6 +34,9 @@ def:pub Home -> Any {
     splash_done_state = useState(sessionStorage.getItem("splash_shown") == "true");
     splashDone = splash_done_state[0];
     setSplashDone = splash_done_state[1];
+    splash_visible_state = useState(sessionStorage.getItem("splash_shown") != "true");
+    splashVisible = splash_visible_state[0];
+    setSplashVisible = splash_visible_state[1];
 
     search_query_state = useState("");
     searchQuery = search_query_state[0];
@@ -78,15 +93,16 @@ def:pub Home -> Any {
             console.error("Failed to fetch projects", e);
         } finally {
             elapsed = Date.now() - start;
-            if not splashDone and elapsed < 3000 {
+            if not splashDone and elapsed < min_splash_ms {
                 def sleeper(resolve: any, reject: any) -> None {
-                    setTimeout(resolve, 3000 - elapsed);
+                    setTimeout(resolve, min_splash_ms - elapsed);
                 }
                 await Reflect.construct(Promise, [sleeper]);
                 sessionStorage.setItem("splash_shown", "true");
             }
             setLoading(False);
             setSplashDone(True);
+            setTimeout(lambda -> None { setSplashVisible(False); }, splash_exit_ms);
         }
     }
 
@@ -204,13 +220,18 @@ def:pub Home -> Any {
         );
     }
 
+    panelClass = "relative z-10 w-full max-w-4xl h-[70vh] bg-[var(--bg-panel)]/90 border border-[var(--border)] rounded-sm shadow-2xl flex flex-col animation-fade-in-up delay-1 clip-hex";
+    if not isDesktop {
+        panelClass = panelClass + " backdrop-blur-md";
+    }
+
     return
         <main
             className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex flex-col items-center justify-center font-sans text-white"
         >
-            <SplashScreen exiting={splashDone}/>
+            {<SplashScreen exiting={splashDone}/> if splashVisible else None}
             <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
-            <div className="noise-overlay opacity-30"></div>
+            {<div className="noise-overlay opacity-30"></div> if not isDesktop else None}
             <EmberBackground className="absolute inset-0 z-0"/>
             <div
                 className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/50 z-10 pointer-events-none"
@@ -247,9 +268,7 @@ def:pub Home -> Any {
                     </div>
                 </div>
             </div>
-            <div
-                className="relative z-10 w-full max-w-4xl h-[70vh] bg-[var(--bg-panel)]/90 backdrop-blur-md border border-[var(--border)] rounded-sm shadow-2xl flex flex-col animation-fade-in-up delay-1 clip-hex"
-            >
+            <div className={panelClass}>
                 <div
                     className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden"
                 >
