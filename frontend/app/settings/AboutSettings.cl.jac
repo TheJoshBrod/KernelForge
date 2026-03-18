@@ -2,20 +2,10 @@
 
 import from "react-router-dom" { useNavigate }
 import from ...components.backdrops.EmberBackground { EmberBackground }
-import from ...components.ui.DesktopRuntime { isDesktopBuild }
 import from ...components.ui.Icons { GithubIcon, DiscordIcon }
 
 def:pub AboutSettings(props: any) -> Any {
     navigate = useNavigate();
-    desktopBuild = isDesktopBuild();
-    headingClass = "relative z-20 flex flex-col items-center justify-center mb-4";
-    if not desktopBuild {
-        headingClass += " animation-fade-in-up";
-    }
-    panelClass = "relative z-10 w-full max-w-4xl h-[70vh] border border-[var(--border)] rounded-sm shadow-2xl flex flex-col bg-[var(--bg-panel)]";
-    if not desktopBuild {
-        panelClass += " backdrop-blur-md animation-fade-in-up delay-1 clip-hex";
-    }
 
     def handleReturn -> None {
         navigate("/settings");
@@ -24,11 +14,11 @@ def:pub AboutSettings(props: any) -> Any {
     return
         <main className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex flex-col items-center justify-center font-sans text-white">
             <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
-            {<div className="noise-overlay opacity-30"></div> if not desktopBuild else None}
+            <div className="noise-overlay opacity-30"></div>
             <EmberBackground className="absolute inset-0 z-0"/>
             <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/50 z-10 pointer-events-none"></div>
 
-            <div className={headingClass}>
+            <div className="relative z-20 flex flex-col items-center justify-center mb-4 animation-fade-in-up">
                 <div className="flex items-center gap-4 mb-2">
                     <img src="/KernelForge.svg" alt="Kernel Forge Logo" className="w-12 h-12" />
                     <h1 className="text-3xl font-bold text-white tracking-wider uppercase industrial-font-display" style={{"textShadow": "0 0 20px rgba(225, 112, 85, 0.4)"}}>
@@ -37,7 +27,7 @@ def:pub AboutSettings(props: any) -> Any {
                 </div>
             </div>
 
-            <div className={panelClass}>
+            <div className="relative z-10 w-full max-w-4xl h-[70vh] bg-[var(--bg-panel)]/90 backdrop-blur-md border border-[var(--border)] rounded-sm shadow-2xl flex flex-col animation-fade-in-up delay-1 clip-hex">
                 <div className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden">
                     <div className="absolute top-0 left-0 right-0 heat-divider"></div>
                     <div className="flex justify-between items-start">
@@ -60,7 +50,7 @@ def:pub AboutSettings(props: any) -> Any {
                                 <DiscordIcon className="w-6 h-6"/>
                             </a>
                             <a
-                                href="https://github.com/TheJoshBrod/CGinS"
+                                href="https://github.com/TheJoshBrod/KernelForge"
                                 target="_blank"
                                 rel="noreferrer"
                                 className="text-white/50 hover:text-white transition-all duration-300 hover:scale-110 hover:-translate-y-1 hover:drop-shadow-[0_0_12px_rgba(255,255,255,0.6)]"

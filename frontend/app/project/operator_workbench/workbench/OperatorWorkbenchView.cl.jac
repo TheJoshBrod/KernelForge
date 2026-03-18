@@ -3,7 +3,6 @@
 import from react { useState, useEffect, useCallback, useRef }
 import from "react-router-dom" { useNavigate, useParams }
 import from .....context.ConfigContext { useConfig }
-import from .....components.ui.DesktopRuntime { isDesktopBuild, isDocumentVisible }
 import from ...dashboard.GpuMismatchModal { GpuMismatchModal }
 import from "reactflow" { useNodesState, useEdgesState }
 import from .....components.ui.Icons { CodeIcon, ActivityIcon, ShieldCheckIcon }
@@ -37,7 +36,6 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     params = useParams();
     resolvedProjectName = projectName or params.projectName;
     resolvedOpName = opName or params.opName;
-    desktopBuild = isDesktopBuild();
 
     # ReactFlow State
     nodes_state = useNodesState([]);
@@ -99,10 +97,6 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     active_gen_tasks_state = useState([]);
     activeGenTasks = active_gen_tasks_state[0];
     setActiveGenTasks = active_gen_tasks_state[1];
-
-    status_poll_ms_state = useState(12000);
-    statusPollMs = status_poll_ms_state[0];
-    setStatusPollMs = status_poll_ms_state[1];
 
     config_ctx = useConfig();
     config = config_ctx.config;
@@ -278,25 +272,10 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     useEffect(
         lambda -> Any { if not liveUpdates {
             return lambda -> None {};
-        }timer = setInterval(lambda -> None { if not isDocumentVisible() {
-            return;
-        }fetchData(False);}, 15000 if desktopBuild else 12000);return lambda -> None { clearInterval(
+        }timer = setInterval(lambda -> None { fetchData(False);}, 8000);return lambda -> None { clearInterval(
             timer
         );}; },
-        [resolvedProjectName, resolvedOpName, liveUpdates, desktopBuild]
-    );
-
-    useEffect(
-        lambda -> Any {
-            def handleVisibilityChange -> None {
-                if isDocumentVisible() and liveUpdates {
-                    fetchData(False);
-                }
-            }
-            document.addEventListener("visibilitychange", handleVisibilityChange);
-            return lambda -> None { document.removeEventListener("visibilitychange", handleVisibilityChange); };
-        },
-        [liveUpdates, resolvedProjectName, resolvedOpName]
+        [resolvedProjectName, resolvedOpName, liveUpdates]
     );
 
     # When a gen task finishes (activeGenTasks shrinks), immediately re-fetch the tree
@@ -315,9 +294,6 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     # Inject CSS keyframe animation for the pending node blink (once on mount)
     useEffect(
         lambda -> Any {
-            if desktopBuild {
-                return lambda -> None {};
-            }
             style = document.createElement("style");
             style.id = "kforge-pending-anim";
             style.textContent = "@keyframes kf-pending { 0%, 100% { opacity: 0.85; } 50% { opacity: 0.08; } } .pending-kernel-node { animation: kf-pending 1.4s ease-in-out infinite; }";
@@ -345,21 +321,16 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         {"projectName": decode_param(resolvedProjectName), "currentGpuInfo": gpu_info_ref.current}
                     );
                     data = resp.reports[0] if resp and resp.reports else {};
-                    opt_job = data["optimize"] if data and "optimize" in data else {};
-                    is_active = bool(opt_job["active"])
-                        if opt_job and "active" in opt_job and opt_job["active"]
-                        else False;
-                    status_raw = str(opt_job["status"] or "").toLowerCase()
-                        if opt_job and "status" in opt_job
-                        else "";
-                    setIsOptimizing(is_active or status_raw == "running");
                     queue_data = data["queue"] if data and "queue" in data else {};
                     active_tasks_data = queue_data["active_tasks"] if "active_tasks" in queue_data else {};
                     active_tasks_list = [];
+                    cur_op = canonical_op_param(resolvedOpName);
                     for tk in Object.keys(active_tasks_data) {
                         t = active_tasks_data[tk];
                         is_gen_or_opt = tk.startsWith("gen_") or (t and "tag" in t and (t["tag"] == "[OPT]" or t["tag"] == "[GEN]")) or tk == "seq_opt" or (t and "parent_ref" in t);
-                        if is_gen_or_opt {
+                        task_op = t["op_name"] if t and "op_name" in t and t["op_name"] else "";
+                        op_matches = not task_op or task_op == cur_op;
+                        if is_gen_or_opt and op_matches {
                             step = t["current_step"] if "current_step" in t else "";
                             status = t["status"] if "status" in t else "";
                             if step and step != "Done" and status != "Done" {
@@ -379,12 +350,7 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         }
                     }
                     setActiveGenTasks(active_tasks_list);
-                    fast_poll = is_active or status_raw == "running" or active_tasks_list.length > 0;
-                    if not isDocumentVisible() {
-                        setStatusPollMs(30000 if not fast_poll else 12000);
-                    } else {
-                        setStatusPollMs(5000 if fast_poll else 15000);
-                    }
+                    setIsOptimizing(active_tasks_list.length > 0);
                     mismatch = data["gpu_mismatch"] if data and "gpu_mismatch" in data else False;
                     setGpuMismatch(mismatch);
                     if mismatch and "benchmarked_gpu_name" in data {
@@ -393,17 +359,13 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                 } except Exception {
                     setIsOptimizing(False);
                     setActiveGenTasks([]);
-                    setStatusPollMs(30000 if not isDocumentVisible() else 15000);
                 }
             }
             pollStatus();
-            poll_ms = 30000 if not isDocumentVisible() else statusPollMs;
-            timer = setInterval(lambda -> None { if not isDocumentVisible() {
-                return;
-            }pollStatus();}, poll_ms);
+            timer = setInterval(lambda -> None { pollStatus();}, 3000);
             return lambda -> None { clearInterval(timer);};
         },
-        [resolvedProjectName, statusPollMs]
+        [resolvedProjectName]
     );
 
     onNodeClick = useCallback(
@@ -449,14 +411,14 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                         "source": e.source,
                         "target": e.target,
                         "type": e.type,
-                        "animated": is_connected if not desktopBuild else False,
+                        "animated": is_connected,
                         "zIndex": 1 if is_connected else 0,
                         "style": {"stroke": "#ffa35b", "strokeWidth": 2} if is_connected else {"stroke": "#a4543e"}
                     });
                 }return new_edges; }
             );
         },
-        [selectedNodeId, setNodes, setEdges, desktopBuild]
+        [selectedNodeId, setNodes, setEdges]
     );
 
     selectedNodeData = rawNodes[selectedNodeId]
@@ -519,6 +481,26 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
     };
 
     if isOptimizing and hasTree {
+        # Build map of parent_id -> rightmost real-child x so pending nodes
+        # are placed to the right of existing children instead of overlapping.
+        node_pos_map = {};
+        for n in nodes { node_pos_map[str(n.id)] = n.position.x; }
+        parent_child_max_x = {};
+        for e in edges {
+            src = str(e.source);
+            tgt = str(e.target);
+            if tgt in node_pos_map {
+                tx = node_pos_map[tgt];
+                if src in parent_child_max_x {
+                    if tx > parent_child_max_x[src] {
+                        parent_child_max_x[src] = tx;
+                    }
+                } else {
+                    parent_child_max_x[src] = tx;
+                }
+            }
+        }
+
         parent_pending_counts = {};
         for tinfo in activeGenTasks {
             pending_parent_id = None;
@@ -546,12 +528,17 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                 task_id = tinfo["id"] if "id" in tinfo else str(offset_idx);
                 node_id = f"pending-node-{task_id}";
 
+                # Place pending node after the rightmost real child, or below
+                # the parent if no real children exist yet.
+                base_x = (parent_child_max_x[key] + 140) if key in parent_child_max_x else pending_parent_x;
+                pending_x = base_x + offset_idx * 140;
+
                 step_label = tinfo["step"] if "step" in tinfo and tinfo["step"] else "Working...";
                 displayNodes.push({
                     "id": node_id,
-                    "position": {"x": pending_parent_x + offset_idx * 140, "y": child_y},
+                    "position": {"x": pending_x, "y": child_y},
                     "data": {"label": step_label},
-                    "className": "" if desktopBuild else "pending-kernel-node",
+                    "className": "pending-kernel-node",
                     "style": pending_style,
                     "type": "default"
                 });
@@ -575,7 +562,7 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
                 "id": f"pending-node-{task_id}",
                 "position": {"x": idx * 200, "y": 0},
                 "data": {"label": step_label},
-                "className": "" if desktopBuild else "pending-kernel-node",
+                "className": "pending-kernel-node",
                 "style": pending_style,
                 "type": "default"
             });

@@ -44,7 +44,7 @@ import from walkers.optimization_results {
 }
 
 cl import from react { useEffect }
-cl import from sonner { Toaster, toast }
+cl import from sonner { Toaster }
 cl import from "react-router-dom" { BrowserRouter as Router, Routes, Route, Navigate }
 cl import from .context.ConfigContext { ConfigProvider }
 cl import from .app.home.Home { Home }
@@ -61,70 +61,6 @@ cl import from .app.project.export.Export { Export }
 cl import "./styles.css";
 
 cl {
-    async def maybeCheckForDesktopUpdate -> None {
-        build_info = (
-            window["__KFORGE_DESKTOP_BUILD__"]
-            if "__KFORGE_DESKTOP_BUILD__" in window and window["__KFORGE_DESKTOP_BUILD__"]
-            else None
-        );
-        if not build_info or not ("desktop" in build_info and build_info["desktop"]) {
-            return;
-        }
-
-        repo = (
-            str(build_info["github_repo"])
-            if "github_repo" in build_info and build_info["github_repo"]
-            else ""
-        );
-        releases_url = (
-            str(build_info["releases_url"])
-            if "releases_url" in build_info and build_info["releases_url"]
-            else f"https://github.com/{repo}/releases"
-        );
-        current_sha = (
-            str(build_info["commit"])
-            if "commit" in build_info and build_info["commit"]
-            else ""
-        );
-        if not repo or not current_sha {
-            return;
-        }
-
-        try {
-            branch_resp = await fetch(
-                f"https://api.github.com/repos/{repo}/branches/main",
-                {"headers": {"Accept": "application/vnd.github+json"}}
-            );
-            if not branch_resp or not branch_resp.ok {
-                return;
-            }
-            payload = await branch_resp.json();
-            latest_sha = (
-                str(payload["commit"]["sha"])
-                if payload and "commit" in payload and payload["commit"] and "sha" in payload["commit"]
-                else ""
-            );
-            if not latest_sha or latest_sha == current_sha {
-                return;
-            }
-
-            cache_key = "kf_desktop_update_sha";
-            last_sha = localStorage.getItem(cache_key);
-            if last_sha == latest_sha {
-                return;
-            }
-            localStorage.setItem(cache_key, latest_sha);
-            toast(
-                "Kernel Forge desktop update available",
-                {
-                    "description": f"GitHub main is at {latest_sha[0:7]} and this build is {current_sha[0:7]}. Install the latest desktop release from {releases_url}."
-                }
-            );
-        } except Exception as e {
-            console.warn("Desktop update check failed:", e);
-        }
-    }
-
     def NotFound {
         return
             <div className="flex min-h-screen flex-col items-center justify-center">
@@ -138,25 +74,10 @@ cl {
     }
 
     def:pub app {
-        build_info = (
-            window["__KFORGE_DESKTOP_BUILD__"]
-            if "__KFORGE_DESKTOP_BUILD__" in window and window["__KFORGE_DESKTOP_BUILD__"]
-            else None
-        );
-        is_desktop_build = bool(
-            build_info
-            and "desktop" in build_info
-            and build_info["desktop"]
-        );
         useEffect(
-            lambda -> Any {
+            lambda -> None {
                 window.Exception = Error;
                 document.title = "Kernel Forge";
-
-                if is_desktop_build {
-                    document.documentElement.classList.add("kf-desktop-performance");
-                    document.body.classList.add("kf-desktop-performance");
-                }
                 
                 # Dynamic Favicon
                 link = document.querySelector("link[rel~='icon']");
@@ -166,11 +87,6 @@ cl {
                     document.head.appendChild(link);
                 }
                 link.href = "/KernelForge.svg";
-                maybeCheckForDesktopUpdate();
-                return lambda -> None {
-                    document.documentElement.classList.remove("kf-desktop-performance");
-                    document.body.classList.remove("kf-desktop-performance");
-                };
             }, []
         );
         return
@@ -211,5 +127,4 @@ cl {
                 </ConfigProvider>
             </Router>;
     }
-
 }

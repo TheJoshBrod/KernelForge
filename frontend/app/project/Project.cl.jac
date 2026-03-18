@@ -15,7 +15,6 @@ import from recharts {
     ResponsiveContainer
 }
 import from ...components.backdrops.GameOfLifeBackground { GameOfLifeBackground }
-import from ...components.ui.DesktopRuntime { isDocumentVisible }
 import from ...components.ui.GlowButton { GlowButton }
 import from ...components.ui.Icons { KernelForgeLogo }
 import from ...components.ui.Modal { Modal }
@@ -30,7 +29,6 @@ def:pub Project -> Any {
     has ops: list = [],
         loading: bool = True,
         status: dict = {},
-        statusPollMs: int = 12000,
         exportPath: str = "",
         searchQuery: str = "",
         downloading: bool = False,
@@ -60,50 +58,6 @@ def:pub Project -> Any {
             return "torch.nn.functional." + raw_text.replace(prefix, "");
         }
         return raw_text.replace("_", ".");
-    }
-
-    def has_active_project_work(data: dict) -> bool {
-        if not data {
-            return False;
-        }
-        for key in ["profile", "generate", "optimize", "benchmark"] {
-            job = data[key] if key in data and data[key] else {};
-            if not job {
-                continue;
-            }
-            is_active = bool(job["active"]) if "active" in job and job["active"] else False;
-            status_raw = (
-                str(job["status"]).toLowerCase()
-                if "status" in job and job["status"]
-                else ""
-            );
-            if is_active or status_raw == "running" or status_raw == "queued" or status_raw == "paused" {
-                return True;
-            }
-        }
-        queue_data = data["queue"] if "queue" in data and data["queue"] else {};
-        if not queue_data {
-            return False;
-        }
-        active_tasks = queue_data["active_tasks"] if "active_tasks" in queue_data and queue_data["active_tasks"] else {};
-        if Object.keys(active_tasks).length > 0 {
-            return True;
-        }
-        pending_ops = queue_data["pending_operators"] if "pending_operators" in queue_data and queue_data["pending_operators"] else [];
-        if pending_ops.length > 0 {
-            return True;
-        }
-        queued_jobs = queue_data["job_queue"] if "job_queue" in queue_data and queue_data["job_queue"] else [];
-        if queued_jobs.length > 0 {
-            return True;
-        }
-        benchmark_slot = queue_data["benchmark_slot"] if "benchmark_slot" in queue_data and queue_data["benchmark_slot"] else {};
-        pending_bench = benchmark_slot["pending"] if "pending" in benchmark_slot and benchmark_slot["pending"] else [];
-        if ("now" in benchmark_slot and benchmark_slot["now"]) or pending_bench.length > 0 {
-            return True;
-        }
-        launching = queue_data["launching_job"] if "launching_job" in queue_data and queue_data["launching_job"] else {};
-        return Object.keys(launching).length > 0;
     }
 
     async def refreshOps -> None {
@@ -138,15 +92,10 @@ def:pub Project -> Any {
                 if resp and resp.reports and resp.reports.length > 0
                 else {};
                 status = data or {};
-                if not isDocumentVisible() {
-                    statusPollMs = 60000;
-                } else {
-                    statusPollMs = 8000 if has_active_project_work(status) else 20000;
-                }
                 adv_job = data["generate"]
                 if data and "generate" in data
                 else {};
-                if isDocumentVisible() and adv_job and adv_job["status"] {
+                if adv_job and adv_job["status"] {
                     await refreshAdvLog();
                 }
             } else {
@@ -282,14 +231,15 @@ def:pub Project -> Any {
             if resp and resp.reports and resp.reports.length > 0
             else {};
             hardwareInfo = data or {};
-            if hardwareInfo and "preferred_target" in hardwareInfo {
-                preferred = hardwareInfo["preferred_target"] if hardwareInfo["preferred_target"] else "cpu";
-                if preferred == "mps" {
-                    targetDevice = "mps";
-                } elif preferred == "cuda" {
-                    targetDevice = "cuda";
-                } else {
+            if hardwareInfo
+            and "mps_available" in hardwareInfo
+            and hardwareInfo["mps_available"] {
+                targetDevice = "mps";
+            } elif hardwareInfo and "cuda_available" in hardwareInfo {
+                if not hardwareInfo["cuda_available"] {
                     targetDevice = "cpu";
+                } else {
+                    targetDevice = "cuda";
                 }
             }
         } except Exception as e {
@@ -302,26 +252,9 @@ def:pub Project -> Any {
 
     useEffect(lambda -> None { refreshAll();detectHardware();}, [name]);
     useEffect(
-        lambda -> Any { def handleVisibilityChange -> None {
-            if isDocumentVisible() {
-                refreshStatus();
-            }
-        }document.addEventListener("visibilitychange", handleVisibilityChange);return lambda -> None { document.removeEventListener(
-            "visibilitychange", handleVisibilityChange
-        );}; },
-        [name]
-    );
-    useEffect(
-        lambda -> Any { timer = setInterval(
-            lambda -> None { refreshStatus();},
-            statusPollMs
-        );return lambda -> None { clearInterval(
+        lambda -> Any { timer = setInterval(lambda -> None { refreshStatus();}, 4000);return lambda -> None { clearInterval(
             timer
         );}; },
-        [name, statusPollMs]
-    );
-    useEffect(
-        lambda -> None { if isDocumentVisible() and name { refreshStatus(); } },
         [name]
     );
 
@@ -887,12 +820,11 @@ def:pub Project -> Any {
 
     hardwareStatus = "";
     if hardwareInfo
-    and "preferred_target" in hardwareInfo
-    and hardwareInfo["preferred_target"] == "mps" {
+    and "mps_available" in hardwareInfo
+    and hardwareInfo["mps_available"] {
         hardwareStatus = "MPS: Apple Silicon";
-    } elif hardwareInfo
-    and "preferred_target" in hardwareInfo
-    and hardwareInfo["preferred_target"] == "cuda" {
+    } elif hardwareInfo and "cuda_available" in hardwareInfo {
+        if hardwareInfo["cuda_available"] {
             gpu_name = hardwareInfo["device_name"]
             if "device_name" in hardwareInfo
             else "";
@@ -901,10 +833,9 @@ def:pub Project -> Any {
             else 0;
             suffix = f" x{count}" if count and count > 1 else "";
             hardwareStatus = f"CUDA: {gpu_name}{suffix}";
-    } elif hardwareInfo and "gpu_present" in hardwareInfo and hardwareInfo["gpu_present"] {
-        hardwareStatus = "GPU detected, runtime unavailable";
-    } else {
-        hardwareStatus = "CUDA not detected";
+        } else {
+            hardwareStatus = "CUDA not detected";
+        }
     }
 
     skeletonOps = [];

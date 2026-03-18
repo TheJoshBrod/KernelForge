@@ -4,17 +4,6 @@ import from react { useEffect, useRef }
 
 def:pub CrashingWaveBackground() -> Any {
     canvasRef = useRef(None);
-    desktop_build = window["__KFORGE_DESKTOP_BUILD__"]
-    if "__KFORGE_DESKTOP_BUILD__" in window and window["__KFORGE_DESKTOP_BUILD__"]
-    else None;
-    isDesktop = bool(
-        desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
-    );
-
-    if isDesktop {
-        return
-            <div className="app-life-canvas app-backdrop-static app-backdrop-static--wave"/>;
-    }
 
     useEffect(
         lambda -> Any { canvas = canvasRef.current;if not canvas {
@@ -29,7 +18,7 @@ def:pub CrashingWaveBackground() -> Any {
             "#f0f9ff",
             "#ffffff"
         ];wetSandColors = ["#262626", "#171717"];  # Very dark to blend with BG
-        animationId = 0;active = True;waterChars = ["~", "≈", "-", "=", "«"];foamChars = [
+        waterChars = ["~", "≈", "-", "=", "«"];foamChars = [
             "*",
             "%",
             "#",
@@ -42,11 +31,6 @@ def:pub CrashingWaveBackground() -> Any {
             cols = Math.floor(canvas.width / fontSize);
             rows = Math.floor(canvas.height / fontSize);
         } resize();window.addEventListener("resize", resize);def draw() -> None {
-            nonlocal animationId ;
-            nonlocal active ;
-            if not active {
-                return;
-            }
             # Clear screen
             ctx.fillStyle = "#020617";  # Zinc-950 equivalent
             ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -140,8 +124,8 @@ def:pub CrashingWaveBackground() -> Any {
             }
 
             time += 1;
-            animationId = requestAnimationFrame(draw);
-        } animationId = requestAnimationFrame(draw);return lambda -> None { nonlocal active ;active = False;cancelAnimationFrame(
+            requestAnimationFrame(draw);
+        } animationId = requestAnimationFrame(draw);return lambda -> None { cancelAnimationFrame(
             animationId
         );window.removeEventListener("resize", resize);}; },
         []

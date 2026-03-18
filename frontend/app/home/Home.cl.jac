@@ -1,32 +1,15 @@
 """Home Page Component"""
 
 import from react { useEffect, useState }
-import from "react-router-dom" { useNavigate }
+import from "react-router-dom" { useNavigate, useLocation }
 import from ...components.backdrops.EmberBackground { EmberBackground }
-import from ...components.ui.DesktopRuntime { isDesktopBuild }
 import from ...components.ui.GlowButton { GlowButton }
 import from ...components.ui.Icons { KernelForgeLogo, SettingsIcon, ArrowRightIcon, GithubIcon, DiscordIcon, TrashIcon }
 import from ...components.SplashScreen { SplashScreen }
 
 def:pub Home -> Any {
     navigate = useNavigate();
-    isDesktop = isDesktopBuild();
-    min_splash_ms = 900 if isDesktop else 3000;
-    splash_exit_ms = 360 if isDesktop else 900;
-    scenePanelClass = "relative z-10 w-full max-w-4xl h-[70vh] border border-[var(--border)] rounded-sm flex flex-col";
-    if isDesktop {
-        scenePanelClass = scenePanelClass + " bg-[var(--bg-panel)] shadow-xl";
-    } else {
-        scenePanelClass = scenePanelClass + " bg-[var(--bg-panel)]/90 backdrop-blur-md shadow-2xl animation-fade-in-up delay-1 clip-hex";
-    }
-    deleteModalOverlayClass = "fixed inset-0 z-[100] flex items-center justify-center bg-black/80 animation-fade-in";
-    if not isDesktop {
-        deleteModalOverlayClass = deleteModalOverlayClass + " backdrop-blur-sm";
-    }
-    deleteModalCardClass = "bg-[var(--bg-panel)] border border-[var(--border)] p-8 max-w-md w-full relative overflow-hidden";
-    if not isDesktop {
-        deleteModalCardClass = deleteModalCardClass + " clip-anvil";
-    }
+    location = useLocation();
 
     projects_state = useState([]);
     projects = projects_state[0];
@@ -39,9 +22,6 @@ def:pub Home -> Any {
     splash_done_state = useState(sessionStorage.getItem("splash_shown") == "true");
     splashDone = splash_done_state[0];
     setSplashDone = splash_done_state[1];
-    splash_visible_state = useState(sessionStorage.getItem("splash_shown") != "true");
-    splashVisible = splash_visible_state[0];
-    setSplashVisible = splash_visible_state[1];
 
     search_query_state = useState("");
     searchQuery = search_query_state[0];
@@ -65,6 +45,22 @@ def:pub Home -> Any {
     }
 
     async def fetchProjects -> None {
+        cacheState = globalThis.__jacCacheState__;
+        if cacheState and cacheState["cache"] {
+            keysToDelete = [];
+            for k in Object.keys(cacheState["cache"]) {
+                if k.startsWith("walker:GetProjects") {
+                    keysToDelete.push(k);
+                }
+            }
+            for k in keysToDelete {
+                Reflect.deleteProperty(cacheState["cache"], k);
+                idx = cacheState["order"].indexOf(k);
+                if idx > -1 {
+                    cacheState["order"].splice(idx, 1);
+                }
+            }
+        }
         start: float = Date.now();
         try {
             resp = await __jacSpawn("GetProjects", "", {});
@@ -82,27 +78,28 @@ def:pub Home -> Any {
             console.error("Failed to fetch projects", e);
         } finally {
             elapsed = Date.now() - start;
-            if not splashDone and elapsed < min_splash_ms {
+            if not splashDone and elapsed < 3000 {
                 def sleeper(resolve: any, reject: any) -> None {
-                    setTimeout(resolve, min_splash_ms - elapsed);
+                    setTimeout(resolve, 3000 - elapsed);
                 }
                 await Reflect.construct(Promise, [sleeper]);
                 sessionStorage.setItem("splash_shown", "true");
             }
             setLoading(False);
             setSplashDone(True);
-            setTimeout(lambda -> None { setSplashVisible(False); }, splash_exit_ms);
         }
     }
 
     useEffect(lambda -> None {
         fetchProjects();
         document.title = "Kernel Forge";
-    }, []);
+    }, [location.key]);
 
     # Filter Projects
+    projectLimit = 15 if searchQuery != "" else 10;
     filteredProjects = [];
     for p in projects {
+        if filteredProjects.length >= projectLimit { break; }
         try {
             if searchQuery == ""
             or p["name"].toLowerCase().includes(searchQuery.toLowerCase()) {
@@ -179,8 +176,8 @@ def:pub Home -> Any {
     deleteModal = None;
     if projectToDelete != "" {
         deleteModal = (
-            <div className={deleteModalOverlayClass}>
-                <div className={deleteModalCardClass}>
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animation-fade-in">
+                <div className="bg-[var(--bg-panel)] border border-[var(--border)] p-8 max-w-md w-full relative overflow-hidden clip-anvil">
                     <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-red-600 to-orange-500"></div>
                     <h2 className="text-xl font-bold text-white mb-4 industrial-font-display uppercase tracking-wider">
                         Delete Project
@@ -211,9 +208,9 @@ def:pub Home -> Any {
         <main
             className="relative h-screen w-screen overflow-hidden bg-[var(--bg-charcoal)] flex flex-col items-center justify-center font-sans text-white"
         >
-            {<SplashScreen exiting={splashDone}/> if splashVisible else None}
+            <SplashScreen exiting={splashDone}/>
             <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
-            {<div className="noise-overlay opacity-30"></div> if not isDesktop else None}
+            <div className="noise-overlay opacity-30"></div>
             <EmberBackground className="absolute inset-0 z-0"/>
             <div
                 className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/50 z-10 pointer-events-none"
@@ -230,7 +227,7 @@ def:pub Home -> Any {
                         <DiscordIcon className="w-7 h-7"/>
                     </a>
                     <a
-                        href="https://github.com/TheJoshBrod/CGinS"
+                        href="https://github.com/TheJoshBrod/KernelForge"
                         target="_blank"
                         rel="noreferrer"
                         className="text-white/50 hover:text-white transition-all duration-300 hover:scale-110 hover:-translate-y-1 hover:drop-shadow-[0_0_12px_rgba(255,255,255,0.6)]"
@@ -250,11 +247,15 @@ def:pub Home -> Any {
                     </div>
                 </div>
             </div>
-            <div className={scenePanelClass}>
+            <div
+                className="relative z-10 w-full max-w-4xl h-[70vh] bg-[var(--bg-panel)]/90 backdrop-blur-md border border-[var(--border)] rounded-sm shadow-2xl flex flex-col animation-fade-in-up delay-1 clip-hex"
+            >
                 <div
                     className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden"
                 >
-                    <div className="absolute top-0 left-0 right-0 heat-divider"></div>
+                    <div
+                        className="absolute top-0 left-0 right-0 heat-divider"
+                    ></div>
                     <div className="relative flex items-center gap-4">
                         <input
                             type="text"

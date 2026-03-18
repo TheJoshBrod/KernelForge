@@ -3,7 +3,6 @@
 import from react { useEffect, useState }
 import from sonner { toast }
 import from "react-router-dom" { useNavigate }
-import from ...components.ui.DesktopRuntime { isDesktopBuild }
 import from ...context.ConfigContext { useConfig }
 import from ...components.ui.Icons { SettingsIcon, BackIcon, UploadIcon, FolderIcon }
 import from ...components.editor.ForgePythonEditor { ForgePythonEditor }
@@ -38,7 +37,6 @@ def fileToText(file: Any) -> Any {
 
 def:pub NewProject -> Any {
     navigate = useNavigate();
-    desktopBuild = isDesktopBuild();
     config_ctx = useConfig();
     config = config_ctx.config;
 
@@ -88,13 +86,8 @@ def:pub NewProject -> Any {
     setSelectedBackend = selected_backend_state[1];
 
     selected_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
-    selected_gpu_usable = (
-        selected_gpu_info
-        and "runtime_usable" in selected_gpu_info
-        and selected_gpu_info["runtime_usable"]
-    );
     compatible_backends = [];
-    if selected_gpu_info and selected_gpu_usable {
+    if selected_gpu_info {
         hint = selected_gpu_info["backend_hint"] if "backend_hint" in selected_gpu_info else "";
         if hint == "cuda" {
             compatible_backends = [{"label": "Triton", "value": "triton"}, {"label": "CUDA", "value": "cuda"}];
@@ -105,9 +98,9 @@ def:pub NewProject -> Any {
         }
     } else {
         hwInfo = config_ctx.hwInfo if "hwInfo" in config_ctx else {};
-        if hwInfo and "preferred_target" in hwInfo and hwInfo["preferred_target"] == "cuda" {
+        if hwInfo and "cuda_available" in hwInfo and hwInfo["cuda_available"] {
             compatible_backends = [{"label": "Triton", "value": "triton"}, {"label": "CUDA", "value": "cuda"}];
-        } elif hwInfo and "preferred_target" in hwInfo and hwInfo["preferred_target"] == "mps" {
+        } elif hwInfo and "mps_available" in hwInfo and hwInfo["mps_available"] {
             compatible_backends = [{"label": "Metal", "value": "metal"}];
         }
     }
@@ -191,9 +184,9 @@ def:pub NewProject -> Any {
             return;
         }setStageIndex(Math.floor(Date.now() / 1300) % stageCycle.length);timer = setInterval(
             lambda -> None { setStageIndex(Math.floor(Date.now() / 1300) % stageCycle.length);},
-            1200 if desktopBuild else 650
+            650
         );return lambda -> None { clearInterval(timer);}; },
-        [isSubmitting, desktopBuild]
+        [isSubmitting]
     );
 
     async def handleCreate -> None {
@@ -324,24 +317,17 @@ def:pub NewProject -> Any {
         <main className="app-shell">
             {loadingOverlay}
             <div className="app-backdrop app-backdrop--forge"></div>
-            {<div className="app-backdrop-embers">
+            <div className="app-backdrop-embers">
                 <span className="ember-particle"></span>
                 <span className="ember-particle"></span>
                 <span className="ember-particle"></span>
                 <span className="ember-particle"></span>
                 <span className="ember-particle"></span>
                 <span className="ember-particle"></span>
-            </div> if not desktopBuild else None}
+            </div>
             <div className="app-content-layer h-screen w-full p-4 md:p-6">
                 <div
-                    className={
-                        "h-full w-full border border-[var(--border)] bg-[var(--surface-0)] overflow-hidden"
-                        + (
-                            " shadow-[0_14px_30px_rgba(0,0,0,0.36)]"
-                            if desktopBuild
-                            else " clip-anvil shadow-[0_22px_48px_rgba(0,0,0,0.45)]"
-                        )
-                    }
+                    className="h-full w-full border border-[var(--border)] bg-[var(--surface-0)] clip-anvil shadow-[0_22px_48px_rgba(0,0,0,0.45)] overflow-hidden"
                 >
                     <div
                         className="h-14 flex items-center justify-between px-6 border-b border-[var(--border)] bg-[var(--surface-1)] relative"

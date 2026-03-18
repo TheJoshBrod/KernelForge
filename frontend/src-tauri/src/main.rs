@@ -27,13 +27,19 @@ const ROUTE_READY_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[cfg(target_os = "linux")]
 fn configure_linux_rendering_env() {
-    // The WebKitGTK GBM / DMA-BUF path is unstable on this target, but fully
-    // disabling compositing or forcing software rendering makes the app feel
-    // much slower. Keep the narrow DMA-BUF workaround as the default and leave
-    // harsher fallbacks opt-in.
-    unsafe {
-        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    // Keep the fastest Linux WebKit path as the default. On this machine, the
+    // broad DMA-BUF/compositing fallbacks remove the blank-window risk but make
+    // the exact origin/main UI unacceptably slow. Leave those fallback modes
+    // opt-in for machines that still need them.
+    let disable_dmabuf = std::env::var_os("KFORGE_DISABLE_DMABUF_RENDERER")
+        .map(|value| value == "1")
+        .unwrap_or(false);
+
+    if disable_dmabuf {
+        unsafe {
+            if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+                std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+            }
         }
     }
 
@@ -68,6 +74,10 @@ fn configure_linux_rendering_env() {
 
     if disable_compositing && !force_software {
         eprintln!("Linux WebKit compositing disabled via KFORGE_DISABLE_WEBKIT_COMPOSITING=1");
+    }
+
+    if disable_dmabuf {
+        eprintln!("Linux DMA-BUF renderer disabled via KFORGE_DISABLE_DMABUF_RENDERER=1");
     }
 
     eprintln!(

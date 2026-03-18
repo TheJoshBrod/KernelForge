@@ -9,10 +9,11 @@ This repo now includes a Jac/Tauri desktop shell under `frontend/src-tauri`.
   - `KFORGE_REPO_ROOT`
   - `KFORGE_DATA_DIR`
   - `KFORGE_CONFIG_PATH`
-- The desktop launcher injects build metadata, starts the Jac sidecar in a native window, and shows an in-app GitHub `main` update notice when the packaged commit falls behind upstream.
+- The desktop launcher starts the Jac sidecar in a native window and keeps desktop-specific behavior in `frontend/src-tauri` rather than forking the shared frontend UI.
 - The Tauri updater path is configured for signed desktop releases via GitHub Releases, with `latest.json` expected at `https://github.com/TheJoshBrod/CGinS/releases/latest/download/latest.json`.
 - Desktop sidecar launch now prefers a dedicated repo or bundled `.desktop-runtime` and only falls back to repo `.venv` for local development compatibility.
 - `./scripts/desktop/prepare-runtime.sh` bootstraps the dedicated desktop runtime with a CUDA-capable Torch wheel channel instead of inheriting the repo CPU-only Torch install.
+- On Linux, the desktop shell now keeps the same visual frontend as `origin/main` and leaves slower WebKit fallback modes opt-in instead of default.
 
 ## Commands
 
@@ -40,6 +41,9 @@ Useful runtime environment overrides:
 - `KFORGE_TORCH_INDEX_URL=...` to override the Torch wheel index directly.
 - `KFORGE_DESKTOP_RUNTIME_REBUILD=1` to recreate `.desktop-runtime` from scratch.
 - `KFORGE_DESKTOP_RUNTIME_SYNC=1` to force a dependency refresh into an existing runtime.
+- `KFORGE_DISABLE_DMABUF_RENDERER=1` to fall back from the fast Linux WebKit DMA-BUF path if your machine renders incorrectly.
+- `KFORGE_DISABLE_WEBKIT_COMPOSITING=1` to force the slower non-composited Linux fallback.
+- `KFORGE_FORCE_SOFTWARE_RENDERING=1` to force the slowest software-rendered Linux fallback when debugging graphics issues.
 
 ## Updater release helpers
 

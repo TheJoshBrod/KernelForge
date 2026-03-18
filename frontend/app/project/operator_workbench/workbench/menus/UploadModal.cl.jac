@@ -83,9 +83,9 @@ def:pub UploadModal(props: any) -> Any {
 
     # Determine available backends
     available_devices = [{"label": "Triton (Python)", "value": "Triton"}];
-    if hwInfo and "preferred_target" in hwInfo and hwInfo["preferred_target"] == "cuda" {
+    if hwInfo and "cuda_available" in hwInfo and hwInfo["cuda_available"] {
         available_devices.splice(0, 0, {"label": "CUDA", "value": "CUDA"});
-    } elif hwInfo and "preferred_target" in hwInfo and hwInfo["preferred_target"] == "mps" {
+    } elif hwInfo and "mps_available" in hwInfo and hwInfo["mps_available"] {
         available_devices.splice(0, 0, {"label": "MPS", "value": "MPS"});
     }
 
