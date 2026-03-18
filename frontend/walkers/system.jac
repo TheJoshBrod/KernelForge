@@ -15,6 +15,7 @@ import from json { load }
 glob _hw_cache: dict = {};
 glob _sys_info_cache: dict = {};
 glob _sys_info_ts: float = 0.0;
+glob _sys_info_cache_key: str = "";
 
 def _normalize_provider(provider: str) -> str {
     value = provider.lower().strip() if provider else "";
@@ -115,10 +116,12 @@ walker:pub GetSystemInfo {
     can return_info with entry {
         global _sys_info_cache;
         global _sys_info_ts;
+        global _sys_info_cache_key;
         try {
             # Check cache (1 minute TTL)
             now_ts = datetime.now().timestamp();
-            if _sys_info_cache and (now_ts - _sys_info_ts) < 60 {
+            cache_key = f"{self.host}|{self.user}|{self.key_path}";
+            if _sys_info_cache and _sys_info_cache_key == cache_key and (now_ts - _sys_info_ts) < 60 {
                 report _sys_info_cache;
                 disengage;
             }
@@ -350,6 +353,7 @@ print(json.dumps(get_gpu_info()))
             # Update cache
             _sys_info_cache = result_payload;
             _sys_info_ts = datetime.now().timestamp();
+            _sys_info_cache_key = cache_key;
 
             report result_payload;
         } except Exception as e {

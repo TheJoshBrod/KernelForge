@@ -14,12 +14,13 @@ def:pub GpuPage -> Any {
     setConfig = config_ctx.setConfig;
     saveConfig = config_ctx.saveConfig;
     loading = config_ctx.loading;
+    hwInfo = config_ctx.hwInfo;
 
     saving_state = useState(False);
     saving = saving_state[0];
     setSaving = saving_state[1];
 
-    system_info_state = useState({});  # Contains 'gpus' list
+    system_info_state = useState(hwInfo if hwInfo else {});  # Contains 'gpus' list
     systemInfo = system_info_state[0];
     setSystemInfo = system_info_state[1];
 
@@ -69,6 +70,15 @@ def:pub GpuPage -> Any {
             console.error("Error stack:", e.stack);
         }
     }
+
+    useEffect(lambda -> None {
+        if hwInfo and "gpus" in hwInfo and hwInfo["gpus"] and (
+            not systemInfo
+            or not ("gpus" in systemInfo and systemInfo["gpus"] and systemInfo["gpus"].length > 0)
+        ) {
+            setSystemInfo(hwInfo);
+        }
+    }, [hwInfo, systemInfo]);
 
     useEffect(lambda -> None { fetchSystemInfo();}, [config]);
 
