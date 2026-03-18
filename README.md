@@ -2,14 +2,14 @@
 
 # <img src="frontend/assets/KernelForge.svg" alt="KernelForge" width="200"/> <br> Kernel Forge
 
-**Drop-in GPU kernel optimizer for PyTorch models, no GPU kernel expertise required.**
+**Drop-in GPU kernel optimizer for PyTorch models.**
 
 ![CUDA](https://img.shields.io/badge/CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white)
 ![Triton](https://img.shields.io/badge/Triton-000000?style=for-the-badge&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAOCAMAAAAsYw3eAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAAzFBMVEUAAAAsuMU2vMczu8Ynt8MitcJOxM4pt8QktsIgtMEruMQltsMhtcIjtcIgtMEltsMhtcI6vclozNVpzdU7vckitcIwusZRxc9IwsxGwcxHwcxSxc8ftME0u8dYx9FCwMtMw81ayNFBv8s1u8cetME/v8pEwMty0NhVxtBTxc9Av8o+vspcyNJKws1UxtBLw81byNI9vslPxM5eydJOxM5nzNVmzNU4vMhz0NhFwctqzdY5vch10dkuucVMw85Nw84vucVWxtA8vsn////g7i7RAAAAD3RSTlMAAAAIVdYBLJzxGXbgyvw6EdVsAAAAAWJLR0RDZ9ANYgAAAAd0SU1FB+oDEhMzJWe0294AAACYSURBVAjXVY5HEoJAFAU/OYMKkhyRUcKACiIq5nT/Qzmy0mXXq+p+AMBwvCDwHAMArCjJimUpsiSyoGr6YDiynbGuqWCYrucHoT9xTQPQNJrFGMfzaIEgSbOcFAXJszKBZBmu1hWpN34Pzbat63bXpBRKXO2D4FBhuqDu2J3Odna5doiqb949DB/Fk6q/UYe83n30787v0Q+e/xC9ZxRPWgAAACV0RVh0ZGF0ZTpjcmVhdGUAMjAyNi0wMy0xOFQxOTo1MTozNyswMDowMOap+1gAAAAldEVYdGRhdGU6bW9kaWZ5ADIwMjYtMDMtMThUMTk6NTE6MzcrMDA6MDCX9EPkAAAAAElFTkSuQmCC)
 ![More coming soon](https://img.shields.io/badge/more_coming_soon...-555555?style=for-the-badge)
 
 [![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/5eFApNyC)
-![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
+[![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
 ---
 </div>
@@ -58,7 +58,6 @@ jac install
 Configure your LLM key in the settings panel after starting, or set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GOOGLE_API_KEY` before launch.
 
 ```bash
-cd frontend
 jac start main.jac
 ```
 
@@ -74,12 +73,12 @@ For headless or scripted runs, see [docs/cli.md](docs/cli.md).
 
 ## Further reading
 
-- [Features](docs/features.md)
 - [System requirements](docs/requirements.md)
 - [CLI reference](docs/cli.md)
 - [System architecture](docs/system-architecture.md)
 - [File formats (.anvil, .cast)](docs/FileFormat.md)
 - [Cast runtime](docs/cast-runtime.md)
-- [Profiling](docs/profiling/)
+- [Profiling API](docs/profiling/api.md)
+- [Profiling architecture](docs/profiling/architecture.md)
 - [Backend source layout](src/README.md)
 - [Frontend walker API](frontend/README.md)
