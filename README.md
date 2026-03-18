@@ -1,4 +1,6 @@
-# Kernel Forge
+<p align="center">
+  <img src="frontend/assets/banner.svg" alt="KernelForge" width="100%"/>
+</p>
 
 Kernel Forge automatically generates and optimizes GPU kernels for PyTorch models with no kernel programming expertise required. It profiles your model at the operator level, uses an LLM to write a correct kernel, then searches for performance improvements using Monte Carlo Tree Search until the kernel beats PyTorch's baseline.
 

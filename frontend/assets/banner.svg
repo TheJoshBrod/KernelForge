@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1200" height="280" viewBox="0 0 1200 280" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#171c1c"/>
+      <stop offset="60%" stop-color="#232c2c"/>
+      <stop offset="100%" stop-color="#1a2222"/>
+    </linearGradient>
+    <linearGradient id="titleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#e56936"/>
+      <stop offset="100%" stop-color="#fbb03b"/>
+    </linearGradient>
+    <radialGradient id="iconGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#e56936" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#e56936" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="280" fill="url(#bgGrad)"/>
+
+  <!-- Subtle dot grid (right side) -->
+  <g opacity="0.06" fill="#e56936">
+    <circle cx="340" cy="40" r="1.5"/> <circle cx="380" cy="40" r="1.5"/> <circle cx="420" cy="40" r="1.5"/> <circle cx="460" cy="40" r="1.5"/> <circle cx="500" cy="40" r="1.5"/> <circle cx="540" cy="40" r="1.5"/> <circle cx="580" cy="40" r="1.5"/> <circle cx="620" cy="40" r="1.5"/> <circle cx="660" cy="40" r="1.5"/> <circle cx="700" cy="40" r="1.5"/> <circle cx="740" cy="40" r="1.5"/> <circle cx="780" cy="40" r="1.5"/> <circle cx="820" cy="40" r="1.5"/> <circle cx="860" cy="40" r="1.5"/> <circle cx="900" cy="40" r="1.5"/> <circle cx="940" cy="40" r="1.5"/> <circle cx="980" cy="40" r="1.5"/> <circle cx="1020" cy="40" r="1.5"/> <circle cx="1060" cy="40" r="1.5"/> <circle cx="1100" cy="40" r="1.5"/> <circle cx="1140" cy="40" r="1.5"/> <circle cx="1180" cy="40" r="1.5"/>
+    <circle cx="340" cy="80" r="1.5"/> <circle cx="380" cy="80" r="1.5"/> <circle cx="420" cy="80" r="1.5"/> <circle cx="460" cy="80" r="1.5"/> <circle cx="500" cy="80" r="1.5"/> <circle cx="540" cy="80" r="1.5"/> <circle cx="580" cy="80" r="1.5"/> <circle cx="620" cy="80" r="1.5"/> <circle cx="660" cy="80" r="1.5"/> <circle cx="700" cy="80" r="1.5"/> <circle cx="740" cy="80" r="1.5"/> <circle cx="780" cy="80" r="1.5"/> <circle cx="820" cy="80" r="1.5"/> <circle cx="860" cy="80" r="1.5"/> <circle cx="900" cy="80" r="1.5"/> <circle cx="940" cy="80" r="1.5"/> <circle cx="980" cy="80" r="1.5"/> <circle cx="1020" cy="80" r="1.5"/> <circle cx="1060" cy="80" r="1.5"/> <circle cx="1100" cy="80" r="1.5"/> <circle cx="1140" cy="80" r="1.5"/> <circle cx="1180" cy="80" r="1.5"/>
+    <circle cx="340" cy="120" r="1.5"/> <circle cx="380" cy="120" r="1.5"/> <circle cx="420" cy="120" r="1.5"/> <circle cx="460" cy="120" r="1.5"/> <circle cx="500" cy="120" r="1.5"/> <circle cx="540" cy="120" r="1.5"/> <circle cx="580" cy="120" r="1.5"/> <circle cx="620" cy="120" r="1.5"/> <circle cx="660" cy="120" r="1.5"/> <circle cx="700" cy="120" r="1.5"/> <circle cx="740" cy="120" r="1.5"/> <circle cx="780" cy="120" r="1.5"/> <circle cx="820" cy="120" r="1.5"/> <circle cx="860" cy="120" r="1.5"/> <circle cx="900" cy="120" r="1.5"/> <circle cx="940" cy="120" r="1.5"/> <circle cx="980" cy="120" r="1.5"/> <circle cx="1020" cy="120" r="1.5"/> <circle cx="1060" cy="120" r="1.5"/> <circle cx="1100" cy="120" r="1.5"/> <circle cx="1140" cy="120" r="1.5"/> <circle cx="1180" cy="120" r="1.5"/>
+    <circle cx="340" cy="160" r="1.5"/> <circle cx="380" cy="160" r="1.5"/> <circle cx="420" cy="160" r="1.5"/> <circle cx="460" cy="160" r="1.5"/> <circle cx="500" cy="160" r="1.5"/> <circle cx="540" cy="160" r="1.5"/> <circle cx="580" cy="160" r="1.5"/> <circle cx="620" cy="160" r="1.5"/> <circle cx="660" cy="160" r="1.5"/> <circle cx="700" cy="160" r="1.5"/> <circle cx="740" cy="160" r="1.5"/> <circle cx="780" cy="160" r="1.5"/> <circle cx="820" cy="160" r="1.5"/> <circle cx="860" cy="160" r="1.5"/> <circle cx="900" cy="160" r="1.5"/> <circle cx="940" cy="160" r="1.5"/> <circle cx="980" cy="160" r="1.5"/> <circle cx="1020" cy="160" r="1.5"/> <circle cx="1060" cy="160" r="1.5"/> <circle cx="1100" cy="160" r="1.5"/> <circle cx="1140" cy="160" r="1.5"/> <circle cx="1180" cy="160" r="1.5"/>
+    <circle cx="340" cy="200" r="1.5"/> <circle cx="380" cy="200" r="1.5"/> <circle cx="420" cy="200" r="1.5"/> <circle cx="460" cy="200" r="1.5"/> <circle cx="500" cy="200" r="1.5"/> <circle cx="540" cy="200" r="1.5"/> <circle cx="580" cy="200" r="1.5"/> <circle cx="620" cy="200" r="1.5"/> <circle cx="660" cy="200" r="1.5"/> <circle cx="700" cy="200" r="1.5"/> <circle cx="740" cy="200" r="1.5"/> <circle cx="780" cy="200" r="1.5"/> <circle cx="820" cy="200" r="1.5"/> <circle cx="860" cy="200" r="1.5"/> <circle cx="900" cy="200" r="1.5"/> <circle cx="940" cy="200" r="1.5"/> <circle cx="980" cy="200" r="1.5"/> <circle cx="1020" cy="200" r="1.5"/> <circle cx="1060" cy="200" r="1.5"/> <circle cx="1100" cy="200" r="1.5"/> <circle cx="1140" cy="200" r="1.5"/> <circle cx="1180" cy="200" r="1.5"/>
+    <circle cx="340" cy="240" r="1.5"/> <circle cx="380" cy="240" r="1.5"/> <circle cx="420" cy="240" r="1.5"/> <circle cx="460" cy="240" r="1.5"/> <circle cx="500" cy="240" r="1.5"/> <circle cx="540" cy="240" r="1.5"/> <circle cx="580" cy="240" r="1.5"/> <circle cx="620" cy="240" r="1.5"/> <circle cx="660" cy="240" r="1.5"/> <circle cx="700" cy="240" r="1.5"/> <circle cx="740" cy="240" r="1.5"/> <circle cx="780" cy="240" r="1.5"/> <circle cx="820" cy="240" r="1.5"/> <circle cx="860" cy="240" r="1.5"/> <circle cx="900" cy="240" r="1.5"/> <circle cx="940" cy="240" r="1.5"/> <circle cx="980" cy="240" r="1.5"/> <circle cx="1020" cy="240" r="1.5"/> <circle cx="1060" cy="240" r="1.5"/> <circle cx="1100" cy="240" r="1.5"/> <circle cx="1140" cy="240" r="1.5"/> <circle cx="1180" cy="240" r="1.5"/>
+  </g>
+
+  <!-- Left orange accent bar -->
+  <rect x="0" y="0" width="5" height="280" fill="#e56936"/>
+
+  <!-- === ICON: exact KernelForge logo === -->
+
+  <!-- Glow behind icon -->
+  <circle cx="155" cy="140" r="130" fill="url(#iconGlow)"/>
+
+  <!-- Exact logo inlined (visible elements from KernelForge.svg, viewBox 0 0 600 600, scaled to 212x212 at x=49,y=34) -->
+  <g transform="translate(49,34) scale(0.35333)">
+    <!-- main filled circle -->
+    <circle fill="#3b4141" stroke="#e56936" stroke-width="21" stroke-miterlimit="10" cx="300" cy="300" r="262.75"/>
+    <!-- outer dashed ring -->
+    <circle fill="none" stroke="#3b4141" stroke-width="10" stroke-miterlimit="10" cx="300" cy="300" r="284.76"/>
+    <!-- anvil body -->
+    <polygon fill="#cc6633" points="392.12 430.01 207.88 430.01 207.88 154.23 171.97 70.52 300 39.03 426.47 71.43 392.12 156.39 392.12 430.01"/>
+    <!-- lightning bolt -->
+    <path fill="#3b4141" stroke="#fbb03b" stroke-width="5" stroke-miterlimit="10" d="M298.27,327.36l-71.73-104.15c-2.78-4.04-1.73-9.65,2.35-12.46l47.1-32.44c4.08-2.81,9.69-1.8,12.48,2.25l24.79,36.1,164.73-120.7,33.14,44.46-175.65,108.28,24.73,36.02c2.78,4.04,1.73,9.65-2.35,12.46l-47.1,32.44c-4.08,2.81-9.69,1.8-12.48-2.25h-.01Z"/>
+    <!-- outer stroke circle -->
+    <circle fill="none" stroke="#e56936" stroke-width="20" stroke-miterlimit="10" cx="300" cy="301.79" r="262.75"/>
+    <!-- anvil legs -->
+    <line fill="none" stroke="#e56936" stroke-width="21" stroke-miterlimit="10" x1="234.06" y1="417.03" x2="118.55" y2="474.31"/>
+    <line fill="none" stroke="#e56936" stroke-width="21" stroke-miterlimit="10" x1="384.35" y1="417.03" x2="499.86" y2="474.31"/>
+    <!-- base ellipse -->
+    <ellipse fill="#e66a37" stroke="#e56936" stroke-width="21" stroke-miterlimit="10" cx="303.28" cy="485.66" rx="161.23" ry="60.01"/>
+    <!-- pedestal detail -->
+    <path fill="#3b4141" stroke="#b2b6b7" stroke-width="5" stroke-miterlimit="10" d="M459.53,359.69h-82.89c-38.41,0-99.68.48-136.74.48-8.11,0-7.13,2.44-11.53,8.1-5.68,7.3-8.81-8.5-13.86-8.5-1.2,0-65.12.22-65.12.22-23.47,0-7.21,18.34-4.36,22.5,5.49,8.03,20.26,29.17,41.11,40.56,23.58,12.88,53.19,15.61,53.19,15.61,4.27,0,3.08,34.27.96,38.47-8.98,17.78-39.21,18.36-40.33,18.36h-10.82c-3.07,0-5.56,2.82-5.56,6.29v6.3c-.08.05-.15.1-.23.15h.23v10.74c0,3.48,2.49,6.29,5.56,6.29h25.26l41.74-22.73c25.15-8.53,51.94-8.69,77.17-.46l45.8,23.19h25.28c3.07,0,5.56-2.82,5.56-6.29v-17.18c0-3.48-2.49-6.29-5.56-6.29h-16.94c-1.02,0-33.32-.44-41.93-18.37-2.02-4.2-3.14-38.47,1.09-38.47l13.62-5.43c21.8-9.46,31.47-24.58,46.83-37.43,7.28-6.09,19.17-5.05,27.94-9.08,20.18-9.28,41.81-27.03,24.51-27.03h.02Z"/>
+    <!-- small base rect -->
+    <rect fill="#e66a37" stroke="#e66a37" stroke-width="5" stroke-miterlimit="10" x="167.45" y="495.81" width="9.05" height="26.93"/>
+  </g>
+
+<text x="298" y="122"
+        font-family="'Segoe UI', 'SF Pro Display', -apple-system, Arial, sans-serif"
+        font-size="74"
+        font-weight="800"
+        fill="url(#titleGrad)"
+        letter-spacing="-1">KernelForge</text>
+
+  <line x1="298" y1="138" x2="975" y2="138" stroke="#e56936" stroke-width="1" opacity="0.35"/>
+
+  <text x="300" y="164"
+        font-family="'Segoe UI', 'SF Pro Display', -apple-system, Arial, sans-serif"
+        font-size="19"
+        fill="#7a9090"
+        letter-spacing="0.3">Drop-in GPU kernel optimizer for PyTorch models, no GPU kernel expertise required</text>
+
+<rect x="300" y="182" width="66" height="26" rx="13" fill="none" stroke="#76b900" stroke-width="1.5"/>
+  <text x="333" y="200" text-anchor="middle"
+        font-family="'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" fill="#76b900">CUDA</text>
+
+  <rect x="376" y="182" width="66" height="26" rx="13" fill="none" stroke="#fbb03b" stroke-width="1.5"/>
+  <text x="409" y="200" text-anchor="middle"
+        font-family="'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" fill="#fbb03b">Triton</text>
+
+  <rect x="452" y="182" width="160" height="26" rx="13" fill="none" stroke="#888888" stroke-width="1.5"/>
+  <text x="532" y="200" text-anchor="middle"
+        font-family="'Segoe UI', Arial, sans-serif" font-size="12" font-weight="600" fill="#888888">more coming soon...</text>
+        
+  <!-- Bottom accent: heat glow under icon -->
+  <ellipse cx="155" cy="258" rx="80" ry="8" fill="#e56936" opacity="0.07"/>
+</svg>
