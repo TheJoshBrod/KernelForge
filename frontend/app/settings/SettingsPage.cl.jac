@@ -75,7 +75,7 @@ def:pub SettingsPage -> Any {
         >
             <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
             {<div className="noise-overlay opacity-30"></div> if not desktopBuild else None}
-            {<EmberBackground className="absolute inset-0 z-0"/> if not desktopBuild else None}
+            <EmberBackground className="absolute inset-0 z-0"/>
             <div
                 className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/50 z-10 pointer-events-none"
             ></div>
@@ -93,9 +93,9 @@ def:pub SettingsPage -> Any {
                 <div
                     className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden"
                 >
-                    {<div
+                    <div
                         className="absolute top-0 left-0 right-0 heat-divider"
-                    ></div> if not desktopBuild else None}
+                    ></div>
                     <h1
                         className="text-2xl font-bold text-white tracking-wide uppercase industrial-font-display"
                     >

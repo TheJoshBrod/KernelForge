@@ -1310,31 +1310,6 @@ video {
 
 .app-backdrop-static--wave {
   background:
-    radial-gradient(circle at 50% 110%, rgba(14, 165, 233, 0.22) 0%, rgba(56, 189, 248, 0.14) 26%, rgba(0, 0, 0, 0) 70%),
-    linear-gradient(180deg, rgba(2, 6, 23, 0.18) 0%, rgba(3, 105, 161, 0.16) 58%, rgba(15, 23, 42, 0.38) 100%);
-}
-
-.app-backdrop-static--matrix {
-  background:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.22), rgba(2, 6, 23, 0.62)),
-    repeating-linear-gradient(
-      180deg,
-      rgba(34, 197, 94, 0.08) 0,
-      rgba(34, 197, 94, 0.08) 2px,
-      transparent 2px,
-      transparent 22px
-    ),
-    repeating-linear-gradient(
-      90deg,
-      rgba(16, 185, 129, 0.05) 0,
-      rgba(16, 185, 129, 0.05) 1px,
-      transparent 1px,
-      transparent 18px
-    );
-}
-
-.app-backdrop-static--wave {
-  background:
     linear-gradient(180deg, rgba(12, 74, 110, 0.22) 0%, rgba(2, 6, 23, 0.7) 38%, rgba(2, 6, 23, 0.96) 100%),
     radial-gradient(circle at 20% 78%, rgba(125, 211, 252, 0.16), transparent 28%),
     radial-gradient(circle at 78% 74%, rgba(56, 189, 248, 0.14), transparent 24%);
@@ -1363,15 +1338,15 @@ html.kf-desktop-performance .app-life-canvas,
 body.kf-desktop-performance .app-life-canvas,
 html.kf-desktop-performance .app-backdrop-static,
 body.kf-desktop-performance .app-backdrop-static {
-  opacity: 0.16;
+  opacity: 0.24;
   filter: none;
 }
 
 html.kf-desktop-performance .app-backdrop-static--ember,
 body.kf-desktop-performance .app-backdrop-static--ember {
   background:
-    radial-gradient(60% 65% at 50% 100%, rgba(214, 48, 49, 0.22) 0%, rgba(225, 112, 85, 0.16) 28%, rgba(0, 0, 0, 0) 72%),
-    linear-gradient(180deg, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.34));
+    radial-gradient(60% 68% at 50% 100%, rgba(214, 48, 49, 0.28) 0%, rgba(225, 112, 85, 0.22) 28%, rgba(0, 0, 0, 0) 72%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.30));
 }
 
 html.kf-desktop-performance .app-backdrop-static--grid,
@@ -1382,24 +1357,6 @@ body.kf-desktop-performance .app-backdrop-static--grid {
     radial-gradient(circle at center, rgba(134, 230, 169, 0.08), rgba(0, 0, 0, 0) 58%);
   background-size: 28px 28px, 28px 28px, 100% 100%;
   background-position: 0 0, 0 0, center;
-}
-
-html.kf-desktop-performance .app-backdrop-static--wave,
-body.kf-desktop-performance .app-backdrop-static--wave {
-  background:
-    linear-gradient(180deg, rgba(10, 35, 52, 0.34), rgba(2, 6, 23, 0.82)),
-    radial-gradient(circle at 50% 82%, rgba(125, 211, 252, 0.10), rgba(0, 0, 0, 0) 42%);
-}
-
-html.kf-desktop-performance .app-backdrop-static--matrix,
-body.kf-desktop-performance .app-backdrop-static--matrix {
-  background:
-    linear-gradient(180deg, rgba(3, 10, 5, 0.78), rgba(0, 0, 0, 0.94)),
-    repeating-linear-gradient(
-      180deg,
-      rgba(34, 197, 94, 0.05) 0 1px,
-      transparent 1px 16px
-    );
 }
 
 html.kf-desktop-performance .app-backdrop-static--wave,
@@ -1427,6 +1384,11 @@ body.kf-desktop-performance .app-backdrop-static--matrix {
       transparent 1px,
       transparent 20px
     );
+}
+
+html.kf-desktop-performance .app-backdrop--splash,
+body.kf-desktop-performance .app-backdrop--splash {
+  opacity: 0.34;
 }
 
 html.kf-desktop-performance .mascot-halo,

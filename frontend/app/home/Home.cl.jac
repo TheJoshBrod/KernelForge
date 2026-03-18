@@ -3,24 +3,16 @@
 import from react { useEffect, useState }
 import from "react-router-dom" { useNavigate }
 import from ...components.backdrops.EmberBackground { EmberBackground }
+import from ...components.ui.DesktopRuntime { isDesktopBuild }
 import from ...components.ui.GlowButton { GlowButton }
 import from ...components.ui.Icons { KernelForgeLogo, SettingsIcon, ArrowRightIcon, GithubIcon, DiscordIcon, TrashIcon }
 import from ...components.SplashScreen { SplashScreen }
 
 def:pub Home -> Any {
     navigate = useNavigate();
-    desktop_build = window["__KFORGE_DESKTOP_BUILD__"]
-    if "__KFORGE_DESKTOP_BUILD__" in window and window["__KFORGE_DESKTOP_BUILD__"]
-    else None;
-    min_splash_ms = 250
-    if desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
-    else 3000;
-    splash_exit_ms = 180
-    if desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
-    else 900;
-    isDesktop = bool(
-        desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
-    );
+    isDesktop = isDesktopBuild();
+    min_splash_ms = 900 if isDesktop else 3000;
+    splash_exit_ms = 360 if isDesktop else 900;
     scenePanelClass = "relative z-10 w-full max-w-4xl h-[70vh] border border-[var(--border)] rounded-sm flex flex-col";
     if isDesktop {
         scenePanelClass = scenePanelClass + " bg-[var(--bg-panel)] shadow-xl";
@@ -222,7 +214,7 @@ def:pub Home -> Any {
             {<SplashScreen exiting={splashDone}/> if splashVisible else None}
             <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
             {<div className="noise-overlay opacity-30"></div> if not isDesktop else None}
-            {<EmberBackground className="absolute inset-0 z-0"/> if not isDesktop else None}
+            <EmberBackground className="absolute inset-0 z-0"/>
             <div
                 className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/50 z-10 pointer-events-none"
             ></div>
@@ -262,9 +254,7 @@ def:pub Home -> Any {
                 <div
                     className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden"
                 >
-                    {(
-                        <div className="absolute top-0 left-0 right-0 heat-divider"></div>
-                    ) if not isDesktop else None}
+                    <div className="absolute top-0 left-0 right-0 heat-divider"></div>
                     <div className="relative flex items-center gap-4">
                         <input
                             type="text"

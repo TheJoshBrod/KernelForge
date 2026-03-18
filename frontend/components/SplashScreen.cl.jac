@@ -1,6 +1,7 @@
 """Splash Screen Component"""
 
 import from .backdrops.EmberBackground { EmberBackground }
+import from .ui.DesktopRuntime { isDesktopBuild }
 import from .ui.Icons { KernelForgeLogo }
 
 def:pub SplashScreen(exiting: bool) -> Any {
@@ -8,12 +9,7 @@ def:pub SplashScreen(exiting: bool) -> Any {
     if exiting {
         splashClass = "splash-screen is-exiting";
     }
-    desktop_build = window["__KFORGE_DESKTOP_BUILD__"]
-    if "__KFORGE_DESKTOP_BUILD__" in window and window["__KFORGE_DESKTOP_BUILD__"]
-    else None;
-    isDesktop = bool(
-        desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
-    );
+    isDesktop = isDesktopBuild();
     mascotClass = "splash-mascot bg-[var(--bg-panel)]/50 border border-[var(--border)] rounded-sm p-8";
     if not isDesktop {
         mascotClass = mascotClass + " backdrop-blur-sm shadow-[0_0_30px_rgba(225,112,85,0.2)]";
@@ -29,7 +25,7 @@ def:pub SplashScreen(exiting: bool) -> Any {
         <div className={splashClass}>
             <div className="absolute inset-0 z-0 industrial-grid-bg opacity-40"></div>
             {<div className="noise-overlay opacity-40"></div> if not isDesktop else None}
-            {<EmberBackground className="absolute inset-0 z-0"/> if not isDesktop else None}
+            <EmberBackground className="absolute inset-0 z-0 app-backdrop--splash"/>
             <div
                 className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/50 z-10 pointer-events-none"
             ></div>
