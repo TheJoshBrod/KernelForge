@@ -107,19 +107,27 @@ def:pub ConfigProvider(children: any) -> Any {
                 merged["active_ssh_index"] = -1;
             }
 
+            # Process Hardware Info
+            hw_data = resp_hw.reports[0]
+            if resp_hw and resp_hw.reports and resp_hw.reports.length > 0
+            else {};
             # Normalize selected GPU index
             selected_idx = merged["selected_gpu_index"]
             if "selected_gpu_index" in merged
             else -1;
             if selected_idx < -1 {
                 merged["selected_gpu_index"] = -1;
+                merged["selected_gpu_info"] = None;
+            }
+            if (
+                merged["active_ssh_index"] == -1
+                and merged["selected_gpu_index"] == -1
+                and hw_data and "gpus" in hw_data and hw_data["gpus"]
+            ) {
+                merged["selected_gpu_index"] = 0;
+                merged["selected_gpu_info"] = hw_data["gpus"][0];
             }
             setConfigState(merged);
-
-            # Process Hardware Info
-            hw_data = resp_hw.reports[0]
-            if resp_hw and resp_hw.reports and resp_hw.reports.length > 0
-            else {};
             setHwInfo(hw_data);
         } except Exception as e {
             console.error("Failed to load config/hardware:", e);
