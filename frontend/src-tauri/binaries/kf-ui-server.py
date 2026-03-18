@@ -2,6 +2,7 @@
 import argparse
 import mimetypes
 import posixpath
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -100,7 +101,28 @@ class KernelForgeUiHandler(BaseHTTPRequestHandler):
         return candidate
 
     def _serve_index(self) -> None:
-        self._serve_file((self.dist_dir / "index.html").resolve())
+        index_path = (self.dist_dir / "index.html").resolve()
+        try:
+            html = index_path.read_text(encoding="utf-8")
+        except OSError:
+            self.send_error(404, "File not found")
+            return
+
+        if "<base " not in html and "<head>" in html:
+            html = html.replace("<head>", '<head>\n<base href="/" />', 1)
+        html = re.sub(
+            r'(href|src)="(?!/|[a-zA-Z][a-zA-Z0-9+.-]*:|#)([^"]+)"',
+            lambda match: f'{match.group(1)}="/{match.group(2)}"',
+            html,
+        )
+
+        content = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(content)
 
     def _serve_file(self, file_path: Path) -> None:
         try:

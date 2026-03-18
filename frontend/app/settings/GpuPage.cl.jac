@@ -16,6 +16,10 @@ def:pub GpuPage -> Any {
     loading = config_ctx.loading;
     hwInfo = config_ctx.hwInfo;
 
+    page_config_state = useState(config if config else {});
+    pageConfig = page_config_state[0];
+    setPageConfig = page_config_state[1];
+
     saving_state = useState(False);
     saving = saving_state[0];
     setSaving = saving_state[1];
@@ -24,22 +28,34 @@ def:pub GpuPage -> Any {
     systemInfo = system_info_state[0];
     setSystemInfo = system_info_state[1];
 
-    gpus = systemInfo["gpus"] if systemInfo and "gpus" in systemInfo else [];
-    selected_idx = config["selected_gpu_index"]
-    if "selected_gpu_index" in config
+    config_selected_gpu = pageConfig["selected_gpu_info"]
+    if "selected_gpu_info" in pageConfig
+    else None;
+    detected_gpus = systemInfo["gpus"]
+    if systemInfo and "gpus" in systemInfo and systemInfo["gpus"]
+    else (
+        hwInfo["gpus"]
+        if hwInfo and "gpus" in hwInfo and hwInfo["gpus"]
+        else []
+    );
+    gpus = detected_gpus if detected_gpus and detected_gpus.length > 0 else (
+        [config_selected_gpu] if config_selected_gpu else []
+    );
+    selected_idx = pageConfig["selected_gpu_index"]
+    if "selected_gpu_index" in pageConfig
     else -1;
     has_explicit_selection = selected_idx != -1 and selected_idx < gpus.length;
     effective_idx = selected_idx if has_explicit_selection else (
         0 if gpus.length > 0 else -1
     );
 
-    async def fetchSystemInfo -> None {
+    async def refreshGpuState -> None {
         try {
-            active_idx = config["active_ssh_index"]
-            if "active_ssh_index" in config
+            active_idx = pageConfig["active_ssh_index"]
+            if "active_ssh_index" in pageConfig
             else -1;
-            ssh_connections = config["ssh_connections"]
-            if "ssh_connections" in config
+            ssh_connections = pageConfig["ssh_connections"]
+            if "ssh_connections" in pageConfig
             else [];
             ssh_conn = None;
             if active_idx != -1 and active_idx < ssh_connections.length {
@@ -56,17 +72,50 @@ def:pub GpuPage -> Any {
                 };
             }
 
-            resp = await __jacSpawn("GetSystemInfo", "", payload);
+            config_http = await fetch("/walker/GetConfig", {
+                "method": "POST",
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                },
+                "body": JSON.stringify({})
+            });
+            config_payload = JSON.parse(await config_http.text());
+            loaded_config = config_payload["data"]["reports"][0]
+            if config_payload and "data" in config_payload and config_payload["data"]
+            and "reports" in config_payload["data"] and config_payload["data"]["reports"]
+            else {};
 
-            data = resp.reports[0]
-            if resp and resp.reports and resp.reports.length > 0
+            info_http = await fetch("/walker/GetSystemInfo", {
+                "method": "POST",
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                },
+                "body": JSON.stringify(payload)
+            });
+            info_payload = JSON.parse(await info_http.text());
+            data = info_payload["data"]["reports"][0]
+            if info_payload and "data" in info_payload and info_payload["data"]
+            and "reports" in info_payload["data"] and info_payload["data"]["reports"]
             else None;
 
+            if loaded_config {
+                if (
+                    ("selected_gpu_index" not in loaded_config or loaded_config["selected_gpu_index"] == -1)
+                    and data and "gpus" in data and data["gpus"]
+                ) {
+                    loaded_config["selected_gpu_index"] = 0;
+                    loaded_config["selected_gpu_info"] = data["gpus"][0];
+                }
+                setPageConfig(loaded_config);
+                setConfig(loaded_config);
+            }
             if data {
                 setSystemInfo(data);
             }
         } except Exception as e {
-            console.error("Failed to fetch system info:", e);
+            console.error("Failed to refresh GPU page state:", e);
             console.error("Error stack:", e.stack);
         }
     }
@@ -80,7 +129,7 @@ def:pub GpuPage -> Any {
         }
     }, [hwInfo, systemInfo]);
 
-    useEffect(lambda -> None { fetchSystemInfo();}, [config]);
+    useEffect(lambda -> None { refreshGpuState();}, []);
 
     gpu_options = [];
     idx = 0;
@@ -103,7 +152,7 @@ def:pub GpuPage -> Any {
     else None;
 
     def handleGpuSelect(index: str) -> None {
-        new_config = {** config};
+        new_config = {** pageConfig};
         idx_int = parseInt(index);
         new_config["selected_gpu_index"] = idx_int;
         if idx_int != -1 and idx_int < gpus.length {
@@ -111,12 +160,13 @@ def:pub GpuPage -> Any {
         } else {
             new_config["selected_gpu_info"] = None;
         }
+        setPageConfig(new_config);
         setConfig(new_config);
     }
 
     async def handleSave -> None {
         setSaving(True);
-        await saveConfig(config);
+        await saveConfig(pageConfig);
         setSaving(False);
     }
 
@@ -233,7 +283,7 @@ def:pub GpuPage -> Any {
                 
                 <div className="p-6 border-t border-[var(--border)] bg-[var(--bg-panel)] shrink-0 flex items-center justify-between gap-4">
                     <button
-                        onClick={fetchSystemInfo}
+                        onClick={refreshGpuState}
                         className="px-6 h-10 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-lg transition-all border border-zinc-700"
                     >
                         Refresh
