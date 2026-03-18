@@ -4,6 +4,22 @@ import from react { useEffect, useRef }
 
 def:pub EmberBackground(className: str = "") -> Any {
     canvasRef = useRef(None);
+    desktop_build = window["__KFORGE_DESKTOP_BUILD__"]
+    if "__KFORGE_DESKTOP_BUILD__" in window and window["__KFORGE_DESKTOP_BUILD__"]
+    else None;
+    isDesktop = bool(
+        desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
+    );
+
+    baseClass = "app-life-canvas";  # Keeping base class for absolute positioning
+    if className {
+        baseClass = baseClass + f" {className}";
+    }
+
+    if isDesktop {
+        return
+            <div className={baseClass + " app-backdrop-static app-backdrop-static--ember"}/>;
+    }
 
     useEffect(
         lambda -> Any { canvas = canvasRef.current;if not canvas {
@@ -120,11 +136,6 @@ def:pub EmberBackground(className: str = "") -> Any {
         );window.removeEventListener("resize", resize);}; },
         []
     );
-
-    baseClass = "app-life-canvas";  # Keeping base class for absolute positioning
-    if className {
-        baseClass = baseClass + f" {className}";
-    }
 
     return
         <canvas ref={canvasRef} className={baseClass}/>;

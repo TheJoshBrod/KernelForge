@@ -15,6 +15,9 @@ def:pub Home -> Any {
     min_splash_ms = 250
     if desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
     else 3000;
+    splash_exit_ms = 180
+    if desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
+    else 900;
 
     projects_state = useState([]);
     projects = projects_state[0];
@@ -79,7 +82,7 @@ def:pub Home -> Any {
             }
             setLoading(False);
             setSplashDone(True);
-            setTimeout(lambda -> None { setSplashVisible(False); }, 900);
+            setTimeout(lambda -> None { setSplashVisible(False); }, splash_exit_ms);
         }
     }
 

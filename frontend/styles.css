@@ -1277,8 +1277,110 @@ video {
   opacity: 0.4;
 }
 
+.app-backdrop-static {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.app-backdrop-static--ember {
+  background:
+    radial-gradient(circle at 50% 100%, rgba(214, 48, 49, 0.30) 0%, rgba(225, 112, 85, 0.18) 28%, rgba(0, 0, 0, 0) 70%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.05) 0%, rgba(214, 48, 49, 0.08) 62%, rgba(214, 48, 49, 0.14) 100%);
+}
+
+.app-backdrop-static--grid {
+  background:
+    linear-gradient(180deg, rgba(134, 230, 169, 0.04) 0%, rgba(0, 0, 0, 0) 35%),
+    repeating-linear-gradient(
+      0deg,
+      rgba(134, 230, 169, 0.10) 0,
+      rgba(134, 230, 169, 0.10) 1px,
+      transparent 1px,
+      transparent 10px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(134, 230, 169, 0.08) 0,
+      rgba(134, 230, 169, 0.08) 1px,
+      transparent 1px,
+      transparent 10px
+    );
+}
+
 .app-backdrop--splash {
   opacity: 0.9;
+}
+
+html.kf-desktop-performance .app-life-canvas,
+body.kf-desktop-performance .app-life-canvas,
+html.kf-desktop-performance .app-backdrop-static,
+body.kf-desktop-performance .app-backdrop-static {
+  opacity: 0.16;
+  filter: none;
+}
+
+html.kf-desktop-performance .app-backdrop-static--ember,
+body.kf-desktop-performance .app-backdrop-static--ember {
+  background:
+    radial-gradient(60% 65% at 50% 100%, rgba(214, 48, 49, 0.22) 0%, rgba(225, 112, 85, 0.16) 28%, rgba(0, 0, 0, 0) 72%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.34));
+}
+
+html.kf-desktop-performance .app-backdrop-static--grid,
+body.kf-desktop-performance .app-backdrop-static--grid {
+  background-image:
+    linear-gradient(to right, rgba(134, 230, 169, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(134, 230, 169, 0.045) 1px, transparent 1px),
+    radial-gradient(circle at center, rgba(134, 230, 169, 0.08), rgba(0, 0, 0, 0) 58%);
+  background-size: 28px 28px, 28px 28px, 100% 100%;
+  background-position: 0 0, 0 0, center;
+}
+
+html.kf-desktop-performance .noise-overlay,
+body.kf-desktop-performance .noise-overlay {
+  display: none;
+}
+
+html.kf-desktop-performance .heat-divider,
+body.kf-desktop-performance .heat-divider {
+  animation: none;
+  background-position: 50% 0;
+  box-shadow: none;
+  opacity: 0.6;
+}
+
+html.kf-desktop-performance .clip-anvil,
+html.kf-desktop-performance .clip-hex,
+body.kf-desktop-performance .clip-anvil,
+body.kf-desktop-performance .clip-hex {
+  clip-path: none;
+}
+
+html.kf-desktop-performance .shadow-2xl,
+body.kf-desktop-performance .shadow-2xl {
+  box-shadow: 0 10px 24px rgba(2, 6, 12, 0.36);
+}
+
+html.kf-desktop-performance .splash-screen,
+body.kf-desktop-performance .splash-screen {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+html.kf-desktop-performance .splash-content,
+body.kf-desktop-performance .splash-content {
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+
+html.kf-desktop-performance .splash-mascot-img,
+body.kf-desktop-performance .splash-mascot-img {
+  filter: none;
+}
+
+html.kf-desktop-performance [class*="backdrop-blur"],
+body.kf-desktop-performance [class*="backdrop-blur"] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 
 .sidebar {

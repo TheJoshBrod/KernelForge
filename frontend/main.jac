@@ -138,10 +138,25 @@ cl {
     }
 
     def:pub app {
+        build_info = (
+            window["__KFORGE_DESKTOP_BUILD__"]
+            if "__KFORGE_DESKTOP_BUILD__" in window and window["__KFORGE_DESKTOP_BUILD__"]
+            else None
+        );
+        is_desktop_build = bool(
+            build_info
+            and "desktop" in build_info
+            and build_info["desktop"]
+        );
         useEffect(
-            lambda -> None {
+            lambda -> Any {
                 window.Exception = Error;
                 document.title = "Kernel Forge";
+
+                if is_desktop_build {
+                    document.documentElement.classList.add("kf-desktop-performance");
+                    document.body.classList.add("kf-desktop-performance");
+                }
                 
                 # Dynamic Favicon
                 link = document.querySelector("link[rel~='icon']");
@@ -152,6 +167,10 @@ cl {
                 }
                 link.href = "/KernelForge.svg";
                 maybeCheckForDesktopUpdate();
+                return lambda -> None {
+                    document.documentElement.classList.remove("kf-desktop-performance");
+                    document.body.classList.remove("kf-desktop-performance");
+                };
             }, []
         );
         return
