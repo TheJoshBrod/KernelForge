@@ -198,8 +198,13 @@ finally:
     if created_name:
         remove = walker("DeleteProject", {"projectName": created_name})
         assert remove and remove.get("success") is True, remove
-        remaining = walker("GetProjects", {})
-        names = [p["name"] for p in remaining.get("projects", [])]
+        names = []
+        for _ in range(6):
+            remaining = walker("GetProjects", {})
+            names = [p["name"] for p in remaining.get("projects", [])]
+            if created_name not in names:
+                break
+            time.sleep(1)
         assert created_name not in names, names
         print(f"[smoke] deleted project {created_name}", flush=True)
 
