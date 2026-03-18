@@ -27,6 +27,10 @@ def:pub GpuPage -> Any {
     selected_idx = config["selected_gpu_index"]
     if "selected_gpu_index" in config
     else -1;
+    has_explicit_selection = selected_idx != -1 and selected_idx < gpus.length;
+    effective_idx = selected_idx if has_explicit_selection else (
+        0 if gpus.length > 0 else -1
+    );
 
     async def fetchSystemInfo -> None {
         try {
@@ -84,8 +88,8 @@ def:pub GpuPage -> Any {
         idx += 1;
     }
 
-    selected_gpu = gpus[selected_idx]
-    if selected_idx != -1 and selected_idx < gpus.length
+    selected_gpu = gpus[effective_idx]
+    if effective_idx != -1 and effective_idx < gpus.length
     else None;
 
     def handleGpuSelect(index: str) -> None {
@@ -166,44 +170,53 @@ def:pub GpuPage -> Any {
                             className="p-4 rounded-lg border border-zinc-800 bg-zinc-900/50 space-y-2"
                         >
                             <div className="text-sm font-bold text-zinc-100">
-                                Selected GPU
+                                {"Selected GPU" if has_explicit_selection else "Detected GPU"}
                             </div>
+                            {(
+                                <div className="text-xs text-[var(--accent)] font-mono uppercase tracking-widest">
+                                    No GPU is saved in config yet. Showing the first detected accelerator.
+                                </div>
+                            ) if selected_gpu and not has_explicit_selection else None}
                             <div className="text-sm text-zinc-300">
-                                {gpus[selected_idx]["name"]
-                                if selected_idx != -1
-                                and selected_idx < gpus.length
-                                and "name" in gpus[selected_idx]
+                                {selected_gpu["name"]
+                                if selected_gpu
+                                and "name" in selected_gpu
                                 else "N/A"}
                             </div>
                             <div className="text-xs text-zinc-400 space-y-1">
                                 <div>
-                                    Memory:{gpus[selected_idx]["memory"]
-                                    if selected_idx != -1
-                                    and selected_idx < gpus.length
-                                    and "memory" in gpus[selected_idx]
+                                    Memory:{selected_gpu["memory"]
+                                    if selected_gpu
+                                    and "memory" in selected_gpu
                                     else "N/A"}
                                 </div>
                                 <div>
-                                    Compute:{gpus[selected_idx]["compute_capability"]
-                                    if selected_idx != -1
-                                    and selected_idx < gpus.length
-                                    and "compute_capability" in gpus[selected_idx]
+                                    Compute:{selected_gpu["compute_capability"]
+                                    if selected_gpu
+                                    and "compute_capability" in selected_gpu
                                     else "N/A"}
                                 </div>
                                 <div>
-                                    SMs:{gpus[selected_idx]["sm_count"]
-                                    if selected_idx != -1
-                                    and selected_idx < gpus.length
-                                    and "sm_count" in gpus[selected_idx]
+                                    SMs:{selected_gpu["sm_count"]
+                                    if selected_gpu
+                                    and "sm_count" in selected_gpu
+                                    else "N/A"}
+                                </div>
+                                <div>
+                                    Runtime:{(
+                                        "CUDA ready"
+                                        if "runtime_usable" in selected_gpu and selected_gpu["runtime_usable"]
+                                        else "Detected only"
+                                    ) if selected_gpu
                                     else "N/A"}
                                 </div>
                             </div>
                         </div>
                     )
-                    if selected_idx != -1 and selected_idx < gpus.length
+                    if selected_gpu
                     else (
                         <div className="text-sm text-zinc-500 italic">
-                            Select a GPU to see stats.
+                            No accelerators detected.
                         </div>
                     )}
                 </div>
