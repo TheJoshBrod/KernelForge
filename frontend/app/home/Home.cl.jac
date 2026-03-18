@@ -18,6 +18,23 @@ def:pub Home -> Any {
     splash_exit_ms = 180
     if desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
     else 900;
+    isDesktop = bool(
+        desktop_build and "desktop" in desktop_build and desktop_build["desktop"]
+    );
+    scenePanelClass = "relative z-10 w-full max-w-4xl h-[70vh] border border-[var(--border)] rounded-sm flex flex-col";
+    if isDesktop {
+        scenePanelClass = scenePanelClass + " bg-[var(--bg-panel)] shadow-xl";
+    } else {
+        scenePanelClass = scenePanelClass + " bg-[var(--bg-panel)]/90 backdrop-blur-md shadow-2xl animation-fade-in-up delay-1 clip-hex";
+    }
+    deleteModalOverlayClass = "fixed inset-0 z-[100] flex items-center justify-center bg-black/80 animation-fade-in";
+    if not isDesktop {
+        deleteModalOverlayClass = deleteModalOverlayClass + " backdrop-blur-sm";
+    }
+    deleteModalCardClass = "bg-[var(--bg-panel)] border border-[var(--border)] p-8 max-w-md w-full relative overflow-hidden";
+    if not isDesktop {
+        deleteModalCardClass = deleteModalCardClass + " clip-anvil";
+    }
 
     projects_state = useState([]);
     projects = projects_state[0];
@@ -170,8 +187,8 @@ def:pub Home -> Any {
     deleteModal = None;
     if projectToDelete != "" {
         deleteModal = (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animation-fade-in">
-                <div className="bg-[var(--bg-panel)] border border-[var(--border)] p-8 max-w-md w-full relative overflow-hidden clip-anvil">
+            <div className={deleteModalOverlayClass}>
+                <div className={deleteModalCardClass}>
                     <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-red-600 to-orange-500"></div>
                     <h2 className="text-xl font-bold text-white mb-4 industrial-font-display uppercase tracking-wider">
                         Delete Project
@@ -204,8 +221,8 @@ def:pub Home -> Any {
         >
             {<SplashScreen exiting={splashDone}/> if splashVisible else None}
             <div className="absolute inset-0 z-0 industrial-grid-bg opacity-30"></div>
-            <div className="noise-overlay opacity-30"></div>
-            <EmberBackground className="absolute inset-0 z-0"/>
+            {<div className="noise-overlay opacity-30"></div> if not isDesktop else None}
+            {<EmberBackground className="absolute inset-0 z-0"/> if not isDesktop else None}
             <div
                 className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-black/50 z-10 pointer-events-none"
             ></div>
@@ -241,15 +258,13 @@ def:pub Home -> Any {
                     </div>
                 </div>
             </div>
-            <div
-                className="relative z-10 w-full max-w-4xl h-[70vh] bg-[var(--bg-panel)]/90 backdrop-blur-md border border-[var(--border)] rounded-sm shadow-2xl flex flex-col animation-fade-in-up delay-1 clip-hex"
-            >
+            <div className={scenePanelClass}>
                 <div
                     className="p-6 border-b border-[var(--border)] space-y-4 shrink-0 relative overflow-hidden"
                 >
-                    <div
-                        className="absolute top-0 left-0 right-0 heat-divider"
-                    ></div>
+                    {(
+                        <div className="absolute top-0 left-0 right-0 heat-divider"></div>
+                    ) if not isDesktop else None}
                     <div className="relative flex items-center gap-4">
                         <input
                             type="text"

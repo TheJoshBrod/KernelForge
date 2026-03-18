@@ -3,6 +3,7 @@
 import from react { useEffect, useState }
 import from sonner { toast }
 import from "react-router-dom" { useNavigate }
+import from ...components.ui.DesktopRuntime { isDesktopBuild }
 import from ...context.ConfigContext { useConfig }
 import from ...components.ui.Icons { SettingsIcon, BackIcon, UploadIcon, FolderIcon }
 import from ...components.editor.ForgePythonEditor { ForgePythonEditor }
@@ -37,6 +38,7 @@ def fileToText(file: Any) -> Any {
 
 def:pub NewProject -> Any {
     navigate = useNavigate();
+    desktopBuild = isDesktopBuild();
     config_ctx = useConfig();
     config = config_ctx.config;
 
@@ -189,9 +191,9 @@ def:pub NewProject -> Any {
             return;
         }setStageIndex(Math.floor(Date.now() / 1300) % stageCycle.length);timer = setInterval(
             lambda -> None { setStageIndex(Math.floor(Date.now() / 1300) % stageCycle.length);},
-            650
+            1200 if desktopBuild else 650
         );return lambda -> None { clearInterval(timer);}; },
-        [isSubmitting]
+        [isSubmitting, desktopBuild]
     );
 
     async def handleCreate -> None {
@@ -322,17 +324,24 @@ def:pub NewProject -> Any {
         <main className="app-shell">
             {loadingOverlay}
             <div className="app-backdrop app-backdrop--forge"></div>
-            <div className="app-backdrop-embers">
+            {<div className="app-backdrop-embers">
                 <span className="ember-particle"></span>
                 <span className="ember-particle"></span>
                 <span className="ember-particle"></span>
                 <span className="ember-particle"></span>
                 <span className="ember-particle"></span>
                 <span className="ember-particle"></span>
-            </div>
+            </div> if not desktopBuild else None}
             <div className="app-content-layer h-screen w-full p-4 md:p-6">
                 <div
-                    className="h-full w-full border border-[var(--border)] bg-[var(--surface-0)] clip-anvil shadow-[0_22px_48px_rgba(0,0,0,0.45)] overflow-hidden"
+                    className={
+                        "h-full w-full border border-[var(--border)] bg-[var(--surface-0)] overflow-hidden"
+                        + (
+                            " shadow-[0_14px_30px_rgba(0,0,0,0.36)]"
+                            if desktopBuild
+                            else " clip-anvil shadow-[0_22px_48px_rgba(0,0,0,0.45)]"
+                        )
+                    }
                 >
                     <div
                         className="h-14 flex items-center justify-between px-6 border-b border-[var(--border)] bg-[var(--surface-1)] relative"
