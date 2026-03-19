@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 730 568">
+  <!-- Generator: Adobe Illustrator 30.2.1, SVG Export Plug-In . SVG Version: 2.1.1 Build 1)  -->
+  <defs>
+    <style>
+      .st0, .st1, .st2, .st3, .st4, .st5, .st6 {
+        fill: none;
+      }
+
+      .st0, .st1, .st2, .st3, .st7, .st6 {
+        stroke-width: 2px;
+      }
+
+      .st0, .st7 {
+        stroke: #f0883e;
+      }
+
+      .st1 {
+        stroke: #64a7ff;
+      }
+
+      .st8, .st9, .st10 {
+        fill: #f0883e;
+      }
+
+      .st11, .st12, .st9, .st10, .st13, .st14, .st15, .st16, .st17, .st18 {
+        isolation: isolate;
+      }
+
+      .st11, .st12, .st14, .st15 {
+        font-family: SegoeUI, 'Segoe UI';
+      }
+
+      .st11, .st14 {
+        font-size: 12px;
+      }
+
+      .st11, .st19, .st15, .st17 {
+        fill: #f85149;
+      }
+
+      .st20, .st12, .st18 {
+        fill: #3fb950;
+      }
+
+      .st12, .st15 {
+        font-size: 11px;
+      }
+
+      .st9, .st10, .st13, .st16, .st17, .st18 {
+        font-family: SegoeUI-Bold, 'Segoe UI';
+        font-weight: 700;
+      }
+
+      .st9, .st16, .st17, .st18 {
+        font-size: 16px;
+      }
+
+      .st21 {
+        fill: #64a7ff;
+      }
+
+      .st10 {
+        font-size: 13px;
+      }
+
+      .st13 {
+        fill: #e6edf3;
+        font-size: 28px;
+      }
+
+      .st2 {
+        stroke-miterlimit: 10;
+      }
+
+      .st2, .st6 {
+        stroke: #f85149;
+      }
+
+      .st14 {
+        fill: #5ab749;
+      }
+
+      .st3 {
+        stroke: #3fb950;
+      }
+
+      .st4 {
+        stroke: #30363d;
+      }
+
+      .st4, .st5 {
+        stroke-width: 1.5px;
+      }
+
+      .st5 {
+        stroke: #238636;
+        stroke-dasharray: 8 4;
+      }
+
+      .st16 {
+        fill: #58a6ff;
+      }
+
+      .st7, .st22 {
+        fill: #0d1117;
+      }
+    </style>
+  </defs>
+  <rect class="st22" width="730" height="568" rx="12" ry="12"/>
+  <rect class="st4" x="3" y="3" width="724" height="562" rx="10" ry="10"/>
+  <text class="st13" transform="translate(234.9 40.42)"><tspan x="0" y="0">Generation Pipeline</tspan></text>
+  <text class="st16" transform="translate(325.21 80)"><tspan x="0" y="0">1. Monitor</tspan></text>
+  <line class="st1" x1="365" y1="88" x2="365" y2="106"/>
+  <polygon class="st21" points="359 106 371 106 365 116 359 106"/>
+  <text class="st16" transform="translate(298.04 132)"><tspan x="0" y="0">2. Load I/O Traces</tspan></text>
+  <line class="st1" x1="365" y1="140" x2="365" y2="158"/>
+  <polygon class="st21" points="359 158 371 158 365 168 359 158"/>
+  <text class="st16" transform="translate(305.99 184)"><tspan x="0" y="0">3. Build Prompt</tspan></text>
+  <line class="st1" x1="365" y1="192" x2="365" y2="214"/>
+  <polygon class="st21" points="359 214 371 214 365 224 359 214"/>
+  <rect class="st5" x="148" y="230" width="368" height="318" rx="10" ry="10"/>
+  <text class="st12" transform="translate(246.03 248)"><tspan x="0" y="0">Generation Loop (up to 8 attempts)</tspan></text>
+  <text class="st18" transform="translate(303.9 272)"><tspan x="0" y="0">4. LLM Generate</tspan></text>
+  <line class="st3" x1="365" y1="280" x2="365" y2="298"/>
+  <polygon class="st20" points="359 298 371 298 365 308 359 298"/>
+  <text class="st18" transform="translate(308.79 324)"><tspan x="0" y="0">5. Write Kernel</tspan></text>
+  <line class="st3" x1="365" y1="332" x2="365" y2="350"/>
+  <polygon class="st20" points="359 350 371 350 365 360 359 350"/>
+  <text class="st9" transform="translate(299.47 376)"><tspan x="0" y="0">6. Validate Kernel</tspan></text>
+  <line class="st0" x1="365" y1="384" x2="365" y2="402"/>
+  <polygon class="st8" points="359 402 371 402 365 412 359 402"/>
+  <polygon class="st7" points="365 418 408 444 365 470 322 444 365 418"/>
+  <text class="st10" transform="translate(349.11 449)"><tspan x="0" y="0">Pass?</tspan></text>
+  <line class="st3" x1="408" y1="444" x2="572" y2="444"/>
+  <polygon class="st20" points="572 439 572 449 582 444 572 439"/>
+  <text class="st14" transform="translate(417 437)"><tspan x="0" y="0">YES</tspan></text>
+  <text class="st18" transform="translate(592 449)"><tspan x="0" y="0">Success</tspan></text>
+  <line class="st6" x1="365" y1="470" x2="365" y2="486"/>
+  <polygon class="st19" points="359 486 371 486 365 496 359 486"/>
+  <text class="st11" transform="translate(372 487)"><tspan x="0" y="0">NO</tspan></text>
+  <text class="st17" transform="translate(279.79 516)"><tspan x="0" y="0">7. Build Repair Prompt</tspan></text>
+  <polyline class="st2" points="277 511.38 195 511.38 195 265 293 265"/>
+  <polygon class="st19" points="289 260 289 270 299 265 289 260"/>
+  <text class="st15" transform="translate(183 405) rotate(-90)"><tspan x="0" y="0">retry</tspan></text>
+  <line class="st6" x1="452.47" y1="511" x2="572" y2="511"/>
+  <polygon class="st19" points="572 506 572 516 582 511 572 506"/>
+  <text class="st17" transform="translate(592.72 516)"><tspan x="0" y="0">Failed</tspan></text>
+</svg>

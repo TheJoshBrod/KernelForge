@@ -4,8 +4,8 @@ import from react { useEffect, useRef, useState }
 
 def _theme_var(name: str, fallback: str) -> str {
     try {
-        root = document.documentElement;
-        styles = window.getComputedStyle(root);
+        doc_root = document.documentElement;
+        styles = window.getComputedStyle(doc_root);
         value = styles.getPropertyValue(name);
         if value and value.trim() {
             return value.trim();
