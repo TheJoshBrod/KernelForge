@@ -1,5 +1,8 @@
+--extra-index-url https://download.pytorch.org/whl/cu130
+
 # Core
-torch
+torch==2.10.0+cu130 ; platform_system == "Linux" and platform_machine == "aarch64"
+torch==2.10.0 ; platform_system != "Linux" or platform_machine != "aarch64"
 numpy
 pandas
 pyarrow
