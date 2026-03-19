@@ -430,14 +430,6 @@ def:pub WorkQueuePanel(props: any) -> Any {
                             view completed
                         </button> if completed.length > 0 else <span/>}
                     </div>
-                    {<div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs font-mono bg-black/20 rounded px-3 py-1.5 border border-[var(--border)]">
-                        <div className="flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse"></span>
-                            <span className="text-zinc-500 uppercase tracking-wider text-[10px]">GPU Slot:</span>
-                        </div>
-                        <span className="text-zinc-200 font-semibold">{benchmarkSlot["now"] if benchmarkSlot["now"] else "idle"}</span>
-                        {<span className="text-zinc-500">· Next: <span className="text-zinc-400">{to_list(pendingOperators).join(", ")}</span></span> if list_len(pendingOperators) > 0 else <span></span>}
-                    </div> if activePoll else <span></span>}
                 </div>
                 <div className="divide-y divide-[var(--border)] max-h-[400px] overflow-y-auto">
                     {<div className="p-8 text-center text-xs text-zinc-200 font-mono">Queue empty</div> if show_empty else <span/>}
