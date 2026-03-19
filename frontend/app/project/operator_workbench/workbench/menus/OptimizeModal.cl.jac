@@ -162,7 +162,18 @@ def:pub OptimizeModal(props: any) -> Any {
                             setModels(list_models);
                             # Set default if none selected and list not empty
                             if not llmModel and list_len(list_models) > 0 {
-                                setLlmModel(list_models[0]["id"]);
+                                saved_str = localStorage.getItem("kf_llm_pref_" + resolvedProjectName);
+                                saved_pref = None;
+                                try { saved_pref = JSON.parse(saved_str); } except Exception { }
+                                saved_id = saved_pref["model"] if saved_pref and "model" in saved_pref else "";
+                                saved_prov = saved_pref["provider"] if saved_pref and "provider" in saved_pref else "";
+                                model_ids = list_models.map(lambda m: dict -> str { return m["id"]; });
+                                if saved_id and model_ids.includes(saved_id) {
+                                    setLlmModel(saved_id);
+                                    if saved_prov { setLlmProvider(saved_prov); }
+                                } else {
+                                    setLlmModel(list_models[0]["id"]);
+                                }
                             }
                         }
                     }
@@ -222,6 +233,22 @@ def:pub OptimizeModal(props: any) -> Any {
         }},
         [isOpen, resolvedProjectName]
     );
+
+    def handleModelChange(model_id: str) -> None {
+        setLlmModel(model_id);
+        selected_provider = "openai";
+        for m in models {
+            if m["id"] == model_id {
+                selected_provider = m["provider"] if "provider" in m else "openai";
+                break;
+            }
+        }
+        setLlmProvider(selected_provider);
+        try {
+            pref = JSON.stringify({"model": model_id, "provider": selected_provider});
+            localStorage.setItem("kf_llm_pref_" + resolvedProjectName, pref);
+        } except Exception { }
+    }
 
     provider_option_nodes = [];
     for p in provider_options {
@@ -411,7 +438,7 @@ def:pub OptimizeModal(props: any) -> Any {
                         <div className="relative">
                             <SearchableSelect
                                 value={llmModel}
-                                onChange={setLlmModel}
+                                onChange={handleModelChange}
                                 options={models.map(
                                     lambda m: dict  -> dict { return {
                                         "value": m["id"],
