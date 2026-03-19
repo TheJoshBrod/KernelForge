@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import platform
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -15,6 +14,12 @@ import torch.nn.functional as F
 from src.progress import update_job_progress
 from src.optimizer.tree_store import update_root_value
 
+from .harness import (
+    DEFAULT_TIMED_RUNS,
+    DEFAULT_WARMUP_RUNS,
+    benchmark_entry_calls,
+    sync_device as benchmark_sync_device,
+)
 from .paths import find_latest_optimized_dir, project_dir_for_name
 from .state import read_json_file, write_json_file
 
@@ -34,13 +39,6 @@ def _resolve_device() -> str:
     if hasattr(torch, "backends") and torch.backends.mps.is_available():
         return "mps"
     return "cuda" if torch.cuda.is_available() else "cpu"
-
-
-def _sync_device(device: str) -> None:
-    if device == "cuda" and torch.cuda.is_available():
-        torch.cuda.synchronize()
-    elif device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
-        torch.mps.synchronize()
 
 
 def _move_to_device(obj: Any, device: str) -> Any:
@@ -65,12 +63,12 @@ def _global_warmup(device: str) -> None:
             for _ in range(6):
                 z = x @ y
                 x = torch.relu(z)
-        _sync_device(device)
+        benchmark_sync_device(device)
     except Exception:
         pass
 
 
-def _entry_signature(entries: list[tuple[Any, dict[str, Any]]]) -> str:
+def _entry_signature(entries: list[tuple[str, Any, dict[str, Any]]]) -> str:
     def _sig(v: Any) -> Any:
         if torch.is_tensor(v):
             return {
@@ -90,7 +88,7 @@ def _entry_signature(entries: list[tuple[Any, dict[str, Any]]]) -> str:
     if not entries:
         return "empty"
     sample = entries[:3]
-    payload = [(_sig(args), _sig(kwargs)) for args, kwargs in sample]
+    payload = [(entry_file, _sig(args), _sig(kwargs)) for entry_file, args, kwargs in sample]
     return json.dumps(payload, sort_keys=True)
 
 
@@ -129,8 +127,8 @@ def _ops_from_csv(raw: str) -> list[str]:
     return out
 
 
-def _load_entries(io_dir: Path, max_entries: int) -> list[tuple[Any, dict[str, Any]]]:
-    entries: list[tuple[Any, dict[str, Any]]] = []
+def _load_entries(io_dir: Path, max_entries: int) -> list[tuple[str, Any, dict[str, Any]]]:
+    entries: list[tuple[str, Any, dict[str, Any]]] = []
     files = sorted(io_dir.glob("entry_*.pt"))[:max_entries]
     for pt in files:
         try:
@@ -145,7 +143,7 @@ def _load_entries(io_dir: Path, max_entries: int) -> list[tuple[Any, dict[str, A
         kwargs = payload.get("kwargs", {})
         if kwargs is None:
             kwargs = {}
-        entries.append((args, kwargs))
+        entries.append((pt.name, args, kwargs))
     return entries
 
 
@@ -181,59 +179,96 @@ def _run_call(func, args: Any, kwargs: dict[str, Any]):
     return func(args, **kwargs)
 
 
-def _measure_pytorch(func, entries: list[tuple[Any, dict[str, Any]]], device: str, repeats: int = 100) -> float:
+def _measure_pytorch(
+    func,
+    entries: list[tuple[str, Any, dict[str, Any]]],
+    device: str,
+) -> dict[str, Any]:
     if not entries:
-        return 0.0
+        return benchmark_entry_calls([], device=device)
 
-    warmup_entries = entries[: min(3, len(entries))]
-    for _ in range(25):
-        for args, kwargs in warmup_entries:
-            d_args = _move_to_device(args, device)
-            d_kwargs = _move_to_device(kwargs, device)
+    entry_calls = []
+    for entry_file, args, kwargs in entries:
+        d_args = _move_to_device(args, device)
+        d_kwargs = _move_to_device(kwargs, device)
+
+        def invoke(bound_args=d_args, bound_kwargs=d_kwargs):
+            return _run_call(func, bound_args, bound_kwargs)
+
+        entry_calls.append((entry_file, invoke))
+
+    return benchmark_entry_calls(
+        entry_calls,
+        device=device,
+        warmup_runs=DEFAULT_WARMUP_RUNS,
+        timed_runs=DEFAULT_TIMED_RUNS,
+    )
+
+
+def _coerce_cached_measurement(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, (int, float)):
+        return {
+            "mean_time_ms": float(value),
+            "entry_files": [],
+            "entry_latencies_ms": [],
+            "entry_results": [],
+            "entry_count": 0,
+            "errors": [],
+            "warmup_runs": DEFAULT_WARMUP_RUNS,
+            "timed_runs": DEFAULT_TIMED_RUNS,
+        }
+    if not isinstance(value, dict):
+        return None
+
+    entry_files_raw = value.get("entry_files")
+    entry_files = (
+        [str(item) for item in entry_files_raw]
+        if isinstance(entry_files_raw, list)
+        else []
+    )
+    entry_latencies_raw = value.get("entry_latencies_ms")
+    entry_latencies = []
+    if isinstance(entry_latencies_raw, list):
+        for item in entry_latencies_raw:
             try:
-                _run_call(func, d_args, d_kwargs)
+                entry_latencies.append(float(item))
             except Exception:
-                pass
-    _sync_device(device)
+                continue
 
-    timings: list[float] = []
-    if device == "cuda":
-        for args, kwargs in entries:
-            d_args = _move_to_device(args, device)
-            d_kwargs = _move_to_device(kwargs, device)
-            start = torch.cuda.Event(enable_timing=True)
-            end = torch.cuda.Event(enable_timing=True)
-            start.record()
-            ok = False
-            for _ in range(repeats):
-                try:
-                    _run_call(func, d_args, d_kwargs)
-                    ok = True
-                except Exception:
-                    break
-            end.record()
-            _sync_device(device)
-            if ok:
-                timings.append(start.elapsed_time(end) / repeats)
-    else:
-        for args, kwargs in entries:
-            d_args = _move_to_device(args, device)
-            d_kwargs = _move_to_device(kwargs, device)
-            t0 = time.perf_counter()
-            ok = False
-            for _ in range(repeats):
-                try:
-                    _run_call(func, d_args, d_kwargs)
-                    ok = True
-                except Exception:
-                    break
-            _sync_device(device)
-            if ok:
-                timings.append(((time.perf_counter() - t0) * 1000.0) / repeats)
+    mean_time_ms = value.get("mean_time_ms")
+    if mean_time_ms is None and entry_latencies:
+        mean_time_ms = sum(entry_latencies) / len(entry_latencies)
+    try:
+        parsed_mean = float(mean_time_ms) if mean_time_ms is not None else 0.0
+    except Exception:
+        parsed_mean = 0.0
 
-    if not timings:
-        return 0.0
-    return float(sum(timings) / len(timings))
+    entry_count_raw = value.get("entry_count")
+    try:
+        entry_count = int(entry_count_raw) if entry_count_raw is not None else len(entry_files)
+    except Exception:
+        entry_count = len(entry_files)
+
+    errors_raw = value.get("errors")
+    errors = errors_raw if isinstance(errors_raw, list) else []
+
+    entry_results = value.get("entry_results")
+    if not isinstance(entry_results, list):
+        entry_results = [
+            {"entry_file": entry_file, "latency_ms": latency_ms}
+            for entry_file, latency_ms in zip(entry_files, entry_latencies)
+        ]
+
+    return {
+        "mean_time_ms": parsed_mean,
+        "entry_files": entry_files,
+        "entry_latencies_ms": entry_latencies,
+        "entry_results": entry_results,
+        "entry_count": entry_count,
+        "errors": errors,
+        "warmup_runs": int(value.get("warmup_runs", DEFAULT_WARMUP_RUNS)),
+        "timed_runs": int(value.get("timed_runs", DEFAULT_TIMED_RUNS)),
+    }
 
 
 def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
@@ -295,8 +330,11 @@ def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
 
 
 def _profile_generated_kernel_ms(
-    project_dir: Path, op_name: str, io_op_dir: Path | None
-) -> tuple[float | None, str, str]:
+    project_dir: Path,
+    op_name: str,
+    io_op_dir: Path | None,
+    benchmark_entry_files: list[Path] | None = None,
+) -> tuple[dict[str, Any] | None, str, str]:
     generated_dir = (
         project_dir
         / "kernels"
@@ -316,13 +354,17 @@ def _profile_generated_kernel_ms(
             from src.optimizer.backends.cuda import CUDABackend
 
             stats = CUDABackend().profile_kernel(
-                {"tmp_dir": generated_dir, "io_dir": io_op_dir},
+                {
+                    "tmp_dir": generated_dir,
+                    "io_dir": io_op_dir,
+                    "entry_files": benchmark_entry_files or [],
+                },
                 baseline=True,
             )
             ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
             if ms is None:
                 return None, "generated_profile_missing", "cuda"
-            return float(ms), "ok", "cuda"
+            return stats, "ok", "cuda"
         except Exception as e:
             msg = str(e).strip()
             if "Ninja is required to load C++ extensions" in msg:
@@ -338,13 +380,17 @@ def _profile_generated_kernel_ms(
             from src.optimizer.backends.triton import TritonBackend
 
             stats = TritonBackend().profile_kernel(
-                {"tmp_dir": generated_dir, "io_dir": io_op_dir},
+                {
+                    "tmp_dir": generated_dir,
+                    "io_dir": io_op_dir,
+                    "entry_files": benchmark_entry_files or [],
+                },
                 baseline=True,
             )
             ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
             if ms is None:
                 return None, "generated_profile_missing", "triton"
-            return float(ms), "ok", "triton"
+            return stats, "ok", "triton"
         except Exception as e:
             return None, "generated_profile_error", "triton"
     if (generated_dir / "success.mps").exists():
@@ -378,26 +424,6 @@ def _load_op_counts(summary_path: Path) -> dict[str, int]:
     return result
 
 
-def _load_op_profile_ms(summary_path: Path) -> dict[str, float]:
-    if not summary_path.exists():
-        return {}
-    try:
-        data = json.loads(summary_path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    raw = data.get("op_profile_ms") if isinstance(data, dict) else {}
-    if not isinstance(raw, dict):
-        return {}
-    result: dict[str, float] = {}
-    for full_name, val in raw.items():
-        op_dir_name = _normalize_op_dir_name(str(full_name))
-        try:
-            result[op_dir_name] = float(val)
-        except Exception:
-            continue
-    return result
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
@@ -415,8 +441,7 @@ def main() -> int:
         io_root = project_dir / "io" / "individual_ops"
         summary_path = project_dir / "io" / "summary.json"
         op_counts = _load_op_counts(summary_path)
-        op_profile_ms = _load_op_profile_ms(summary_path)
-        if not io_root.exists() and not op_counts and not op_profile_ms:
+        if not io_root.exists() and not op_counts:
             write_json_file(
                 output_path,
                 {
@@ -436,13 +461,12 @@ def main() -> int:
         optimized_root = find_latest_optimized_dir(args.project)
 
         cache_raw = read_json_file(cache_path, {})
-        cache: dict[str, float] = {}
+        cache: dict[str, dict[str, Any]] = {}
         if isinstance(cache_raw, dict):
             for k, v in cache_raw.items():
-                try:
-                    cache[k] = float(v)
-                except Exception:
-                    continue
+                normalized = _coerce_cached_measurement(v)
+                if normalized is not None:
+                    cache[k] = normalized
 
         results_by_op: dict[str, dict[str, Any]] = {}
         errors: list[str] = []
@@ -452,7 +476,7 @@ def main() -> int:
                 if d.is_dir():
                     op_dirs[d.name] = d
 
-        candidate_ops = sorted(set(op_dirs.keys()) | set(op_counts.keys()) | set(op_profile_ms.keys()))
+        candidate_ops = sorted(set(op_dirs.keys()) | set(op_counts.keys()))
         selected_ops = _ops_from_csv(args.ops)
         if selected_ops:
             selected_set = set(selected_ops)
@@ -518,6 +542,11 @@ def main() -> int:
                 "timestamp": _now_iso(),
                 "status": status,
                 "device": device,
+                "benchmark_protocol": {
+                    "warmup_runs": DEFAULT_WARMUP_RUNS,
+                    "timed_runs": DEFAULT_TIMED_RUNS,
+                    "notes": "Internal ranking only; no confidence intervals.",
+                },
                 "runtime_fingerprint": json.loads(runtime_fingerprint),
                 "optimized_dir": str(optimized_root) if optimized_root else "",
                 "results": [results_by_op[k] for k in sorted(results_by_op.keys())],
@@ -540,25 +569,42 @@ def main() -> int:
             func = _get_pytorch_func(op_name)
 
             entry_sig = _entry_signature(entries) if entries else "summary_only"
-            cache_key = f"{runtime_fingerprint}:{op_name}:{entry_sig}:warmup=25,reps=100"
-            pytorch_ms = cache.get(cache_key)
-            baseline_source = "cache" if pytorch_ms is not None else ""
-            if pytorch_ms is None:
-                pytorch_ms = 0.0
+            cache_key = (
+                f"{runtime_fingerprint}:{op_name}:{entry_sig}:"
+                f"warmup={DEFAULT_WARMUP_RUNS},runs={DEFAULT_TIMED_RUNS}"
+            )
+            pytorch_measurement = cache.get(cache_key)
+            baseline_source = "cache" if pytorch_measurement is not None else ""
+            if pytorch_measurement is None:
+                pytorch_measurement = {
+                    "mean_time_ms": 0.0,
+                    "entry_files": [entry_file for entry_file, _, _ in entries],
+                    "entry_latencies_ms": [],
+                    "entry_results": [],
+                    "entry_count": len(entries),
+                    "errors": [],
+                    "warmup_runs": DEFAULT_WARMUP_RUNS,
+                    "timed_runs": DEFAULT_TIMED_RUNS,
+                }
                 if func and entries:
                     try:
-                        pytorch_ms = _measure_pytorch(func, entries, device)
+                        pytorch_measurement = _measure_pytorch(func, entries, device)
                         baseline_source = "measured"
                     except Exception as e:
                         errors.append(f"{op_name}: pytorch benchmark failed: {e}")
-                        pytorch_ms = 0.0
                         baseline_source = "error"
-                elif op_name in op_profile_ms:
-                    pytorch_ms = float(op_profile_ms[op_name])
-                    baseline_source = "profile_summary"
                 else:
                     baseline_source = "unavailable"
-                cache[cache_key] = float(pytorch_ms)
+                cache[cache_key] = pytorch_measurement
+
+            pytorch_ms = float(pytorch_measurement.get("mean_time_ms") or 0.0)
+            benchmarked_entry_files = pytorch_measurement.get("entry_files") or [
+                entry_file for entry_file, _, _ in entries
+            ]
+            benchmarked_entry_count = int(
+                pytorch_measurement.get("entry_count") or len(benchmarked_entry_files)
+            )
+            pytorch_entry_latencies = pytorch_measurement.get("entry_latencies_ms") or []
 
             count = op_counts.get(op_name, len(entries))
             try:
@@ -570,18 +616,40 @@ def main() -> int:
             kernel_status = "missing"
             backend = ""
             kernel_estimated = False
+            kernel_entry_latencies = []
+            kernel_benchmarked_entry_files = []
             if optimized_root:
                 kernel_ms, kernel_status, backend = _read_best_kernel_ms(optimized_root / op_name)
             else:
                 kernel_status = "missing_optimized_dir"
 
             if kernel_status != "ok":
-                generated_ms, generated_status, generated_backend = _profile_generated_kernel_ms(
-                    project_dir, op_name, op_dir
+                generated_stats, generated_status, generated_backend = _profile_generated_kernel_ms(
+                    project_dir,
+                    op_name,
+                    op_dir,
+                    benchmark_entry_files=[op_dir / name for name in benchmarked_entry_files]
+                    if op_dir and benchmarked_entry_files
+                    else None,
                 )
-                if generated_ms is not None:
-                    kernel_ms = generated_ms
+                if generated_stats is not None:
+                    kernel_ms_raw = (
+                        generated_stats.get("mean_time_ms")
+                        if isinstance(generated_stats, dict)
+                        else None
+                    )
+                    kernel_ms = float(kernel_ms_raw) if kernel_ms_raw is not None else None
                     kernel_status = "ok"
+                    kernel_entry_latencies = (
+                        generated_stats.get("entry_latencies_ms")
+                        if isinstance(generated_stats, dict)
+                        else []
+                    ) or []
+                    kernel_benchmarked_entry_files = (
+                        generated_stats.get("entry_files")
+                        if isinstance(generated_stats, dict)
+                        else []
+                    ) or []
                     if generated_backend:
                         backend = generated_backend
                 elif generated_status == "generated_profile_error_ninja" and pytorch_ms > 0.0:
@@ -622,13 +690,20 @@ def main() -> int:
 
             row = {
                 "op": op_name,
-                "entries": count,
+                "entries": benchmarked_entry_count,
+                "available_entries": count,
+                "benchmarked_entry_count": benchmarked_entry_count,
+                "benchmarked_entry_files": benchmarked_entry_files,
                 "pytorch_ms": float(pytorch_ms),
+                "pytorch_entry_latencies_ms": pytorch_entry_latencies,
                 "kernel_ms": float(kernel_ms) if kernel_ms is not None else None,
+                "kernel_entry_latencies_ms": kernel_entry_latencies,
                 "kernel_status": kernel_status,
                 "winner": winner,
                 "baseline_source": baseline_source,
             }
+            if kernel_benchmarked_entry_files:
+                row["kernel_benchmarked_entry_files"] = kernel_benchmarked_entry_files
             if backend:
                 row["backend"] = backend
             if kernel_estimated:
