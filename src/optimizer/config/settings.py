@@ -98,7 +98,7 @@ try:
         llm_model_name: str = "anthropic/claude-sonnet-4-6"
         cuda_home: str = _DEFAULT_CUDA_HOME
         retry_limit: int = 3
-        ancestor_code_depth: int = 3
+        ancestor_code_depth: int = 1
 
         model_config = SettingsConfigDict(env_prefix="OPTIMIZER_")
 
@@ -114,6 +114,6 @@ except Exception:
         llm_model_name: str = "anthropic/claude-sonnet-4-6"
         cuda_home: str = _DEFAULT_CUDA_HOME
         retry_limit: int = 3
-        ancestor_code_depth: int = 3
+        ancestor_code_depth: int = 1
 
     settings = _load_from_env("OPTIMIZER_", PipelineConfig)
