@@ -43,6 +43,88 @@ def:pub ConfigProvider(children: any) -> Any {
     hwInfo = hw_info_state[0];
     setHwInfo = hw_info_state[1];
 
+    def normalizeSelectedGpu(cfg: dict, hw: dict) -> dict {
+        merged_cfg = {** cfg};
+        gpus = hw["gpus"] if hw and "gpus" in hw and hw["gpus"] else [];
+        selected_idx = merged_cfg["selected_gpu_index"]
+        if merged_cfg and "selected_gpu_index" in merged_cfg
+        else -1;
+        selected_info = merged_cfg["selected_gpu_info"]
+        if merged_cfg and "selected_gpu_info" in merged_cfg
+        else None;
+
+        if selected_idx != -1 and selected_idx < gpus.length {
+            merged_cfg["selected_gpu_info"] = gpus[selected_idx];
+            return merged_cfg;
+        }
+
+        if not selected_info or gpus.length == 0 {
+            if selected_idx != -1 and selected_idx >= gpus.length {
+                merged_cfg["selected_gpu_index"] = -1;
+                merged_cfg["selected_gpu_info"] = None;
+            }
+            return merged_cfg;
+        }
+
+        match_idx = -1;
+        selected_uuid = (
+            str(selected_info["uuid"])
+            if "uuid" in selected_info and selected_info["uuid"]
+            else ""
+        );
+        selected_name = (
+            str(selected_info["name"])
+            if "name" in selected_info and selected_info["name"]
+            else ""
+        );
+        selected_conn = (
+            str(selected_info["connection"])
+            if "connection" in selected_info and selected_info["connection"]
+            else "local"
+        );
+        selected_device = (
+            str(selected_info["device_id"])
+            if "device_id" in selected_info and selected_info["device_id"]
+            else ""
+        );
+
+        idx = 0;
+        for gpu in gpus {
+            gpu_uuid = str(gpu["uuid"]) if "uuid" in gpu and gpu["uuid"] else "";
+            gpu_name = str(gpu["name"]) if "name" in gpu and gpu["name"] else "";
+            gpu_conn = (
+                str(gpu["connection"])
+                if "connection" in gpu and gpu["connection"]
+                else "local"
+            );
+            gpu_device = (
+                str(gpu["device_id"])
+                if "device_id" in gpu and gpu["device_id"]
+                else ""
+            );
+            if selected_uuid and gpu_uuid and selected_uuid == gpu_uuid {
+                match_idx = idx;
+                break;
+            }
+            if gpu_name == selected_name and gpu_conn == selected_conn {
+                if not selected_device or not gpu_device or gpu_device == selected_device {
+                    match_idx = idx;
+                    break;
+                }
+            }
+            idx += 1;
+        }
+
+        if match_idx != -1 {
+            merged_cfg["selected_gpu_index"] = match_idx;
+            merged_cfg["selected_gpu_info"] = gpus[match_idx];
+        } else {
+            merged_cfg["selected_gpu_index"] = -1;
+            merged_cfg["selected_gpu_info"] = None;
+        }
+        return merged_cfg;
+    }
+
     # Load config on mount
     async def fetchConfig -> None {
         try {
@@ -114,12 +196,12 @@ def:pub ConfigProvider(children: any) -> Any {
             if selected_idx < -1 {
                 merged["selected_gpu_index"] = -1;
             }
-            setConfigState(merged);
-
             # Process Hardware Info
             hw_data = resp_hw.reports[0]
             if resp_hw and resp_hw.reports and resp_hw.reports.length > 0
             else {};
+            normalized_config = normalizeSelectedGpu(merged, hw_data);
+            setConfigState(normalized_config);
             setHwInfo(hw_data);
         } except Exception as e {
             console.error("Failed to load config/hardware:", e);
