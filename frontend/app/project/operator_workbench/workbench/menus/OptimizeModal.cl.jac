@@ -98,11 +98,11 @@ def:pub OptimizeModal(props: any) -> Any {
     llmModel = llm_model_state[0];
     setLlmModel = llm_model_state[1];
 
-    iterations_state = useState(5);
+    iterations_state = useState(1);
     iterations = iterations_state[0];
     setIterations = iterations_state[1];
 
-    workers_state = useState(4);
+    workers_state = useState(1);
     workers = workers_state[0];
     setWorkers = workers_state[1];
 
@@ -469,7 +469,7 @@ def:pub OptimizeModal(props: any) -> Any {
                                 type="number"
                                 value={iterations}
                                 onChange={lambda e: any  -> None { setIterations(
-                                    e.target.value
+                                    Math.max(1, int(e.target.value) if e.target.value else 1)
                                 );}}
                                 min="1"
                                 max="50"
@@ -486,7 +486,7 @@ def:pub OptimizeModal(props: any) -> Any {
                             <input
                                 type="number"
                                 value={workers}
-                                onChange={lambda e: any -> None { setWorkers(e.target.value); }}
+                                onChange={lambda e: any -> None { setWorkers(Math.max(1, int(e.target.value) if e.target.value else 1)); }}
                                 min="1"
                                 max="32"
                                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-sm text-zinc-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
