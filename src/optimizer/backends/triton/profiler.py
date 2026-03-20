@@ -1,22 +1,19 @@
 """
 Triton Backend Profiler.
-Handles GPU specs detection (NVIDIA + AMD) and kernel profiling via triton.testing.do_bench.
+Handles GPU specs detection (NVIDIA + AMD) and kernel profiling.
 """
 
 import os
 import glob
-import time
 import importlib
 import importlib.util
 import subprocess
 from pathlib import Path
 
-import numpy as np
 import torch
 
 try:
     import triton
-    import triton.testing
     TRITON_AVAILABLE = True
 except ImportError:
     TRITON_AVAILABLE = False
@@ -24,6 +21,12 @@ except ImportError:
 from src.optimizer.config.settings import settings
 from src.optimizer.core.types import GPUSpecs
 from src.optimizer.profiling import get_device_specs as get_profiled_device_specs
+from src.optimizer.benchmarking.harness import (
+    DEFAULT_TIMED_RUNS,
+    DEFAULT_WARMUP_RUNS,
+    benchmark_entry_calls,
+    summarize_entry_results,
+)
 
 
 # ******************
@@ -172,9 +175,12 @@ def normalize_args_kwargs(args: list, kwargs: dict, params: list, defaults: dict
     return normalized, remaining_kwargs
 
 
-def get_input_files(io_dir: Path) -> list:
+def get_input_files(io_dir: Path, selected_files: list[Path] | list[str] | None = None) -> list:
     """Retrieves list of all input file paths for a given profiled pytorch op."""
-    pt_files = sorted(glob.glob(os.path.join(io_dir, "entry_*.pt")))
+    if selected_files:
+        pt_files = [str(Path(item)) for item in selected_files]
+    else:
+        pt_files = sorted(glob.glob(os.path.join(io_dir, "entry_*.pt")))
     if not pt_files:
         raise ValueError(f"No entry_*.pt files found in {io_dir}")
     return pt_files
@@ -191,7 +197,7 @@ def move_to_cuda(item):
     return item
 
 
-def load_batch(pt_files: list) -> list[tuple[list, dict]]:
+def load_batch(pt_files: list) -> list[tuple[str, list, dict]]:
     """Loads a batch of .pt files into GPU memory."""
     inputs = []
     for pt_file in pt_files:
@@ -218,7 +224,7 @@ def load_batch(pt_files: list) -> list[tuple[list, dict]]:
                     args, kwargs = normalize_args_kwargs(
                         args, kwargs, params, defaults)
 
-            inputs.append((args, kwargs))
+            inputs.append((Path(pt_file).name, args, kwargs))
 
         except Exception as e:
             print(f"Warning: Failed to load {pt_file}: {e}")
@@ -233,7 +239,7 @@ def load_batch(pt_files: list) -> list[tuple[list, dict]]:
 
 def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int = 0, previous_stats: dict = None):
     """
-    Profile a Triton kernel using triton.testing.do_bench.
+    Profile a Triton kernel with the shared internal benchmark harness.
     """
     if not TRITON_AVAILABLE:
         raise RuntimeError("Triton is not installed. Install with: pip install triton")
@@ -255,42 +261,53 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
         torch.cuda.set_device(device_index)
 
     # Batching logic
-    all_files = get_input_files(input_dir)
+    selected_files = paths.get("entry_files")
+    all_files = get_input_files(input_dir, selected_files)
     BATCH_SIZE = settings.batch_size
-    timings = []
+    entry_results = []
+    timing_errors = []
     prof = None
 
     for i in range(0, len(all_files), BATCH_SIZE):
         batch_files = all_files[i: i + BATCH_SIZE]
         inputs = load_batch(batch_files)
 
-        # Profile each input using triton.testing.do_bench
-        # return_mode="mean" matches how CUDA kernel profiling averages reps per entry
-        for args, kwargs in inputs:
-            ms = triton.testing.do_bench(
-                lambda a=args: module.launch(*a),
-                warmup=25,
-                rep=100,
-                return_mode="mean",
-            )
-            timings.append(ms)
+        entry_calls = []
+        for entry_file, args, kwargs in inputs:
+            def invoke(bound_args=args):
+                return module.launch(*bound_args)
+
+            entry_calls.append((entry_file, invoke))
+
+        batch_stats = benchmark_entry_calls(
+            entry_calls,
+            device="cuda",
+            warmup_runs=DEFAULT_WARMUP_RUNS,
+            timed_runs=DEFAULT_TIMED_RUNS,
+        )
+        entry_results.extend(batch_stats.get("entry_results") or [])
+        timing_errors.extend(batch_stats.get("errors") or [])
 
         # Cleanup VRAM
         del inputs
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    stats = {
-        'mean_time_ms': float(np.mean(timings)),
-        'std_time_ms':  float(np.std(timings)),
-        'min_time_ms':  float(np.min(timings)),
-        'max_time_ms':  float(np.max(timings)),
-    }
+    stats = summarize_entry_results(
+        entry_results,
+        errors=timing_errors,
+        device="cuda",
+        warmup_runs=DEFAULT_WARMUP_RUNS,
+        timed_runs=DEFAULT_TIMED_RUNS,
+    )
 
     # Compare with baseline if provided
     if previous_stats:
-        speedup = previous_stats['min_time_ms'] / stats['min_time_ms']
-        print(f"Speedup: {speedup:.2f}x")
+        prev_mean = previous_stats.get('mean_time_ms') if isinstance(previous_stats, dict) else None
+        curr_mean = stats.get('mean_time_ms')
+        if prev_mean and curr_mean:
+            speedup = prev_mean / curr_mean
+            print(f"Speedup: {speedup:.2f}x")
 
     return stats, prof
 

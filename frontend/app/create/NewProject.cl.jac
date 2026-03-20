@@ -86,9 +86,19 @@ def:pub NewProject -> Any {
     setSelectedBackend = selected_backend_state[1];
 
     selected_gpu_info = config["selected_gpu_info"] if config and "selected_gpu_info" in config else None;
+    hwInfo = config_ctx.hwInfo if "hwInfo" in config_ctx else {};
+    hw_gpus = hwInfo["gpus"] if hwInfo and "gpus" in hwInfo and hwInfo["gpus"] else [];
+    selected_gpu_index = config["selected_gpu_index"]
+    if config and "selected_gpu_index" in config
+    else -1;
+    effective_selected_gpu = (
+        hw_gpus[selected_gpu_index]
+        if selected_gpu_index != -1 and selected_gpu_index < hw_gpus.length
+        else selected_gpu_info
+    );
     compatible_backends = [];
-    if selected_gpu_info {
-        hint = selected_gpu_info["backend_hint"] if "backend_hint" in selected_gpu_info else "";
+    if effective_selected_gpu {
+        hint = effective_selected_gpu["backend_hint"] if "backend_hint" in effective_selected_gpu else "";
         if hint == "cuda" {
             compatible_backends = [{"label": "Triton", "value": "triton"}, {"label": "CUDA", "value": "cuda"}];
         } elif hint == "rocm" {
@@ -97,7 +107,6 @@ def:pub NewProject -> Any {
             compatible_backends = [{"label": "Metal", "value": "metal"}];
         }
     } else {
-        hwInfo = config_ctx.hwInfo if "hwInfo" in config_ctx else {};
         if hwInfo and "cuda_available" in hwInfo and hwInfo["cuda_available"] {
             compatible_backends = [{"label": "Triton", "value": "triton"}, {"label": "CUDA", "value": "cuda"}];
         } elif hwInfo and "mps_available" in hwInfo and hwInfo["mps_available"] {
@@ -122,7 +131,7 @@ def:pub NewProject -> Any {
                 setSelectedBackend("");
             }
         },
-        [selected_gpu_info, config_ctx.hwInfo, selectedBackend]
+        [effective_selected_gpu, config_ctx.hwInfo, selectedBackend]
     );
 
     useEffect(
@@ -244,7 +253,7 @@ def:pub NewProject -> Any {
                 "",
                 {
                     "projectName": formData["projectName"].trim(),
-                    "selectedGpuInfo": config["selected_gpu_info"] if config and "selected_gpu_info" in config else None,
+                    "selectedGpuInfo": effective_selected_gpu,
                     "selectedBackend": selectedBackend,
                     "code": model_code,
                     "modelFileB64": model_file_b64,
@@ -423,7 +432,7 @@ def:pub NewProject -> Any {
                                             </label>
                                             <div className="flex items-center gap-2">
                                                 <span className="text-xs text-zinc-400">
-                                                    Target: <span className="text-amber-400 font-medium">{selected_gpu_info["name"] if selected_gpu_info and "name" in selected_gpu_info else "Local GPU"}</span>
+                                                    Target: <span className="text-amber-400 font-medium">{effective_selected_gpu["name"] if effective_selected_gpu and "name" in effective_selected_gpu else "Local GPU"}</span>
                                                 </span>
                                                 <a 
                                                     onClick={lambda -> None { navigate("/settings/gpu", {"state": {"return_to": "/new-project"}}); }}
