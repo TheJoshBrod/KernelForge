@@ -26,7 +26,6 @@ from src.optimizer.benchmarking.harness import (
     DEFAULT_WARMUP_RUNS,
     benchmark_entry_calls,
     summarize_entry_results,
-    sync_device,
 )
 
 
@@ -275,17 +274,8 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
 
         entry_calls = []
         for entry_file, args, kwargs in inputs:
-            try:
-                module.launch(*args, **kwargs)
-            except TypeError:
-                module.launch(*args)
-            sync_device("cuda")
-
-            def invoke(bound_args=args, bound_kwargs=kwargs):
-                try:
-                    return module.launch(*bound_args, **bound_kwargs)
-                except TypeError:
-                    return module.launch(*bound_args)
+            def invoke(bound_args=args):
+                return module.launch(*bound_args)
 
             entry_calls.append((entry_file, invoke))
 
