@@ -25,6 +25,20 @@ def _project_dir(project: str) -> Path:
     return _repo_root() / "kernels" / "projects" / project
 
 
+def _with_python_bin_on_path(env: dict[str, str] | None = None) -> dict[str, str]:
+    merged = dict(env) if env is not None else dict(os.environ)
+    python_bin = str(Path(sys.executable).parent)
+    current_path = merged.get("PATH", "")
+    path_parts = [part for part in current_path.split(os.pathsep) if part]
+    if python_bin not in path_parts:
+        merged["PATH"] = (
+            python_bin
+            if not current_path
+            else python_bin + os.pathsep + current_path
+        )
+    return merged
+
+
 def _normalize_device(device: str) -> str:
     d = (device or "").strip().lower()
     valid_devices = {"cuda", "metal", "triton", "mps", "cpu"}
@@ -253,6 +267,9 @@ def _load_kernel_benchmark(project_dir: Path, op_name: str) -> tuple[float | Non
             continue
         if str(row.get("kernel_status", "")) != "ok":
             continue
+        kernel_entry_latencies = row.get("kernel_entry_latencies_ms")
+        if not isinstance(kernel_entry_latencies, list) or not kernel_entry_latencies:
+            return None, ""
         kernel_ms = row.get("kernel_ms")
         try:
             parsed_ms = float(kernel_ms)
@@ -266,7 +283,7 @@ def _load_kernel_benchmark(project_dir: Path, op_name: str) -> tuple[float | Non
 
 def run_profile(args: argparse.Namespace) -> int:
     root = _repo_root()
-    env = dict(os.environ)
+    env = _with_python_bin_on_path()
     cmd = [
         sys.executable,
         "-m",
@@ -286,7 +303,7 @@ def run_profile(args: argparse.Namespace) -> int:
 
 def run_benchmark(args: argparse.Namespace) -> int:
     root = _repo_root()
-    env = dict(os.environ)
+    env = _with_python_bin_on_path()
     cmd = [
         sys.executable,
         "-m",
@@ -300,7 +317,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
 def run_generate(args: argparse.Namespace) -> int:
     root = _repo_root()
-    env = dict(os.environ)
+    env = _with_python_bin_on_path()
 
     if hasattr(args, "llm_provider") and args.llm_provider:
         env["LLM_PROVIDER"] = args.llm_provider
@@ -627,7 +644,7 @@ def run_generate(args: argparse.Namespace) -> int:
 
 def run_optimize(args: argparse.Namespace) -> int:
     root = _repo_root()
-    env = dict(os.environ)
+    env = _with_python_bin_on_path()
 
     if hasattr(args, "llm_provider") and args.llm_provider:
         env["LLM_PROVIDER"] = args.llm_provider

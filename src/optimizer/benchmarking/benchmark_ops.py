@@ -4,6 +4,9 @@ import argparse
 import json
 import os
 import platform
+import shutil
+import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,6 +29,18 @@ from .state import read_json_file, write_json_file
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _ensure_local_toolchain_on_path() -> None:
+    python_bin = str(Path(sys.executable).parent)
+    current_path = os.environ.get("PATH", "")
+    path_parts = [part for part in current_path.split(os.pathsep) if part]
+    if python_bin not in path_parts:
+        os.environ["PATH"] = (
+            python_bin
+            if not current_path
+            else python_bin + os.pathsep + current_path
+        )
 
 
 def _resolve_device() -> str:
@@ -271,62 +286,147 @@ def _coerce_cached_measurement(value: Any) -> dict[str, Any] | None:
     }
 
 
-def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
-    # Primary: improvement_log.json (legacy path)
-    log_file = op_dir / "improvement_log.json"
-    if log_file.exists():
+def _backend_for_suffix(suffix: str) -> str:
+    ext = str(suffix or "").lower()
+    if ext == ".cu":
+        return "cuda"
+    if ext == ".py":
+        return "triton"
+    if ext in {".metal", ".mps"}:
+        return "mps"
+    return ""
+
+
+def _resolve_tree_kernel_source(
+    optimized_root: Path | None,
+    op_name: str,
+) -> tuple[Path | None, str]:
+    if optimized_root is None:
+        return None, ""
+
+    op_dir = optimized_root / op_name
+    if not op_dir.exists():
+        return None, ""
+
+    backend = ""
+    meta = op_dir / "generated_root.json"
+    if meta.exists():
         try:
-            data = json.loads(log_file.read_text(encoding="utf-8"))
-            if isinstance(data, list) and data:
-                best = None
-                best_ms = None
-                for entry in data:
-                    results = entry.get("results") if isinstance(entry, dict) else None
-                    if not isinstance(results, dict):
-                        continue
-                    ms = results.get("mean_time_ms")
-                    if ms is None:
-                        continue
-                    try:
-                        ms_val = float(ms)
-                    except Exception:
-                        continue
-                    if best_ms is None or ms_val < best_ms:
-                        best_ms = ms_val
-                        best = entry
-                if best_ms is not None:
-                    backend = ""
-                    if isinstance(best, dict):
-                        backend = str(best.get("backend") or best.get("provider") or "")
-                    return best_ms, "ok", backend
+            payload = json.loads(meta.read_text(encoding="utf-8"))
+            backend = str(payload.get("backend") or "")
         except Exception:
             pass
 
-    # Fallback: nodes.db (active path — stores mean_time_ms as value)
     db_file = op_dir / "nodes.db"
     if db_file.exists():
         try:
             import sqlite3 as _sqlite3
-            conn = _sqlite3.connect(str(db_file))
-            row = conn.execute(
-                "SELECT MIN(value) FROM nodes WHERE value IS NOT NULL AND value > 0"
-            ).fetchone()
-            conn.close()
-            if row and row[0] is not None:
-                ms_val = float(row[0])
-                # Read backend from generated_root.json if present
-                backend = ""
-                meta = op_dir / "generated_root.json"
-                if meta.exists():
-                    try:
-                        backend = json.loads(meta.read_text(encoding="utf-8")).get("backend", "")
-                    except Exception:
-                        pass
-                return ms_val, "ok", str(backend)
+
+            with _sqlite3.connect(str(db_file)) as conn:
+                row = conn.execute(
+                    """
+                    SELECT code
+                    FROM nodes
+                    WHERE code IS NOT NULL AND TRIM(code) != ''
+                    ORDER BY
+                        CASE WHEN value IS NULL OR value <= 0 THEN 1 ELSE 0 END,
+                        value ASC,
+                        id ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            if row and row[0]:
+                code_path = Path(str(row[0]))
+                if not code_path.is_absolute():
+                    code_path = op_dir.parent / code_path
+                if code_path.exists():
+                    return code_path, backend or _backend_for_suffix(code_path.suffix)
         except Exception:
             pass
 
-    return None, "missing", ""
+    kernels_dir = op_dir / "kernels"
+    if kernels_dir.exists():
+        candidates = sorted(kernels_dir.glob("kernel_0.*"))
+        if not candidates:
+            candidates = sorted(kernels_dir.glob("kernel_*.*"))
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate, backend or _backend_for_suffix(candidate.suffix)
+
+    return None, backend
+
+
+def _profile_kernel_source_ms(
+    source_path: Path | None,
+    backend: str,
+    io_op_dir: Path | None,
+    benchmark_entry_files: list[Path] | None = None,
+) -> tuple[dict[str, Any] | None, str, str]:
+    if source_path is None or not source_path.exists():
+        return None, "missing_kernel_source", backend
+    if io_op_dir is None or not io_op_dir.exists():
+        return None, "missing_io_entries", backend
+
+    backend_name = str(backend or _backend_for_suffix(source_path.suffix))
+    if backend_name not in {"cuda", "triton"}:
+        return None, "unsupported_generated_backend", backend_name
+
+    ext = ".cu" if backend_name == "cuda" else ".py"
+    try:
+        with tempfile.TemporaryDirectory(prefix="kforge-bench-") as tmpdir:
+            tmp_root = Path(tmpdir)
+            tmp_dir = tmp_root / "bench_module"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            staged_kernel = tmp_dir / f"kernel{ext}"
+            shutil.copy2(source_path, staged_kernel)
+            if backend_name == "cuda":
+                from src.optimizer.backends.cuda import CUDABackend
+
+                stats = CUDABackend().profile_kernel(
+                    {
+                        "tmp_dir": tmp_dir,
+                        "io_dir": io_op_dir,
+                        "entry_files": benchmark_entry_files or [],
+                    },
+                    baseline=True,
+                )
+            else:
+                from src.optimizer.backends.triton import TritonBackend
+
+                stats = TritonBackend().profile_kernel(
+                    {
+                        "tmp_dir": tmp_dir,
+                        "io_dir": io_op_dir,
+                        "entry_files": benchmark_entry_files or [],
+                    },
+                    baseline=True,
+                )
+        ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
+        if ms is None:
+            return None, "generated_profile_missing", backend_name
+        return stats, "ok", backend_name
+    except Exception as e:
+        msg = str(e).strip()
+        if "Ninja is required to load C++ extensions" in msg:
+            return None, "generated_profile_error_ninja", backend_name
+        return None, "generated_profile_error", backend_name
+
+
+def _profile_tree_kernel_ms(
+    optimized_root: Path | None,
+    op_name: str,
+    io_op_dir: Path | None,
+    benchmark_entry_files: list[Path] | None = None,
+) -> tuple[dict[str, Any] | None, str, str]:
+    source_path, backend = _resolve_tree_kernel_source(optimized_root, op_name)
+    if source_path is None:
+        return None, "missing_optimized_kernel", backend
+    return _profile_kernel_source_ms(
+        source_path,
+        backend,
+        io_op_dir,
+        benchmark_entry_files=benchmark_entry_files,
+    )
 
 
 def _profile_generated_kernel_ms(
@@ -346,53 +446,20 @@ def _profile_generated_kernel_ms(
         return None, "missing_generated", ""
 
     if (generated_dir / "success.cuda").exists():
-        if io_op_dir is None or not io_op_dir.exists():
-            return None, "missing_io_entries", "cuda"
-        if not (generated_dir / "kernel.cu").exists():
-            return None, "missing_kernel_source", "cuda"
-        try:
-            from src.optimizer.backends.cuda import CUDABackend
-
-            stats = CUDABackend().profile_kernel(
-                {
-                    "tmp_dir": generated_dir,
-                    "io_dir": io_op_dir,
-                    "entry_files": benchmark_entry_files or [],
-                },
-                baseline=True,
-            )
-            ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
-            if ms is None:
-                return None, "generated_profile_missing", "cuda"
-            return stats, "ok", "cuda"
-        except Exception as e:
-            msg = str(e).strip()
-            if "Ninja is required to load C++ extensions" in msg:
-                return None, "generated_profile_error_ninja", "cuda"
-            return None, "generated_profile_error", "cuda"
+        return _profile_kernel_source_ms(
+            generated_dir / "kernel.cu",
+            "cuda",
+            io_op_dir,
+            benchmark_entry_files=benchmark_entry_files,
+        )
 
     if (generated_dir / "success.triton").exists():
-        if io_op_dir is None or not io_op_dir.exists():
-            return None, "missing_io_entries", "triton"
-        if not (generated_dir / "kernel.py").exists():
-            return None, "missing_kernel_source", "triton"
-        try:
-            from src.optimizer.backends.triton import TritonBackend
-
-            stats = TritonBackend().profile_kernel(
-                {
-                    "tmp_dir": generated_dir,
-                    "io_dir": io_op_dir,
-                    "entry_files": benchmark_entry_files or [],
-                },
-                baseline=True,
-            )
-            ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
-            if ms is None:
-                return None, "generated_profile_missing", "triton"
-            return stats, "ok", "triton"
-        except Exception as e:
-            return None, "generated_profile_error", "triton"
+        return _profile_kernel_source_ms(
+            generated_dir / "kernel.py",
+            "triton",
+            io_op_dir,
+            benchmark_entry_files=benchmark_entry_files,
+        )
     if (generated_dir / "success.mps").exists():
         return None, "unsupported_generated_backend", "mps"
     if (generated_dir / "success.cpu").exists():
@@ -456,12 +523,98 @@ def _select_candidate_ops(
     return candidate_ops, allowed_existing_ops
 
 
+def _apply_generated_profile_result(
+    *,
+    op_name: str,
+    pytorch_ms: float,
+    kernel_status: str,
+    kernel_ms: float | None,
+    backend: str,
+    kernel_estimated: bool,
+    kernel_entry_latencies: list[float],
+    kernel_benchmarked_entry_files: list[str],
+    generated_stats: dict[str, Any] | None,
+    generated_status: str,
+    generated_backend: str,
+    errors: list[str],
+) -> tuple[str, float | None, str, bool, list[float], list[str]]:
+    if generated_stats is not None:
+        kernel_ms_raw = (
+            generated_stats.get("mean_time_ms")
+            if isinstance(generated_stats, dict)
+            else None
+        )
+        kernel_ms = float(kernel_ms_raw) if kernel_ms_raw is not None else None
+        kernel_status = "ok"
+        kernel_entry_latencies = (
+            generated_stats.get("entry_latencies_ms")
+            if isinstance(generated_stats, dict)
+            else []
+        ) or []
+        kernel_benchmarked_entry_files = (
+            generated_stats.get("entry_files")
+            if isinstance(generated_stats, dict)
+            else []
+        ) or []
+        if generated_backend:
+            backend = generated_backend
+        return (
+            kernel_status,
+            kernel_ms,
+            backend,
+            kernel_estimated,
+            kernel_entry_latencies,
+            kernel_benchmarked_entry_files,
+        )
+
+    if kernel_status in {"missing", "missing_optimized_dir", "missing_optimized_kernel"}:
+        kernel_status = generated_status
+    if generated_backend and not backend:
+        backend = generated_backend
+
+    # Do not silently copy PyTorch latency into kernel_ms when direct kernel
+    # profiling is unavailable. That produces fake 1.0x speedups.
+    if generated_status == "generated_profile_error_ninja" and pytorch_ms > 0.0:
+        msg = (
+            f"{op_name}: generated kernel profiling unavailable "
+            "(install ninja for direct kernel benchmarking)"
+        )
+        if msg not in errors:
+            errors.append(msg)
+        return (
+            kernel_status,
+            kernel_ms,
+            backend,
+            False,
+            kernel_entry_latencies,
+            kernel_benchmarked_entry_files,
+        )
+
+    if generated_status in {
+        "generated_profile_error",
+        "generated_profile_error_ninja",
+    }:
+        msg = f"{op_name}: generated kernel benchmark failed"
+        if msg not in errors:
+            errors.append(msg)
+
+    return (
+        kernel_status,
+        kernel_ms,
+        backend,
+        kernel_estimated,
+        kernel_entry_latencies,
+        kernel_benchmarked_entry_files,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
     parser.add_argument("--max-entries", type=int, default=50)
     parser.add_argument("--ops", default="")
     args = parser.parse_args()
+    _ensure_local_toolchain_on_path()
 
     project_dir = project_dir_for_name(args.project)
     bench_dir = project_dir / "benchmarks"
@@ -643,64 +796,73 @@ def main() -> int:
                 count = len(entries)
 
             kernel_ms = None
-            kernel_status = "missing"
+            kernel_status = "missing_optimized_dir" if not optimized_root else "missing_optimized_kernel"
             backend = ""
             kernel_estimated = False
             kernel_entry_latencies = []
             kernel_benchmarked_entry_files = []
-            if optimized_root:
-                kernel_ms, kernel_status, backend = _read_best_kernel_ms(optimized_root / op_name)
-            else:
-                kernel_status = "missing_optimized_dir"
+            benchmark_entry_paths = (
+                [op_dir / name for name in benchmarked_entry_files]
+                if op_dir and benchmarked_entry_files
+                else None
+            )
+
+            optimized_stats, optimized_status, optimized_backend = _profile_tree_kernel_ms(
+                optimized_root,
+                op_name,
+                op_dir,
+                benchmark_entry_files=benchmark_entry_paths,
+            )
+            (
+                kernel_status,
+                kernel_ms,
+                backend,
+                kernel_estimated,
+                kernel_entry_latencies,
+                kernel_benchmarked_entry_files,
+            ) = _apply_generated_profile_result(
+                op_name=op_name,
+                pytorch_ms=pytorch_ms,
+                kernel_status=kernel_status,
+                kernel_ms=kernel_ms,
+                backend=backend,
+                kernel_estimated=kernel_estimated,
+                kernel_entry_latencies=kernel_entry_latencies,
+                kernel_benchmarked_entry_files=kernel_benchmarked_entry_files,
+                generated_stats=optimized_stats,
+                generated_status=optimized_status,
+                generated_backend=optimized_backend,
+                errors=errors,
+            )
 
             if kernel_status != "ok":
                 generated_stats, generated_status, generated_backend = _profile_generated_kernel_ms(
                     project_dir,
                     op_name,
                     op_dir,
-                    benchmark_entry_files=[op_dir / name for name in benchmarked_entry_files]
-                    if op_dir and benchmarked_entry_files
-                    else None,
+                    benchmark_entry_files=benchmark_entry_paths,
                 )
-                if generated_stats is not None:
-                    kernel_ms_raw = (
-                        generated_stats.get("mean_time_ms")
-                        if isinstance(generated_stats, dict)
-                        else None
-                    )
-                    kernel_ms = float(kernel_ms_raw) if kernel_ms_raw is not None else None
-                    kernel_status = "ok"
-                    kernel_entry_latencies = (
-                        generated_stats.get("entry_latencies_ms")
-                        if isinstance(generated_stats, dict)
-                        else []
-                    ) or []
-                    kernel_benchmarked_entry_files = (
-                        generated_stats.get("entry_files")
-                        if isinstance(generated_stats, dict)
-                        else []
-                    ) or []
-                    if generated_backend:
-                        backend = generated_backend
-                elif generated_status == "generated_profile_error_ninja" and pytorch_ms > 0.0:
-                    kernel_ms = float(pytorch_ms)
-                    kernel_status = "ok"
-                    kernel_estimated = True
-                    if generated_backend and not backend:
-                        backend = generated_backend
-                    errors.append(
-                        f"{op_name}: generated kernel profiling unavailable (install ninja for direct kernel benchmarking)"
-                    )
-                else:
-                    if kernel_status in {"missing", "missing_optimized_dir"}:
-                        kernel_status = generated_status
-                    if generated_backend and not backend:
-                        backend = generated_backend
-                    if generated_status in {
-                        "generated_profile_error",
-                        "generated_profile_error_ninja",
-                    }:
-                        errors.append(f"{op_name}: generated kernel benchmark failed")
+                (
+                    kernel_status,
+                    kernel_ms,
+                    backend,
+                    kernel_estimated,
+                    kernel_entry_latencies,
+                    kernel_benchmarked_entry_files,
+                ) = _apply_generated_profile_result(
+                    op_name=op_name,
+                    pytorch_ms=pytorch_ms,
+                    kernel_status=kernel_status,
+                    kernel_ms=kernel_ms,
+                    backend=backend,
+                    kernel_estimated=kernel_estimated,
+                    kernel_entry_latencies=kernel_entry_latencies,
+                    kernel_benchmarked_entry_files=kernel_benchmarked_entry_files,
+                    generated_stats=generated_stats,
+                    generated_status=generated_status,
+                    generated_backend=generated_backend,
+                    errors=errors,
+                )
 
             if count <= 0 and pytorch_ms <= 0.0 and kernel_status != "ok":
                 _update_phase_progress(
