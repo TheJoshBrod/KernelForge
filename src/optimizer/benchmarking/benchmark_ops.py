@@ -424,6 +424,38 @@ def _load_op_counts(summary_path: Path) -> dict[str, int]:
     return result
 
 
+def _discover_captured_op_dirs(io_root: Path) -> dict[str, Path]:
+    op_dirs: dict[str, Path] = {}
+    if not io_root.exists():
+        return op_dirs
+    for d in io_root.iterdir():
+        if not d.is_dir():
+            continue
+        has_entries = any(child.name.startswith("entry_") and child.suffix == ".pt" for child in d.iterdir())
+        if has_entries:
+            op_dirs[d.name] = d
+    return op_dirs
+
+
+def _select_candidate_ops(
+    op_dirs: dict[str, Path],
+    op_counts: dict[str, int],
+    selected_ops: list[str],
+) -> tuple[list[str], set[str]]:
+    discovered_ops = sorted(op_dirs.keys())
+    if discovered_ops:
+        candidate_ops = list(discovered_ops)
+        allowed_existing_ops = set(discovered_ops)
+    else:
+        candidate_ops = sorted(set(op_counts.keys()))
+        allowed_existing_ops = set(candidate_ops)
+
+    if selected_ops:
+        selected_set = set(selected_ops)
+        candidate_ops = [op for op in candidate_ops if op in selected_set]
+    return candidate_ops, allowed_existing_ops
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
@@ -470,25 +502,23 @@ def main() -> int:
 
         results_by_op: dict[str, dict[str, Any]] = {}
         errors: list[str] = []
-        op_dirs: dict[str, Path] = {}
-        if io_root.exists():
-            for d in io_root.iterdir():
-                if d.is_dir():
-                    op_dirs[d.name] = d
-
-        candidate_ops = sorted(set(op_dirs.keys()) | set(op_counts.keys()))
+        op_dirs = _discover_captured_op_dirs(io_root)
         selected_ops = _ops_from_csv(args.ops)
-        if selected_ops:
-            selected_set = set(selected_ops)
-            candidate_ops = [op for op in candidate_ops if op in selected_set]
+        candidate_ops, allowed_existing_ops = _select_candidate_ops(
+            op_dirs, op_counts, selected_ops
+        )
 
         existing_payload = read_json_file(output_path, {})
         if isinstance(existing_payload, dict):
             existing_results = existing_payload.get("results")
             if isinstance(existing_results, list):
                 for r in existing_results:
-                    if isinstance(r, dict) and r.get("op"):
-                        results_by_op[str(r["op"])] = r
+                    if not (isinstance(r, dict) and r.get("op")):
+                        continue
+                    op_name = str(r["op"])
+                    if allowed_existing_ops and op_name not in allowed_existing_ops:
+                        continue
+                    results_by_op[op_name] = r
         if selected_ops:
             for op_name in selected_ops:
                 results_by_op.pop(op_name, None)
