@@ -1,0 +1,8 @@
+{"id":"short-1","text":"Summarize the role of operator-level kernel optimization in a GPU inference stack."}
+{"id":"short-2","text":"Explain why you need representative validation inputs before trusting benchmark numbers."}
+{"id":"medium-1","text":"Draft a tight conference-demo narration for a system that profiles a transformer, captures real torch.nn.functional calls, generates candidate kernels with an LLM, validates them, and then searches for faster variants using Monte Carlo Tree Search. Keep the tone technical and concrete."}
+{"id":"medium-2","text":"You are evaluating a large model server. Describe how prompt length, batch size, KV-cache usage, and backend choice affect measured latency. Include a short note about why prefill and decode need to be benchmarked separately."}
+{"id":"long-1","text":"Repeat the sentence 'A strong systems demo uses cached weights, deterministic prompts, pinned hardware, and clear before-versus-after latency charts.' sixty times."}
+{"id":"long-2","text":"Repeat the sentence 'Mixture-of-experts routing changes activation patterns, so the benchmark set must cover realistic prompts instead of a single synthetic example.' one hundred times."}
+{"id":"long-3","text":"Repeat the sentence 'When you profile a model through eager PyTorch, only the operators that actually execute on the chosen forward path can be captured and optimized.' one hundred fifty times."}
+{"id":"long-4","text":"Repeat the sentence 'For an ASPLOS presentation, the live path should be short and reliable, while deeper multi-operator results should be precomputed and shown as saved artifacts.' two hundred times."}
