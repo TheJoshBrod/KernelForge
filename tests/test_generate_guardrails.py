@@ -108,3 +108,121 @@ def test_generator_main_reports_available_ops_when_requested_op_is_missing(
     assert "No captured operator directories matched the requested ops: aten__softmax" in output
     assert "torch_nn_functional_softmax" in output
     assert "torch_nn_functional_silu" in output
+
+
+def test_load_saved_benchmark_for_existing_kernel_reuses_verified_row_when_sources_match(
+    tmp_path: Path,
+):
+    project_dir = tmp_path / "project"
+    generated_op_dir = (
+        project_dir
+        / "kernels"
+        / "generated"
+        / "individual_op_kernels"
+        / "torch_nn_functional_softplus"
+    )
+    generated_op_dir.mkdir(parents=True)
+    (generated_op_dir / "kernel.cu").write_text("// same kernel\n", encoding="utf-8")
+
+    tree_kernel = (
+        project_dir
+        / "trees"
+        / "torch_nn_functional_softplus"
+        / "kernels"
+        / "kernel_0.cu"
+    )
+    tree_kernel.parent.mkdir(parents=True)
+    tree_kernel.write_text("// same kernel\n", encoding="utf-8")
+
+    (tree_kernel.parent.parent / "generated_root.json").write_text(
+        json.dumps(
+            {
+                "kernel_relpath": "trees/torch_nn_functional_softplus/kernels/kernel_0.cu"
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bench_dir = project_dir / "benchmarks"
+    bench_dir.mkdir(parents=True)
+    (bench_dir / "op_benchmarks.json").write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "op": "torch_nn_functional_softplus",
+                        "kernel_status": "ok",
+                        "kernel_ms": 0.42,
+                        "backend": "cuda",
+                        "kernel_entry_latencies_ms": [0.41, 0.43],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert workflow._load_saved_benchmark_for_existing_kernel(
+        project_dir,
+        "torch_nn_functional_softplus",
+        generated_op_dir,
+    ) == (0.42, "cuda")
+
+
+def test_load_saved_benchmark_for_existing_kernel_rejects_changed_sources(
+    tmp_path: Path,
+):
+    project_dir = tmp_path / "project"
+    generated_op_dir = (
+        project_dir
+        / "kernels"
+        / "generated"
+        / "individual_op_kernels"
+        / "torch_nn_functional_softplus"
+    )
+    generated_op_dir.mkdir(parents=True)
+    (generated_op_dir / "kernel.cu").write_text("// new kernel\n", encoding="utf-8")
+
+    tree_kernel = (
+        project_dir
+        / "trees"
+        / "torch_nn_functional_softplus"
+        / "kernels"
+        / "kernel_0.cu"
+    )
+    tree_kernel.parent.mkdir(parents=True)
+    tree_kernel.write_text("// old kernel\n", encoding="utf-8")
+
+    (tree_kernel.parent.parent / "generated_root.json").write_text(
+        json.dumps(
+            {
+                "kernel_relpath": "trees/torch_nn_functional_softplus/kernels/kernel_0.cu"
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bench_dir = project_dir / "benchmarks"
+    bench_dir.mkdir(parents=True)
+    (bench_dir / "op_benchmarks.json").write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "op": "torch_nn_functional_softplus",
+                        "kernel_status": "ok",
+                        "kernel_ms": 0.42,
+                        "backend": "cuda",
+                        "kernel_entry_latencies_ms": [0.41, 0.43],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert workflow._load_saved_benchmark_for_existing_kernel(
+        project_dir,
+        "torch_nn_functional_softplus",
+        generated_op_dir,
+    ) == (None, "")
