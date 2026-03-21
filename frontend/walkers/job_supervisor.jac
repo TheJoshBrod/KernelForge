@@ -1832,6 +1832,35 @@ def:pub _normalize_metric_op_name(raw: Any) -> str {
     return text.replace(".", "_").replace("/", "_");
 }
 
+def:pub _captured_op_counts(project_name: str) -> dict {
+    ops_map = {};
+    base_dir = path.join(_project_dir(project_name), "io", "individual_ops");
+    if not path.exists(base_dir) {
+        return ops_map;
+    }
+    for name in listdir(base_dir) {
+        full_path = path.join(base_dir, name);
+        if not path.isdir(full_path) {
+            continue;
+        }
+        count = 0;
+        try {
+            entries = [
+                f
+                for f in listdir(full_path)
+                if f.startswith("entry_") and f.endswith(".pt")
+            ];
+            count = len(entries);
+        } except Exception {
+            count = 0;
+        }
+        if count > 0 {
+            ops_map[str(name)] = count;
+        }
+    }
+    return ops_map;
+}
+
 def _to_positive_float(raw: Any) -> Any {
     if raw is None {
         return None;
@@ -1909,19 +1938,35 @@ def _compute_project_metrics(project_name: str) -> dict {
         }
     }
 
+    captured_counts = _captured_op_counts(project_name);
+    has_captured_ops = len(captured_counts) > 0;
+
     count_by_op = {};
     for full_name in op_counts {
         op_name = _normalize_metric_op_name(full_name);
         if not op_name {
             continue;
         }
+        if has_captured_ops and not (op_name in captured_counts) {
+            continue;
+        }
         count_by_op[op_name] = _to_int(op_counts[full_name]);
+    }
+    if has_captured_ops {
+        for op_name in captured_counts {
+            if not (op_name in count_by_op) {
+                count_by_op[op_name] = _to_int(captured_counts[op_name]);
+            }
+        }
     }
 
     profile_ms_by_op = {};
     for full_name in op_profile_ms {
         op_name = _normalize_metric_op_name(full_name);
         if not op_name {
+            continue;
+        }
+        if has_captured_ops and not (op_name in captured_counts) {
             continue;
         }
         ms_val = _to_positive_float(op_profile_ms[full_name]);
@@ -1946,6 +1991,9 @@ def _compute_project_metrics(project_name: str) -> dict {
         if not op_name {
             continue;
         }
+        if has_captured_ops and not (op_name in captured_counts) {
+            continue;
+        }
         bench_by_op[op_name] = r;
         if not (op_name in seen_bench) {
             bench_order.append(op_name);
@@ -1958,6 +2006,9 @@ def _compute_project_metrics(project_name: str) -> dict {
     for op_name in tree_raw {
         norm_name = _normalize_metric_op_name(op_name);
         if not norm_name {
+            continue;
+        }
+        if has_captured_ops and not (norm_name in captured_counts) {
             continue;
         }
         ms_val = _to_positive_float(tree_raw[op_name]);

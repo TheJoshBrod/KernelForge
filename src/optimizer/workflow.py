@@ -188,7 +188,12 @@ def _run(cmd: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str]:
         print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, end="")
-    return result.returncode, result.stderr.strip()
+    detail_parts: list[str] = []
+    if result.stderr and result.stderr.strip():
+        detail_parts.append(result.stderr.strip())
+    if result.stdout and result.stdout.strip():
+        detail_parts.append(result.stdout.strip())
+    return result.returncode, "\n".join(detail_parts)
 
 
 def _ops_from_csv(raw: str) -> list[str]:
@@ -207,7 +212,10 @@ def _discover_ops(io_dir: Path) -> list[str]:
         return []
     ops: list[str] = []
     for child in sorted(io_dir.iterdir()):
-        if child.is_dir():
+        if not child.is_dir():
+            continue
+        has_entries = any(entry.name.startswith("entry_") and entry.suffix == ".pt" for entry in child.iterdir())
+        if has_entries:
             ops.append(child.name)
     return ops
 
@@ -324,9 +332,25 @@ def run_generate(args: argparse.Namespace) -> int:
         if reason:
             print(f"[workflow] {reason}")
 
+    discovered_ops = _discover_ops(io_dir)
     ops = _ops_from_csv(args.ops)
-    if not ops:
-        ops = _discover_ops(io_dir)
+    if ops:
+        invalid_ops = [op for op in ops if op not in discovered_ops]
+        ops = [op for op in ops if op in discovered_ops]
+        if invalid_ops:
+            available = ", ".join(discovered_ops) if discovered_ops else "(none)"
+            reason = (
+                "No captured inputs found for requested ops: "
+                + ", ".join(invalid_ops)
+                + ". Available captured ops: "
+                + available
+            )
+            print(f"[workflow] {reason}")
+            if not ops:
+                _fail_all_active_tasks(project_dir, reason)
+                return 1
+    else:
+        ops = discovered_ops
     if not ops:
         print("[workflow] No operators discovered for generation.")
         return 1

@@ -8,6 +8,7 @@ import from .globals { repo_root, config_store }
 import from .catalog_db { _ensure_dir }
 import from .job_supervisor {
     _project_dir,
+    _captured_op_counts,
     _read_state,
     _update_job_state,
     _start_job,
@@ -105,6 +106,7 @@ walker:pub StartGenerate {
         io_dir = path.join(_project_dir(self.projectName), "io", "individual_ops");
         out_dir = path.join(_project_dir(self.projectName), "kernels", "generated");
         _ensure_dir(out_dir);
+        captured_ops = _captured_op_counts(self.projectName);
 
         target_device = str(self.targetDevice).lower() if self.targetDevice else "cuda";
         if not self.targetDevice {
@@ -130,13 +132,47 @@ walker:pub StartGenerate {
             report {"success": False, "error": f"Unsupported target device: {target_device}"};
             disengage;
         }
-        if len(ops_list) == 0 and path.exists(io_dir) {
-            for op_name in listdir(io_dir) {
-                op_dir = path.join(io_dir, op_name);
-                if path.isdir(op_dir) {
-                    ops_list.append(str(op_name));
+        invalid_ops = [];
+        valid_ops = [];
+        seen_ops = {};
+        if len(ops_list) == 0 {
+            for op_name in captured_ops {
+                valid_ops.append(str(op_name));
+            }
+        } else {
+            for raw_op in ops_list {
+                op_name = str(raw_op);
+                if op_name in seen_ops {
+                    continue;
+                }
+                seen_ops[op_name] = True;
+                if op_name in captured_ops {
+                    valid_ops.append(op_name);
+                } else {
+                    invalid_ops.append(op_name);
                 }
             }
+        }
+        ops_list = valid_ops;
+        if len(ops_list) == 0 {
+            available_ops = [];
+            for op_name in captured_ops {
+                available_ops.append(str(op_name));
+            }
+            error_msg = "No captured operators are available for generation.";
+            if len(invalid_ops) > 0 {
+                error_msg = (
+                    "No captured inputs found for requested operators: "
+                    + ", ".join(invalid_ops)
+                );
+            }
+            report {
+                "success": False,
+                "error": error_msg,
+                "invalid_ops": invalid_ops,
+                "available_ops": available_ops
+            };
+            disengage;
         }
         cmd = [
             sys.executable,

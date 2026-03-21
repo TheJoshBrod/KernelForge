@@ -786,6 +786,7 @@ def main():
 
     # Loop over all function directories
     function_dirs = sorted(glob.glob(os.path.join(io_dir, "*")))
+    available_ops: list[str] = []
     jobs: list[tuple[str, list[str], str, str]] = []
 
     for func_dir in function_dirs:
@@ -794,12 +795,14 @@ def main():
 
         function_name = os.path.basename(func_dir).replace("_", ".")
         op_key = _normalize_op_name(function_name)
+        entry_files = sorted(glob.glob(os.path.join(func_dir, "entry_*.pt")))
+        if not entry_files:
+            continue
+        if op_key not in available_ops:
+            available_ops.append(op_key)
         if skip_ops and op_key in skip_ops:
             continue
         if only_ops and op_key not in only_ops:
-            continue
-        entry_files = sorted(glob.glob(os.path.join(func_dir, "entry_*.pt")))
-        if not entry_files:
             continue
         jobs.append((func_dir, entry_files, function_name, op_key))
 
@@ -814,6 +817,14 @@ def main():
         jobs = jobs[:max_ops]
 
     total_jobs = len(jobs)
+    if only_ops and total_jobs == 0:
+        requested = ", ".join(sorted(only_ops))
+        available = ", ".join(sorted(available_ops)) if available_ops else "(none)"
+        print(
+            "No captured operator directories matched the requested ops: "
+            f"{requested}. Available captured ops: {available}"
+        )
+        return 2
     update_job_progress(0, total_jobs, "Starting generation")
 
     completed = 0
@@ -962,4 +973,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main() or 0)
