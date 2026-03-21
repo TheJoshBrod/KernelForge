@@ -7,6 +7,7 @@ import json
 import os
 import importlib
 import sys
+from collections.abc import Mapping
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
@@ -513,12 +514,12 @@ def load_model(module, weights_path: Path, device: str):
 
 
 def normalize_inputs(sample):
-    if isinstance(sample, dict):
-        return (), sample
+    if isinstance(sample, Mapping):
+        return (), dict(sample)
     if isinstance(sample, (list, tuple)):
-        if len(sample) == 2 and isinstance(sample[1], dict):
+        if len(sample) == 2 and isinstance(sample[1], Mapping):
             args = sample[0] if isinstance(sample[0], (list, tuple)) else (sample[0],)
-            return tuple(args), sample[1]
+            return tuple(args), dict(sample[1])
         return tuple(sample), {}
     return (sample,), {}
 
@@ -528,7 +529,7 @@ def move_to_device(obj, device: str):
         return obj.to(device)
     if isinstance(obj, (list, tuple)):
         return type(obj)(move_to_device(x, device) for x in obj)
-    if isinstance(obj, dict):
+    if isinstance(obj, Mapping):
         return {k: move_to_device(v, device) for k, v in obj.items()}
     return obj
 
