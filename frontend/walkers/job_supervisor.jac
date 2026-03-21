@@ -1236,6 +1236,131 @@ def _terminal_queue_tasks(active_tasks: dict) -> dict {
     return preserved;
 }
 
+def _queue_task_is_terminal(task: dict) -> bool {
+    if not task {
+        return True;
+    }
+    current_step = (
+        str(task["current_step"])
+        if "current_step" in task and task["current_step"]
+        else ""
+    );
+    if current_step == "Done" or current_step == "Failed" {
+        return True;
+    }
+    status_text = (
+        str(task["status"]).strip().lower()
+        if "status" in task and task["status"]
+        else ""
+    );
+    return (
+        status_text == "done"
+        or status_text == "failed"
+        or status_text == "completed"
+        or status_text == "cancelled"
+        or status_text == "error"
+    );
+}
+
+def _reconcile_queue_state_with_job_state(project_name: str, queue_state: dict) -> dict {
+    if not queue_state {
+        return _default_queue_state();
+    }
+
+    state_path = path.join(_project_dir(project_name), "state.json");
+    state = _read_state_raw(state_path);
+    if not state or len(state) == 0 {
+        return queue_state;
+    }
+
+    changed = False;
+    active_tasks = (
+        queue_state["active_tasks"]
+        if "active_tasks" in queue_state and queue_state["active_tasks"]
+        else {}
+    );
+
+    for (job_key, task_tag) in [("generate", "[GEN]"), ("optimize", "[OPT]")] {
+        job = state[job_key] if job_key in state and state[job_key] else {};
+        if not job {
+            continue;
+        }
+        status_text = (
+            str(job["status"]).strip().lower()
+            if "status" in job and job["status"]
+            else ""
+        );
+        control_text = (
+            str(job["control"]).strip().lower()
+            if "control" in job and job["control"]
+            else ""
+        );
+        if (
+            bool(job["active"]) if "active" in job else False
+        ) or status_text == "running" or status_text == "queued" or status_text == "paused" or control_text == "running" {
+            continue;
+        }
+        if not (
+            status_text == "completed"
+            or status_text == "success"
+            or status_text == "error"
+            or status_text == "cancelled"
+        ) {
+            continue;
+        }
+
+        task_changed = False;
+        for task_key in active_tasks {
+            task = active_tasks[task_key];
+            tag_text = (
+                str(task["tag"])
+                if task and "tag" in task and task["tag"]
+                else ""
+            );
+            if tag_text != task_tag or _queue_task_is_terminal(task) {
+                continue;
+            }
+            if status_text == "completed" or status_text == "success" {
+                task["current_step"] = "Done";
+                task["status"] = "Done";
+            } else {
+                task["current_step"] = "Failed";
+                task["status"] = "Failed";
+                if not ("result" in task) or not task["result"] {
+                    task["result"] = (
+                        str(job["message"])
+                        if "message" in job and job["message"]
+                        else "Recovered stale queue state (worker no longer running)."
+                    );
+                }
+            }
+            task_changed = True;
+            changed = True;
+        }
+
+        if task_changed {
+            queue_state["current_operator"] = "";
+            queue_state["pending_operators"] = [];
+            queue_state["benchmark_slot"] = {"now": None, "pending": []};
+            queue_state["launching_job"] = {};
+            _append_queue_debug(
+                project_name,
+                "reconcile_queue",
+                "cleared stale running queue state",
+                {
+                    "job_key": job_key,
+                    "status": status_text
+                }
+            );
+        }
+    }
+
+    if changed {
+        queue_state["active_tasks"] = active_tasks;
+    }
+    return queue_state;
+}
+
 def:pub _read_queue_state(project_name: str) -> dict {
     queue_path = path.join(_project_dir(project_name), "queue.json");
     state = _default_queue_state();
@@ -1260,6 +1385,7 @@ def:pub _read_queue_state(project_name: str) -> dict {
     if not ("launching_job" in state) or not state["launching_job"] {
         state["launching_job"] = {};
     }
+    state = _reconcile_queue_state_with_job_state(project_name, state);
     return state;
 }
 
