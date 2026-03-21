@@ -30,11 +30,12 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def generate_optimization_prompt(self, 
-                                   gpu_specs: GPUSpecs, 
-                                   current_code: str, 
+    def generate_optimization_prompt(self,
+                                   gpu_specs: GPUSpecs,
+                                   current_code: str,
                                    improvement_log: List[str],
-                                   ancestor_codes: Optional[List[Tuple[int, str]]] = None) -> str:
+                                   ancestor_codes: Optional[List[Tuple[int, str]]] = None,
+                                   failed_siblings: Optional[List[str]] = None) -> str:
         """
         Generates the LLM prompt for optimizing kernel code.
         """

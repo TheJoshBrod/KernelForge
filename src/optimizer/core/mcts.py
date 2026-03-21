@@ -280,12 +280,12 @@ def choose_optimization(paths: dict, C: float = settings.mcts_c_constant, exclud
         while current.children_ids and depth_sanity < 1000:
             depth_sanity += 1
 
-            # Linear Annealing: From 0.5 down to 0.3            
-            total_steps_done = roots[0].visits
-            max_steps = 1000
-
-            progress = min(1.0, total_steps_done / max_steps)
-            current_exponent = 0.5 - (0.2 * progress)
+            # Linear Annealing: From pw_initial_exponent down to pw_final_exponent
+            total_steps_done = root.visits
+            progress = min(1.0, total_steps_done / settings.pw_anneal_steps)
+            current_exponent = settings.pw_initial_exponent - (
+                (settings.pw_initial_exponent - settings.pw_final_exponent) * progress
+            )
             max_children = math.floor(current.visits ** current_exponent)
             
             # Branching Condition
@@ -307,9 +307,17 @@ def choose_optimization(paths: dict, C: float = settings.mcts_c_constant, exclud
                     continue  # Skip missing nodes
                 if child_id in exclude_ids:
                     continue  # Skip nodes being processed by other workers
-                
+
                 child = _NODE_CACHE[child_id]
-                
+
+                # Skip stagnant subtrees: if a node has been visited enough times
+                # and never improved beyond its own value, avoid it.
+                if (child.visits >= settings.stagnation_threshold
+                        and child.value is not None
+                        and child.best_subtree_value is not None
+                        and child.best_subtree_value >= child.value):
+                    continue
+
                 # CRITICAL: If a child is 'failed' (inf value), do we visit it?
                 # In minimization, 'inf' score is bad, so UCT naturally avoids it.
                 # But we must ensure uct_score handles 'inf' math correctly.
@@ -464,6 +472,46 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
                 h["speedup_vs_baseline"] = 1.0 if current_time == baseline_time else 0.0
 
     return history, codes
+
+
+def collect_failed_siblings(paths: dict, parent_node: KernelNode) -> list[str]:
+    """Return improvement_description strings for failed nodes related to parent_node.
+
+    Collects:
+    1. Failed children of parent_node (already-attempted failures at this level)
+    2. Failed siblings of parent_node (failed children of parent_node's parent)
+
+    This surfaces known-bad transformations so the LLM can avoid repeating them.
+    """
+    db_path = get_db_path(paths)
+    failed_descriptions = []
+    try:
+        with sqlite3.connect(db_path) as conn:
+            # Failed children of parent_node (attempts already made from this node)
+            cursor = conn.execute(
+                "SELECT n.improvement_description FROM nodes n "
+                "JOIN edges e ON n.id = e.child_id "
+                "WHERE e.parent_id = ? AND n.value IS NULL",
+                (parent_node.id,)
+            )
+            for row in cursor.fetchall():
+                if row[0]:
+                    failed_descriptions.append(row[0])
+
+            # Failed siblings of parent_node (children of grandparent that failed)
+            if parent_node.parent_id is not None and parent_node.parent_id != -1:
+                cursor = conn.execute(
+                    "SELECT n.improvement_description FROM nodes n "
+                    "JOIN edges e ON n.id = e.child_id "
+                    "WHERE e.parent_id = ? AND n.value IS NULL AND n.id != ?",
+                    (parent_node.parent_id, parent_node.id)
+                )
+                for row in cursor.fetchall():
+                    if row[0] and row[0] not in failed_descriptions:
+                        failed_descriptions.append(row[0])
+    except Exception:
+        pass
+    return failed_descriptions
 
 
 def get_existing_roots(paths: dict) -> list[dict]:

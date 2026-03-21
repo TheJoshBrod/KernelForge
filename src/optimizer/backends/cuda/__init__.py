@@ -27,17 +27,19 @@ class CUDABackend(Backend):
     def get_sys_prompt(self) -> str:
         return prompts.get_sys_prompt()
 
-    def generate_optimization_prompt(self, 
-                                   gpu_specs: GPUSpecs, 
-                                   kernel_code: str, 
+    def generate_optimization_prompt(self,
+                                   gpu_specs: GPUSpecs,
+                                   kernel_code: str,
                                    improvement_log: List[dict],
-                                   ancestor_codes: Optional[List[Tuple[int, str]]] = None) -> str:
-        
+                                   ancestor_codes: Optional[List[Tuple[int, str]]] = None,
+                                   failed_siblings: Optional[List[str]] = None) -> str:
+
         return prompts.generate_gpu_optimization_prompt(
             gpu_info=gpu_specs.model_dump(),
             kernel_code=kernel_code,
             improvement_log=improvement_log,
-            ancestor_codes=ancestor_codes
+            ancestor_codes=ancestor_codes,
+            failed_siblings=failed_siblings
         )
 
     def validate_kernel(self, 

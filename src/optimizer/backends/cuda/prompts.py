@@ -175,7 +175,8 @@ Your optimized output will be saved to a kernel.cu follow and must follow ALL ru
 def generate_gpu_optimization_prompt(gpu_info: dict,
                                      kernel_code: str,
                                      improvement_log: list[str],
-                                     ancestor_codes: list[tuple[int, str]] = None) -> str:
+                                     ancestor_codes: list[tuple[int, str]] = None,
+                                     failed_siblings: list[str] = None) -> str:
     """
     Generates a structured prompt for an LLM to optimize a CUDA kernel 
     based on specific GPU hardware architecture and constraints.
@@ -295,14 +296,28 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
         if len(sorted_log) < len(improvement_log):
              history_section = f"> *(History pruned: {len(sorted_log)}/{len(improvement_log)} items)*\n\n" + history_section
 
-    # 3. Ancestor Codes (Limit to Parent Only to save tokens)
+    # 3. Failed Approaches
+    failed_section = ""
+    if failed_siblings:
+        failed_lines = "\n".join(f"- {desc}" for desc in failed_siblings)
+        failed_section = f"**Previously Failed Approaches (DO NOT repeat these)**\n{failed_lines}\n"
+
+    # 4. Ancestor Codes — show evolution trail up to a 12KB budget
     ancestor_section = ""
     if ancestor_codes and len(ancestor_codes) > 0:
-        ancestor_section = "**Code Evolution (Immediate Parent)**\n"
-        # Only take the last one (Parent)
-        last_iter, last_code = ancestor_codes[-1] 
-        display_code = last_code if len(last_code) < 6000 else last_code[:6000] + "\n// ... truncated"
-        ancestor_section += f"<details><summary>Iteration {last_iter}</summary>\n```cpp\n{display_code}\n```\n</details>"
+        ancestor_section = "**Code Evolution**\n"
+        char_budget = 12000
+        chars_used = 0
+        blocks = []
+        for iter_id, code in ancestor_codes:
+            label = "Parent" if (iter_id, code) == ancestor_codes[-1] else f"Ancestor (iteration {iter_id})"
+            remaining = char_budget - chars_used
+            if remaining <= 0:
+                break
+            display_code = code if len(code) <= remaining else code[:remaining] + "\n// ... truncated"
+            chars_used += len(display_code)
+            blocks.append(f"<details><summary>{label} — iteration {iter_id}</summary>\n```cpp\n{display_code}\n```\n</details>")
+        ancestor_section += "\n".join(blocks)
 
     prompt = f"""
 ### Task: Optimize CUDA Kernel for {gpu_info.get('gpu_name', 'GPU')} ({arch_name})
@@ -310,6 +325,7 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
 **Hardware Constraints**
 {constraints}
 
+{failed_section}
 **Optimization History (Learn from this)**
 {history_section}
 

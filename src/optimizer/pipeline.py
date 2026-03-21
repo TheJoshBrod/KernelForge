@@ -151,15 +151,15 @@ def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, impro
         "iteration": next_id,
         "attempted": improvement_description,
         "results": current_stats,
-        "speedup_vs_parent": (parent_info.value / current_stats['mean_time_ms']
-                              if parent_info.value is not None and current_stats['mean_time_ms'] > 0
+        "speedup_vs_parent": (parent_info.value / current_stats['min_time_ms']
+                              if parent_info.value is not None and current_stats['min_time_ms'] > 0
                               else 1.0),
     }
 
     # Save node to DB
     node_val = {
         "id": next_id,
-        "value": current_stats['mean_time_ms'],
+        "value": current_stats['min_time_ms'],
         "speedup_vs_parent": log_entry['speedup_vs_parent'],
         "improvement_description": improvement_description,
         "parent": parent_info.id,
@@ -192,10 +192,13 @@ def optimize(
 
     # Collect improvement history from tree (walk from parent to root)
     improvement_log, ancestor_codes = mcts.collect_ancestry(
-        paths, 
-        parent_node, 
+        paths,
+        parent_node,
         code_depth=settings.ancestor_code_depth
     )
+
+    # Collect known-bad transformations to steer the LLM away from repeated failures
+    failed_siblings = mcts.collect_failed_siblings(paths, parent_node)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         paths["tmp_dir"] = Path(tmpdir)
@@ -226,7 +229,7 @@ def optimize(
                 })
 
         improvement_description, is_valid, failure_reason = generator.generate(
-            backend, kernel_code, gpu_specs, improvement_log, paths, model=model, ancestor_codes=ancestor_codes, ssh_config=ssh_config, status_callback=_status_cb)
+            backend, kernel_code, gpu_specs, improvement_log, paths, model=model, ancestor_codes=ancestor_codes, failed_siblings=failed_siblings, ssh_config=ssh_config, status_callback=_status_cb)
         print("\tFinished generation.")
         print(f"\t\t- Status: {is_valid}")
 

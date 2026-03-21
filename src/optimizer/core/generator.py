@@ -196,7 +196,7 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
     return feedback, is_valid, error
 
 
-def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None, ssh_config: dict = None, status_callback = None) -> Tuple[str, bool, str]:
+def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, improvement_log: list, paths: dict[str, Path], model: str = None, ancestor_codes: list[tuple[int, str]] = None, failed_siblings: list[str] = None, ssh_config: dict = None, status_callback = None) -> Tuple[str, bool, str]:
     """Generates and validates CUDA kernels 
 
     Args:
@@ -218,7 +218,7 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
     sys_prompt = backend.get_sys_prompt()
     llm: GenModel = GenModel(sys_prompt)
     msg = backend.generate_optimization_prompt(
-        gpu_specs, best_kernel_code, improvement_log, ancestor_codes)
+        gpu_specs, best_kernel_code, improvement_log, ancestor_codes, failed_siblings)
 
     # DEBUG: Save full prompt alongside each generation
     # Use shared counter if available (parallel mode), else count files (sequential mode)
