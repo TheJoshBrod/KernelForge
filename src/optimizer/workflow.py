@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -247,6 +248,73 @@ def _has_success_marker(op_dir: Path) -> bool:
     return False
 
 
+def _find_kernel_source(op_dir: Path) -> Path | None:
+    for name in ("kernel.cu", "kernel.py", "kernel.metal", "kernel.mps", "kernel.cpu"):
+        candidate = op_dir / name
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    for candidate in sorted(op_dir.glob("kernel.*")):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _load_tree_root_kernel_path(project_dir: Path, op_name: str) -> Path | None:
+    tree_op_dir = project_dir / "trees" / op_name
+    meta_path = tree_op_dir / "generated_root.json"
+    if meta_path.exists():
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            relpath = str(payload.get("kernel_relpath") or "").strip()
+            if relpath:
+                candidate = project_dir / relpath
+                if candidate.exists() and candidate.is_file():
+                    return candidate
+        except Exception:
+            pass
+
+    kernels_dir = tree_op_dir / "kernels"
+    if not kernels_dir.exists():
+        return None
+    candidates = sorted(kernels_dir.glob("kernel_0.*"))
+    if not candidates:
+        candidates = sorted(kernels_dir.glob("kernel_*.*"))
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_saved_benchmark_for_existing_kernel(
+    project_dir: Path,
+    op_name: str,
+    generated_op_dir: Path,
+) -> tuple[float | None, str]:
+    generated_kernel = _find_kernel_source(generated_op_dir)
+    if generated_kernel is None:
+        return None, ""
+
+    tree_kernel = _load_tree_root_kernel_path(project_dir, op_name)
+    if tree_kernel is None:
+        return None, ""
+
+    try:
+        if _file_sha256(generated_kernel) != _file_sha256(tree_kernel):
+            return None, ""
+    except Exception:
+        return None, ""
+
+    return _load_kernel_benchmark(project_dir, op_name)
+
+
 def _load_kernel_benchmark(project_dir: Path, op_name: str) -> tuple[float | None, str]:
     bench_path = project_dir / "benchmarks" / "op_benchmarks.json"
     if not bench_path.exists():
@@ -402,6 +470,9 @@ def run_generate(args: argparse.Namespace) -> int:
         op_failure: str | None = None
         can_benchmark = False
         reused_existing = False
+        reused_saved_benchmark = False
+        saved_kernel_ms: float | None = None
+        saved_backend = ""
 
         # C3/C4: advance current_operator and shrink pending_operators in the queue
         update_queue_state(project_dir, {
@@ -412,12 +483,23 @@ def run_generate(args: argparse.Namespace) -> int:
         if _has_success_marker(generated_op_dir):
             reused_existing = True
             can_benchmark = True
+            if args.benchmark:
+                saved_kernel_ms, saved_backend = _load_saved_benchmark_for_existing_kernel(
+                    project_dir,
+                    op_name,
+                    generated_op_dir,
+                )
+                reused_saved_benchmark = saved_kernel_ms is not None
             publish_result = publish_generated_root(
                 project_dir,
                 op_name,
-                kernel_ms=None,
-                backend=target_device,
-                description="Generated baseline kernel (existing)",
+                kernel_ms=saved_kernel_ms,
+                backend=saved_backend or target_device,
+                description=(
+                    "Generated baseline kernel (existing, benchmark reused)"
+                    if reused_saved_benchmark
+                    else "Generated baseline kernel (existing)"
+                ),
             )
             if not publish_result.get("ok", False):
                 print(
@@ -512,76 +594,92 @@ def run_generate(args: argparse.Namespace) -> int:
             if check_cancelled():
                 return 130
 
-            update_job_progress(
-                idx,
-                progress_total,
-                (
-                    f"Benchmarking kernel for {op_name} ({idx + 1}/{total_ops})"
-                    if not reused_existing
-                    else (
-                        f"Skipping generation for {op_name} (already generated); "
-                        f"benchmarking ({idx + 1}/{total_ops})"
-                    )
-                ),
-            )
-            bench_cmd = [
-                sys.executable,
-                "-m",
-                "src.optimizer.benchmarking.benchmark_ops",
-                "--project",
-                args.project,
-                "--ops",
-                op_name,
-            ]
-            # C2: signal benchmarking phase so the UI progress bar advances
-            update_queue_state(project_dir, {"active_tasks": {task_key: {
-                **task_meta,
-                "current_step": "Benchmarking",
-                "status": "In Progress",
-                "op_name": op_name,
-                "tag": "[GEN]",
-            }}})
-            rc, stderr = _run(bench_cmd, root, subprocess_env)
-            if rc != 0:
-                detail = f": {stderr[:_RESULT_TRUNCATE]}" if stderr else ""
-                failure_msg = f"benchmark failed (exit {rc}){detail}"
-                op_failure = f"{op_failure}; {failure_msg}" if op_failure else failure_msg
-                update_queue_state(project_dir, {"active_tasks": {task_key: {
-                    **task_meta,
-                    "current_step": "Failed",
-                    "status": "Failed",
-                    "result": failure_msg[:_RESULT_TRUNCATE],
-                    "op_name": op_name,
-                    "tag": "[GEN]",
-                }}})
-            else:
-                kernel_ms, backend = _load_kernel_benchmark(project_dir, op_name)
-                # C1: write benchmark timing so completed section can show value_ms
+            if reused_saved_benchmark:
+                update_job_progress(
+                    idx,
+                    progress_total,
+                    f"Reusing saved benchmark for {op_name} ({idx + 1}/{total_ops})",
+                )
                 update_queue_state(project_dir, {"active_tasks": {task_key: {
                     **task_meta,
                     "current_step": "Done",
                     "status": "Done",
-                    "value_ms": kernel_ms,
+                    "value_ms": saved_kernel_ms,
                     "kernel_id": "0",
                     "op_name": op_name,
                     "tag": "[GEN]",
                 }}})
-                publish_result = publish_generated_root(
-                    project_dir,
-                    op_name,
-                    kernel_ms=kernel_ms,
-                    backend=backend or target_device,
-                    description=(
-                        "Generated baseline kernel (existing, benchmarked)"
-                        if reused_existing
-                        else "Generated baseline kernel (benchmarked)"
+            else:
+                update_job_progress(
+                    idx,
+                    progress_total,
+                    (
+                        f"Benchmarking kernel for {op_name} ({idx + 1}/{total_ops})"
+                        if not reused_existing
+                        else (
+                            f"Skipping generation for {op_name} (already generated); "
+                            f"benchmarking ({idx + 1}/{total_ops})"
+                        )
                     ),
                 )
-                if not publish_result.get("ok", False):
-                    print(
-                        "[workflow] Warning: failed to publish benchmarked root for "
-                        f"{op_name}: {publish_result.get('reason', 'unknown')}"
+                bench_cmd = [
+                    sys.executable,
+                    "-m",
+                    "src.optimizer.benchmarking.benchmark_ops",
+                    "--project",
+                    args.project,
+                    "--ops",
+                    op_name,
+                ]
+                # C2: signal benchmarking phase so the UI progress bar advances
+                update_queue_state(project_dir, {"active_tasks": {task_key: {
+                    **task_meta,
+                    "current_step": "Benchmarking",
+                    "status": "In Progress",
+                    "op_name": op_name,
+                    "tag": "[GEN]",
+                }}})
+                rc, stderr = _run(bench_cmd, root, subprocess_env)
+                if rc != 0:
+                    detail = f": {stderr[:_RESULT_TRUNCATE]}" if stderr else ""
+                    failure_msg = f"benchmark failed (exit {rc}){detail}"
+                    op_failure = f"{op_failure}; {failure_msg}" if op_failure else failure_msg
+                    update_queue_state(project_dir, {"active_tasks": {task_key: {
+                        **task_meta,
+                        "current_step": "Failed",
+                        "status": "Failed",
+                        "result": failure_msg[:_RESULT_TRUNCATE],
+                        "op_name": op_name,
+                        "tag": "[GEN]",
+                    }}})
+                else:
+                    kernel_ms, backend = _load_kernel_benchmark(project_dir, op_name)
+                    # C1: write benchmark timing so completed section can show value_ms
+                    update_queue_state(project_dir, {"active_tasks": {task_key: {
+                        **task_meta,
+                        "current_step": "Done",
+                        "status": "Done",
+                        "value_ms": kernel_ms,
+                        "kernel_id": "0",
+                        "op_name": op_name,
+                        "tag": "[GEN]",
+                    }}})
+                    publish_result = publish_generated_root(
+                        project_dir,
+                        op_name,
+                        kernel_ms=kernel_ms,
+                        backend=backend or target_device,
+                        description=(
+                            "Generated baseline kernel (existing, benchmarked)"
+                            if reused_existing
+                            else "Generated baseline kernel (benchmarked)"
+                        ),
                     )
+                    if not publish_result.get("ok", False):
+                        print(
+                            "[workflow] Warning: failed to publish benchmarked root for "
+                            f"{op_name}: {publish_result.get('reason', 'unknown')}"
+                        )
 
         if op_failure:
             update_queue_state(project_dir, {"active_tasks": {task_key: {
@@ -603,7 +701,9 @@ def run_generate(args: argparse.Namespace) -> int:
             continue
 
         if args.benchmark:
-            if reused_existing:
+            if reused_saved_benchmark:
+                msg = f"Reused saved benchmark for {idx + 1}/{total_ops} operators."
+            elif reused_existing:
                 msg = f"Reused + benchmarked {idx + 1}/{total_ops} operators."
             else:
                 msg = f"Generated + benchmarked {idx + 1}/{total_ops} operators."
