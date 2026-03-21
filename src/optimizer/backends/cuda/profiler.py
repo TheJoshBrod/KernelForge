@@ -34,6 +34,12 @@ from torch.utils.cpp_extension import load_inline
 
 
 from src.optimizer.config.settings import settings
+from src.optimizer.benchmarking.harness import (
+    DEFAULT_TIMED_RUNS,
+    DEFAULT_WARMUP_RUNS,
+    benchmark_entry_calls,
+    summarize_entry_results,
+)
 from src.optimizer.core.types import GPUSpecs
 from src.optimizer.profiling import get_device_specs as get_profiled_device_specs
 
@@ -182,9 +188,12 @@ def normalize_args_kwargs(args: list, kwargs: dict, params: list, defaults: dict
     return normalized, remaining_kwargs
 
 
-def get_input_files(io_dir: Path) -> list:
+def get_input_files(io_dir: Path, selected_files: list[Path] | list[str] | None = None) -> list:
     """Retrieves list of all input file paths for a given profiled pytorch op"""
-    pt_files = sorted(glob.glob(os.path.join(io_dir, "entry_*.pt")))
+    if selected_files:
+        pt_files = [str(Path(item)) for item in selected_files]
+    else:
+        pt_files = sorted(glob.glob(os.path.join(io_dir, "entry_*.pt")))
 
     if not pt_files:
         raise ValueError(f"No entry_*.pt files found in {io_dir}")
@@ -209,7 +218,7 @@ def _sync_device(device: str) -> None:
         torch.mps.synchronize()
 
 
-def load_batch(pt_files: list) -> list[tuple[list[any], dict[str, any]]]:
+def load_batch(pt_files: list) -> list[tuple[str, list[any], dict[str, any]]]:
     """Loads a batch of .pt files into GPU memory"""
     inputs = []
     device = _target_device()
@@ -240,7 +249,7 @@ def load_batch(pt_files: list) -> list[tuple[list[any], dict[str, any]]]:
                     args, kwargs = normalize_args_kwargs(
                         args, kwargs, params, defaults)
 
-            inputs.append((args, kwargs))
+            inputs.append((Path(pt_file).name, args, kwargs))
 
         except Exception as e:
             print(f"Warning: Failed to load {pt_file}: {e}")
@@ -260,9 +269,11 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
         torch.cuda.set_device(device_index)
 
     # Batching logic to prevent OOM
-    all_files = get_input_files(input_dir)
+    selected_files = paths.get("entry_files")
+    all_files = get_input_files(input_dir, selected_files)
     BATCH_SIZE = settings.batch_size
-    timings = []
+    entry_results = []
+    timing_errors = []
 
     # We profile everything using one profiler context
     # UPDATE: Removed global profiler context as it accumulates too much RAM (OOM on batch 4)
@@ -273,44 +284,33 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
         batch_files = all_files[i: i + BATCH_SIZE]
         inputs = load_batch(batch_files)
 
-        # Warmup (only for this batch, discarded)
-        for _ in range(25):
-            for args, kwargs in inputs:
-                try:
-                    module.launch(*args, **kwargs)
-                except TypeError:
-                    module.launch(*args)
-        _sync_device(target_device)
+        entry_calls = []
+        for entry_file, args, kwargs in inputs:
+            try:
+                module.launch(*args, **kwargs)
+            except TypeError:
+                module.launch(*args)
+            _sync_device(target_device)
 
-        # Measure
-        if target_device == "cuda":
-            start = torch.cuda.Event(enable_timing=True)
-            end = torch.cuda.Event(enable_timing=True)
-            for args, kwargs in inputs:
-                start.record()
-                for _ in range(100):
-                    try:
-                        module.launch(*args, **kwargs)
-                    except TypeError:
-                        module.launch(*args)
-                end.record()
-                torch.cuda.synchronize()
-                elapsed_ms = start.elapsed_time(end) / 100
-                timings.append(elapsed_ms)
-        else:
-            for args, kwargs in inputs:
-                start_time = time.perf_counter()
-                for _ in range(100):
-                    try:
-                        module.launch(*args, **kwargs)
-                    except TypeError:
-                        module.launch(*args)
-                _sync_device(target_device)
-                elapsed_ms = (time.perf_counter() - start_time) * 1000.0 / 100
-                timings.append(elapsed_ms)
+            def invoke(bound_args=args, bound_kwargs=kwargs):
+                try:
+                    return module.launch(*bound_args, **bound_kwargs)
+                except TypeError:
+                    return module.launch(*bound_args)
+
+            entry_calls.append((entry_file, invoke))
+
+        batch_stats = benchmark_entry_calls(
+            entry_calls,
+            device=target_device,
+            warmup_runs=DEFAULT_WARMUP_RUNS,
+            timed_runs=DEFAULT_TIMED_RUNS,
+        )
+        entry_results.extend(batch_stats.get("entry_results") or [])
+        timing_errors.extend(batch_stats.get("errors") or [])
 
         # Profile run (for detailed metrics)
-        for args, kwargs in inputs:
+        for _, args, kwargs in inputs:
             try:
                 module.launch(*args, **kwargs)
             except TypeError:
@@ -324,17 +324,21 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
         elif target_device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
             torch.mps.empty_cache()
 
-    stats = {
-        'mean_time_ms': float(np.mean(timings)),
-        'std_time_ms':  float(np.std(timings)),
-        'min_time_ms':  float(np.min(timings)),
-        'max_time_ms':  float(np.max(timings)),
-    }
+    stats = summarize_entry_results(
+        entry_results,
+        errors=timing_errors,
+        device=target_device,
+        warmup_runs=DEFAULT_WARMUP_RUNS,
+        timed_runs=DEFAULT_TIMED_RUNS,
+    )
 
     # Compare with baseline if provided
     if previous_stats:
-        speedup = previous_stats['min_time_ms'] / stats['min_time_ms']
-        print(f"Speedup: {speedup:.2f}x")
+        prev_mean = previous_stats.get('mean_time_ms') if isinstance(previous_stats, dict) else None
+        curr_mean = stats.get('mean_time_ms')
+        if prev_mean and curr_mean:
+            speedup = prev_mean / curr_mean
+            print(f"Speedup: {speedup:.2f}x")
 
     return stats, prof
 
