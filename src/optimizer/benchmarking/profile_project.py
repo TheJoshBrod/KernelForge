@@ -95,9 +95,12 @@ PROFILE_SKIP_OPS: set[str] = set(DEFAULT_SKIP_OPS)
 PROFILE_SKIP_PREFIXES: set[str] = set(DEFAULT_SKIP_PREFIXES)
 
 calls: dict[str, list[dict[str, Any]]] = {}
+stream_saved_counts: dict[str, int] = {}
+persisted_entry_counts: dict[str, int] = {}
 _wrapped: set[Any] = set()
 ENABLE_WRAPPING = True
 skipped_counts: dict[str, int] = {}
+PROFILE_STREAM_SAVE_DIR: str | None = None
 
 
 def _serialize(v):
@@ -298,7 +301,6 @@ def wrap_function(module, func_name: str) -> None:
             return output
 
         ser_output = _serialize(output)
-        calls.setdefault(key, [])
 
         # Try to resolve full parameter set including defaults.
         # _func_sig is always a real inspect.Signature when set, so bind() +
@@ -308,7 +310,7 @@ def wrap_function(module, func_name: str) -> None:
                 bound = _func_sig.bind(*args, **kwargs)
                 bound.apply_defaults()
                 resolved_kwargs = {k: _serialize(v) for k, v in bound.arguments.items()}
-                calls[key].append({
+                _record_entry(key, {
                     "function_name": key,
                     "args": [],
                     "kwargs": resolved_kwargs,
@@ -320,7 +322,7 @@ def wrap_function(module, func_name: str) -> None:
                 pass  # bind failed — fall through to original
 
         # Original recording path (fallback)
-        calls[key].append({
+        _record_entry(key, {
             "function_name": key,
             "args": [_serialize(a) for a in args],
             "kwargs": {k: _serialize(v) for k, v in kwargs.items()},
@@ -345,32 +347,49 @@ def wrap_torch_nn_functional() -> None:
         wrap_function(F, name)
 
 
-def save_entries(func_name: str, entries: list[dict[str, Any]], base_dir: str, max_per_op: int = 200) -> None:
+def save_entries(func_name: str, entries: list[dict[str, Any]], base_dir: str, max_per_op: int = 200) -> int:
     func_dir = os.path.join(base_dir, func_name.replace(".", "_").replace("/", "_"))
     os.makedirs(func_dir, exist_ok=True)
 
-    existing_count = len(
-        [
-            n
-            for n in os.listdir(func_dir)
-            if n.startswith("entry_") and n.endswith(".pt")
-        ]
-    )
+    existing_count = persisted_entry_counts.get(func_name)
+    if existing_count is None:
+        existing_count = len(
+            [
+                n
+                for n in os.listdir(func_dir)
+                if n.startswith("entry_") and n.endswith(".pt")
+            ]
+        )
+    persisted_entry_counts[func_name] = existing_count
     if existing_count > max_per_op:
-        return
+        return 0
 
+    written = 0
     for idx, entry in enumerate(entries):
         if existing_count + idx > max_per_op:
-            return
+            break
         file_path = os.path.join(func_dir, f"entry_{existing_count + idx:06d}.pt")
         torch.save(entry, file_path)
+        written += 1
+    persisted_entry_counts[func_name] = existing_count + written
+    return written
+
+
+def _record_entry(func_name: str, entry: dict[str, Any]) -> None:
+    if PROFILE_STREAM_SAVE_DIR:
+        written = save_entries(func_name, [entry], PROFILE_STREAM_SAVE_DIR)
+        if written > 0:
+            stream_saved_counts[func_name] = stream_saved_counts.get(func_name, 0) + written
+        return
+    calls.setdefault(func_name, []).append(entry)
 
 
 def flush_calls(base_dir: str) -> dict[str, int]:
-    op_counts: dict[str, int] = {}
+    op_counts: dict[str, int] = dict(stream_saved_counts)
+    stream_saved_counts.clear()
     for func_name, entries in calls.items():
-        save_entries(func_name, entries, base_dir)
-        op_counts[func_name] = op_counts.get(func_name, 0) + len(entries)
+        written = save_entries(func_name, entries, base_dir)
+        op_counts[func_name] = op_counts.get(func_name, 0) + written
     calls.clear()
     return op_counts
 
@@ -637,6 +656,7 @@ def _default_sample_from_model(model) -> Any:
 
 
 def main() -> int:
+    global PROFILE_STREAM_SAVE_DIR
     parser = argparse.ArgumentParser(
         description="Profile a project model to capture per-op inputs/outputs."
     )
@@ -660,6 +680,10 @@ def main() -> int:
 
     out_dir = Path(args.out_dir) if args.out_dir else project_dir / "io" / "individual_ops"
     out_dir.mkdir(parents=True, exist_ok=True)
+    PROFILE_STREAM_SAVE_DIR = str(out_dir)
+    calls.clear()
+    stream_saved_counts.clear()
+    persisted_entry_counts.clear()
 
     device = _resolve_device()
     config = load_project_config(project_dir)
