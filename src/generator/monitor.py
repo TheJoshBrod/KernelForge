@@ -3,11 +3,87 @@ src/generator/monitor.py
 Monitors and Preprocesses PyTorch Aten and CUDA Kernel Abstraction Layer Calls for Generator.
 """
 import os
+import sys
 import torch
 
 aten_output: str = ""
 kernel_output: str = ""
 _HAS_CUDA = torch.cuda.is_available()
+
+
+def _parse_sm_to_capability(arch: str) -> tuple[int, int] | None:
+    if not arch or not str(arch).startswith("sm_"):
+        return None
+    digits = "".join(ch for ch in str(arch)[3:] if ch.isdigit())
+    if not digits:
+        return None
+    value = int(digits)
+    if value <= 0:
+        return None
+    return value // 10, value % 10
+
+
+def _max_supported_cuda_capability() -> tuple[int, int] | None:
+    try:
+        arch_list = torch.cuda.get_arch_list()
+    except Exception:
+        return None
+    best: tuple[int, int] | None = None
+    for arch in arch_list:
+        capability = _parse_sm_to_capability(str(arch))
+        if capability is None:
+            continue
+        if best is None or capability > best:
+            best = capability
+    return best
+
+
+def _supports_forward_compatible_cuda_minor(
+    device_capability: tuple[int, int],
+    max_supported_capability: tuple[int, int] | None,
+    torch_cuda_version: str | None,
+) -> bool:
+    if max_supported_capability is None:
+        return False
+    try:
+        torch_cuda_major = int(str(torch_cuda_version or "").split(".")[0])
+    except Exception:
+        return False
+    return (
+        device_capability[0] == max_supported_capability[0]
+        and device_capability[1] == (max_supported_capability[1] + 1)
+        and torch_cuda_major >= 12
+    )
+
+
+def _skip_cuda_profiler_reason() -> str | None:
+    if os.environ.get("KFORGE_FORCE_CUDA_PROFILER", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return None
+    if not _HAS_CUDA:
+        return "CUDA unavailable"
+    try:
+        device_capability = torch.cuda.get_device_capability()
+    except Exception:
+        return None
+    max_supported_capability = _max_supported_cuda_capability()
+    if max_supported_capability is None or device_capability <= max_supported_capability:
+        return None
+    if _supports_forward_compatible_cuda_minor(
+        device_capability,
+        max_supported_capability,
+        getattr(torch.version, "cuda", None),
+    ):
+        return (
+            "Skipping generate-time CUDA profiler on forward-compatible device capability "
+            f"{device_capability[0]}.{device_capability[1]} because this PyTorch build only ships up to "
+            f"{max_supported_capability[0]}.{max_supported_capability[1]}. "
+            "Generation will continue without profiler context."
+        )
+    return (
+        "Skipping generate-time CUDA profiler because GPU capability "
+        f"{device_capability[0]}.{device_capability[1]} exceeds this PyTorch build maximum "
+        f"{max_supported_capability[0]}.{max_supported_capability[1]}."
+    )
 
 
 def handle_trace(prof):
@@ -51,6 +127,10 @@ def profile_single_op(context: dict, full_exec_string: str) -> str:
     """
     target_device = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
     if not _HAS_CUDA or target_device == "cpu":
+        return ""
+    skip_reason = _skip_cuda_profiler_reason()
+    if skip_reason:
+        print(f"[generator.monitor] {skip_reason}", file=sys.stderr, flush=True)
         return ""
 
     # 1. Reset global profiler strings for this specific op

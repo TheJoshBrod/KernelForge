@@ -62,6 +62,28 @@ def _check_nvcc_version(cuda_home: str) -> None:
 _cuda_env_ready: bool = False
 
 
+def _current_device_compute_capability() -> str:
+    if not torch.cuda.is_available():
+        return ""
+    try:
+        major, minor = torch.cuda.get_device_capability(torch.cuda.current_device())
+    except Exception:
+        try:
+            major, minor = torch.cuda.get_device_capability()
+        except Exception:
+            return ""
+    return f"{major}.{minor}"
+
+
+def _ensure_torch_cuda_arch_list() -> None:
+    if os.environ.get("TORCH_CUDA_ARCH_LIST"):
+        return
+    capability = _current_device_compute_capability().strip()
+    if not capability:
+        return
+    os.environ["TORCH_CUDA_ARCH_LIST"] = capability
+
+
 def ensure_cuda_env() -> None:
     global _cuda_env_ready
     if _cuda_env_ready:
@@ -69,6 +91,7 @@ def ensure_cuda_env() -> None:
     if "CUDA_HOME" not in os.environ:
         os.environ["CUDA_HOME"] = _detect_cuda_home()
     _check_nvcc_version(os.environ["CUDA_HOME"])
+    _ensure_torch_cuda_arch_list()
     python_bin = os.path.dirname(sys.executable)
     if python_bin not in os.environ.get("PATH", "").split(os.pathsep):
         os.environ["PATH"] = f"{python_bin}:{os.environ.get('PATH','')}"

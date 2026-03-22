@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.generator import main as generator_main
+from src.generator import monitor as generator_monitor
 from src.optimizer import workflow
 
 
@@ -183,6 +184,32 @@ def test_generator_main_shuts_down_cuda_verifier_on_exit(tmp_path: Path, monkeyp
 
     assert generator_main.main() == 2
     assert calls == ["shutdown"]
+
+
+def test_generator_monitor_treats_one_step_newer_cuda_minor_as_forward_compatible():
+    assert generator_monitor._supports_forward_compatible_cuda_minor(
+        (12, 1),
+        (12, 0),
+        "13.0",
+    ) is True
+    assert generator_monitor._supports_forward_compatible_cuda_minor(
+        (12, 2),
+        (12, 0),
+        "13.0",
+    ) is False
+
+
+def test_generator_monitor_skips_cuda_profiler_on_forward_compatible_device(monkeypatch):
+    monkeypatch.setattr(generator_monitor, "_HAS_CUDA", True)
+    monkeypatch.delenv("KFORGE_FORCE_CUDA_PROFILER", raising=False)
+    monkeypatch.setattr(generator_monitor.torch.cuda, "get_device_capability", lambda *args, **kwargs: (12, 1))
+    monkeypatch.setattr(generator_monitor.torch.cuda, "get_arch_list", lambda: ["sm_80", "sm_120", "compute_120"])
+    monkeypatch.setattr(generator_monitor.torch.version, "cuda", "13.0", raising=False)
+
+    reason = generator_monitor._skip_cuda_profiler_reason()
+
+    assert reason is not None
+    assert "Generation will continue without profiler context" in reason
 
 
 def test_load_saved_benchmark_for_existing_kernel_reuses_verified_row_when_sources_match(

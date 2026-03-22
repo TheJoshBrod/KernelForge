@@ -185,7 +185,7 @@ def _preflight_cuda_target() -> tuple[bool, str]:
                 "CUDA preflight note: detected GPU "
                 f"'{dev_name}' capability {dev_cap[0]}.{dev_cap[1]} is one step newer "
                 f"than this PyTorch build max {max_cap[0]}.{max_cap[1]}; "
-                "continuing in compatibility mode."
+                "continuing with forward-compatible CUDA support."
             )
 
         return False, (

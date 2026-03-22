@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.optimizer.benchmarking import benchmark_ops
+from src.optimizer.backends.cuda import loader as cuda_loader
 from src.optimizer import workflow
 
 
@@ -168,6 +169,17 @@ def test_workflow_run_streams_child_output(tmp_path: Path, capsys):
     assert "second line" in stdout
     assert "first line" in detail
     assert "second line" in detail
+
+
+def test_cuda_loader_uses_current_device_capability_for_arch_list(monkeypatch):
+    monkeypatch.delenv("TORCH_CUDA_ARCH_LIST", raising=False)
+    monkeypatch.setattr(cuda_loader.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(cuda_loader.torch.cuda, "current_device", lambda: 0)
+    monkeypatch.setattr(cuda_loader.torch.cuda, "get_device_capability", lambda *args, **kwargs: (12, 1))
+
+    cuda_loader._ensure_torch_cuda_arch_list()
+
+    assert os.environ["TORCH_CUDA_ARCH_LIST"] == "12.1"
 
 
 def test_resolve_tree_kernel_source_prefers_real_kernel_file_from_nodes_db(
