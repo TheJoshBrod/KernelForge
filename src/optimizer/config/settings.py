@@ -94,6 +94,7 @@ try:
     class PipelineConfig(BaseSettings):
         batch_size: int = 50
         verifier_timeout_seconds: int = 300
+        cuda_compile_timeout_seconds: int = 60
         mcts_c_constant: float = 1.0
         llm_model_name: str = "anthropic/claude-sonnet-4-6"
         llm_request_timeout_seconds: int = 90
@@ -119,6 +120,7 @@ except Exception:
     class PipelineConfig:
         batch_size: int = 50
         verifier_timeout_seconds: int = 300
+        cuda_compile_timeout_seconds: int = 60
         mcts_c_constant: float = 1.0
         llm_model_name: str = "anthropic/claude-sonnet-4-6"
         llm_request_timeout_seconds: int = 90

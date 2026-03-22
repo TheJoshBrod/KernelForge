@@ -998,6 +998,7 @@ def _main_impl():
             else:
                 baseline_code = templates.load_baseline_kernel(function_name)
                 if baseline_code:
+                    print(f"Validating baseline kernel: {function_name}", flush=True)
                     baseline_ok, baseline_error = _validate_static_kernel(
                         baseline_code, validation_entry_files, op_dir, "baseline", ssh_config=ssh_config
                     )

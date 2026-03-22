@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import os
+import queue
 import re
 import shutil
 import sys
 import tempfile
+import time
 import zipfile
+import traceback
+import multiprocessing
 from pathlib import Path
 from typing import Any
 
 import torch
 from torch.utils.cpp_extension import load_inline
 
-from src.optimizer.config.settings import MIN_CUDA_VERSION
+from src.optimizer.config.settings import MIN_CUDA_VERSION, settings
 
 
 def _extract_signature(code: str) -> str:
@@ -183,6 +187,109 @@ def compile_code_string(code: str, name: str, build_dir: str, verbose: bool = Fa
             verbose=verbose,
             with_cuda=False,
         )
+
+
+def _compile_code_string_worker(
+    q_out,
+    code: str,
+    name: str,
+    build_dir: str,
+    verbose: bool,
+) -> None:
+    try:
+        test_sleep = float(os.environ.get("KFORGE_TEST_CUDA_COMPILE_SLEEP_SECONDS", "0") or "0")
+    except Exception:
+        test_sleep = 0.0
+
+    if test_sleep > 0:
+        time.sleep(test_sleep)
+
+    try:
+        compile_code_string(code=code, name=name, build_dir=build_dir, verbose=verbose)
+        q_out.put((True, ""))
+    except Exception:
+        q_out.put((False, traceback.format_exc()))
+
+
+def _close_mp_queue(q) -> None:
+    try:
+        q.close()
+    except Exception:
+        pass
+    try:
+        q.join_thread()
+    except Exception:
+        pass
+
+
+def compile_code_string_with_timeout(
+    code: str,
+    name: str,
+    build_dir: str,
+    *,
+    verbose: bool = False,
+    timeout_seconds: float | None = None,
+) -> tuple[bool, str]:
+    timeout = float(timeout_seconds or settings.cuda_compile_timeout_seconds)
+    if timeout <= 0:
+        timeout = float(settings.cuda_compile_timeout_seconds)
+
+    ctx = multiprocessing.get_context("spawn")
+    q_out = ctx.Queue()
+    worker = ctx.Process(
+        target=_compile_code_string_worker,
+        args=(q_out, code, name, build_dir, verbose),
+    )
+    worker.start()
+
+    started = time.monotonic()
+    try:
+        while True:
+            remaining = timeout - (time.monotonic() - started)
+            if remaining <= 0:
+                ok = False
+                detail = (
+                    f"[Compilation Timeout]\n"
+                    f"CUDA extension compilation timed out after {timeout:.1f} seconds."
+                )
+                break
+            try:
+                ok, detail = q_out.get(timeout=min(0.2, remaining))
+                worker.join(timeout=1.0)
+                break
+            except queue.Empty:
+                if worker.is_alive():
+                    continue
+                ok = False
+                detail = (
+                    f"[Compilation Failed]\n"
+                    f"compile worker exited with code {worker.exitcode} before reporting a result"
+                )
+                break
+    finally:
+        if worker.is_alive():
+            try:
+                worker.terminate()
+            except Exception:
+                pass
+            try:
+                worker.join(timeout=1.0)
+            except Exception:
+                pass
+        if worker.is_alive() and hasattr(worker, "kill"):
+            try:
+                worker.kill()
+            except Exception:
+                pass
+            try:
+                worker.join(timeout=1.0)
+            except Exception:
+                pass
+        _close_mp_queue(q_out)
+
+    if worker.exitcode not in (0, None) and ok:
+        return False, f"[Compilation Failed]\ncompile worker exited with code {worker.exitcode}"
+    return ok, detail
 
 
 def load_export(export_path: str | Path, extract_dir: str | Path | None = None) -> dict[str, Any]:

@@ -8,9 +8,9 @@ import atexit
 import os
 import re
 import hashlib
-import tempfile
 import multiprocessing
 import queue
+import tempfile
 import traceback
 from pathlib import Path
 
@@ -465,15 +465,19 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
     code_hash = hashlib.md5(generated_cu_code.encode()).hexdigest()[:16]
     cache_name = f"kforge_{code_hash}"
     cache_dir = os.path.join(tempfile.gettempdir(), "kforge_build_cache", cache_name)
-    try:
-        loader.compile_code_string(
-            code=generated_cu_code,
-            name=cache_name,
-            build_dir=cache_dir,
-            verbose=False,
-        )
-    except Exception as compile_err:
-        return False, f"[Compilation Failed]\n{compile_err}"
+    compile_ok, compile_detail = loader.compile_code_string_with_timeout(
+        code=generated_cu_code,
+        name=cache_name,
+        build_dir=cache_dir,
+        verbose=False,
+    )
+    if not compile_ok:
+        prefix = "[Compilation Failed]"
+        if compile_detail.startswith("[Compilation Timeout]"):
+            prefix = ""
+        elif not compile_detail.startswith(prefix):
+            prefix = prefix + "\n"
+        return False, f"{prefix}{compile_detail}"
 
     # Send to worker (cache_name + cache_dir so it loads the pre-built .so)
     _ensure_worker_alive()

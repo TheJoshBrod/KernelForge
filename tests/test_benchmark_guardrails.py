@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.optimizer.benchmarking import benchmark_ops
 from src.optimizer.backends.cuda import loader as cuda_loader
+from src.optimizer.backends.cuda import verifier as cuda_verifier
 from src.optimizer import workflow
 
 
@@ -180,6 +181,47 @@ def test_cuda_loader_uses_current_device_capability_for_arch_list(monkeypatch):
     cuda_loader._ensure_torch_cuda_arch_list()
 
     assert os.environ["TORCH_CUDA_ARCH_LIST"] == "12.1"
+
+
+def test_cuda_loader_compile_timeout_returns_instead_of_hanging(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("KFORGE_TEST_CUDA_COMPILE_SLEEP_SECONDS", "2")
+
+    started = time.monotonic()
+    success, detail = cuda_loader.compile_code_string_with_timeout(
+        code="torch::Tensor launch(torch::Tensor x) { return x; }",
+        name="kforge_timeout_test",
+        build_dir=str(tmp_path / "build"),
+        timeout_seconds=0.5,
+    )
+    elapsed = time.monotonic() - started
+
+    assert success is False
+    assert "[Compilation Timeout]" in detail
+    assert elapsed < 1.5
+
+
+def test_cuda_verifier_surfaces_compile_timeout_without_entering_worker(
+    monkeypatch,
+    tmp_path: Path,
+):
+    tmp_dir = tmp_path / "tmp"
+    io_dir = tmp_path / "io"
+    tmp_dir.mkdir()
+    io_dir.mkdir()
+
+    monkeypatch.setattr(
+        cuda_verifier.loader,
+        "compile_code_string_with_timeout",
+        lambda **kwargs: (False, "[Compilation Timeout]\nCUDA extension compilation timed out after 0.5 seconds."),
+    )
+
+    success, detail = cuda_verifier.validate_kernel(
+        "torch::Tensor launch(torch::Tensor x) { return x; }",
+        {"tmp_dir": tmp_dir, "io_dir": io_dir, "entry_files": []},
+    )
+
+    assert success is False
+    assert "[Compilation Timeout]" in detail
 
 
 def test_resolve_tree_kernel_source_prefers_real_kernel_file_from_nodes_db(
