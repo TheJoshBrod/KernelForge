@@ -24,6 +24,49 @@ def test_discover_ops_only_returns_directories_with_entries(tmp_path: Path):
     assert workflow._discover_ops(io_dir) == ["torch_nn_functional_softmax"]
 
 
+def test_sample_entry_files_keeps_first_and_last_for_large_sets():
+    entry_files = [f"entry_{idx:06d}.pt" for idx in range(10)]
+
+    sampled = generator_main._sample_entry_files(entry_files, 4)
+
+    assert sampled[0] == entry_files[0]
+    assert sampled[-1] == entry_files[-1]
+    assert len(sampled) == 4
+
+
+def test_validate_kernel_passes_selected_entry_files_to_backend(
+    tmp_path: Path, monkeypatch
+):
+    entries = [
+        tmp_path / "entry_000001.pt",
+        tmp_path / "entry_000002.pt",
+    ]
+    for entry in entries:
+        entry.write_text("x", encoding="utf-8")
+
+    captured: dict = {}
+
+    def fake_validate(self, code, paths, ssh_config=None):
+        captured["entry_files"] = paths["entry_files"]
+        return True, "[Success] All 2 tests passed"
+
+    monkeypatch.setattr(generator_main, "_is_triton", lambda: False)
+    monkeypatch.setattr(generator_main.CUDABackend, "validate_kernel", fake_validate)
+
+    log_file = tmp_path / "log.txt"
+    call_success, exec_success, feedback = generator_main._validate_kernel(
+        "// kernel",
+        [str(entry) for entry in entries],
+        log_file,
+        str(tmp_path / "tmp"),
+    )
+
+    assert call_success is True
+    assert exec_success is True
+    assert "All 2 tests passed" in feedback
+    assert captured["entry_files"] == entries
+
+
 def test_run_generate_rejects_invalid_requested_ops_and_marks_tasks_failed(
     tmp_path: Path, monkeypatch
 ):
@@ -108,6 +151,38 @@ def test_generator_main_reports_available_ops_when_requested_op_is_missing(
     assert "No captured operator directories matched the requested ops: aten__softmax" in output
     assert "torch_nn_functional_softmax" in output
     assert "torch_nn_functional_silu" in output
+
+
+def test_generator_main_shuts_down_cuda_verifier_on_exit(tmp_path: Path, monkeypatch):
+    io_dir = tmp_path / "io"
+    softmax_dir = io_dir / "torch_nn_functional_softmax"
+    softmax_dir.mkdir(parents=True)
+    (softmax_dir / "entry_000001.pt").write_text("x", encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    calls: list[str] = []
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "generator.main",
+            "--io-dir",
+            str(io_dir),
+            "--out-dir",
+            str(out_dir),
+            "--only-ops",
+            "aten__softmax",
+        ],
+    )
+    monkeypatch.setattr(generator_main, "update_job_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        generator_main.cuda_verifier,
+        "shutdown_worker",
+        lambda *args, **kwargs: calls.append("shutdown"),
+    )
+
+    assert generator_main.main() == 2
+    assert calls == ["shutdown"]
 
 
 def test_load_saved_benchmark_for_existing_kernel_reuses_verified_row_when_sources_match(

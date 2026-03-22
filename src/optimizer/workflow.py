@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from src.progress import check_cancelled, update_job_progress, wait_if_paused
@@ -198,17 +199,26 @@ def _preflight_cuda_target() -> tuple[bool, str]:
 
 def _run(cmd: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str]:
     print(f"[workflow] Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=str(cwd), env=env, capture_output=True, text=True)
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="")
-    detail_parts: list[str] = []
-    if result.stderr and result.stderr.strip():
-        detail_parts.append(result.stderr.strip())
-    if result.stdout and result.stdout.strip():
-        detail_parts.append(result.stdout.strip())
-    return result.returncode, "\n".join(detail_parts)
+    # Use spool files instead of capture_output=True so spawned helper processes
+    # cannot keep PIPE FDs open and wedge the parent workflow process.
+    with tempfile.TemporaryDirectory(prefix="kforge_workflow_run_") as tmpdir:
+        combined_path = Path(tmpdir) / "combined.log"
+        with combined_path.open("w+", encoding="utf-8") as combined:
+            result = subprocess.run(
+                cmd,
+                cwd=str(cwd),
+                env=env,
+                stdout=combined,
+                stderr=combined,
+                text=True,
+            )
+            combined.flush()
+            combined.seek(0)
+            combined_text = combined.read()
+
+    if combined_text:
+        print(combined_text, end="")
+    return result.returncode, combined_text.strip()
 
 
 def _ops_from_csv(raw: str) -> list[str]:

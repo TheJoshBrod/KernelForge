@@ -136,6 +136,14 @@ def handle_verify(data):
 
             # Load IO files
             entry_files = sorted(glob.glob(os.path.join(io_dir, "entry_*.pt")))
+            selected_entry_files = data.get("entry_files") or []
+            if selected_entry_files:
+                selected_names = {os.path.basename(name) for name in selected_entry_files}
+                entry_files = [
+                    entry_file
+                    for entry_file in entry_files
+                    if os.path.basename(entry_file) in selected_names
+                ]
             if not entry_files:
                 return {"valid": False, "log": "No entry files found in io_dir"}
 

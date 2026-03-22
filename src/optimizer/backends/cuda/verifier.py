@@ -4,6 +4,7 @@ Validates a generated CUDA kernel by compiling it as a PyTorch C++ extension
 and comparing its tensor output against a ground-truth tensor.
 """
 
+import atexit
 import os
 import re
 import hashlib
@@ -139,6 +140,20 @@ _WORKER_Q_IN = None
 _WORKER_Q_OUT = None
 
 
+def _resolve_entry_files(io_dir: str, selected_entry_files) -> list[Path]:
+    if selected_entry_files:
+        resolved: list[Path] = []
+        for raw_path in selected_entry_files:
+            candidate = Path(raw_path)
+            if not candidate.is_absolute():
+                candidate = Path(io_dir) / candidate.name
+            if candidate.exists():
+                resolved.append(candidate)
+        if resolved:
+            return sorted(resolved)
+    return sorted(Path(io_dir).glob("entry_*.pt"))
+
+
 def _validate_worker_loop(q_in, q_out):
     """
     Persistent worker loop.
@@ -162,7 +177,7 @@ def _validate_worker_loop(q_in, q_out):
             if job is None:
                 break  # Sentinel to exit
 
-            generated_cu_code, tmpdir, io_dir, cache_name, cache_dir = job
+            generated_cu_code, tmpdir, io_dir, cache_name, cache_dir, selected_entry_files = job
 
             # Run the validation logic
             try:
@@ -185,7 +200,7 @@ def _validate_worker_loop(q_in, q_out):
                     continue
 
                 # Execution Test
-                entry_files = sorted(Path(io_dir).glob("entry_*.pt"))
+                entry_files = _resolve_entry_files(io_dir, selected_entry_files)
                 if not entry_files:
                     q_out.put(
                         (False, "[Error] No entry files found in io_dir"))
@@ -198,36 +213,40 @@ def _validate_worker_loop(q_in, q_out):
                 # first-seen order).  Using a per-entry order would give different
                 # arities to module.launch() for entries with different kwargs
                 # structures (e.g. some passing stride=2, others relying on defaults).
-                entries = []
                 canonical_signature = None
+                param_order: list[str] | None = None
                 for f in entry_files:
-                    e = torch.load(f)
-                    entries.append(e)
+                    e = torch.load(f, map_location='cpu', weights_only=False)
                     if canonical_signature is None:
                         sig = e.get("signature", {})
                         if sig and sig.get("params"):
                             canonical_signature = sig
 
-                if canonical_signature is None and entries:
-                    first_args = entries[0].get("args", []) or []
-                    param_order = [f"arg{i}" for i in range(len(first_args))]
-                    seen = set(param_order)
-                    for entry in entries:
-                        kw = entry.get("kwargs", {}) or {}
+                    if canonical_signature is None:
+                        args = e.get("args", []) or []
+                        if param_order is None:
+                            param_order = [f"arg{i}" for i in range(len(args))]
+                            seen = set(param_order)
+                        else:
+                            seen = set(param_order)
+                        kw = e.get("kwargs", {}) or {}
                         if isinstance(kw, dict):
                             for k in kw:
                                 if k not in seen:
                                     param_order.append(k)
                                     seen.add(k)
-                    canonical_signature = {"params": param_order, "defaults": {}}
+
+                if canonical_signature is None:
+                    canonical_signature = {"params": param_order or [], "defaults": {}}
 
                 all_valid = True
                 error_logs = []
                 llm_analysis_count = 0
                 MAX_LLM_ANALYSIS = 1
 
-                for entry_file, entry in zip(entry_files, entries):
+                for entry_file in entry_files:
                     try:
+                        entry = torch.load(entry_file, map_location='cpu', weights_only=False)
                         args = entry.get("args", [])
                         kwargs = entry.get("kwargs", {})
 
@@ -349,6 +368,7 @@ def _ensure_worker_alive():
     if _WORKER_PROCESS is None or not _WORKER_PROCESS.is_alive():
         if _WORKER_PROCESS is not None:
             print("Verifier: Restarting worker process...")
+            shutdown_worker(grace_seconds=0.5)
 
         # Use spawn context consistently for both Queues and Process
         ctx = multiprocessing.get_context('spawn')
@@ -363,12 +383,69 @@ def _ensure_worker_alive():
         _WORKER_PROCESS.start()
 
 
+def _close_queue_handle(q) -> None:
+    if q is None:
+        return
+    try:
+        q.close()
+    except Exception:
+        pass
+    try:
+        q.join_thread()
+    except Exception:
+        pass
+
+
+def shutdown_worker(grace_seconds: float = 2.0) -> None:
+    global _WORKER_PROCESS, _WORKER_Q_IN, _WORKER_Q_OUT
+
+    worker = _WORKER_PROCESS
+    q_in = _WORKER_Q_IN
+    q_out = _WORKER_Q_OUT
+
+    _WORKER_PROCESS = None
+    _WORKER_Q_IN = None
+    _WORKER_Q_OUT = None
+
+    if q_in is not None:
+        try:
+            q_in.put(None)
+        except Exception:
+            pass
+
+    if worker is not None:
+        try:
+            worker.join(timeout=grace_seconds)
+        except Exception:
+            pass
+        if worker.is_alive():
+            try:
+                worker.terminate()
+            except Exception:
+                pass
+            try:
+                worker.join(timeout=grace_seconds)
+            except Exception:
+                pass
+        if worker.is_alive() and hasattr(worker, "kill"):
+            try:
+                worker.kill()
+            except Exception:
+                pass
+            try:
+                worker.join(timeout=grace_seconds)
+            except Exception:
+                pass
+
+    _close_queue_handle(q_in)
+    _close_queue_handle(q_out)
+
+
 def _kill_worker():
-    global _WORKER_PROCESS
-    if _WORKER_PROCESS:
-        _WORKER_PROCESS.terminate()
-        _WORKER_PROCESS.join()
-        _WORKER_PROCESS = None
+    shutdown_worker(grace_seconds=0.5)
+
+
+atexit.register(shutdown_worker)
 
 
 def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[bool, str]:
@@ -400,7 +477,17 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
 
     # Send to worker (cache_name + cache_dir so it loads the pre-built .so)
     _ensure_worker_alive()
-    _WORKER_Q_IN.put((generated_cu_code, str(tmpdir), str(io_dir), cache_name, cache_dir))
+    selected_entry_files = paths.get("entry_files") or []
+    _WORKER_Q_IN.put(
+        (
+            generated_cu_code,
+            str(tmpdir),
+            str(io_dir),
+            cache_name,
+            cache_dir,
+            [str(path) for path in selected_entry_files],
+        )
+    )
 
     # Wait for result with timeout
     import time
@@ -410,6 +497,7 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
 
     while time.time() - start_time < TIMEOUT:
         if not _WORKER_PROCESS.is_alive():
+            shutdown_worker(grace_seconds=0.2)
             return False, "[Process Error] Worker process crashed unexpectedly."
 
         try:
@@ -420,7 +508,7 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
 
     # Timeout occurred
     print(f"Warning: Validation timed out. Killing worker.")
-    _kill_worker()
+    shutdown_worker(grace_seconds=0.5)
     return False, "[Timeout Error] Validation timed out (Infinite loop detected)."
 
 
@@ -444,7 +532,12 @@ def validate_remote_kernel(ssh_config: dict, generated_cu_code: str, paths: dict
         
         # Upload IO files to shared cache
         io_dir = paths["io_dir"]
-        io_files = list(io_dir.glob("*.pt"))
+        selected_entry_files = paths.get("entry_files") or []
+        io_files = (
+            [Path(entry_file) for entry_file in selected_entry_files]
+            if selected_entry_files
+            else list(io_dir.glob("*.pt"))
+        )
         file_map = {str(f): f.name for f in io_files}
         
         remote_io_dir = "kforge_workspace/io_cache/" + io_dir.name
@@ -453,7 +546,8 @@ def validate_remote_kernel(ssh_config: dict, generated_cu_code: str, paths: dict
         # Send verify task
         payload = {
             "code": generated_cu_code,
-            "io_dir": remote_io_dir
+            "io_dir": remote_io_dir,
+            "entry_files": [Path(entry_file).name for entry_file in selected_entry_files],
         }
         
         result = worker.send_task("verify", payload)

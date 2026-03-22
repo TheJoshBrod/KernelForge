@@ -162,7 +162,18 @@ def validate_kernel(generated_py_code: str, paths: dict[str, Path]) -> tuple[boo
             return False, "[Error] Triton kernel module has no 'launch()' function"
 
         # Run against test entries
-        entry_files = sorted(Path(io_dir).glob("entry_*.pt"))
+        selected_entry_files = paths.get("entry_files") or []
+        if selected_entry_files:
+            entry_files = []
+            for raw_path in selected_entry_files:
+                candidate = Path(raw_path)
+                if not candidate.is_absolute():
+                    candidate = Path(io_dir) / candidate.name
+                if candidate.exists():
+                    entry_files.append(candidate)
+            entry_files = sorted(entry_files)
+        else:
+            entry_files = sorted(Path(io_dir).glob("entry_*.pt"))
         if not entry_files:
             return False, "[Error] No entry files found in io_dir"
 
@@ -265,7 +276,12 @@ def validate_remote_kernel(ssh_config: dict, generated_py_code: str, paths: dict
 
         # Upload IO files to shared cache
         io_dir = paths["io_dir"]
-        io_files = list(io_dir.glob("*.pt"))
+        selected_entry_files = paths.get("entry_files") or []
+        io_files = (
+            [Path(entry_file) for entry_file in selected_entry_files]
+            if selected_entry_files
+            else list(io_dir.glob("*.pt"))
+        )
         file_map = {str(f): f.name for f in io_files}
 
         remote_io_dir = "kforge_workspace/io_cache/" + io_dir.name
@@ -274,7 +290,8 @@ def validate_remote_kernel(ssh_config: dict, generated_py_code: str, paths: dict
         # Send verify task
         payload = {
             "code": generated_py_code,
-            "io_dir": remote_io_dir
+            "io_dir": remote_io_dir,
+            "entry_files": [Path(entry_file).name for entry_file in selected_entry_files],
         }
 
         result = worker.send_task("verify", payload)

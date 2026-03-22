@@ -4,6 +4,7 @@ import os
 import sys
 import json
 import sqlite3
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -125,6 +126,26 @@ def test_workflow_with_python_bin_on_path_prepends_python_bin():
     env = workflow._with_python_bin_on_path({"PATH": "/usr/bin"})
 
     assert env["PATH"].split(":")[0] == str(Path(sys.executable).parent)
+
+
+def test_workflow_run_does_not_wait_for_grandchild_stdio_to_close(tmp_path: Path):
+    cmd = [
+        sys.executable,
+        "-c",
+        (
+            "import subprocess, sys; "
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(2)']); "
+            "print('parent complete', flush=True)"
+        ),
+    ]
+
+    started = time.monotonic()
+    rc, detail = workflow._run(cmd, tmp_path, workflow._with_python_bin_on_path())
+    elapsed = time.monotonic() - started
+
+    assert rc == 0
+    assert "parent complete" in detail
+    assert elapsed < 1.5
 
 
 def test_resolve_tree_kernel_source_prefers_real_kernel_file_from_nodes_db(

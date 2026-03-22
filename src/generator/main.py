@@ -27,6 +27,7 @@ import src.generator.generator as generator
 import src.generator.monitor as monitor
 import src.generator.prompts.prompts as prompts
 import src.generator.templates as templates
+import src.optimizer.backends.cuda.verifier as cuda_verifier
 from src.optimizer.backends.cuda import CUDABackend
 from src.optimizer.backends.triton import TritonBackend
 from src.optimizer.pipeline import update_queue_state
@@ -55,13 +56,49 @@ def _success_filename() -> str:
     return f"success.{device}"
 
 
-def _validate_kernel(cu_code, entry_file, log_file_loc, tmpdir, ssh_config=None):
+def _read_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except Exception:
+        value = default
+    return max(1, value)
+
+
+def _sample_entry_files(entry_files: list[str], limit: int) -> list[str]:
+    if limit <= 0 or len(entry_files) <= limit:
+        return list(entry_files)
+    if limit == 1:
+        return [entry_files[0]]
+
+    last_index = len(entry_files) - 1
+    selected_indices: list[int] = []
+    for pos in range(limit):
+        idx = round((last_index * pos) / (limit - 1))
+        if not selected_indices or idx != selected_indices[-1]:
+            selected_indices.append(idx)
+    return [entry_files[idx] for idx in selected_indices]
+
+
+def _select_prompt_entry_files(entry_files: list[str]) -> list[str]:
+    limit = _read_int_env("KFORGE_PROMPT_EXAMPLES", 4)
+    return _sample_entry_files(entry_files, limit)
+
+
+def _select_validation_entry_files(entry_files: list[str]) -> list[str]:
+    extra_cases = _read_int_env("KFORGE_EXTRA_VALIDATION_CASES", 7)
+    return _sample_entry_files(entry_files, 1 + extra_cases)
+
+
+def _validate_kernel(cu_code, entry_files, log_file_loc, tmpdir, ssh_config=None):
     """Route to the unified backend verifier."""
-    # Derive io_dir from entry_file path
-    io_dir = Path(entry_file).parent
+    if not entry_files:
+        return False, False, "[Error] No entry files provided"
+
+    io_dir = Path(entry_files[0]).parent
     paths = {
         "io_dir": io_dir,
         "tmp_dir": Path(tmpdir),
+        "entry_files": [Path(entry_file) for entry_file in entry_files],
     }
 
     if _is_triton():
@@ -230,30 +267,29 @@ def _validate_static_kernel(
     kernel_dir = op_dir / "kernel"
     kernel_dir.mkdir(parents=True, exist_ok=True)
 
-    for i, entry_file in enumerate(entry_files):
-        if not wait_if_paused():
-            return False, "Generation cancelled."
-        if check_cancelled():
-            return False, "Generation cancelled."
+    if not wait_if_paused():
+        return False, "Generation cancelled."
+    if check_cancelled():
+        return False, "Generation cancelled."
 
-        tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
-        log_file_loc = op_dir / "attempts" / f"log-{tag}-{i}.txt"
-        os.makedirs(log_file_loc.parent, exist_ok=True)
+    tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
+    log_file_loc = op_dir / "attempts" / f"log-{tag}.txt"
+    os.makedirs(log_file_loc.parent, exist_ok=True)
 
-        call_success, exec_success, feedback = _validate_kernel(
-            cu_code, entry_file, log_file_loc, tmpdir, ssh_config=ssh_config
-        )
+    call_success, exec_success, feedback = _validate_kernel(
+        cu_code, entry_files, log_file_loc, tmpdir, ssh_config=ssh_config
+    )
 
-        if os.path.exists(tmpdir):
-            shutil.rmtree(tmpdir)
+    if os.path.exists(tmpdir):
+        shutil.rmtree(tmpdir)
 
-        ext = _kernel_ext()
-        if not (call_success and exec_success):
-            with open(kernel_dir / f"kernel-{tag}-{i}{ext}", "w") as f:
-                f.write(cu_code)
-            with open(op_dir / "attempts" / f"feedback-{tag}-{i}.txt", "w") as f:
-                f.write(feedback)
-            return False, feedback
+    ext = _kernel_ext()
+    if not (call_success and exec_success):
+        with open(kernel_dir / f"kernel-{tag}{ext}", "w") as f:
+            f.write(cu_code)
+        with open(op_dir / "attempts" / f"feedback-{tag}.txt", "w") as f:
+            f.write(feedback)
+        return False, feedback
 
     with open(op_dir / _kernel_filename(), "w", encoding="utf-8") as f:
         f.write(cu_code)
@@ -354,18 +390,16 @@ def validate_with_retries(
             if repaired:
                 # Re-validate repaired kernel from scratch
                 repair_tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
-                repaired_ok = True
-                for j, entry_file in enumerate(tqdm(entry_files, desc="Repair Tests")):
-                    log_file_loc = output_dir / "attempts" / f"log-repair-{attempt_idx}-{j}.txt"
-                    os.makedirs(log_file_loc.parent, exist_ok=True)
-                    call_success, exec_success, repair_feedback = _validate_kernel(
-                        repaired, entry_file, log_file_loc, repair_tmpdir, ssh_config=ssh_config
-                    )
-                    repaired_ok = repaired_ok and call_success and exec_success
-                    if not repaired_ok:
-                        with open(kernel_dir / f"kernel-repair-{attempt_idx}-{j}{_kernel_ext()}", "w") as f:
-                            f.write(repaired)
-                        return False, repair_feedback, "codex_repair"
+                log_file_loc = output_dir / "attempts" / f"log-repair-{attempt_idx}.txt"
+                os.makedirs(log_file_loc.parent, exist_ok=True)
+                call_success, exec_success, repair_feedback = _validate_kernel(
+                    repaired, entry_files, log_file_loc, repair_tmpdir, ssh_config=ssh_config
+                )
+                repaired_ok = call_success and exec_success
+                if not repaired_ok:
+                    with open(kernel_dir / f"kernel-repair-{attempt_idx}{_kernel_ext()}", "w") as f:
+                        f.write(repaired)
+                    return False, repair_feedback, "codex_repair"
                 if os.path.exists(repair_tmpdir):
                     shutil.rmtree(repair_tmpdir)
                 if repaired_ok:
@@ -493,7 +527,7 @@ def validate_with_retries(
 
         # Validate all inputs at once using backend
         call_success, exec_success, feedback = _validate_kernel(
-            cu_code, entry_files[0], log_file_loc, tmpdir, ssh_config=ssh_config
+            cu_code, entry_files, log_file_loc, tmpdir, ssh_config=ssh_config
         )
 
         print(feedback)
@@ -612,9 +646,16 @@ def process_function(
         print(e)
         return False
 
-    # Load all calls for prompt generation
+    prompt_entry_files = _select_prompt_entry_files(entry_files)
+    if len(prompt_entry_files) < len(entry_files):
+        print(
+            f"Sampling {len(prompt_entry_files)}/{len(entry_files)} entries for prompt generation: "
+            f"{function_name}"
+        )
+
+    # Load representative calls for prompt generation
     call_list = []
-    for entry_file in entry_files:
+    for entry_file in prompt_entry_files:
         try:
             entry = torch.load(
                 entry_file, map_location='cpu', weights_only=False)
@@ -639,11 +680,17 @@ def process_function(
     op_key = _normalize_op_name(function_name)
     task_key = "gen_" + op_key
     proj_base_dir = project_dir if project_dir else None
+    validation_entry_files = _select_validation_entry_files(entry_files)
+    if len(validation_entry_files) < len(entry_files):
+        print(
+            f"Sampling {len(validation_entry_files)}/{len(entry_files)} entries for validation: "
+            f"{function_name}"
+        )
 
     # Validate loop - pass entry files directly
     success, failure_msg, failure_stage = validate_with_retries(
         op_dir,
-        entry_files,
+        validation_entry_files,
         gen_model,
         prompt,
         function_name,
@@ -671,7 +718,14 @@ def process_function(
     return success
 
 
-def main():
+def _shutdown_generation_workers() -> None:
+    try:
+        cuda_verifier.shutdown_worker()
+    except Exception:
+        pass
+
+
+def _main_impl():
     """Main entry point: load benchmarks and process each one."""
     parser = argparse.ArgumentParser(description="Generate kernels from profiled ops.")
     parser.add_argument("io_dir", nargs="?", help="Path to profiled ops directory")
@@ -890,6 +944,7 @@ def main():
 
         baseline_code = None
         baseline_ok = False
+        validation_entry_files = _select_validation_entry_files(entry_files)
         if use_baseline and templates.has_baseline_kernel(function_name):
             baseline_path = templates.baseline_kernel_path(function_name)
             # Skip baselines that don't match the target backend's extension
@@ -899,7 +954,7 @@ def main():
                 baseline_code = templates.load_baseline_kernel(function_name)
                 if baseline_code:
                     baseline_ok, baseline_error = _validate_static_kernel(
-                        baseline_code, entry_files, op_dir, "baseline", ssh_config=ssh_config
+                        baseline_code, validation_entry_files, op_dir, "baseline", ssh_config=ssh_config
                     )
                     if not baseline_ok:
                         _write_failure_report(
@@ -970,6 +1025,13 @@ def main():
             "pending_operators": [],
             "current_operator": "",
         })
+
+
+def main():
+    try:
+        return _main_impl()
+    finally:
+        _shutdown_generation_workers()
 
 
 if __name__ == "__main__":
