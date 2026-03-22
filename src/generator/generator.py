@@ -36,7 +36,7 @@ def cleanup_mkdown(input: str) -> str:
     return input.strip()
 
 
-def generate(gen_model: GenModel, msg: str, model: str) -> str:
+def generate(gen_model: GenModel, msg: str, model: str, status_callback=None) -> str:
     """
     Generate kernel code using the provided GenModel instance.
     
@@ -48,9 +48,9 @@ def generate(gen_model: GenModel, msg: str, model: str) -> str:
     Returns:
         Cleaned up kernel code string
     """
-    print(f"Generating code with {model}...")
+    print(f"Generating code with {model}...", flush=True)
     
-    response = gen_model.chat(msg, model)
+    response = gen_model.chat(msg, model, status_callback=status_callback)
     if not response:
         raise RuntimeError("LLM returned empty response.")
     response_text = str(response).strip()
@@ -66,5 +66,5 @@ def generate(gen_model: GenModel, msg: str, model: str) -> str:
     code = cleanup_mkdown(response)
     if not code:
         raise RuntimeError("LLM response did not contain kernel code.")
-    print("Code generated...")
+    print("Code generated...", flush=True)
     return code

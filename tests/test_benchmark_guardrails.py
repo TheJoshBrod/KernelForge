@@ -148,6 +148,28 @@ def test_workflow_run_does_not_wait_for_grandchild_stdio_to_close(tmp_path: Path
     assert elapsed < 1.5
 
 
+def test_workflow_run_streams_child_output(tmp_path: Path, capsys):
+    cmd = [
+        sys.executable,
+        "-c",
+        (
+            "import time; "
+            "print('first line', flush=True); "
+            "time.sleep(0.1); "
+            "print('second line', flush=True)"
+        ),
+    ]
+
+    rc, detail = workflow._run(cmd, tmp_path, workflow._with_python_bin_on_path())
+
+    stdout = capsys.readouterr().out
+    assert rc == 0
+    assert "first line" in stdout
+    assert "second line" in stdout
+    assert "first line" in detail
+    assert "second line" in detail
+
+
 def test_resolve_tree_kernel_source_prefers_real_kernel_file_from_nodes_db(
     tmp_path: Path,
 ):

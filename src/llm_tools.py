@@ -8,6 +8,7 @@ import multiprocessing
 import queue
 import time
 from typing import Any
+from typing import Callable
 from typing import Dict
 from typing import List
 
@@ -63,7 +64,10 @@ def _provider_payload(
 
 
 def _anthropic_request(payload: dict[str, Any]) -> str:
-    client = anthropic.Anthropic(timeout=payload["request_timeout"])
+    client = anthropic.Anthropic(
+        timeout=payload["request_timeout"],
+        max_retries=0,
+    )
     message = client.messages.create(
         model=payload["model"],
         max_tokens=8196,
@@ -182,22 +186,67 @@ def _stop_process(proc, grace_seconds: float = 1.0) -> None:
             pass
 
 
-def _request_with_watchdog(payload: dict[str, Any], provider_label: str) -> tuple[bool, str]:
-    watchdog_timeout = float(getattr(settings, "llm_watchdog_timeout_seconds", 120))
+def _emit_status(
+    status_callback: Callable[[str], None] | None,
+    message: str,
+) -> None:
+    if status_callback is None:
+        return
+    text = str(message or "").strip()
+    if not text:
+        return
+    try:
+        status_callback(text)
+    except Exception:
+        pass
+
+
+def _request_with_watchdog(
+    payload: dict[str, Any],
+    provider_label: str,
+    *,
+    watchdog_timeout: float | None = None,
+    status_callback: Callable[[str], None] | None = None,
+) -> tuple[bool, str]:
+    watchdog_timeout = float(
+        watchdog_timeout
+        if watchdog_timeout is not None
+        else getattr(settings, "llm_watchdog_timeout_seconds", 120)
+    )
+    heartbeat_seconds = max(1.0, min(5.0, watchdog_timeout / 6.0 if watchdog_timeout > 0 else 5.0))
     ctx = multiprocessing.get_context("spawn")
     result_queue = ctx.Queue()
     proc = ctx.Process(target=_provider_worker, args=(payload, result_queue))
     proc.daemon = True
     proc.start()
+    start_time = time.monotonic()
+    _emit_status(status_callback, f"Calling {provider_label} API")
 
     try:
-        try:
-            result = result_queue.get(timeout=watchdog_timeout)
-        except queue.Empty:
-            return (
-                False,
-                f"Error calling {provider_label} API: request timed out after {int(watchdog_timeout)} seconds",
-            )
+        deadline = start_time + watchdog_timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return (
+                    False,
+                    f"Error calling {provider_label} API: request timed out after {int(watchdog_timeout)} seconds",
+                )
+            try:
+                result = result_queue.get(timeout=min(heartbeat_seconds, remaining))
+                break
+            except queue.Empty:
+                if not proc.is_alive():
+                    try:
+                        result = result_queue.get_nowait()
+                        break
+                    except queue.Empty:
+                        return False, f"Error calling {provider_label} API: worker exited without response"
+                elapsed = int(max(0.0, time.monotonic() - start_time))
+                timeout_display = int(max(1.0, round(watchdog_timeout)))
+                _emit_status(
+                    status_callback,
+                    f"Waiting on {provider_label} API ({elapsed}s/{timeout_display}s)",
+                )
 
         if not isinstance(result, dict):
             return False, f"Error calling {provider_label} API: invalid worker response"
@@ -231,7 +280,12 @@ class GenModel:
         self.history: List[Dict[str, Any]] = []
         self.tools: Dict[str, callable] = {}
 
-    def chat(self, user_msg: str, model: str) -> str:
+    def chat(
+        self,
+        user_msg: str,
+        model: str,
+        status_callback: Callable[[str], None] | None = None,
+    ) -> str:
         if not user_msg or not model:
             return ""
 
@@ -245,10 +299,40 @@ class GenModel:
         retry_limit = max(0, int(getattr(settings, "llm_retry_limit", 2)))
         total_attempts = retry_limit + 1
         backoff_seconds = float(getattr(settings, "llm_retry_backoff_seconds", 2.0))
+        total_timeout_seconds = float(getattr(settings, "llm_total_timeout_seconds", 180))
+        total_deadline = (
+            time.monotonic() + total_timeout_seconds
+            if total_timeout_seconds > 0
+            else None
+        )
 
         final_error = ""
         for attempt in range(total_attempts):
-            ok, response = _request_with_watchdog(payload, provider_label)
+            if total_deadline is not None:
+                remaining_total = total_deadline - time.monotonic()
+                if remaining_total <= 0:
+                    final_error = (
+                        f"Error calling {provider_label} API: overall request deadline exceeded "
+                        f"after {int(total_timeout_seconds)} seconds"
+                    )
+                    break
+                attempt_watchdog = min(
+                    float(getattr(settings, "llm_watchdog_timeout_seconds", 120)),
+                    remaining_total,
+                )
+            else:
+                attempt_watchdog = float(getattr(settings, "llm_watchdog_timeout_seconds", 120))
+
+            _emit_status(
+                status_callback,
+                f"{provider_label} attempt {attempt + 1}/{total_attempts}",
+            )
+            ok, response = _request_with_watchdog(
+                payload,
+                provider_label,
+                watchdog_timeout=attempt_watchdog,
+                status_callback=status_callback,
+            )
             if ok:
                 self.__assistant(response)
                 return response
@@ -258,7 +342,21 @@ class GenModel:
                 break
 
             sleep_seconds = backoff_seconds * (2 ** attempt)
-            time.sleep(sleep_seconds)
+            if total_deadline is not None:
+                remaining_total = total_deadline - time.monotonic()
+                if remaining_total <= 0:
+                    final_error = (
+                        f"Error calling {provider_label} API: overall request deadline exceeded "
+                        f"after {int(total_timeout_seconds)} seconds"
+                    )
+                    break
+                sleep_seconds = min(sleep_seconds, remaining_total)
+            if sleep_seconds > 0:
+                _emit_status(
+                    status_callback,
+                    f"{provider_label} retry backoff {attempt + 1}/{retry_limit}: {sleep_seconds:.1f}s",
+                )
+                time.sleep(sleep_seconds)
 
         self.__assistant(final_error)
         return final_error

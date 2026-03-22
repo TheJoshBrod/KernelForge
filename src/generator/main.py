@@ -362,6 +362,28 @@ def validate_with_retries(
     attempts_total = codex_max_attempts if use_codex_generate else max_attempts
     task_meta = {"tag": "[GEN]", "op_name": op_key}
 
+    def _update_llm_wait_state(attempt_index: int, detail: str) -> None:
+        detail_text = str(detail or "").strip()
+        if not detail_text:
+            return
+        print(f"[LLM] {detail_text}", flush=True)
+        update_job_progress(
+            attempt_index,
+            max_attempts,
+            f"{detail_text} for {op_key} (attempt {attempt_index + 1}/{max_attempts})",
+        )
+        if _proj_base_dir and _task_key:
+            queue_step = detail_text if len(detail_text) <= 96 else detail_text[:93] + "..."
+            update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
+                **task_meta,
+                "current_step": queue_step,
+                "detail": detail_text,
+                "attempt_current": attempt_index + 1,
+                "attempt_max": max_attempts,
+                "op_name": op_key,
+                "tag": "[GEN]",
+            }}})
+
     def _run_codex_repair(feedback: str, attempt_idx: int) -> tuple[bool, str, str]:
         # Note: This still uses base_prompt logic which isn't carried here perfectly
         # For now, we assume codex uses its own prompt construction.
@@ -508,7 +530,15 @@ def validate_with_retries(
                     # See `repair` variable below.
                     msg = last_repair_prompt
                 
-                cu_code = generator.generate(gen_model, msg, llm_model)
+                cu_code = generator.generate(
+                    gen_model,
+                    msg,
+                    llm_model,
+                    status_callback=lambda detail, attempt_index=attempt: _update_llm_wait_state(
+                        attempt_index,
+                        detail,
+                    ),
+                )
 
             except Exception as e:
                 print(f"Failed on attempt {attempt}\n{e}")

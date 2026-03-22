@@ -98,6 +98,7 @@ try:
         llm_model_name: str = "anthropic/claude-sonnet-4-6"
         llm_request_timeout_seconds: int = 90
         llm_watchdog_timeout_seconds: int = 120
+        llm_total_timeout_seconds: int = 180
         llm_retry_limit: int = 2
         llm_retry_backoff_seconds: float = 2.0
         cuda_home: str = _DEFAULT_CUDA_HOME
@@ -122,6 +123,7 @@ except Exception:
         llm_model_name: str = "anthropic/claude-sonnet-4-6"
         llm_request_timeout_seconds: int = 90
         llm_watchdog_timeout_seconds: int = 120
+        llm_total_timeout_seconds: int = 180
         llm_retry_limit: int = 2
         llm_retry_backoff_seconds: float = 2.0
         cuda_home: str = _DEFAULT_CUDA_HOME

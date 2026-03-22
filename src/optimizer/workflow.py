@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from src.progress import check_cancelled, update_job_progress, wait_if_paused
@@ -201,24 +202,39 @@ def _run(cmd: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str]:
     print(f"[workflow] Running: {' '.join(cmd)}")
     # Use spool files instead of capture_output=True so spawned helper processes
     # cannot keep PIPE FDs open and wedge the parent workflow process.
+    popen_env = dict(env)
+    popen_env.setdefault("PYTHONUNBUFFERED", "1")
     with tempfile.TemporaryDirectory(prefix="kforge_workflow_run_") as tmpdir:
         combined_path = Path(tmpdir) / "combined.log"
-        with combined_path.open("w+", encoding="utf-8") as combined:
-            result = subprocess.run(
+        with combined_path.open("w", encoding="utf-8", buffering=1) as combined:
+            proc = subprocess.Popen(
                 cmd,
                 cwd=str(cwd),
-                env=env,
+                env=popen_env,
                 stdout=combined,
                 stderr=combined,
                 text=True,
             )
-            combined.flush()
-            combined.seek(0)
-            combined_text = combined.read()
+        chunks: list[str] = []
+        with combined_path.open("r", encoding="utf-8", errors="replace") as combined:
+            while True:
+                chunk = combined.read()
+                if chunk:
+                    print(chunk, end="")
+                    chunks.append(chunk)
+                result = proc.poll()
+                if result is not None:
+                    break
+                time.sleep(0.1)
+            tail = combined.read()
+            if tail:
+                print(tail, end="")
+                chunks.append(tail)
+        combined_text = "".join(chunks)
 
     if combined_text:
-        print(combined_text, end="")
-    return result.returncode, combined_text.strip()
+        return int(result), combined_text.strip()
+    return int(result), ""
 
 
 def _ops_from_csv(raw: str) -> list[str]:
