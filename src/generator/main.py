@@ -456,6 +456,21 @@ def validate_with_retries(
                 return False, f"Missing configuration for LLM provider {llm_provider}.", "llm_api"
             
             try:
+                update_job_progress(
+                    attempt,
+                    max_attempts,
+                    f"Waiting on LLM for {op_key} (attempt {attempt + 1}/{max_attempts})",
+                )
+                if _proj_base_dir and _task_key:
+                    update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
+                        **task_meta,
+                        "current_step": "Waiting on LLM",
+                        "attempt_current": attempt + 1,
+                        "attempt_max": max_attempts,
+                        "op_name": op_key,
+                        "tag": "[GEN]",
+                    }}})
+
                 # FIRST ATTEMPT: Use initial_prompt
                 if attempt == 0:
                     current_prompt = initial_prompt

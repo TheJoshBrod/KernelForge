@@ -96,6 +96,10 @@ try:
         verifier_timeout_seconds: int = 300
         mcts_c_constant: float = 1.0
         llm_model_name: str = "anthropic/claude-sonnet-4-6"
+        llm_request_timeout_seconds: int = 90
+        llm_watchdog_timeout_seconds: int = 120
+        llm_retry_limit: int = 2
+        llm_retry_backoff_seconds: float = 2.0
         cuda_home: str = _DEFAULT_CUDA_HOME
         retry_limit: int = 3
         ancestor_code_depth: int = 3
@@ -116,6 +120,10 @@ except Exception:
         verifier_timeout_seconds: int = 300
         mcts_c_constant: float = 1.0
         llm_model_name: str = "anthropic/claude-sonnet-4-6"
+        llm_request_timeout_seconds: int = 90
+        llm_watchdog_timeout_seconds: int = 120
+        llm_retry_limit: int = 2
+        llm_retry_backoff_seconds: float = 2.0
         cuda_home: str = _DEFAULT_CUDA_HOME
         retry_limit: int = 3
         ancestor_code_depth: int = 3

@@ -149,6 +149,8 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
     Returns:
         Tuple[str, bool, str]: _description_
     """
+    if status_callback:
+        status_callback("Waiting on LLM", paths.get("attempt", 0) + 1)
     response = llm.chat(msg, model)
     feedback, cu_code = extract_feedback_and_code(response)
 

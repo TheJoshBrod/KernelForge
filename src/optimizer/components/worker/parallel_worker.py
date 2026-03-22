@@ -140,6 +140,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                 # For retries, current_prompt is the error message (GenModel keeps history)
                 
                 try:
+                    result_queue.put((node_id, dispatch_key, {"step": "Waiting on LLM", "attempt": attempt + 1}, "status_update"))
                     response = llm.chat(current_prompt, model or settings.llm_model_name)
                 except Exception as e:
                     result_queue.put((node_id, dispatch_key, None, f"llm_error: {e}"))
