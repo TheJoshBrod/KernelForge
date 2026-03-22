@@ -573,6 +573,18 @@ def _scenario_result(args) -> dict[str, Any]:
         if not already_on_device:
             model = model.to(args.device)
         model.eval()
+        if args.mode == "compiled":
+            print(
+                f"[bench] compiling model backend={args.compile_backend} mode={args.compile_mode}",
+                flush=True,
+            )
+            model = torch.compile(
+                model,
+                backend=args.compile_backend,
+                mode=args.compile_mode,
+                fullgraph=False,
+                dynamic=True,
+            )
 
         warmup_tokens = min(args.max_new_tokens, max(2, args.warmup_new_tokens))
         print(f"[bench] warmup runs={args.warmup_runs} tokens={warmup_tokens}", flush=True)
@@ -598,6 +610,8 @@ def _scenario_result(args) -> dict[str, Any]:
         "selected_ops": selected_ops,
         "patch_stats": patch_stats,
         "patch_sources": patch_sources,
+        "compile_backend": args.compile_backend if args.mode == "compiled" else "",
+        "compile_mode": args.compile_mode if args.mode == "compiled" else "",
         "max_input_length": args.max_input_length,
         "max_new_tokens": args.max_new_tokens,
         "timed_runs": args.timed_runs,
@@ -631,6 +645,10 @@ def _run_subprocess(args, mode: str) -> dict[str, Any]:
         str(args.timed_runs),
         "--prompt-selection",
         args.prompt_selection,
+        "--compile-backend",
+        args.compile_backend,
+        "--compile-mode",
+        args.compile_mode,
     ]
     if args.ops:
         cmd.extend(["--ops", args.ops])
@@ -665,29 +683,29 @@ def _run_subprocess(args, mode: str) -> dict[str, Any]:
     raise RuntimeError(f"Missing scenario result for {mode}")
 
 
-def _compare_results(baseline: dict[str, Any], forged: dict[str, Any]) -> dict[str, Any]:
+def _compare_results(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     base_summary = baseline["summary"]
-    forged_summary = forged["summary"]
+    candidate_summary = candidate["summary"]
     base_tps = float(base_summary["generated_tokens_per_s"])
-    forged_tps = float(forged_summary["generated_tokens_per_s"])
+    candidate_tps = float(candidate_summary["generated_tokens_per_s"])
     base_total_tps = float(base_summary["total_tokens_per_s"])
-    forged_total_tps = float(forged_summary["total_tokens_per_s"])
+    candidate_total_tps = float(candidate_summary["total_tokens_per_s"])
 
     baseline_ids = baseline["summary"]["runs"][0]["generated_ids"]
-    forged_ids = forged["summary"]["runs"][0]["generated_ids"]
-    exact_match = baseline_ids == forged_ids
+    candidate_ids = candidate["summary"]["runs"][0]["generated_ids"]
+    exact_match = baseline_ids == candidate_ids
 
     return {
-        "generated_tokens_per_s_speedup": (forged_tps / base_tps) if base_tps > 0 else None,
-        "total_tokens_per_s_speedup": (forged_total_tps / base_total_tps) if base_total_tps > 0 else None,
+        "generated_tokens_per_s_speedup": (candidate_tps / base_tps) if base_tps > 0 else None,
+        "total_tokens_per_s_speedup": (candidate_total_tps / base_total_tps) if base_total_tps > 0 else None,
         "prefill_speedup": (
-            float(base_summary["prefill_ms_median"]) / float(forged_summary["prefill_ms_median"])
-            if float(forged_summary["prefill_ms_median"]) > 0
+            float(base_summary["prefill_ms_median"]) / float(candidate_summary["prefill_ms_median"])
+            if float(candidate_summary["prefill_ms_median"]) > 0
             else None
         ),
         "decode_speedup": (
-            float(base_summary["decode_ms_median"]) / float(forged_summary["decode_ms_median"])
-            if float(forged_summary["decode_ms_median"]) > 0
+            float(base_summary["decode_ms_median"]) / float(candidate_summary["decode_ms_median"])
+            if float(candidate_summary["decode_ms_median"]) > 0
             else None
         ),
         "exact_generated_token_match": exact_match,
@@ -704,7 +722,7 @@ def _write_compare_result(project: str, payload: dict[str, Any]) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark Qwen TPS with and without forged kernels.")
     parser.add_argument("--project", default="test_qwen - NVIDIA GB10")
-    parser.add_argument("--mode", choices=["compare", "baseline", "forged"], default="compare")
+    parser.add_argument("--mode", choices=["compare", "compare3", "baseline", "compiled", "forged"], default="compare")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--ops", default="")
     parser.add_argument("--max-prompts", type=int, default=2)
@@ -715,12 +733,33 @@ def main() -> int:
     parser.add_argument("--timed-runs", type=int, default=2)
     parser.add_argument("--prompt-selection", choices=["first", "longest"], default="longest")
     parser.add_argument("--prefer-tree-best", action="store_true")
+    parser.add_argument("--compile-backend", default="inductor")
+    parser.add_argument("--compile-mode", default="reduce-overhead")
     args = parser.parse_args()
 
     try:
-        if args.mode in {"baseline", "forged"}:
+        if args.mode in {"baseline", "compiled", "forged"}:
             result = _scenario_result(args)
             print(RESULT_SENTINEL + json.dumps(result), flush=True)
+            return 0
+
+        if args.mode == "compare3":
+            baseline = _run_subprocess(args, "baseline")
+            compiled = _run_subprocess(args, "compiled")
+            forged = _run_subprocess(args, "forged")
+            payload = {
+                "project": args.project,
+                "device": args.device,
+                "ops": forged["selected_ops"],
+                "baseline": baseline,
+                "compiled": compiled,
+                "forged": forged,
+                "compiled_vs_baseline": _compare_results(baseline, compiled),
+                "forged_vs_baseline": _compare_results(baseline, forged),
+                "forged_vs_compiled": _compare_results(compiled, forged),
+            }
+            out_path = _write_compare_result(args.project, payload)
+            print(json.dumps({"results_path": str(out_path)}, indent=2))
             return 0
 
         baseline = _run_subprocess(args, "baseline")
