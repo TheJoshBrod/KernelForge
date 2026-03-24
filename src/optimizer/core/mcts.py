@@ -412,7 +412,7 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
             "iteration": current.id,
             "attempted": current.improvement_description or "Baseline",
             "results": {
-                "mean_time_ms": runtime
+                "min_time_ms": runtime
             },
             "speedup_vs_parent": getattr(current, "speedup_vs_parent", 1.0) or 1.0
         }

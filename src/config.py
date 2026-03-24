@@ -73,7 +73,7 @@ def apply_llm_config() -> bool:
         return False
 
     for key, value in env_map.items():
-        if value is not None:
+        if value is not None and str(key) not in os.environ:
             os.environ[str(key)] = str(value)
     return True
 

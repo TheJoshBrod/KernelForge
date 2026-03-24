@@ -239,62 +239,110 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
         f"{bw_line}"
     )
 
-# 2. Process the Improvement Log with SLIDING WINDOW PRUNING
+# 2. Process Lineage History — last 5 ancestors from parental chain
     history_blocks = []
-    best_speedup = 0.0
     best_iter = 0
     best_runtime = float('inf')
+    best_speedup = 1.0
 
-    # Pass 1: Find best
+    # Pass 1: Find best across full lineage
     if improvement_log:
         for entry in improvement_log:
-            results = entry.get('results', {})
-            mean_time = results.get('min_time_ms', float('inf'))
-            if mean_time < best_runtime:
-                best_runtime = mean_time
+            rt = entry.get('results', {}).get('min_time_ms', float('inf'))
+            if rt < best_runtime:
+                best_runtime = rt
                 best_iter = entry.get('iteration', 0)
                 best_speedup = entry.get('speedup_vs_baseline', 1.0)
+                if not (0 < best_speedup < float('inf')):
+                    best_speedup = 1.0
 
-    # Pass 2: Filter relevant entries (Pruning)
-    relevant_indices = set()
-    if best_iter != 0: relevant_indices.add(best_iter) # Always keep best
-    
-    # Keep last 5 attempts
-    total_entries = len(improvement_log)
-    for i in range(max(0, total_entries - 5), total_entries):
-        relevant_indices.add(improvement_log[i].get('iteration'))
+    # Baseline reference from root (first entry — collect_ancestry returns root→leaf)
+    baseline_ref = ""
+    if improvement_log:
+        root_rt = improvement_log[0].get('results', {}).get('min_time_ms', float('inf'))
+        root_id = improvement_log[0].get('iteration', 0)
+        if 0 < root_rt < float('inf'):
+            baseline_ref = f"> Baseline: {root_rt:.4f} ms (root iteration {root_id})"
 
-    sorted_log = [e for e in improvement_log if e.get('iteration') in relevant_indices]
-    
-    if not sorted_log:
+    # Pass 2: Slice last 5 (collect_ancestry guarantees root→leaf lineage only)
+    window = improvement_log[-5:] if len(improvement_log) > 5 else list(improvement_log)
+    pruned = len(improvement_log) > len(window)
+
+    # Best-in-lineage anchor — prepend separately if outside the window
+    best_in_window = any(e.get('iteration') == best_iter for e in window)
+    best_anchor = ""
+    if not best_in_window and best_iter != 0:
+        best_entry = next((e for e in improvement_log if e.get('iteration') == best_iter), None)
+        if best_entry:
+            bt = best_entry.get('results', {}).get('min_time_ms', 0.0)
+            best_anchor = (
+                f"### >>> TARGET TO BEAT — ITERATION {best_iter}:"
+                f" BEST IN LINEAGE | {best_speedup:.2f}x vs baseline <<<\n"
+                f"- **Runtime: {bt:.4f} ms**\n"
+                f"- Strategy:\n"
+                f"> {best_entry.get('attempted', 'No description.')}\n"
+                f"---"
+            )
+
+    if not window:
         history_section = "> *No previous attempts recorded.*"
     else:
-        # Build blocks
-        for entry in sorted_log:
+        for entry in window:
             iter_num = entry.get('iteration', '?')
             strategy_text = entry.get('attempted', 'No description.')
-            results = entry.get('results', {})
-            mean_time = results.get('min_time_ms', 0.0)
+            rt = entry.get('results', {}).get('min_time_ms', 0.0)
+            speedup_parent = entry.get('speedup_vs_parent', 1.0)
             speedup_base = entry.get('speedup_vs_baseline', 1.0)
-            
-            if iter_num == best_iter:
-                label = f"CURRENT BEST ({speedup_base:.2f}x)"
-            elif speedup_base < 1.0:
-                label = f"REGRESSION ({speedup_base:.2f}x)"
-            else:
-                label = f"IMPROVEMENT ({speedup_base:.2f}x)"
 
-            block = f"""
-**ITERATION {iter_num}: {label}**
-- Runtime: {mean_time:.4f} ms
-- Strategy:
-> {strategy_text}
----"""
+            # Zero-floor: reject inf/NaN/non-positive values
+            if not (0 < speedup_parent < float('inf')):
+                speedup_parent = 1.0
+            if not (0 < speedup_base < float('inf')):
+                speedup_base = 1.0
+
+            if iter_num == best_iter:
+                block = (
+                    f"\n### >>> ITERATION {iter_num}:"
+                    f" BEST IN LINEAGE ({speedup_parent:.2f}x vs parent)"
+                    f" | {speedup_base:.2f}x vs baseline <<<\n"
+                    f"- **Runtime: {rt:.4f} ms**\n"
+                    f"- Strategy:\n"
+                    f"> {strategy_text}\n"
+                    f"---"
+                )
+            elif speedup_parent >= 1.0:
+                block = (
+                    f"\n**ITERATION {iter_num}:"
+                    f" STEP FORWARD ({speedup_parent:.2f}x vs parent)"
+                    f" | {speedup_base:.2f}x vs baseline**\n"
+                    f"- Runtime: {rt:.4f} ms\n"
+                    f"- Strategy:\n"
+                    f"> {strategy_text}\n"
+                    f"---"
+                )
+            else:
+                block = (
+                    f"\n**ITERATION {iter_num}:"
+                    f" STEP BACK ({speedup_parent:.2f}x vs parent)"
+                    f" | {speedup_base:.2f}x vs baseline**\n"
+                    f"- Runtime: {rt:.4f} ms\n"
+                    f"- Strategy:\n"
+                    f"> {strategy_text}\n"
+                    f"---"
+                )
             history_blocks.append(block)
 
         history_section = "\n".join(history_blocks)
-        if len(sorted_log) < len(improvement_log):
-             history_section = f"> *(History pruned: {len(sorted_log)}/{len(improvement_log)} items)*\n\n" + history_section
+
+        prefix_parts = []
+        if baseline_ref:
+            prefix_parts.append(baseline_ref)
+        if pruned:
+            prefix_parts.append(f"> *(Showing last {len(window)} of {len(improvement_log)} ancestors in this lineage)*")
+        if best_anchor:
+            prefix_parts.append(best_anchor)
+        if prefix_parts:
+            history_section = "\n".join(prefix_parts) + "\n\n" + history_section
 
     # 3. Failed Approaches
     failed_section = ""
@@ -339,7 +387,7 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
 ```
 
 **Instructions**
-1. **Review History:** Avoid strategies marked as Regression.
+1. **Review History:** Avoid repeating strategies marked STEP BACK unless they enabled a subsequent STEP FORWARD.
 2. **Architecture Strategy:** {specific_tips}
 3. **Generate Code:** Preserve `launch(...)` signature.
 """
