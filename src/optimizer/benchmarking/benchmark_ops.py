@@ -23,8 +23,16 @@ from .harness import (
     benchmark_entry_calls,
     sync_device as benchmark_sync_device,
 )
+from .integration import (
+    empty_adapter_stats,
+    invoke_kernel_launch,
+    launch_params_for_runtime_kernel,
+    merge_adapter_stats,
+)
 from .paths import find_latest_optimized_dir, project_dir_for_name
 from .state import read_json_file, write_json_file
+
+BenchmarkEntry = tuple[str, Any, dict[str, Any], Any]
 
 
 def _now_iso() -> str:
@@ -83,7 +91,7 @@ def _global_warmup(device: str) -> None:
         pass
 
 
-def _entry_signature(entries: list[tuple[str, Any, dict[str, Any]]]) -> str:
+def _entry_signature(entries: list[BenchmarkEntry]) -> str:
     def _sig(v: Any) -> Any:
         if torch.is_tensor(v):
             return {
@@ -103,7 +111,10 @@ def _entry_signature(entries: list[tuple[str, Any, dict[str, Any]]]) -> str:
     if not entries:
         return "empty"
     sample = entries[:3]
-    payload = [(entry_file, _sig(args), _sig(kwargs)) for entry_file, args, kwargs in sample]
+    payload = [
+        (entry_file, _sig(args), _sig(kwargs), _sig(signature_meta))
+        for entry_file, args, kwargs, signature_meta in sample
+    ]
     return json.dumps(payload, sort_keys=True)
 
 
@@ -142,8 +153,8 @@ def _ops_from_csv(raw: str) -> list[str]:
     return out
 
 
-def _load_entries(io_dir: Path, max_entries: int) -> list[tuple[str, Any, dict[str, Any]]]:
-    entries: list[tuple[str, Any, dict[str, Any]]] = []
+def _load_entries(io_dir: Path, max_entries: int) -> list[BenchmarkEntry]:
+    entries: list[BenchmarkEntry] = []
     files = sorted(io_dir.glob("entry_*.pt"))[:max_entries]
     for pt in files:
         try:
@@ -156,9 +167,10 @@ def _load_entries(io_dir: Path, max_entries: int) -> list[tuple[str, Any, dict[s
             continue
         args = payload.get("args", [])
         kwargs = payload.get("kwargs", {})
+        signature_meta = payload.get("signature")
         if kwargs is None:
             kwargs = {}
-        entries.append((pt.name, args, kwargs))
+        entries.append((pt.name, args, kwargs, signature_meta))
     return entries
 
 
@@ -196,14 +208,14 @@ def _run_call(func, args: Any, kwargs: dict[str, Any]):
 
 def _measure_pytorch(
     func,
-    entries: list[tuple[str, Any, dict[str, Any]]],
+    entries: list[BenchmarkEntry],
     device: str,
 ) -> dict[str, Any]:
     if not entries:
         return benchmark_entry_calls([], device=device)
 
     entry_calls = []
-    for entry_file, args, kwargs in entries:
+    for entry_file, args, kwargs, _signature_meta in entries:
         d_args = _move_to_device(args, device)
         d_kwargs = _move_to_device(kwargs, device)
 
@@ -467,6 +479,141 @@ def _profile_generated_kernel_ms(
     return None, "missing_generated", ""
 
 
+def _resolve_generated_kernel_source(
+    project_dir: Path,
+    op_name: str,
+) -> tuple[Path | None, str]:
+    generated_dir = (
+        project_dir
+        / "kernels"
+        / "generated"
+        / "individual_op_kernels"
+        / op_name
+    )
+    if not generated_dir.exists():
+        return None, ""
+    if (generated_dir / "success.cuda").exists():
+        kernel_path = generated_dir / "kernel.cu"
+        return (kernel_path if kernel_path.exists() else None), "cuda"
+    if (generated_dir / "success.triton").exists():
+        kernel_path = generated_dir / "kernel.py"
+        return (kernel_path if kernel_path.exists() else None), "triton"
+    if (generated_dir / "success.mps").exists():
+        kernel_path = generated_dir / "kernel.metal"
+        return (kernel_path if kernel_path.exists() else None), "mps"
+    return None, ""
+
+
+def _stage_runtime_cuda_kernel(source_path: Path, op_name: str) -> tuple[Any, Path]:
+    from src.optimizer.backends.cuda import loader
+
+    runtime_root = Path(tempfile.mkdtemp(prefix="kforge-integrated-"))
+    runtime_dir = runtime_root / "kernel"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    runtime_kernel = runtime_dir / "kernel.cu"
+    shutil.copy2(source_path, runtime_kernel)
+    module_suffix = "".join(
+        char if (char.isalnum() or char == "_") else "_"
+        for char in runtime_root.name
+    )
+    ext = loader.load_kernel(
+        runtime_dir,
+        name=f"kforge_integrated_{op_name}_{module_suffix}",
+        build_dir=runtime_dir / ".build",
+    )
+    return ext, runtime_root
+
+
+def _measure_integrated_kernel_source(
+    source_path: Path | None,
+    *,
+    backend: str,
+    op_name: str,
+    func: Any,
+    entries: list[BenchmarkEntry],
+    device: str,
+) -> tuple[dict[str, Any] | None, str]:
+    if source_path is None or not source_path.exists():
+        return None, "missing_kernel_source"
+    if not entries:
+        return None, "missing_io_entries"
+
+    backend_name = str(backend or _backend_for_suffix(source_path.suffix))
+    if backend_name != "cuda":
+        return None, "unsupported_integrated_backend"
+    if device != "cuda" or not torch.cuda.is_available():
+        return None, "unsupported_integrated_device"
+
+    runtime_root: Path | None = None
+    try:
+        ext, runtime_root = _stage_runtime_cuda_kernel(source_path, op_name)
+        runtime_kernel = runtime_root / "kernel" / "kernel.cu"
+        launch_params = launch_params_for_runtime_kernel(runtime_kernel, ext.launch)
+        adapter_totals = empty_adapter_stats()
+        entry_calls = []
+
+        for entry_file, args, kwargs, signature_meta in entries:
+            d_args = _move_to_device(args, device)
+            d_kwargs = _move_to_device(kwargs, device)
+
+            def invoke(
+                bound_args=d_args,
+                bound_kwargs=d_kwargs,
+                bound_signature=signature_meta,
+            ):
+                call_adapter_stats = empty_adapter_stats()
+                result = invoke_kernel_launch(
+                    ext,
+                    args=bound_args,
+                    kwargs=bound_kwargs,
+                    launch_params=launch_params,
+                    op_name=op_name,
+                    func=func,
+                    signature_meta=bound_signature,
+                    ensure_device=None,
+                    force_contiguous=False,
+                    adapter_stats=call_adapter_stats,
+                )
+                merge_adapter_stats(adapter_totals, call_adapter_stats)
+                return result
+
+            entry_calls.append((entry_file, invoke))
+
+        measurement = benchmark_entry_calls(
+            entry_calls,
+            device=device,
+            warmup_runs=DEFAULT_WARMUP_RUNS,
+            timed_runs=DEFAULT_TIMED_RUNS,
+        )
+        measurement["adapter_stats"] = adapter_totals
+        measurement["adapter_mode"] = {
+            "ensure_device": "",
+            "force_contiguous": False,
+        }
+        return measurement, "ok"
+    except Exception:
+        return None, "integrated_profile_error"
+    finally:
+        if runtime_root is not None:
+            shutil.rmtree(runtime_root, ignore_errors=True)
+
+
+def _winner_from_measurements(
+    *,
+    pytorch_ms: float,
+    candidate_status: str,
+    candidate_ms: float | None,
+) -> str:
+    if (
+        candidate_status == "ok"
+        and candidate_ms is not None
+        and pytorch_ms > 0.0
+        and candidate_ms < pytorch_ms
+    ):
+        return "optimized"
+    return "pytorch"
+
+
 def _normalize_op_dir_name(name: str) -> str:
     return str(name).replace(".", "_").replace("/", "_")
 
@@ -728,7 +875,10 @@ def main() -> int:
                 "benchmark_protocol": {
                     "warmup_runs": DEFAULT_WARMUP_RUNS,
                     "timed_runs": DEFAULT_TIMED_RUNS,
-                    "notes": "Internal ranking only; no confidence intervals.",
+                    "notes": (
+                        "Direct kernel replay and deployment-style integrated replay; "
+                        "no confidence intervals."
+                    ),
                 },
                 "runtime_fingerprint": json.loads(runtime_fingerprint),
                 "optimized_dir": str(optimized_root) if optimized_root else "",
@@ -761,7 +911,7 @@ def main() -> int:
             if pytorch_measurement is None:
                 pytorch_measurement = {
                     "mean_time_ms": 0.0,
-                    "entry_files": [entry_file for entry_file, _, _ in entries],
+                    "entry_files": [entry_file for entry_file, _, _, _ in entries],
                     "entry_latencies_ms": [],
                     "entry_results": [],
                     "entry_count": len(entries),
@@ -782,7 +932,7 @@ def main() -> int:
 
             pytorch_ms = float(pytorch_measurement.get("mean_time_ms") or 0.0)
             benchmarked_entry_files = pytorch_measurement.get("entry_files") or [
-                entry_file for entry_file, _, _ in entries
+                entry_file for entry_file, _, _, _ in entries
             ]
             benchmarked_entry_count = int(
                 pytorch_measurement.get("entry_count") or len(benchmarked_entry_files)
@@ -864,6 +1014,81 @@ def main() -> int:
                     errors=errors,
                 )
 
+            integrated_kernel_ms = None
+            integrated_kernel_status = "missing_optimized_dir" if not optimized_root else "missing_optimized_kernel"
+            integrated_kernel_entry_latencies: list[float] = []
+            integrated_kernel_benchmarked_entry_files: list[str] = []
+            integrated_kernel_source = ""
+            integrated_adapter_stats: dict[str, int] = {}
+
+            integrated_candidates: list[tuple[str, Path | None, str, str]] = []
+            optimized_source_path, optimized_source_backend = _resolve_tree_kernel_source(
+                optimized_root,
+                op_name,
+            )
+            integrated_candidates.append(
+                (
+                    "optimized_tree",
+                    optimized_source_path,
+                    optimized_source_backend,
+                    "missing_optimized_dir" if not optimized_root else "missing_optimized_kernel",
+                )
+            )
+            generated_source_path, generated_source_backend = _resolve_generated_kernel_source(
+                project_dir,
+                op_name,
+            )
+            integrated_candidates.append(
+                (
+                    "generated",
+                    generated_source_path,
+                    generated_source_backend,
+                    "missing_generated",
+                )
+            )
+
+            for source_kind, source_path, source_backend, missing_status in integrated_candidates:
+                if source_path is None:
+                    if integrated_kernel_status in {"missing_optimized_dir", "missing_optimized_kernel"}:
+                        integrated_kernel_status = missing_status
+                    continue
+                integrated_measurement, candidate_status = _measure_integrated_kernel_source(
+                    source_path,
+                    backend=source_backend,
+                    op_name=op_name,
+                    func=func,
+                    entries=entries,
+                    device=device,
+                )
+                if integrated_measurement is None:
+                    integrated_kernel_status = candidate_status
+                    if candidate_status == "integrated_profile_error":
+                        errors.append(
+                            f"{op_name}: integrated kernel benchmark failed ({source_kind}: {candidate_status})"
+                        )
+                    continue
+
+                integrated_kernel_status = candidate_status
+                integrated_kernel_ms_raw = integrated_measurement.get("mean_time_ms")
+                integrated_kernel_ms = (
+                    float(integrated_kernel_ms_raw)
+                    if integrated_kernel_ms_raw is not None
+                    else None
+                )
+                integrated_kernel_entry_latencies = (
+                    integrated_measurement.get("entry_latencies_ms") or []
+                )
+                integrated_kernel_benchmarked_entry_files = (
+                    integrated_measurement.get("entry_files") or []
+                )
+                integrated_adapter_stats = (
+                    integrated_measurement.get("adapter_stats")
+                    if isinstance(integrated_measurement.get("adapter_stats"), dict)
+                    else {}
+                )
+                integrated_kernel_source = source_kind
+                break
+
             if count <= 0 and pytorch_ms <= 0.0 and kernel_status != "ok":
                 _update_phase_progress(
                     idx + 1,
@@ -876,9 +1101,16 @@ def main() -> int:
                 )
                 continue
 
-            winner = "pytorch"
-            if kernel_status == "ok" and kernel_ms is not None and pytorch_ms and kernel_ms < pytorch_ms:
-                winner = "optimized"
+            winner = _winner_from_measurements(
+                pytorch_ms=pytorch_ms,
+                candidate_status=kernel_status,
+                candidate_ms=kernel_ms,
+            )
+            deployment_winner = _winner_from_measurements(
+                pytorch_ms=pytorch_ms,
+                candidate_status=integrated_kernel_status,
+                candidate_ms=integrated_kernel_ms,
+            )
 
             row = {
                 "op": op_name,
@@ -892,16 +1124,38 @@ def main() -> int:
                 "kernel_entry_latencies_ms": kernel_entry_latencies,
                 "kernel_status": kernel_status,
                 "winner": winner,
+                "integrated_kernel_ms": (
+                    float(integrated_kernel_ms)
+                    if integrated_kernel_ms is not None
+                    else None
+                ),
+                "integrated_kernel_entry_latencies_ms": integrated_kernel_entry_latencies,
+                "integrated_kernel_status": integrated_kernel_status,
+                "deployment_winner": deployment_winner,
                 "baseline_source": baseline_source,
             }
             if kernel_benchmarked_entry_files:
                 row["kernel_benchmarked_entry_files"] = kernel_benchmarked_entry_files
+            if integrated_kernel_benchmarked_entry_files:
+                row["integrated_kernel_benchmarked_entry_files"] = (
+                    integrated_kernel_benchmarked_entry_files
+                )
             if backend:
                 row["backend"] = backend
+            if integrated_kernel_source:
+                row["deployment_kernel_source"] = integrated_kernel_source
+            if integrated_adapter_stats:
+                row["integration_adapter_stats"] = integrated_adapter_stats
             if kernel_estimated:
                 row["kernel_estimated"] = True
             if pytorch_ms and kernel_ms:
                 row["speedup"] = float(pytorch_ms / kernel_ms) if kernel_ms > 0 else None
+            if pytorch_ms and integrated_kernel_ms:
+                row["deployment_speedup"] = (
+                    float(pytorch_ms / integrated_kernel_ms)
+                    if integrated_kernel_ms > 0
+                    else None
+                )
             results_by_op[op_name] = row
             if kernel_status == "ok" and kernel_ms is not None:
                 try:

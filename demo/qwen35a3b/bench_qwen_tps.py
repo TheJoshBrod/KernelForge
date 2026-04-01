@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import inspect
 import json
 import os
-import re
 import sqlite3
 import subprocess
 import sys
@@ -14,6 +12,13 @@ import time
 import traceback
 from pathlib import Path
 from typing import Any
+
+from src.optimizer.benchmarking.integration import (
+    empty_adapter_stats,
+    invoke_kernel_launch,
+    launch_params_for_runtime_kernel,
+    merge_adapter_stats,
+)
 
 
 RESULT_SENTINEL = "__KFORGE_QWEN_TPS_RESULT__"
@@ -132,15 +137,31 @@ def _load_benchmark_results(project_dir: Path) -> list[dict[str, Any]]:
     return results if isinstance(results, list) else []
 
 
+def _benchmark_results_by_op(project_dir: Path) -> dict[str, dict[str, Any]]:
+    result_map: dict[str, dict[str, Any]] = {}
+    for row in _load_benchmark_results(project_dir):
+        if not isinstance(row, dict):
+            continue
+        op = row.get("op")
+        if op:
+            result_map[str(op)] = row
+    return result_map
+
+
 def _default_forged_ops(project_dir: Path) -> list[str]:
     results = _load_benchmark_results(project_dir)
     winners = []
     for row in results:
         if not isinstance(row, dict):
             continue
-        if row.get("winner") != "optimized":
-            continue
-        if row.get("kernel_status") != "ok":
+        deployment_winner = str(row.get("deployment_winner") or "")
+        integrated_status = str(row.get("integrated_kernel_status") or "")
+        direct_winner = str(row.get("winner") or "")
+        direct_status = str(row.get("kernel_status") or "")
+        if deployment_winner:
+            if deployment_winner != "optimized" or integrated_status != "ok":
+                continue
+        elif direct_winner != "optimized" or direct_status != "ok":
             continue
         op = row.get("op")
         if op:
@@ -152,63 +173,6 @@ def _resolve_ops(project_dir: Path, ops_arg: str) -> list[str]:
     if not ops_arg or ops_arg == "winners":
         return _default_forged_ops(project_dir)
     return [item.strip() for item in ops_arg.split(",") if item.strip()]
-
-
-def _extract_launch_arity(kernel_path: Path, launch_obj) -> int | None:
-    if kernel_path.exists():
-        match = re.search(
-            r"torch::Tensor\s+launch\s*\(([^)]*)\)",
-            kernel_path.read_text(encoding="utf-8"),
-        )
-        if match:
-            params = [param.strip() for param in match.group(1).split(",") if param.strip()]
-            return len(params)
-    try:
-        return len(inspect.signature(launch_obj).parameters)
-    except Exception:
-        return None
-
-
-def _split_signature_params(signature_text: str) -> list[str]:
-    params: list[str] = []
-    current: list[str] = []
-    depth = 0
-    for char in signature_text:
-        if char in "<({[":
-            depth += 1
-        elif char in ">)}]":
-            depth = max(depth - 1, 0)
-        if char == "," and depth == 0:
-            part = "".join(current).strip()
-            if part:
-                params.append(part)
-            current = []
-            continue
-        current.append(char)
-    tail = "".join(current).strip()
-    if tail:
-        params.append(tail)
-    return params
-
-
-def _parse_launch_params(kernel_path: Path) -> list[tuple[str, str]]:
-    if not kernel_path.exists():
-        return []
-    text = kernel_path.read_text(encoding="utf-8")
-    match = re.search(r"torch::Tensor\s+launch\s*\((.*?)\)\s*\{", text, re.S)
-    if not match:
-        return []
-    params: list[tuple[str, str]] = []
-    for raw_param in _split_signature_params(match.group(1)):
-        cleaned = " ".join(raw_param.split())
-        if not cleaned:
-            continue
-        pieces = cleaned.rsplit(" ", 1)
-        if len(pieces) != 2:
-            continue
-        param_type, param_name = pieces
-        params.append((param_name.strip(), param_type.strip()))
-    return params
 
 
 def _resolve_generated_kernel(project_dir: Path, op_name: str) -> Path | None:
@@ -242,73 +206,45 @@ def _resolve_kernel_source(
     op_name: str,
     *,
     prefer_tree_best: bool,
+    preferred_source: str = "",
 ) -> Path | None:
     generated = _resolve_generated_kernel(project_dir, op_name)
+    tree_best = _best_tree_kernel(project_dir, op_name)
+    if preferred_source == "optimized_tree":
+        return tree_best or generated
+    if preferred_source == "generated":
+        return generated or tree_best
     if not prefer_tree_best:
         return generated
-    tree_best = _best_tree_kernel(project_dir, op_name)
     if tree_best is not None:
         return tree_best
     return generated
-
-
-def _normalize_launch_value(param_name: str, param_type: str, value: Any):
-    import torch
-
-    if "std::vector<int64_t>" in param_type:
-        if isinstance(value, int):
-            return [value]
-        if isinstance(value, torch.Size):
-            return list(value)
-        if isinstance(value, tuple):
-            return list(value)
-        if isinstance(value, list):
-            return value
-    if "int64_t" in param_type and isinstance(value, bool):
-        return int(value)
-    return value
 
 
 def _make_kernel_patch(
     ext,
     orig_fn,
     launch_params: list[tuple[str, str]],
-    orig_params: list[tuple[str, Any]] | None,
     stats: dict[str, Any],
+    *,
+    op_name: str,
 ):
-    import torch
-
     def patched(*args, **kwargs):
         stats["calls"] += 1
         try:
-            if orig_params is not None:
-                param_names = [name for name, _ in orig_params]
-                resolved = {param_names[i]: value for i, value in enumerate(args) if i < len(param_names)}
-                resolved.update(kwargs)
-                ordered = []
-                for param_name, default in orig_params:
-                    if param_name in resolved:
-                        ordered.append(resolved[param_name])
-                    elif default is not inspect.Parameter.empty:
-                        ordered.append(default)
-                    else:
-                        ordered.append(None)
-            else:
-                ordered = list(args)
-
-            call_args = []
-            for index, value in enumerate(ordered[: len(launch_params) or len(ordered)]):
-                param_name = ""
-                param_type = ""
-                if index < len(launch_params):
-                    param_name, param_type = launch_params[index]
-                    value = _normalize_launch_value(param_name, param_type, value)
-                if isinstance(value, torch.Tensor):
-                    tensor = value.cuda(non_blocking=True) if not value.is_cuda else value
-                    call_args.append(tensor.contiguous() if tensor.dim() > 0 else tensor)
-                else:
-                    call_args.append(value)
-            output = ext.launch(*call_args)
+            call_adapter_stats = empty_adapter_stats()
+            output = invoke_kernel_launch(
+                ext,
+                args=args,
+                kwargs=kwargs,
+                launch_params=launch_params,
+                op_name=op_name,
+                func=orig_fn,
+                ensure_device=None,
+                force_contiguous=False,
+                adapter_stats=call_adapter_stats,
+            )
+            merge_adapter_stats(stats["adapter_stats"], call_adapter_stats)
             stats["kernel_success"] += 1
             return output
         except Exception as exc:
@@ -355,6 +291,7 @@ def _patch_forged_ops(
     stats: dict[str, Any] = {}
     sources: dict[str, str] = {}
     originals: list[tuple[str, Any]] = []
+    benchmark_rows = _benchmark_results_by_op(project_dir)
 
     for op_name in selected_ops:
         if not op_name.startswith(OP_PREFIX):
@@ -364,36 +301,51 @@ def _patch_forged_ops(
         if orig_fn is None:
             continue
 
+        benchmark_row = benchmark_rows.get(op_name, {})
+        preferred_source = (
+            str(benchmark_row.get("deployment_kernel_source") or "")
+            if isinstance(benchmark_row, dict)
+            else ""
+        )
+        generated_kernel = _resolve_generated_kernel(project_dir, op_name)
+        tree_kernel = _best_tree_kernel(project_dir, op_name)
         kernel_path = _resolve_kernel_source(
             project_dir,
             op_name,
             prefer_tree_best=prefer_tree_best,
+            preferred_source=preferred_source,
         )
         if kernel_path is None:
             continue
+        actual_source = preferred_source
+        if tree_kernel is not None and kernel_path == tree_kernel:
+            actual_source = "optimized_tree"
+        elif generated_kernel is not None and kernel_path == generated_kernel:
+            actual_source = "generated"
 
         ext, runtime_kernel = _load_runtime_kernel_source(project_dir, op_name, kernel_path)
-        try:
-            orig_params = [
-                (name, param.default)
-                for name, param in inspect.signature(orig_fn).parameters.items()
-                if param.kind
-                not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-            ]
-        except Exception:
-            orig_params = None
-        launch_params = _parse_launch_params(runtime_kernel)
-        if not launch_params:
-            launch_arity = _extract_launch_arity(runtime_kernel, ext.launch)
-            launch_params = [(f"arg_{i}", "") for i in range(launch_arity or 0)]
-        op_stats = {"calls": 0, "kernel_success": 0, "fallback": 0, "last_error": ""}
+        launch_params = launch_params_for_runtime_kernel(runtime_kernel, ext.launch)
+        op_stats = {
+            "calls": 0,
+            "kernel_success": 0,
+            "fallback": 0,
+            "last_error": "",
+            "adapter_stats": empty_adapter_stats(),
+            "deployment_kernel_source": actual_source,
+        }
         stats[op_name] = op_stats
         sources[op_name] = str(kernel_path)
         originals.append((fn_attr, orig_fn))
         setattr(
             F,
             fn_attr,
-            _make_kernel_patch(ext, orig_fn, launch_params, orig_params, op_stats),
+            _make_kernel_patch(
+                ext,
+                orig_fn,
+                launch_params,
+                op_stats,
+                op_name=op_name,
+            ),
         )
 
     def restore():
