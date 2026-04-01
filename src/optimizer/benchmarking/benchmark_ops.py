@@ -34,6 +34,11 @@ from .state import read_json_file, write_json_file
 
 BenchmarkEntry = tuple[str, Any, dict[str, Any], Any]
 
+STRICT_CORRECTNESS_ATOL = 1e-4
+STRICT_CORRECTNESS_RTOL = 1e-3
+VERIFY_CORRECTNESS_ATOL = 1e-2
+VERIFY_CORRECTNESS_RTOL = 1e-1
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -230,6 +235,156 @@ def _measure_pytorch(
         warmup_runs=DEFAULT_WARMUP_RUNS,
         timed_runs=DEFAULT_TIMED_RUNS,
     )
+
+
+def _summarize_output_correctness(
+    output_generated: Any,
+    ground_truth: Any,
+) -> dict[str, Any]:
+    if torch.is_tensor(output_generated) and torch.is_tensor(ground_truth):
+        target_ground_truth = ground_truth.to(output_generated.device)
+        if not target_ground_truth.is_floating_point():
+            is_equal = bool(torch.equal(output_generated, target_ground_truth))
+            return {
+                "strict_match": is_equal,
+                "loose_match": is_equal,
+                "max_abs_diff": None,
+                "mean_abs_diff": None,
+            }
+
+        out_f = output_generated.float()
+        gt_f = target_ground_truth.float()
+        diff = (out_f - gt_f).abs()
+        max_abs_diff = float(diff.max().item()) if diff.numel() else 0.0
+        mean_abs_diff = float(diff.mean().item()) if diff.numel() else 0.0
+        return {
+            "strict_match": bool(
+                torch.allclose(
+                    output_generated,
+                    target_ground_truth,
+                    atol=STRICT_CORRECTNESS_ATOL,
+                    rtol=STRICT_CORRECTNESS_RTOL,
+                )
+            ),
+            "loose_match": bool(
+                torch.allclose(
+                    output_generated,
+                    target_ground_truth,
+                    atol=VERIFY_CORRECTNESS_ATOL,
+                    rtol=VERIFY_CORRECTNESS_RTOL,
+                )
+            ),
+            "max_abs_diff": max_abs_diff,
+            "mean_abs_diff": mean_abs_diff,
+        }
+
+    if torch.is_tensor(output_generated) and output_generated.numel() == 1 and not torch.is_tensor(ground_truth):
+        is_equal = bool(output_generated.detach().cpu().item() == ground_truth)
+        return {
+            "strict_match": is_equal,
+            "loose_match": is_equal,
+            "max_abs_diff": None,
+            "mean_abs_diff": None,
+        }
+
+    if (not torch.is_tensor(output_generated)) and torch.is_tensor(ground_truth) and ground_truth.numel() == 1:
+        is_equal = bool(output_generated == ground_truth.detach().cpu().item())
+        return {
+            "strict_match": is_equal,
+            "loose_match": is_equal,
+            "max_abs_diff": None,
+            "mean_abs_diff": None,
+        }
+
+    is_equal = bool(output_generated == ground_truth)
+    return {
+        "strict_match": is_equal,
+        "loose_match": is_equal,
+        "max_abs_diff": None,
+        "mean_abs_diff": None,
+    }
+
+
+def _measure_integrated_correctness(
+    ext,
+    *,
+    launch_params: list[tuple[str, str]],
+    op_name: str,
+    func: Any,
+    entries: list[BenchmarkEntry],
+    device: str,
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "entries_checked": 0,
+        "strict_atol": STRICT_CORRECTNESS_ATOL,
+        "strict_rtol": STRICT_CORRECTNESS_RTOL,
+        "loose_atol": VERIFY_CORRECTNESS_ATOL,
+        "loose_rtol": VERIFY_CORRECTNESS_RTOL,
+        "strict_pass": True,
+        "strict_mismatches": 0,
+        "loose_pass": True,
+        "loose_mismatches": 0,
+        "worst_max_abs_diff": None,
+        "worst_mean_abs_diff": None,
+        "worst_entry": "",
+        "errors": [],
+    }
+    if func is None or not entries:
+        return summary
+
+    for entry_file, args, kwargs, signature_meta in entries:
+        try:
+            d_args = _move_to_device(args, device)
+            d_kwargs = _move_to_device(kwargs, device)
+            ground_truth = _run_call(func, d_args, d_kwargs)
+            output_generated = invoke_kernel_launch(
+                ext,
+                args=d_args,
+                kwargs=d_kwargs,
+                launch_params=launch_params,
+                op_name=op_name,
+                func=func,
+                signature_meta=signature_meta,
+                ensure_device=None,
+                force_contiguous=False,
+                adapter_stats=empty_adapter_stats(),
+            )
+            benchmark_sync_device(device)
+            correctness = _summarize_output_correctness(output_generated, ground_truth)
+        except Exception as exc:
+            summary["errors"].append({"entry_file": str(entry_file), "error": str(exc)})
+            summary["strict_mismatches"] += 1
+            summary["loose_mismatches"] += 1
+            summary["entries_checked"] += 1
+            continue
+
+        if not correctness["strict_match"]:
+            summary["strict_mismatches"] += 1
+        if not correctness["loose_match"]:
+            summary["loose_mismatches"] += 1
+
+        max_abs_diff = correctness.get("max_abs_diff")
+        current_worst = summary.get("worst_max_abs_diff")
+        if isinstance(max_abs_diff, (int, float)) and (
+            current_worst is None or float(max_abs_diff) > float(current_worst)
+        ):
+            summary["worst_max_abs_diff"] = float(max_abs_diff)
+            summary["worst_mean_abs_diff"] = correctness.get("mean_abs_diff")
+            summary["worst_entry"] = str(entry_file)
+
+        summary["entries_checked"] += 1
+
+    summary["strict_pass"] = (
+        summary["entries_checked"] > 0
+        and summary["strict_mismatches"] == 0
+        and not summary["errors"]
+    )
+    summary["loose_pass"] = (
+        summary["entries_checked"] > 0
+        and summary["loose_mismatches"] == 0
+        and not summary["errors"]
+    )
+    return summary
 
 
 def _coerce_cached_measurement(value: Any) -> dict[str, Any] | None:
@@ -585,6 +740,14 @@ def _measure_integrated_kernel_source(
             warmup_runs=DEFAULT_WARMUP_RUNS,
             timed_runs=DEFAULT_TIMED_RUNS,
         )
+        measurement["correctness_summary"] = _measure_integrated_correctness(
+            ext,
+            launch_params=launch_params,
+            op_name=op_name,
+            func=func,
+            entries=entries,
+            device=device,
+        )
         measurement["adapter_stats"] = adapter_totals
         measurement["adapter_mode"] = {
             "ensure_device": "",
@@ -603,15 +766,36 @@ def _winner_from_measurements(
     pytorch_ms: float,
     candidate_status: str,
     candidate_ms: float | None,
+    correctness_ok: bool = True,
 ) -> str:
     if (
-        candidate_status == "ok"
+        correctness_ok
+        and candidate_status == "ok"
         and candidate_ms is not None
         and pytorch_ms > 0.0
         and candidate_ms < pytorch_ms
     ):
         return "optimized"
     return "pytorch"
+
+
+def _safe_deployment_winner(
+    *,
+    pytorch_ms: float,
+    candidate_status: str,
+    candidate_ms: float | None,
+    correctness_summary: dict[str, Any] | None,
+) -> str:
+    strict_ok = bool(
+        isinstance(correctness_summary, dict)
+        and correctness_summary.get("strict_pass") is True
+    )
+    return _winner_from_measurements(
+        pytorch_ms=pytorch_ms,
+        candidate_status=candidate_status,
+        candidate_ms=candidate_ms,
+        correctness_ok=strict_ok,
+    )
 
 
 def _normalize_op_dir_name(name: str) -> str:
@@ -1020,6 +1204,7 @@ def main() -> int:
             integrated_kernel_benchmarked_entry_files: list[str] = []
             integrated_kernel_source = ""
             integrated_adapter_stats: dict[str, int] = {}
+            integrated_correctness_summary: dict[str, Any] | None = None
 
             integrated_candidates: list[tuple[str, Path | None, str, str]] = []
             optimized_source_path, optimized_source_backend = _resolve_tree_kernel_source(
@@ -1086,6 +1271,11 @@ def main() -> int:
                     if isinstance(integrated_measurement.get("adapter_stats"), dict)
                     else {}
                 )
+                integrated_correctness_summary = (
+                    integrated_measurement.get("correctness_summary")
+                    if isinstance(integrated_measurement.get("correctness_summary"), dict)
+                    else None
+                )
                 integrated_kernel_source = source_kind
                 break
 
@@ -1111,6 +1301,12 @@ def main() -> int:
                 candidate_status=integrated_kernel_status,
                 candidate_ms=integrated_kernel_ms,
             )
+            deployment_safe_winner = _safe_deployment_winner(
+                pytorch_ms=pytorch_ms,
+                candidate_status=integrated_kernel_status,
+                candidate_ms=integrated_kernel_ms,
+                correctness_summary=integrated_correctness_summary,
+            )
 
             row = {
                 "op": op_name,
@@ -1132,6 +1328,7 @@ def main() -> int:
                 "integrated_kernel_entry_latencies_ms": integrated_kernel_entry_latencies,
                 "integrated_kernel_status": integrated_kernel_status,
                 "deployment_winner": deployment_winner,
+                "deployment_safe_winner": deployment_safe_winner,
                 "baseline_source": baseline_source,
             }
             if kernel_benchmarked_entry_files:
@@ -1146,6 +1343,8 @@ def main() -> int:
                 row["deployment_kernel_source"] = integrated_kernel_source
             if integrated_adapter_stats:
                 row["integration_adapter_stats"] = integrated_adapter_stats
+            if integrated_correctness_summary:
+                row["deployment_correctness"] = integrated_correctness_summary
             if kernel_estimated:
                 row["kernel_estimated"] = True
             if pytorch_ms and kernel_ms:

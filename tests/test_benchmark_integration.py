@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -85,6 +86,48 @@ def test_winner_from_measurements_requires_real_candidate_win():
         )
         == "pytorch"
     )
+    assert (
+        benchmark_ops._winner_from_measurements(
+            pytorch_ms=1.0,
+            candidate_status="ok",
+            candidate_ms=0.5,
+            correctness_ok=False,
+        )
+        == "pytorch"
+    )
+
+
+def test_summarize_output_correctness_tracks_strict_vs_loose_tolerances():
+    generated = torch.tensor([1.0, 2.0], dtype=torch.float32)
+    ground_truth = torch.tensor([1.0075, 2.0], dtype=torch.float32)
+
+    summary = benchmark_ops._summarize_output_correctness(generated, ground_truth)
+
+    assert summary["strict_match"] is False
+    assert summary["loose_match"] is True
+    assert summary["max_abs_diff"] == pytest.approx(0.0075, rel=1e-4, abs=1e-6)
+    assert summary["mean_abs_diff"] > 0.0
+
+
+def test_safe_deployment_winner_requires_strict_correctness():
+    assert (
+        benchmark_ops._safe_deployment_winner(
+            pytorch_ms=1.0,
+            candidate_status="ok",
+            candidate_ms=0.8,
+            correctness_summary={"strict_pass": True},
+        )
+        == "optimized"
+    )
+    assert (
+        benchmark_ops._safe_deployment_winner(
+            pytorch_ms=1.0,
+            candidate_status="ok",
+            candidate_ms=0.8,
+            correctness_summary={"strict_pass": False},
+        )
+        == "pytorch"
+    )
 
 
 def test_default_forged_ops_prefers_deployment_winner(tmp_path: Path):
@@ -101,14 +144,18 @@ def test_default_forged_ops_prefers_deployment_winner(tmp_path: Path):
                         "winner": "optimized",
                         "kernel_status": "ok",
                         "deployment_winner": "optimized",
+                        "deployment_safe_winner": "optimized",
                         "integrated_kernel_status": "ok",
+                        "deployment_correctness": {"strict_pass": True},
                     },
                     {
                         "op": "torch_nn_functional_linear",
                         "winner": "optimized",
                         "kernel_status": "ok",
                         "deployment_winner": "pytorch",
+                        "deployment_safe_winner": "pytorch",
                         "integrated_kernel_status": "ok",
+                        "deployment_correctness": {"strict_pass": False},
                     },
                     {
                         "op": "torch_nn_functional_embedding",
@@ -120,7 +167,9 @@ def test_default_forged_ops_prefers_deployment_winner(tmp_path: Path):
                         "winner": "optimized",
                         "kernel_status": "ok",
                         "deployment_winner": "optimized",
+                        "deployment_safe_winner": "pytorch",
                         "integrated_kernel_status": "integrated_profile_error",
+                        "deployment_correctness": {"strict_pass": False},
                     },
                 ]
             }

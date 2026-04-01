@@ -154,11 +154,25 @@ def _default_forged_ops(project_dir: Path) -> list[str]:
     for row in results:
         if not isinstance(row, dict):
             continue
+        deployment_safe_winner = str(row.get("deployment_safe_winner") or "")
         deployment_winner = str(row.get("deployment_winner") or "")
         integrated_status = str(row.get("integrated_kernel_status") or "")
         direct_winner = str(row.get("winner") or "")
         direct_status = str(row.get("kernel_status") or "")
-        if deployment_winner:
+        correctness = (
+            row.get("deployment_correctness")
+            if isinstance(row.get("deployment_correctness"), dict)
+            else {}
+        )
+        strict_pass = correctness.get("strict_pass") if isinstance(correctness, dict) else None
+        if deployment_safe_winner:
+            if (
+                deployment_safe_winner != "optimized"
+                or integrated_status != "ok"
+                or strict_pass is not True
+            ):
+                continue
+        elif deployment_winner:
             if deployment_winner != "optimized" or integrated_status != "ok":
                 continue
         elif direct_winner != "optimized" or direct_status != "ok":
