@@ -24,6 +24,8 @@ Your job is to generate a **single compilable CUDA PyTorch extension source file
 
 4. No text, explanation, or comments outside the code block.
 
+5. Do NOT delegate the target operation to PyTorch, ATen, Triton built-ins, or any wrapper around them; implement the computation directly in the kernel.
+
 -----------------------------------------------
  EXAMPLE CODE STRUCTURE
 -----------------------------------------------

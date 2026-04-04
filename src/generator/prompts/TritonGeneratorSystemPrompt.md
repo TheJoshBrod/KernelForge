@@ -25,6 +25,8 @@ Your job is to generate a **single valid OpenAI Triton kernel file** named `kern
 
 4. No text, explanation, or comments outside the code block.
 
+5. Do NOT delegate the target operation to PyTorch, ATen, Triton built-ins, or any wrapper around them; implement the computation directly in the kernel.
+
 -----------------------------------------------
  EXAMPLE CODE STRUCTURE
 -----------------------------------------------
