@@ -208,7 +208,7 @@ def _measure_pytorch(
 def _coerce_cached_measurement(value: Any) -> dict[str, Any] | None:
     if isinstance(value, (int, float)):
         return {
-            "mean_time_ms": float(value),
+            "min_time_ms": float(value),
             "entry_files": [],
             "entry_latencies_ms": [],
             "entry_results": [],
@@ -235,13 +235,13 @@ def _coerce_cached_measurement(value: Any) -> dict[str, Any] | None:
             except Exception:
                 continue
 
-    mean_time_ms = value.get("mean_time_ms")
-    if mean_time_ms is None and entry_latencies:
-        mean_time_ms = sum(entry_latencies) / len(entry_latencies)
+    min_time_ms = value.get("min_time_ms") or value.get("mean_time_ms")
+    if min_time_ms is None and entry_latencies:
+        min_time_ms = min(entry_latencies)
     try:
-        parsed_mean = float(mean_time_ms) if mean_time_ms is not None else 0.0
+        parsed_min = float(min_time_ms) if min_time_ms is not None else 0.0
     except Exception:
-        parsed_mean = 0.0
+        parsed_min = 0.0
 
     entry_count_raw = value.get("entry_count")
     try:
@@ -260,7 +260,7 @@ def _coerce_cached_measurement(value: Any) -> dict[str, Any] | None:
         ]
 
     return {
-        "mean_time_ms": parsed_mean,
+        "min_time_ms": parsed_min,
         "entry_files": entry_files,
         "entry_latencies_ms": entry_latencies,
         "entry_results": entry_results,
@@ -284,7 +284,7 @@ def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
                     results = entry.get("results") if isinstance(entry, dict) else None
                     if not isinstance(results, dict):
                         continue
-                    ms = results.get("mean_time_ms")
+                    ms = results.get("min_time_ms") or results.get("mean_time_ms")
                     if ms is None:
                         continue
                     try:
@@ -302,7 +302,7 @@ def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
         except Exception:
             pass
 
-    # Fallback: nodes.db (active path — stores mean_time_ms as value)
+    # Fallback: nodes.db (active path — stores min_time_ms as value)
     db_file = op_dir / "nodes.db"
     if db_file.exists():
         try:
@@ -361,7 +361,7 @@ def _profile_generated_kernel_ms(
                 },
                 baseline=True,
             )
-            ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
+            ms = stats.get("min_time_ms") if isinstance(stats, dict) else None
             if ms is None:
                 return None, "generated_profile_missing", "cuda"
             return stats, "ok", "cuda"
@@ -387,7 +387,7 @@ def _profile_generated_kernel_ms(
                 },
                 baseline=True,
             )
-            ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
+            ms = stats.get("min_time_ms") if isinstance(stats, dict) else None
             if ms is None:
                 return None, "generated_profile_missing", "triton"
             return stats, "ok", "triton"
@@ -577,7 +577,7 @@ def main() -> int:
             baseline_source = "cache" if pytorch_measurement is not None else ""
             if pytorch_measurement is None:
                 pytorch_measurement = {
-                    "mean_time_ms": 0.0,
+                    "min_time_ms": 0.0,
                     "entry_files": [entry_file for entry_file, _, _ in entries],
                     "entry_latencies_ms": [],
                     "entry_results": [],
@@ -597,7 +597,7 @@ def main() -> int:
                     baseline_source = "unavailable"
                 cache[cache_key] = pytorch_measurement
 
-            pytorch_ms = float(pytorch_measurement.get("mean_time_ms") or 0.0)
+            pytorch_ms = float(pytorch_measurement.get("min_time_ms") or 0.0)
             benchmarked_entry_files = pytorch_measurement.get("entry_files") or [
                 entry_file for entry_file, _, _ in entries
             ]
@@ -634,7 +634,7 @@ def main() -> int:
                 )
                 if generated_stats is not None:
                     kernel_ms_raw = (
-                        generated_stats.get("mean_time_ms")
+                        generated_stats.get("min_time_ms")
                         if isinstance(generated_stats, dict)
                         else None
                     )

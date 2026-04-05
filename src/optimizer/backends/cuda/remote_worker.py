@@ -230,22 +230,23 @@ def handle_profile(data):
                 
                 if not inputs: continue
 
-                # Warmup
-                for args in inputs:
-                     module.launch(*args)
+                # Warmup (25 runs across all inputs in batch, then sync)
+                for _ in range(25):
+                    for args in inputs:
+                        module.launch(*args)
                 torch.cuda.synchronize()
-                
-                # Measure
+
+                # Measure (100 runs per input with CUDA events — matches harness)
                 start = torch.cuda.Event(enable_timing=True)
                 end = torch.cuda.Event(enable_timing=True)
-                
+
                 for args in inputs:
                     start.record()
-                    for _ in range(10): 
-                         module.launch(*args)
+                    for _ in range(100):
+                        module.launch(*args)
                     end.record()
                     torch.cuda.synchronize()
-                    timings.append(start.elapsed_time(end) / 10.0)
+                    timings.append(start.elapsed_time(end) / 100.0)
                 
                 # Cleanup
                 del inputs

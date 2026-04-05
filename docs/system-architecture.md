@@ -36,7 +36,7 @@ This phase treats code optimization as a search problem, utilizing **Monte Carlo
     -   *Source: [`src/optimizer/core/mcts.py`](../src/optimizer/core/mcts.py)*
 3.  **Iterative Refinement**:
     -   **Generation**: The LLM is given the parent kernel's code and its entire optimization history (lineage of changes). It is prompted to apply a specific speedup strategy (e.g., "tiling," "loop unrolling," "vectorized memory access").
-    -   **Profiling**: The new kernel is compiled and benchmarked on the actual hardware to measure `mean_time_ms`.
+    -   **Profiling**: The new kernel is compiled and benchmarked on the actual hardware to measure `min_time_ms`.
     -   *Source: `src/optimizer/backends/cuda/profiler.py` and `src/optimizer/backends/triton/profiler.py`*
 4.  **Tree Update**:
     -   The new kernel is saved as a child node with its performance metrics (speedup vs. parent).

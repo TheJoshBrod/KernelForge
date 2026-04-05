@@ -402,7 +402,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         node_data = {
             "id": next_id,
             "parent": -1,  # Root marker
-            "value": current_stats['mean_time_ms'],
+            "value": current_stats['min_time_ms'],
             "speedup_vs_parent": 1.0,
             "improvement_description": "Initial",
             "code": f"{paths['proj_dir'].name}/kernels/kernel_{next_id}{backend.kernel_extension}",
@@ -417,7 +417,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         # Save kernel code
         (paths["proj_dir"] / "kernels" / f"kernel_{next_id}{backend.kernel_extension}").write_text(code)
 
-        print(f"\t\tCreated new root: Node {next_id} ({current_stats['mean_time_ms']:.4f} ms)")
+        print(f"\t\tCreated new root: Node {next_id} ({current_stats['min_time_ms']:.4f} ms)")
         return node
 
 
@@ -496,7 +496,7 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
             # Log kernel
             node_data = {
                 "id": 0,
-                "value": current_stats['mean_time_ms'],
+                "value": current_stats['min_time_ms'],
                 "speedup_vs_parent": 1.0,
                 "improvement_description": "Initial",
                 "parent": -1,

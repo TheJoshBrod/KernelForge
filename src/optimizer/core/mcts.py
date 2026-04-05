@@ -461,10 +461,10 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
 
     # 3. Calculate "Speedup vs Baseline"
     if history:
-        baseline_time = history[0]["results"]["mean_time_ms"]
-        
+        baseline_time = history[0]["results"]["min_time_ms"]
+
         for h in history:
-            current_time = h["results"]["mean_time_ms"]
+            current_time = h["results"]["min_time_ms"]
             if (baseline_time > 0 and baseline_time != float('inf')
                     and current_time > 0 and current_time != float('inf')):
                 h["speedup_vs_baseline"] = baseline_time / current_time

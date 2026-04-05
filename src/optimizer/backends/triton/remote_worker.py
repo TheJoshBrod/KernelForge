@@ -174,7 +174,7 @@ def handle_verify(data):
 
 def handle_profile(data):
     """
-    Imports and profiles the Triton kernel using triton.testing.do_bench.
+    Imports and profiles the Triton kernel using the shared harness timing pattern.
     """
     if triton is None:
         return {"error": "Triton not installed on remote"}
@@ -220,14 +220,23 @@ def handle_profile(data):
                 if not inputs:
                     continue
 
-                # Measure each input with triton.testing.do_bench
+                # Warmup (25 runs across all inputs in batch, then sync)
+                for _ in range(25):
+                    for args in inputs:
+                        module.launch(*args)
+                torch.cuda.synchronize()
+
+                # Measure (100 runs per input with CUDA events — matches harness)
+                start = torch.cuda.Event(enable_timing=True)
+                end = torch.cuda.Event(enable_timing=True)
+
                 for args in inputs:
-                    ms = triton.testing.do_bench(
-                        lambda a=args: module.launch(*a),
-                        warmup=25,
-                        rep=100,
-                    )
-                    timings.append(ms)
+                    start.record()
+                    for _ in range(100):
+                        module.launch(*args)
+                    end.record()
+                    torch.cuda.synchronize()
+                    timings.append(start.elapsed_time(end) / 100.0)
 
                 # Cleanup
                 del inputs
