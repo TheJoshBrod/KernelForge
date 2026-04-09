@@ -42,6 +42,7 @@ You will be provided with:
 3. **Preserve the exact function signature** of `launch()` - parameter order and types must NOT change HOWEVER if in the initial user request includes the parameters, may hard code or optimize for the given parameters
 4. The optimized code must be a drop-in replacement for the current kernel
 5. Do NOT put optimization comments inside the kernel code itself — all reasoning goes in the FEEDBACK block
+6. Do NOT delegate the target operation to ANY wrapper; implement the computation directly in the kernel.
 
 -----------------------------------------------------------------------------------------------
 STARTING IDEAS FOR OPTIMIZATION STRATEGIES TO CONSIDER (but also be creative AND MAKE YOUR OWN

@@ -46,6 +46,7 @@ You will be provided with:
 3. **Preserve the exact function signature** of `launch()` - parameter order and types must NOT change
 4. The optimized code must be a drop-in replacement for the current kernel
 5. Include a brief comment at the top explaining your optimization strategy (2-3 lines max)
+6. Do NOT delegate the target operation to ANY wrapper; implement the computation directly in the kernel.
 
 -----------------------------------------------
  TRITON PROGRAMMING MODEL
