@@ -114,6 +114,7 @@ tags
 .aider*
 .cline/
 .zed/
+.agent/
 
 # Marimo
 marimo/_static/
@@ -372,6 +373,7 @@ compile_commands.json
 
 # Compiled Jac Lang files
 *.jir
+.jac/*
 
 # Java bytecode (already covered by *.class)
 
@@ -382,3 +384,6 @@ target/
 # KernelForge files
 *.cast
 *.anvil 
+
+kernels/projects
+model/
