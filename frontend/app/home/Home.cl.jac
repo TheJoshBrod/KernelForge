@@ -218,7 +218,7 @@ def:pub Home -> Any {
             {(
                 <div className="absolute top-6 right-8 z-50 flex items-center gap-6">
                     <a
-                        href="https://discord.gg/"
+                        href="https://discord.gg/cchEQguDB7"
                         target="_blank"
                         rel="noreferrer"
                         className="text-white/50 hover:text-[#5865F2] transition-all duration-300 hover:scale-110 hover:-translate-y-1 hover:drop-shadow-[0_0_12px_rgba(88,101,242,0.6)]"

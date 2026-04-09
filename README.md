@@ -8,7 +8,7 @@
 ![Triton](https://img.shields.io/badge/Triton-000000?style=for-the-badge&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAOCAMAAAAsYw3eAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAAzFBMVEUAAAAsuMU2vMczu8Ynt8MitcJOxM4pt8QktsIgtMEruMQltsMhtcIjtcIgtMEltsMhtcI6vclozNVpzdU7vckitcIwusZRxc9IwsxGwcxHwcxSxc8ftME0u8dYx9FCwMtMw81ayNFBv8s1u8cetME/v8pEwMty0NhVxtBTxc9Av8o+vspcyNJKws1UxtBLw81byNI9vslPxM5eydJOxM5nzNVmzNU4vMhz0NhFwctqzdY5vch10dkuucVMw85Nw84vucVWxtA8vsn////g7i7RAAAAD3RSTlMAAAAIVdYBLJzxGXbgyvw6EdVsAAAAAWJLR0RDZ9ANYgAAAAd0SU1FB+oDEhMzJWe0294AAACYSURBVAjXVY5HEoJAFAU/OYMKkhyRUcKACiIq5nT/Qzmy0mXXq+p+AMBwvCDwHAMArCjJimUpsiSyoGr6YDiynbGuqWCYrucHoT9xTQPQNJrFGMfzaIEgSbOcFAXJszKBZBmu1hWpN34Pzbat63bXpBRKXO2D4FBhuqDu2J3Odna5doiqb949DB/Fk6q/UYe83n30787v0Q+e/xC9ZxRPWgAAACV0RVh0ZGF0ZTpjcmVhdGUAMjAyNi0wMy0xOFQxOTo1MTozNyswMDowMOap+1gAAAAldEVYdGRhdGU6bW9kaWZ5ADIwMjYtMDMtMThUMTk6NTE6MzcrMDA6MDCX9EPkAAAAAElFTkSuQmCC)
 ![More coming soon](https://img.shields.io/badge/more_coming_soon...-555555?style=for-the-badge)
 
-[![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/5eFApNyC)
+[![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/cchEQguDB7)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
 ---
