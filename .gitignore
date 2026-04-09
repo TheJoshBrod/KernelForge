@@ -1,76 +1,382 @@
-#####################
-# Generic gitignore #
-#####################
+########################
+# gitignore Template
+# Generic — works across all projects
+########################
 
-# Test/Temp files
-tmp
-output
-benchmarks/data/text/*.txt
+########################
+# Secrets / Environment
+########################
 
-# Large Data Files
-*.pt
-*.parquet
-*.JPEG
+# Environment files
+.env
+.env.*
+.env.local
+.env.*.local
+!.env.example
 
-# Compiled files
-benchmarks/compiled/*
+# Secret files
+secrets/
+.envrc
+.direnv/
 
-# Agent Dirs
-.agent/
+# Credentials & keys
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+credentials.json
+.pypirc
 
+########################
+# Logs & Temp
+########################
 
+*.log
+*.log.*
+logs/
+tmp/
+output/
+*.tmp
+*.bak
+*.orig
+*.rej
+
+########################
+# OS-specific
+########################
+
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+Icon
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*Zone.Identifier
+
+# Linux
+.fuse_hidden*
+.nfs*
+.Trash-*
+
+# Google Drive / Dropbox
+.dropbox*
+
+########################
+# Editors / IDEs
+########################
+
+# General
+*~
+*.swp
+*.swo
+.idea/
+
+# VS Code
+.vscode/
+.history/
+.vscode-test/
+
+# Vim
+Session.vim
+.netrwhist
+tags
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# Cursor
+.cursorignore
+.cursorindexingignore
+
+# Agentic IDEs
+.claude/
+.windsurf/
+.continue/
+.codeium/
+.copilot/
+.roo/
+.roomodes
+.aider*
+.cline/
+.zed/
+
+# Marimo
+marimo/_static/
+marimo/_lsp/
+__marimo__/
+
+########################
 # Python
-Python-3.12.5/*
-*.pyc
+########################
+
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.egg-info*
+*.py[cod]
+*$py.class
+*.pyc
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
 dist/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
 env/
 venv/
 venv3/
 .venv/
-.pytest_cache
+ENV/
+env.bak/
+venv.bak/
 
-# JavaScript
+# Dependency manager artifacts (lock files are per-project — commit in apps, ignore in libraries)
+# Uncomment any you want to ignore globally:
+# Pipfile.lock
+# uv.lock
+# poetry.lock
+# pdm.lock
+# pixi.lock
+.python-version
+poetry.toml
+pdm.toml
+.pdm-python
+.pdm-build/
+.pixi/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Jupyter
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath
+*.sage.py
+
+# Spyder
+.spyderproject
+.spyproject
+
+# Rope
+.ropeproject/
+
+# mkdocs
+/site
+
+# Cython
+cython_debug/
+
+# Abstra
+.abstra/
+
+# Django
+local_settings.py
+
+# Flask
+instance/
+.webassets-cache
+
+# Scrapy
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+
+########################
+# JavaScript / TypeScript
+########################
+
+node_modules/
+.pnp.*
+.yarn-integrity
+.npm
+.yarn/
+
+# Frameworks / bundlers
+.next/
+.nuxt/
+.svelte-kit/
+.astro/
+.parcel-cache/
+.turbo/
+.vite/
+
+# Output
+dist-ssr/
 bundle.js
-*node_modules*
-files_for_autograder_io/
-*/var/*
+
+# Build info
+*.tsbuildinfo
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+########################
+# Java / Kotlin
+########################
+
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+.classpath
+.project
+.settings/
+bin/
+out/
+hs_err_pid*
+.gradle/
+gradle-app.setting
+
+########################
+# Go
+########################
+
+vendor/
+coverage.out
+*.prof
+# *.exe and *.test listed under C/C++ below
+
+########################
+# Rust
+########################
+
+# Rust backup files
+**/*.rs.bk
+# Cargo.lock — commit in binaries, ignore in libraries (per-project decision)
+# Cargo.lock
+
+########################
+# C / C++ / CMake
+########################
+
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+*.test
+*.d
+*.gch
+*.pch
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
+compile_commands.json
+
+########################
+# Terraform / Infrastructure
+########################
+
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfvars
 
 # Virtual Machines
 .vagrant/
 
-# Text editors and IDEs
-*~
-*.lock
-*.swp
-.vscode
-.ropeproject/
-.vscode/
-.idea
+########################
+# Databases
+########################
 
-# macOS system files
-*.DS_Store
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite3-journal
 
-# Zone Identifiers
-*Zone.Identifier
+########################
+# Misc / Language-specific
+########################
 
-# Google Drive and Dropbox
-Icon
-.dropbox*
+# Compiled Jac Lang files
+*.jir
 
-# Jac
-.jaccache/*
-.jac/
-jac.md
+# Java bytecode (already covered by *.class)
 
-
-# Local secrets / runtime data
-frontend/config.json
-projects/
-!src/projects/
-!src/projects/**/
-!src/projects/**/*.py
+# Build artifact dirs (multi-ecosystem: Rust/Maven/PyBuilder)
+target/
 
 
 # KernelForge files
