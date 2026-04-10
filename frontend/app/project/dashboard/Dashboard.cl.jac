@@ -137,6 +137,14 @@ def:pub Dashboard -> Any {
     speedData = speedData_state[0];
     setSpeedData = speedData_state[1];
 
+    metrics_meta_state = useState({
+        "default_mode": "deployment",
+        "selection_policy": "safe",
+        "speedup_label": "Estimated Op-Level Speedup"
+    });
+    metricsMeta = metrics_meta_state[0];
+    setMetricsMeta = metrics_meta_state[1];
+
     op_time_mode_state = useState("best");
     opTimeMode = op_time_mode_state[0];
     setOpTimeMode = op_time_mode_state[1];
@@ -327,6 +335,7 @@ def:pub Dashboard -> Any {
             {
                 "operator_usage": ops,
                 "speed_comparison": speedData,
+                "metrics_meta": metricsMeta,
                 "status": status,
                 "hardware_info": hardwareInfo,
                 "mcts_summary": mctsSummary
@@ -944,6 +953,25 @@ def:pub Dashboard -> Any {
                         }
                     }
                     setSpeedData(get_metrics_speed_source(metrics_data));
+                    setMetricsMeta(
+                        {
+                            "default_mode": (
+                                metrics_data["default_mode"]
+                                if "default_mode" in metrics_data and metrics_data["default_mode"]
+                                else "deployment"
+                            ),
+                            "selection_policy": (
+                                metrics_data["selection_policy"]
+                                if "selection_policy" in metrics_data and metrics_data["selection_policy"]
+                                else "safe"
+                            ),
+                            "speedup_label": (
+                                metrics_data["speedup_label"]
+                                if "speedup_label" in metrics_data and metrics_data["speedup_label"]
+                                else "Estimated Op-Level Speedup"
+                            )
+                        }
+                    );
                 }
                 # Process Hardware
                 hw_data = hw_resp.reports[0] if hw_resp and hw_resp.reports else {};
@@ -976,6 +1004,9 @@ def:pub Dashboard -> Any {
                 }
                 if "speed_comparison" in cached {
                     setSpeedData(to_list(cached["speed_comparison"]));
+                }
+                if "metrics_meta" in cached and cached["metrics_meta"] {
+                    setMetricsMeta(cached["metrics_meta"]);
                 }
                 if "status" in cached and cached["status"] {
                     setStatus(cached["status"]);
@@ -2013,6 +2044,21 @@ def:pub Dashboard -> Any {
     }
 
     projectBackend = status["backend"] if status and "backend" in status else "CUDA";
+    metricsDefaultMode = (
+        str(metricsMeta["default_mode"])
+        if metricsMeta and "default_mode" in metricsMeta and metricsMeta["default_mode"]
+        else "deployment"
+    );
+    metricsSelectionPolicy = (
+        str(metricsMeta["selection_policy"])
+        if metricsMeta and "selection_policy" in metricsMeta and metricsMeta["selection_policy"]
+        else "safe"
+    );
+    speedupLabel = (
+        str(metricsMeta["speedup_label"])
+        if metricsMeta and "speedup_label" in metricsMeta and metricsMeta["speedup_label"]
+        else "Estimated Op-Level Speedup"
+    );
 
     return
         <div className="p-6 md:p-8 max-w-7xl mx-auto space-y-6">
@@ -2021,6 +2067,9 @@ def:pub Dashboard -> Any {
                 forgedCount={forgedCount}
                 opsCount={list_len(to_list(ops))}
                 modelSpeedupRatio={modelSpeedupRatio}
+                speedupLabel={speedupLabel}
+                benchmarkMode={metricsDefaultMode}
+                selectionPolicy={metricsSelectionPolicy}
                 hardwareStatus={hardwareStatus}
                 projectBackend={projectBackend}
                 forgedTooltipPos={forgedTooltipPos}

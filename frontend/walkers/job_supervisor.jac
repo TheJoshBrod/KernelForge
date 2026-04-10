@@ -2016,19 +2016,37 @@ def _compute_project_metrics(project_name: str) -> dict {
     bench_results = [];
     bench_file_status = "";
     bench_errors = [];
+    bench_default_mode = "deployment";
+    bench_selection_policy = "safe";
     bench_path = path.join(project_dir, "benchmarks", "op_benchmarks.json");
     if path.exists(bench_path) {
         try {
             with open(bench_path, "r") as f {
                 bench_data = load(f);
             }
-            bench_results = bench_data["results"]
-            if bench_data and "results" in bench_data
-            else [];
+            bench_results = (
+                bench_data["benchmarks"]
+                if bench_data and "benchmarks" in bench_data and bench_data["benchmarks"]
+                else (
+                    bench_data["results"]
+                    if bench_data and "results" in bench_data
+                    else []
+                )
+            );
             bench_file_status = (
                 str(bench_data["status"])
                 if bench_data and "status" in bench_data and bench_data["status"]
                 else ""
+            );
+            bench_default_mode = (
+                str(bench_data["default_mode"])
+                if bench_data and "default_mode" in bench_data and bench_data["default_mode"]
+                else "deployment"
+            );
+            bench_selection_policy = (
+                str(bench_data["selection_policy"])
+                if bench_data and "selection_policy" in bench_data and bench_data["selection_policy"]
+                else "safe"
             );
             bench_errors = (
                 bench_data["errors"]
@@ -2167,32 +2185,123 @@ def _compute_project_metrics(project_name: str) -> dict {
         }
     }
 
+    micro_best_by_op = {};
     forged_best_by_op = {};
+    micro_winner_by_op = {};
+    recommended_backend_by_op = {};
+    evidence_level_by_op = {};
     for op_name in bench_by_op {
         b_row = bench_by_op[op_name];
-        kernel_status = (
-            str(b_row["kernel_status"]).lower()
-            if "kernel_status" in b_row and b_row["kernel_status"]
-            else ""
+        micro_data = (
+            b_row["micro"]
+            if "micro" in b_row and b_row["micro"]
+            else {}
         );
-        if kernel_status != "ok" {
-            continue;
+        deployment_data = (
+            b_row["deployment"]
+            if "deployment" in b_row and b_row["deployment"]
+            else {}
+        );
+        selection_data = (
+            b_row["selection"]
+            if "selection" in b_row and b_row["selection"]
+            else {}
+        );
+
+        micro_status = (
+            str(micro_data["status"]).lower()
+            if micro_data and "status" in micro_data and micro_data["status"]
+            else (
+                str(b_row["kernel_status"]).lower()
+                if "kernel_status" in b_row and b_row["kernel_status"]
+                else ""
+            )
+        );
+        micro_kernel_ms = (
+            _to_positive_float(micro_data["kernel_ms"])
+            if micro_data and "kernel_ms" in micro_data
+            else (
+                _to_positive_float(b_row["kernel_ms"])
+                if "kernel_ms" in b_row
+                else None
+            )
+        );
+        micro_winner = (
+            str(micro_data["winner"])
+            if micro_data and "winner" in micro_data and micro_data["winner"]
+            else (
+                str(b_row["winner"])
+                if "winner" in b_row and b_row["winner"]
+                else "unknown"
+            )
+        );
+        micro_winner_by_op[op_name] = micro_winner;
+        if (micro_status == "ready" or micro_status == "ok") and micro_kernel_ms is not None {
+            micro_best_by_op[op_name] = micro_kernel_ms;
         }
-        kernel_ms = (
-            _to_positive_float(b_row["kernel_ms"])
-            if "kernel_ms" in b_row
-            else None
+
+        recommended_backend = (
+            str(selection_data["recommended_backend"])
+            if selection_data
+                and "recommended_backend" in selection_data
+                and selection_data["recommended_backend"]
+            else (
+                str(deployment_data["recommended_backend"])
+                if deployment_data
+                    and "recommended_backend" in deployment_data
+                    and deployment_data["recommended_backend"]
+                else (
+                    "optimized"
+                    if "deployment_safe_winner" in b_row
+                        and b_row["deployment_safe_winner"]
+                        and str(b_row["deployment_safe_winner"]) == "optimized"
+                    else "pytorch"
+                )
+            )
         );
-        if kernel_ms is not None {
-            forged_best_by_op[op_name] = kernel_ms;
+        recommended_backend_by_op[op_name] = recommended_backend;
+
+        deployment_status = (
+            str(deployment_data["status"]).lower()
+            if deployment_data and "status" in deployment_data and deployment_data["status"]
+            else (
+                str(b_row["integrated_kernel_status"]).lower()
+                if "integrated_kernel_status" in b_row and b_row["integrated_kernel_status"]
+                else ""
+            )
+        );
+        deployment_kernel_ms = (
+            _to_positive_float(deployment_data["replay_kernel_ms"])
+            if deployment_data and "replay_kernel_ms" in deployment_data
+            else (
+                _to_positive_float(b_row["integrated_kernel_ms"])
+                if "integrated_kernel_ms" in b_row
+                else None
+            )
+        );
+
+        if (
+            recommended_backend == "optimized"
+            and (deployment_status == "ready" or deployment_status == "ok")
+            and deployment_kernel_ms is not None
+        ) {
+            forged_best_by_op[op_name] = deployment_kernel_ms;
+            evidence_level_by_op[op_name] = "deployment";
+        } elif op_name in micro_best_by_op {
+            evidence_level_by_op[op_name] = "micro";
+        } else {
+            evidence_level_by_op[op_name] = "baseline";
         }
     }
     for op_name in tree_best_by_op {
         tree_ms = tree_best_by_op[op_name];
-        if not (op_name in forged_best_by_op) {
-            forged_best_by_op[op_name] = tree_ms;
-        } elif tree_ms < forged_best_by_op[op_name] {
-            forged_best_by_op[op_name] = tree_ms;
+        if not (op_name in micro_best_by_op) {
+            micro_best_by_op[op_name] = tree_ms;
+        } elif tree_ms < micro_best_by_op[op_name] {
+            micro_best_by_op[op_name] = tree_ms;
+        }
+        if not (op_name in evidence_level_by_op) {
+            evidence_level_by_op[op_name] = "micro";
         }
     }
 
@@ -2222,6 +2331,12 @@ def _compute_project_metrics(project_name: str) -> dict {
             seen_ops[op_name] = True;
         }
     }
+    for op_name in micro_best_by_op {
+        if not (op_name in seen_ops) {
+            all_ops.append(op_name);
+            seen_ops[op_name] = True;
+        }
+    }
 
     rows = [];
     rows_by_op = {};
@@ -2242,6 +2357,24 @@ def _compute_project_metrics(project_name: str) -> dict {
         forged_ms = (
             forged_best_by_op[op_name] if op_name in forged_best_by_op else None
         );
+        micro_forged_ms = (
+            micro_best_by_op[op_name] if op_name in micro_best_by_op else None
+        );
+        recommended_backend = (
+            recommended_backend_by_op[op_name]
+            if op_name in recommended_backend_by_op
+            else ("pytorch" if pytorch_ms is not None else "unknown")
+        );
+        micro_winner = (
+            micro_winner_by_op[op_name]
+            if op_name in micro_winner_by_op
+            else "unknown"
+        );
+        evidence_level = (
+            evidence_level_by_op[op_name]
+            if op_name in evidence_level_by_op
+            else "baseline"
+        );
 
         winner = "unknown";
         if pytorch_ms is not None {
@@ -2258,6 +2391,9 @@ def _compute_project_metrics(project_name: str) -> dict {
             "name": op_name,
             "count": count,
             "winner": winner,
+            "micro_winner": micro_winner,
+            "recommended_backend": recommended_backend,
+            "evidence_level": evidence_level,
             "total_time_ms": total_time_ms
         };
         if pytorch_ms is not None {
@@ -2266,14 +2402,26 @@ def _compute_project_metrics(project_name: str) -> dict {
         if forged_ms is not None {
             row["forged_ms"] = forged_ms;
         }
+        if micro_forged_ms is not None {
+            row["micro_forged_ms"] = micro_forged_ms;
+        }
         rows.append(row);
         rows_by_op[op_name] = row;
 
         if pytorch_ms is not None {
-            speed_row = {"name": op_name, "pytorch": pytorch_ms};
+            speed_row = {
+                "name": op_name,
+                "pytorch": pytorch_ms,
+                "micro_winner": micro_winner,
+                "recommended_backend": recommended_backend,
+                "evidence_level": evidence_level
+            };
             if forged_ms is not None {
                 speed_row["forged"] = forged_ms;
                 speed_row["optimized"] = forged_ms;
+            }
+            if micro_forged_ms is not None {
+                speed_row["micro_forged"] = micro_forged_ms;
             }
             speed_comparison.append(speed_row);
         }
@@ -2319,6 +2467,10 @@ def _compute_project_metrics(project_name: str) -> dict {
         "rows_by_op": rows_by_op,
         "operator_usage": operator_usage,
         "speed_comparison": speed_comparison,
+        "default_mode": bench_default_mode,
+        "selection_policy": bench_selection_policy,
+        "speedup_label": "Estimated Op-Level Speedup",
+        "speedup_evidence_level": "deployment",
         "status": chart_status,
         "profile_status": profile_status,
         "profile_message": profile_message,

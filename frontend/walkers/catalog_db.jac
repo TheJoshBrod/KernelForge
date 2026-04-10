@@ -51,7 +51,11 @@ def:pub _ensure_catalog_schema() -> None {
             op_count INTEGER NOT NULL DEFAULT 0,
             pytorch_ms REAL,
             forged_ms REAL,
+            micro_forged_ms REAL,
             winner TEXT,
+            micro_winner TEXT,
+            recommended_backend TEXT,
+            evidence_level TEXT,
             total_time_ms REAL NOT NULL DEFAULT 0,
             updated_at TEXT,
             PRIMARY KEY (project_name, op_name)
@@ -66,6 +70,9 @@ def:pub _ensure_catalog_schema() -> None {
             profile_status TEXT,
             profile_message TEXT,
             errors_json TEXT,
+            default_mode TEXT,
+            selection_policy TEXT,
+            speedup_label TEXT,
             metrics_version INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT
         )
@@ -110,6 +117,63 @@ def:pub _ensure_catalog_schema() -> None {
         }
     } except Exception as e {
         print(f"Warning: failed to migrate project_metric_meta schema: {e}");
+    }
+    try {
+        cursor.execute("PRAGMA table_info(operator_metrics)");
+        metric_cols = {};
+        for col in cursor.fetchall() {
+            if col and len(col) > 1 and col[1] {
+                metric_cols[str(col[1])] = True;
+            }
+        }
+        if not ("micro_forged_ms" in metric_cols) {
+            cursor.execute(
+                "ALTER TABLE operator_metrics ADD COLUMN micro_forged_ms REAL"
+            );
+        }
+        if not ("micro_winner" in metric_cols) {
+            cursor.execute(
+                "ALTER TABLE operator_metrics ADD COLUMN micro_winner TEXT"
+            );
+        }
+        if not ("recommended_backend" in metric_cols) {
+            cursor.execute(
+                "ALTER TABLE operator_metrics ADD COLUMN recommended_backend TEXT"
+            );
+        }
+        if not ("evidence_level" in metric_cols) {
+            cursor.execute(
+                "ALTER TABLE operator_metrics ADD COLUMN evidence_level TEXT"
+            );
+        }
+    } except Exception as e {
+        print(f"Warning: failed to migrate operator_metrics schema: {e}");
+    }
+    try {
+        cursor.execute("PRAGMA table_info(project_metric_meta)");
+        meta_cols2 = {};
+        for col in cursor.fetchall() {
+            if col and len(col) > 1 and col[1] {
+                meta_cols2[str(col[1])] = True;
+            }
+        }
+        if not ("default_mode" in meta_cols2) {
+            cursor.execute(
+                "ALTER TABLE project_metric_meta ADD COLUMN default_mode TEXT"
+            );
+        }
+        if not ("selection_policy" in meta_cols2) {
+            cursor.execute(
+                "ALTER TABLE project_metric_meta ADD COLUMN selection_policy TEXT"
+            );
+        }
+        if not ("speedup_label" in meta_cols2) {
+            cursor.execute(
+                "ALTER TABLE project_metric_meta ADD COLUMN speedup_label TEXT"
+            );
+        }
+    } except Exception as e {
+        print(f"Warning: failed to add benchmark metadata columns: {e}");
     }
     try {
         cursor.execute("PRAGMA table_info(projects)");
@@ -458,6 +522,21 @@ def:pub _upsert_project_metric_rows(project_name: str, payload: dict) -> None {
         if payload and "profile_message" in payload and payload["profile_message"]
         else ""
     );
+    default_mode = (
+        str(payload["default_mode"])
+        if payload and "default_mode" in payload and payload["default_mode"]
+        else "deployment"
+    );
+    selection_policy = (
+        str(payload["selection_policy"])
+        if payload and "selection_policy" in payload and payload["selection_policy"]
+        else "safe"
+    );
+    speedup_label = (
+        str(payload["speedup_label"])
+        if payload and "speedup_label" in payload and payload["speedup_label"]
+        else "Estimated Op-Level Speedup"
+    );
     errors_json = "[]";
     if payload and "errors" in payload and payload["errors"] {
         try {
@@ -518,6 +597,14 @@ def:pub _upsert_project_metric_rows(project_name: str, payload: dict) -> None {
                 forged_ms = None;
             }
         }
+        micro_forged_ms = None;
+        if "micro_forged_ms" in row and row["micro_forged_ms"] is not None {
+            try {
+                micro_forged_ms = float(row["micro_forged_ms"]);
+            } except Exception {
+                micro_forged_ms = None;
+            }
+        }
         total_time_ms = 0.0;
         try {
             total_time_ms = (
@@ -529,12 +616,28 @@ def:pub _upsert_project_metric_rows(project_name: str, payload: dict) -> None {
             total_time_ms = 0.0;
         }
         winner = str(row["winner"]) if "winner" in row and row["winner"] else "";
+        micro_winner = (
+            str(row["micro_winner"])
+            if "micro_winner" in row and row["micro_winner"]
+            else ""
+        );
+        recommended_backend = (
+            str(row["recommended_backend"])
+            if "recommended_backend" in row and row["recommended_backend"]
+            else ""
+        );
+        evidence_level = (
+            str(row["evidence_level"])
+            if "evidence_level" in row and row["evidence_level"]
+            else ""
+        );
         cursor.execute(
             """
             INSERT OR REPLACE INTO operator_metrics(
-                project_name, op_name, op_count, pytorch_ms, forged_ms, winner,
-                total_time_ms, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                project_name, op_name, op_count, pytorch_ms, forged_ms,
+                micro_forged_ms, winner, micro_winner, recommended_backend,
+                evidence_level, total_time_ms, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 project_name,
@@ -542,7 +645,11 @@ def:pub _upsert_project_metric_rows(project_name: str, payload: dict) -> None {
                 op_count,
                 pytorch_ms,
                 forged_ms,
+                micro_forged_ms,
                 winner,
+                micro_winner,
+                recommended_backend,
+                evidence_level,
                 total_time_ms,
                 now
             )
@@ -552,8 +659,9 @@ def:pub _upsert_project_metric_rows(project_name: str, payload: dict) -> None {
     cursor.execute(
         """
         INSERT OR REPLACE INTO project_metric_meta(
-            project_name, status, profile_status, profile_message, errors_json, metrics_version, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            project_name, status, profile_status, profile_message, errors_json,
+            default_mode, selection_policy, speedup_label, metrics_version, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             project_name,
@@ -561,6 +669,9 @@ def:pub _upsert_project_metric_rows(project_name: str, payload: dict) -> None {
             profile_status,
             profile_message,
             errors_json,
+            default_mode,
+            selection_policy,
+            speedup_label,
             metrics_version,
             now
         )
@@ -576,7 +687,8 @@ def:pub _read_project_metric_rows(project_name: str) -> dict {
     cursor = conn.cursor();
     cursor.execute(
         """
-        SELECT op_name, op_count, pytorch_ms, forged_ms, winner, total_time_ms
+        SELECT op_name, op_count, pytorch_ms, forged_ms, micro_forged_ms, winner,
+               micro_winner, recommended_backend, evidence_level, total_time_ms
         FROM operator_metrics
         WHERE project_name = ?
         ORDER BY op_name
@@ -587,7 +699,8 @@ def:pub _read_project_metric_rows(project_name: str) -> dict {
 
     cursor.execute(
         """
-        SELECT status, profile_status, profile_message, errors_json, metrics_version, updated_at
+        SELECT status, profile_status, profile_message, errors_json, default_mode,
+               selection_policy, speedup_label, metrics_version, updated_at
         FROM project_metric_meta
         WHERE project_name = ?
         """,
@@ -602,7 +715,7 @@ def:pub _read_project_metric_rows(project_name: str) -> dict {
     operator_usage = [];
 
     for m in metric_rows {
-        if not m or len(m) < 6 or not m[0] {
+        if not m or len(m) < 10 or not m[0] {
             continue;
         }
         op_name = str(m[0]);
@@ -634,10 +747,24 @@ def:pub _read_project_metric_rows(project_name: str) -> dict {
                 forged_ms = None;
             }
         }
-        winner = str(m[4]) if m[4] else "unknown";
+        micro_forged_ms = None;
+        if m[4] is not None {
+            try {
+                parsed = float(m[4]);
+                if parsed > 0.0 {
+                    micro_forged_ms = parsed;
+                }
+            } except Exception {
+                micro_forged_ms = None;
+            }
+        }
+        winner = str(m[5]) if m[5] else "unknown";
+        micro_winner = str(m[6]) if m[6] else "unknown";
+        recommended_backend = str(m[7]) if m[7] else "";
+        evidence_level = str(m[8]) if m[8] else "";
         total_time_ms = 0.0;
         try {
-            total_time_ms = float(m[5]) if m[5] is not None else 0.0;
+            total_time_ms = float(m[9]) if m[9] is not None else 0.0;
         } except Exception {
             total_time_ms = 0.0;
         }
@@ -646,6 +773,9 @@ def:pub _read_project_metric_rows(project_name: str) -> dict {
             "name": op_name,
             "count": count,
             "winner": winner,
+            "micro_winner": micro_winner,
+            "recommended_backend": recommended_backend,
+            "evidence_level": evidence_level,
             "total_time_ms": total_time_ms
         };
         if pytorch_ms is not None {
@@ -654,15 +784,27 @@ def:pub _read_project_metric_rows(project_name: str) -> dict {
         if forged_ms is not None {
             row["forged_ms"] = forged_ms;
         }
+        if micro_forged_ms is not None {
+            row["micro_forged_ms"] = micro_forged_ms;
+        }
 
         rows.append(row);
         rows_by_op[op_name] = row;
 
         if pytorch_ms is not None {
-            srow = {"name": op_name, "pytorch": pytorch_ms};
+            srow = {
+                "name": op_name,
+                "pytorch": pytorch_ms,
+                "micro_winner": micro_winner,
+                "recommended_backend": recommended_backend,
+                "evidence_level": evidence_level
+            };
             if forged_ms is not None {
                 srow["forged"] = forged_ms;
                 srow["optimized"] = forged_ms;
+            }
+            if micro_forged_ms is not None {
+                srow["micro_forged"] = micro_forged_ms;
             }
             speed_comparison.append(srow);
         }
@@ -677,6 +819,9 @@ def:pub _read_project_metric_rows(project_name: str) -> dict {
     profile_status = "";
     profile_message = "";
     errors = [];
+    default_mode = "deployment";
+    selection_policy = "safe";
+    speedup_label = "Estimated Op-Level Speedup";
     metrics_version = 0;
     metrics_updated_at = "";
     meta_vals = [];
@@ -706,15 +851,24 @@ def:pub _read_project_metric_rows(project_name: str) -> dict {
             errors = [];
         }
     }
-    if len(meta_vals) > 4 and meta_vals[4] is not None {
+    if len(meta_vals) > 4 and meta_vals[4] {
+        default_mode = str(meta_vals[4]);
+    }
+    if len(meta_vals) > 5 and meta_vals[5] {
+        selection_policy = str(meta_vals[5]);
+    }
+    if len(meta_vals) > 6 and meta_vals[6] {
+        speedup_label = str(meta_vals[6]);
+    }
+    if len(meta_vals) > 7 and meta_vals[7] is not None {
         try {
-            metrics_version = int(meta_vals[4]);
+            metrics_version = int(meta_vals[7]);
         } except Exception {
             metrics_version = 0;
         }
     }
-    if len(meta_vals) > 5 and meta_vals[5] {
-        metrics_updated_at = str(meta_vals[5]);
+    if len(meta_vals) > 8 and meta_vals[8] {
+        metrics_updated_at = str(meta_vals[8]);
     }
 
     return {
@@ -722,6 +876,9 @@ def:pub _read_project_metric_rows(project_name: str) -> dict {
         "rows_by_op": rows_by_op,
         "operator_usage": operator_usage,
         "speed_comparison": speed_comparison,
+        "default_mode": default_mode,
+        "selection_policy": selection_policy,
+        "speedup_label": speedup_label,
         "status": status,
         "profile_status": profile_status,
         "profile_message": profile_message,

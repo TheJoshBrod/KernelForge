@@ -60,6 +60,17 @@ walker:pub GetDashboardCharts {
                 if payload and "profile_message" in payload
                 else ""
             ),
+            "default_mode": (
+                payload["default_mode"] if payload and "default_mode" in payload else "deployment"
+            ),
+            "selection_policy": (
+                payload["selection_policy"] if payload and "selection_policy" in payload else "safe"
+            ),
+            "speedup_label": (
+                payload["speedup_label"]
+                if payload and "speedup_label" in payload
+                else "Estimated Op-Level Speedup"
+            ),
             "errors": payload["errors"] if payload and "errors" in payload else [],
             "metrics_version": (
                 payload["metrics_version"] if payload and "metrics_version" in payload else 0
