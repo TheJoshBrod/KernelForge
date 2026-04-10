@@ -52,9 +52,12 @@ On this mixed-workload run, `Kernel Forge mixed latest` delivered the best overa
 - Relative to eager throughput: `1.09x` prefill tok/s, `1.14x` decode tok/s, and `1.13x` total tok/s
 - In this run, `torch.compile` slightly improved prefill (`1.02x`) but regressed decode (`0.92x`) and total throughput (`0.92x`) relative to eager
 
-![Qwen 3.5 35B-A3B latency breakdown](docs/benchmarks/qwen35_mixed_latency_breakdown.png)
-
-![Qwen 3.5 35B-A3B throughput vs PyTorch eager](docs/benchmarks/qwen35_mixed_throughput_vs_eager.png)
+<table>
+<tr>
+<td><img src="docs/benchmarks/qwen35_mixed_latency_breakdown.png" alt="Qwen 3.5 35B-A3B latency breakdown"/></td>
+<td><img src="docs/benchmarks/qwen35_mixed_throughput_vs_eager.png" alt="Qwen 3.5 35B-A3B throughput vs PyTorch eager"/></td>
+</tr>
+</table>
 
 ---
 
