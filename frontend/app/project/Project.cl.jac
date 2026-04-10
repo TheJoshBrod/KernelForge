@@ -392,7 +392,9 @@ def:pub Project -> Any {
                 export_ops = recommendedBenchOps();
             }
             resp = await __jacSpawn(
-                "ExportProject", "", {"projectName": name, "ops": export_ops}
+                "ExportProject",
+                "",
+                {"projectName": name, "ops": export_ops, "selectionPolicy": "safe"}
             );
             result = resp.reports[0]
             if resp and resp.reports and resp.reports.length > 0
@@ -412,7 +414,9 @@ def:pub Project -> Any {
                     export_ops = recommendedBenchOps();
                 }
                 resp = await __jacSpawn(
-                    "DownloadExport", "", {"projectName": name, "ops": export_ops}
+                    "DownloadExport",
+                    "",
+                    {"projectName": name, "ops": export_ops, "selectionPolicy": "safe"}
                 );
                 data = resp.reports[0]
                 if resp and resp.reports and resp.reports.length > 0

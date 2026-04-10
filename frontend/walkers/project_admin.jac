@@ -202,7 +202,11 @@ def _merge_weight_artifacts(entries: list) -> list {
     return out;
 }
 
-def _export_project_zip(project_name: str, ops: list = None) -> dict {
+def _export_project_zip(
+    project_name: str,
+    ops: list = None,
+    selection_policy: str = "safe"
+) -> dict {
     optimized_dir = _find_optimized_dir(project_name);
     source_dir = optimized_dir;
     if not source_dir {
@@ -242,6 +246,7 @@ def _export_project_zip(project_name: str, ops: list = None) -> dict {
         "created_at": datetime.now().isoformat(),
         "source_dir": source_dir,
         "selected_ops": selected_ops,
+        "selection_policy": selection_policy,
         "kernels": []
     };
 
@@ -830,21 +835,31 @@ walker:pub GetProjectBenchmarks {
 
 walker:pub ExportProject {
     has projectName: str,
-        ops: list = [];
+        ops: list = [],
+        selectionPolicy: str = "safe";
 
     can run with entry {
-        result = _export_project_zip(self.projectName, self.ops);
+        result = _export_project_zip(
+            self.projectName,
+            self.ops,
+            self.selectionPolicy
+        );
         report result;
     }
 }
 
 walker:pub DownloadExport {
     has projectName: str,
-        ops: list = [];
+        ops: list = [],
+        selectionPolicy: str = "safe";
 
     can run with entry {
         if self.ops and len(self.ops) > 0 {
-            export_result = _export_project_zip(self.projectName, self.ops);
+            export_result = _export_project_zip(
+                self.projectName,
+                self.ops,
+                self.selectionPolicy
+            );
             if not export_result["success"] {
                 report export_result;
                 disengage;
@@ -857,7 +872,11 @@ walker:pub DownloadExport {
                 self.projectName + ".kforge.zip"
             );
             if not path.exists(export_path) {
-                export_result = _export_project_zip(self.projectName, []);
+                export_result = _export_project_zip(
+                    self.projectName,
+                    [],
+                    self.selectionPolicy
+                );
                 if not export_result["success"] {
                     report export_result;
                     disengage;
