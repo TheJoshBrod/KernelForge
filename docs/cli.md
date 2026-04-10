@@ -55,6 +55,29 @@ python -m src.optimizer.workflow optimize \
 python -m src.optimizer.workflow benchmark --project <project_name>
 ```
 
+Mode-aware benchmarking:
+
+```bash
+python -m src.optimizer.workflow benchmark \
+  --project <project_name> \
+  --mode deployment \
+  --selection-policy safe
+```
+
+Benchmark mode meanings:
+
+- `micro`: fast per-op benchmark used for search-oriented measurements
+- `deployment`: integrated replay benchmark used for safe recommendation
+- `stress`: reserved for robustness-focused coverage checks
+- `e2e`: reserved for harness-backed end-to-end benchmarking
+
+Selection policy meanings:
+
+- `safe`: deployment-safe recommendations only
+- `mixed`: allow faster unsafe candidates alongside safe ones
+- `fastest`: prefer raw microbenchmark winners
+- `custom_only`: exclude wrapper-backed kernels where metadata supports it
+
 ## Project artifact layout
 
 ```
@@ -66,6 +89,6 @@ kernels/projects/<project_name>/
 ├── kernels/
 │   └── generated/individual_op_kernels/<op>/
 ├── trees/<op>/                         # MCTS nodes and kernel source per attempt
-├── benchmarks/op_benchmarks.json
+├── benchmarks/op_benchmarks.json      # schema v2: selection + micro + deployment + stress + e2e
 └── logs/
 ```

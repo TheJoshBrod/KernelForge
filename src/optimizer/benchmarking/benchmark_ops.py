@@ -1062,6 +1062,8 @@ def _build_output_payload(
     optimized_root: Path | None,
     rows: list[dict[str, Any]],
     errors: list[str],
+    default_mode: str = "deployment",
+    selection_policy: str = "safe",
     current: int | None = None,
     total: int | None = None,
 ) -> dict[str, Any]:
@@ -1072,8 +1074,8 @@ def _build_output_payload(
         "status": status,
         "device": device,
         "available_modes": ["micro", "deployment", "stress", "e2e"],
-        "default_mode": "deployment",
-        "selection_policy": "safe",
+        "default_mode": str(default_mode or "deployment"),
+        "selection_policy": str(selection_policy or "safe"),
         "benchmark_protocol": {
             "warmup_runs": DEFAULT_WARMUP_RUNS,
             "timed_runs": DEFAULT_TIMED_RUNS,
@@ -1187,6 +1189,16 @@ def main() -> int:
     parser.add_argument("--project", required=True)
     parser.add_argument("--max-entries", type=int, default=50)
     parser.add_argument("--ops", default="")
+    parser.add_argument(
+        "--mode",
+        default="deployment",
+        choices=["micro", "deployment", "stress", "e2e"],
+    )
+    parser.add_argument(
+        "--selection-policy",
+        default="safe",
+        choices=["safe", "mixed", "fastest", "custom_only"],
+    )
     args = parser.parse_args()
     _ensure_local_toolchain_on_path()
 
@@ -1292,6 +1304,8 @@ def main() -> int:
                     optimized_root=optimized_root,
                     rows=rows,
                     errors=errors,
+                    default_mode=args.mode,
+                    selection_policy=args.selection_policy,
                 ),
             )
             print(f"[benchmarking.benchmark_ops] Wrote {output_path}")
@@ -1306,6 +1320,8 @@ def main() -> int:
                 optimized_root=optimized_root,
                 rows=[results_by_op[k] for k in sorted(results_by_op.keys())],
                 errors=errors,
+                default_mode=args.mode,
+                selection_policy=args.selection_policy,
                 current=current,
                 total=total,
             )
@@ -1609,8 +1625,8 @@ def main() -> int:
                 "timestamp": _now_iso(),
                 "status": "error",
                 "available_modes": ["micro", "deployment", "stress", "e2e"],
-                "default_mode": "deployment",
-                "selection_policy": "safe",
+                "default_mode": str(args.mode or "deployment"),
+                "selection_policy": str(args.selection_policy or "safe"),
                 "benchmarks": [],
                 "results": [],
                 "errors": [str(e)],

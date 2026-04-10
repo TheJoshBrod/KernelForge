@@ -130,6 +130,27 @@ def test_safe_deployment_winner_requires_strict_correctness():
     )
 
 
+def test_build_output_payload_uses_requested_mode_and_selection_policy():
+    payload = benchmark_ops._build_output_payload(
+        project="demo",
+        status="ready",
+        device="cuda",
+        runtime_fingerprint='{"torch": "test"}',
+        optimized_root=None,
+        rows=[],
+        errors=[],
+        default_mode="deployment",
+        selection_policy="safe",
+    )
+
+    assert payload["schema_version"] == 2
+    assert payload["available_modes"] == ["micro", "deployment", "stress", "e2e"]
+    assert payload["default_mode"] == "deployment"
+    assert payload["selection_policy"] == "safe"
+    assert payload["benchmarks"] == []
+    assert payload["results"] == []
+
+
 def test_default_forged_ops_prefers_deployment_winner(tmp_path: Path):
     module = _load_qwen_bench_module()
     project_dir = tmp_path / "project"

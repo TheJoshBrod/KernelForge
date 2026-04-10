@@ -40,6 +40,9 @@ Returns:
 
 - `operator_usage`: list of `{name,count,total_time_ms}`
 - `speed_comparison`: list of `{name,pytorch,optimized?}`
+- `default_mode`: benchmark mode that should drive the default UI interpretation
+- `selection_policy`: selection policy used for default recommendations
+- `speedup_label`: user-facing label for the headline speedup KPI
 - `status`: `pending|error|empty|partial|ready`
 - `profile_status`
 - `profile_message`
@@ -48,5 +51,27 @@ Returns:
 Behavior notes:
 
 - `speed_comparison` may contain baseline-only rows while generation is in progress.
-- `operator_usage` prefers optimized timing when available, else baseline timing.
+- `operator_usage` and headline speedup estimates prefer deployment-safe recommended timings.
 - During per-operator generation/optimization, chart payload may update incrementally.
+
+## `GetProjectBenchmarks`
+
+Reads `kernels/projects/<project>/benchmarks/op_benchmarks.json` and returns the
+project benchmark artifact in a frontend-friendly shape.
+
+Returns:
+
+- `results`: benchmark rows
+- `recommended_ops`: ops whose `selection.recommended_backend == optimized`
+- `raw_winners`: ops that only win the raw microbenchmark
+- `unsafe_ops`: rejected ops with reason strings
+- `available_modes`: currently `micro|deployment|stress|e2e`
+- `default_mode`
+- `selection_policy`
+
+Behavior notes:
+
+- `winners` is retained as a legacy alias for `recommended_ops`
+- callers should prefer `recommended_ops` over raw `winner`
+- `results` may contain both schema v2 nested fields and legacy flat fields during
+  the migration window

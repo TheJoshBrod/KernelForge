@@ -173,6 +173,44 @@ def test_workflow_run_streams_child_output(tmp_path: Path, capsys):
     assert "second line" in detail
 
 
+def test_run_benchmark_forwards_mode_and_selection_policy(tmp_path: Path, monkeypatch):
+    captured: dict = {}
+
+    monkeypatch.setattr(workflow, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(workflow, "_with_python_bin_on_path", lambda env=None: {})
+
+    def fake_run(cmd, root, env):
+        captured["cmd"] = cmd
+        captured["root"] = root
+        captured["env"] = env
+        return 0, ""
+
+    monkeypatch.setattr(workflow, "_run", fake_run)
+
+    args = type(
+        "Args",
+        (),
+        {
+            "project": "demo",
+            "mode": "deployment",
+            "selection_policy": "safe",
+        },
+    )()
+
+    assert workflow.run_benchmark(args) == 0
+    assert captured["cmd"] == [
+        sys.executable,
+        "-m",
+        "src.optimizer.benchmarking.benchmark_ops",
+        "--project",
+        "demo",
+        "--mode",
+        "deployment",
+        "--selection-policy",
+        "safe",
+    ]
+
+
 def test_cuda_loader_uses_current_device_capability_for_arch_list(monkeypatch):
     monkeypatch.delenv("TORCH_CUDA_ARCH_LIST", raising=False)
     monkeypatch.setattr(cuda_loader.torch.cuda, "is_available", lambda: True)

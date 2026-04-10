@@ -422,6 +422,10 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "--project",
         args.project,
     ]
+    if getattr(args, "mode", ""):
+        cmd += ["--mode", args.mode]
+    if getattr(args, "selection_policy", ""):
+        cmd += ["--selection-policy", args.selection_policy]
     rc, _ = _run(cmd, root, env)
     return rc
 
@@ -929,6 +933,16 @@ def main() -> int:
 
     benchmark = sub.add_parser("benchmark")
     benchmark.add_argument("--project", required=True)
+    benchmark.add_argument(
+        "--mode",
+        default="deployment",
+        choices=["micro", "deployment", "stress", "e2e"],
+    )
+    benchmark.add_argument(
+        "--selection-policy",
+        default="safe",
+        choices=["safe", "mixed", "fastest", "custom_only"],
+    )
 
     generate = sub.add_parser("generate")
     generate.add_argument("--project", required=True)
