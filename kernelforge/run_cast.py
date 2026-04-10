@@ -93,8 +93,6 @@ def ensure_cuda_toolkit_env() -> str | None:
 
 
 def compile_kernel(kernel_cu_path: str, op_name: str, build_dir: str, opt_level: str = "-O3"):
-    import re
-
     cuda_home = ensure_cuda_toolkit_env()
     if cuda_home is None:
         raise RuntimeError("No CUDA toolkit with nvcc was found for JIT compilation.")
@@ -107,7 +105,6 @@ def compile_kernel(kernel_cu_path: str, op_name: str, build_dir: str, opt_level:
     with open(kernel_cu_path) as f:
         cuda_src = f.read()
 
-    # Extract the launch() declaration for the C++ header (same approach as loader.py)
     match = re.search(r"(torch::Tensor\s+launch\s*\([^)]*\))", cuda_src)
     if not match:
         raise RuntimeError(f"Could not find 'launch' signature in {kernel_cu_path}")
@@ -275,7 +272,7 @@ def _build_functional_patch(
             for value in ordered[:limit]:
                 if isinstance(value, torch.Tensor):
                     tensor_args.append(value)
-                    call_args.append(value.contiguous())
+                    call_args.append(value if value.is_contiguous() else value.contiguous())
                 else:
                     call_args.append(value)
 
@@ -301,8 +298,6 @@ class CastModelRuntime(nn.Module):
     """A thin nn.Module wrapper that activates cast kernel patches per forward."""
 
     def __init__(self, model, functional_patches: dict[str, Callable[..., Any]]):
-        import torch.nn as nn
-
         if not isinstance(model, nn.Module):
             raise TypeError("model must be an nn.Module")
         super().__init__()
@@ -339,25 +334,23 @@ def load_cast(
     import torch
 
     cast_path = os.path.abspath(cast_path)
-    cache_key = hashlib.sha256(open(cast_path, "rb").read()).hexdigest()
+    with open(cast_path, "rb") as _f:
+        cache_key = hashlib.sha256(_f.read()).hexdigest()
     cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "cast", cache_key)
 
     print(f"Loading {cast_path}")
 
     with zipfile.ZipFile(cast_path) as zf:
-        # 1. Validate header
         header = json.loads(zf.read("HEADER.json"))
         if header["file_type"] != "kernelforge_inference":
             raise RuntimeError(f"Expected kernelforge_inference, got {header['file_type']}")
         print(f"  Project : {header['project_name']}")
         print(f"  Version : {header['format_version']}")
 
-        # 2. Verify checksums
         print("  Verifying checksums ...")
         verify_checksums(zf)
         print("  Checksums OK")
 
-        # 3. Extract to cache dir
         if not os.path.isdir(cache_dir):
             print(f"  Extracting to {cache_dir}")
             zf.extractall(cache_dir)
@@ -366,7 +359,6 @@ def load_cast(
 
         manifest = json.loads(zf.read("manifest.json"))
 
-    # 4. JIT compile kernels and patch ops
     build_dir = os.path.join(cache_dir, "build")
     os.makedirs(build_dir, exist_ok=True)
 
@@ -378,6 +370,9 @@ def load_cast(
             f"Unknown kernel policy '{kernel_policy}'. Expected one of: {', '.join(_KERNEL_POLICIES)}"
         )
 
+    cuda_available = torch.cuda.is_available()
+    gpu_sm = "sm_{0}{1}".format(*torch.cuda.get_device_capability()) if cuda_available else None
+
     for op in manifest["ops"]:
         op_name = op["name"]
         kernel_cu = os.path.join(cache_dir, op["cuda_source"])
@@ -386,7 +381,7 @@ def load_cast(
             print(f"  [--no-kernels] Skipping kernel for {op_name}")
             continue
 
-        if not torch.cuda.is_available():
+        if not cuda_available:
             print(f"  [WARN] CUDA not available — skipping kernel for {op_name}")
             continue
 
@@ -396,7 +391,6 @@ def load_cast(
             continue
 
         # Try precompiled .so for the current GPU first
-        gpu_sm = "sm_{0}{1}".format(*torch.cuda.get_device_capability())
         precompiled = op.get("precompiled", {})
         so_rel = precompiled.get(gpu_sm)
         so_path = os.path.join(cache_dir, so_rel) if so_rel else None
@@ -454,7 +448,6 @@ def load_cast(
         )
         print(f"  Registered runtime patch torch.nn.functional.{fn_attr} → {op_name}")
 
-    # 5. Load model class from model.py
     import importlib.util
     import sys
 
@@ -484,11 +477,9 @@ def load_cast(
 
     print(f"  Model class: {ModelClass.__name__}")
 
-    # 6. Instantiate model
     model_init_args = manifest.get("model_init_args") or {}
     model_config_file = os.path.join(cache_dir, "model_config.json")
     if model_args:
-        # CLI override: --model-args '{"model_type": "resnet", ...}'
         try:
             from transformers import AutoConfig
             cfg_dict = dict(model_args)
@@ -503,7 +494,8 @@ def load_cast(
         # HuggingFace model — load config from the bundled model_config.json
         try:
             from transformers import AutoConfig
-            cfg_dict = json.load(open(model_config_file))
+            with open(model_config_file) as _mcf:
+                cfg_dict = json.load(_mcf)
             model_type = cfg_dict.pop("model_type", None)
             # Rebuild id2label/label2id to be consistent with num_labels so
             # HuggingFace doesn't override num_labels with len(id2label).
@@ -523,14 +515,11 @@ def load_cast(
             "model_config.json saved alongside model.py in the project."
         )
 
-    # 7. Load weights
     import torch
     weight_file = os.path.join(cache_dir, manifest["weight_file"])
     print(f"  Loading weights from {manifest['weight_file']} ...")
     state_dict = torch.load(weight_file, map_location="cpu", weights_only=True)
     model.load_state_dict(state_dict)
-    model.eval()
-
     runtime_model = CastModelRuntime(model, functional_patches)
     runtime_model.eval()
     if device:
