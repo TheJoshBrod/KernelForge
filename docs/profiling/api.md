@@ -75,3 +75,37 @@ Behavior notes:
 - callers should prefer `recommended_ops` over raw `winner`
 - `results` may contain both schema v2 nested fields and legacy flat fields during
   the migration window
+
+## `GetProjectSelectionPreview`
+
+Reads the same benchmark artifact as `GetProjectBenchmarks`, applies a selection
+policy, and returns a UI-ready preview for review/export surfaces.
+
+Inputs:
+
+- `projectName`
+- `selectionPolicy`: `safe|mixed|fastest|custom_only`
+
+Returns:
+
+- `selection_policy`
+- `selected_ops`
+- `selected_details`: list of selected op entries with `reason`, `warning`,
+  `export_allowed`, and `tags`
+- `excluded_ops`: list of excluded op entries with `reason` and `tags`
+- `recommended_ops`
+- `raw_winners`
+- `unsafe_selected_ops`
+- `requires_unsafe_ack`
+- `policy_note`
+- `available_modes`
+- `default_mode`
+
+Behavior notes:
+
+- `safe` selects only deployment-safe recommendations
+- `mixed` allows raw microbenchmark winners alongside safe recommendations
+- `fastest` selects raw microbenchmark winners only
+- `custom_only` excludes wrapper-backed kernels when classification metadata is
+  present, otherwise it falls back to deployment-safe recommendations and sets
+  `policy_note`

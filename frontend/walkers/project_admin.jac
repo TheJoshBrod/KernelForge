@@ -282,6 +282,343 @@ def _export_project_zip(
     return {"success": True, "path": export_path};
 }
 
+def _default_benchmark_payload() -> dict {
+    return {
+        "results": [],
+        "available_modes": ["micro", "deployment", "stress", "e2e"],
+        "default_mode": "deployment",
+        "selection_policy": "safe"
+    };
+}
+
+def _load_project_benchmark_payload(project_name: str) -> dict {
+    bench_path = path.join(
+        _project_dir(project_name), "benchmarks", "op_benchmarks.json"
+    );
+    if not path.exists(bench_path) {
+        return _default_benchmark_payload();
+    }
+    try {
+        with open(bench_path, "r") as f {
+            data = load(f);
+        }
+        results = data["results"] if data and "results" in data else [];
+        if data and "benchmarks" in data and data["benchmarks"] {
+            results = data["benchmarks"];
+        }
+        return {
+            "results": results,
+            "available_modes": (
+                data["available_modes"]
+                if data and "available_modes" in data and data["available_modes"]
+                else ["micro", "deployment", "stress", "e2e"]
+            ),
+            "default_mode": (
+                str(data["default_mode"])
+                if data and "default_mode" in data and data["default_mode"]
+                else "deployment"
+            ),
+            "selection_policy": (
+                str(data["selection_policy"])
+                if data and "selection_policy" in data and data["selection_policy"]
+                else "safe"
+            )
+        };
+    } except Exception as e {
+        print(f"Error reading benchmarks: {e}");
+        return _default_benchmark_payload();
+    }
+}
+
+def _benchmark_row_details(row: dict) -> dict {
+    selection = row["selection"] if "selection" in row and row["selection"] else {};
+    micro = row["micro"] if "micro" in row and row["micro"] else {};
+    deployment = row["deployment"] if "deployment" in row and row["deployment"] else {};
+    correctness = (
+        deployment["correctness"]
+        if deployment and "correctness" in deployment and deployment["correctness"]
+        else (
+            row["deployment_correctness"]
+            if "deployment_correctness" in row and row["deployment_correctness"]
+            else {}
+        )
+    );
+    fallback = (
+        deployment["fallback"]
+        if deployment and "fallback" in deployment and deployment["fallback"]
+        else {}
+    );
+    raw_winner = False;
+    if micro and "winner" in micro and micro["winner"] {
+        raw_winner = (str(micro["winner"]) == "optimized");
+    } elif "winner" in row and row["winner"] {
+        raw_winner = (str(row["winner"]) == "optimized");
+    }
+    recommended_backend = "";
+    if selection and "recommended_backend" in selection and selection["recommended_backend"] {
+        recommended_backend = str(selection["recommended_backend"]);
+    } elif deployment and "recommended_backend" in deployment and deployment["recommended_backend"] {
+        recommended_backend = str(deployment["recommended_backend"]);
+    } elif "deployment_safe_winner" in row and row["deployment_safe_winner"] {
+        recommended_backend = (
+            "optimized" if str(row["deployment_safe_winner"]) == "optimized" else "pytorch"
+        );
+    } elif raw_winner {
+        recommended_backend = "optimized";
+    } else {
+        recommended_backend = "pytorch";
+    }
+
+    recommended_reason = "";
+    if selection and "recommended_reason" in selection and selection["recommended_reason"] {
+        recommended_reason = str(selection["recommended_reason"]);
+    } elif recommended_backend == "optimized" {
+        recommended_reason = "strict-pass + speedup + deployment replay success";
+    } elif raw_winner {
+        recommended_reason = "microbenchmark win only; deployment-safe evidence insufficient";
+    } else {
+        recommended_reason = "PyTorch remains the recommended backend";
+    }
+
+    export_allowed = False;
+    if selection and "export_allowed" in selection {
+        export_allowed = bool(selection["export_allowed"]);
+    } else {
+        export_allowed = (recommended_backend == "optimized");
+    }
+
+    unsafe_override_required = False;
+    if selection and "unsafe_override_required" in selection {
+        unsafe_override_required = bool(selection["unsafe_override_required"]);
+    } else {
+        unsafe_override_required = raw_winner and not export_allowed;
+    }
+
+    strict_pass_known = False;
+    strict_pass = False;
+    if correctness and "strict_pass" in correctness {
+        strict_pass_known = True;
+        strict_pass = bool(correctness["strict_pass"]);
+    }
+
+    deployment_status = "";
+    if deployment and "status" in deployment and deployment["status"] {
+        deployment_status = str(deployment["status"]);
+    } elif "integrated_kernel_status" in row and row["integrated_kernel_status"] {
+        deployment_status = str(row["integrated_kernel_status"]);
+    }
+
+    fallback_observed = None;
+    if fallback and "observed" in fallback and fallback["observed"] != None {
+        fallback_observed = int(fallback["observed"]);
+    }
+
+    kernel_classification = "";
+    if selection and "kernel_classification" in selection and selection["kernel_classification"] {
+        kernel_classification = str(selection["kernel_classification"]);
+    } elif deployment and "kernel_classification" in deployment and deployment["kernel_classification"] {
+        kernel_classification = str(deployment["kernel_classification"]);
+    } elif "kernel_classification" in row and row["kernel_classification"] {
+        kernel_classification = str(row["kernel_classification"]);
+    }
+
+    tags = [];
+    if strict_pass_known and not strict_pass {
+        tags.append("strict mismatch");
+    }
+    if deployment_status and deployment_status != "ready" and deployment_status != "ok" {
+        tags.append("coverage incomplete");
+    }
+    if raw_winner and not export_allowed {
+        tags.append("microbenchmark only");
+    }
+    if fallback_observed != None and fallback_observed > 0 {
+        tags.append("fallback observed");
+    }
+
+    return {
+        "op": str(row["op"]) if row and "op" in row and row["op"] else "",
+        "raw_winner": raw_winner,
+        "recommended_backend": recommended_backend,
+        "recommended_reason": recommended_reason,
+        "export_allowed": export_allowed,
+        "unsafe_override_required": unsafe_override_required,
+        "strict_pass_known": strict_pass_known,
+        "strict_pass": strict_pass,
+        "deployment_status": deployment_status,
+        "fallback_observed": fallback_observed,
+        "kernel_classification": kernel_classification,
+        "tags": tags
+    };
+}
+
+def _selection_entry_for_policy(selection_policy: str, info: dict) -> dict {
+    op_name = str(info["op"]) if info and "op" in info and info["op"] else "";
+    raw_winner = bool(info["raw_winner"]) if info and "raw_winner" in info else False;
+    export_allowed = (
+        bool(info["export_allowed"]) if info and "export_allowed" in info else False
+    );
+    kernel_classification = (
+        str(info["kernel_classification"])
+        if info and "kernel_classification" in info and info["kernel_classification"]
+        else ""
+    );
+    reason = (
+        str(info["recommended_reason"])
+        if info and "recommended_reason" in info and info["recommended_reason"]
+        else "PyTorch remains the recommended backend"
+    );
+    tags = [];
+    if info and "tags" in info and info["tags"] {
+        for tag in info["tags"] {
+            tags.append(str(tag));
+        }
+    }
+
+    selected = False;
+    warning = False;
+    effective_reason = reason;
+    note = "";
+
+    if selection_policy == "safe" {
+        selected = export_allowed;
+        if selected {
+            effective_reason = "deployment-safe recommendation";
+        }
+    } elif selection_policy == "mixed" {
+        selected = export_allowed or raw_winner;
+        warning = selected and not export_allowed;
+        if selected and warning {
+            effective_reason = "unsafe microbenchmark winner allowed by mixed policy";
+        } elif selected {
+            effective_reason = "deployment-safe recommendation";
+        }
+    } elif selection_policy == "fastest" {
+        selected = raw_winner;
+        warning = selected and not export_allowed;
+        if selected {
+            effective_reason = "selected by raw microbenchmark winner";
+        } else {
+            effective_reason = "PyTorch remains the fastest measured backend";
+        }
+    } elif selection_policy == "custom_only" {
+        if kernel_classification == "cublas_wrapper" or kernel_classification == "aten_wrapper" {
+            effective_reason = "wrapper excluded by policy";
+            tags.append("wrapper excluded by policy");
+        } elif kernel_classification == "custom" {
+            selected = export_allowed or raw_winner;
+            warning = selected and not export_allowed;
+            if selected and warning {
+                effective_reason = "unsafe custom microbenchmark winner allowed by custom-only policy";
+            } elif selected {
+                effective_reason = "custom kernel recommendation";
+            }
+        } else {
+            note = "Kernel classification metadata is unavailable for some operators; custom-only falls back to deployment-safe recommendations.";
+            selected = export_allowed;
+            if selected {
+                effective_reason = "kernel classification unavailable; using deployment-safe recommendation";
+            }
+        }
+    }
+
+    dedup_tags = [];
+    seen_tags = {};
+    for tag in tags {
+        tag_key = str(tag);
+        if tag_key and not (tag_key in seen_tags) {
+            seen_tags[tag_key] = True;
+            dedup_tags.append(tag_key);
+        }
+    }
+
+    return {
+        "op": op_name,
+        "selected": selected,
+        "warning": warning,
+        "reason": effective_reason,
+        "tags": dedup_tags,
+        "recommended_backend": (
+            str(info["recommended_backend"])
+            if info and "recommended_backend" in info and info["recommended_backend"]
+            else "pytorch"
+        ),
+        "export_allowed": export_allowed,
+        "unsafe_override_required": warning or (
+            bool(info["unsafe_override_required"])
+            if info and "unsafe_override_required" in info
+            else False
+        ),
+        "policy_note": note
+    };
+}
+
+def _selection_preview_from_payload(payload: dict, selection_policy: str = "") -> dict {
+    results = payload["results"] if payload and "results" in payload else [];
+    default_policy = (
+        str(payload["selection_policy"])
+        if payload and "selection_policy" in payload and payload["selection_policy"]
+        else "safe"
+    );
+    active_policy = str(selection_policy) if selection_policy else default_policy;
+
+    selected_ops = [];
+    selected_details = [];
+    excluded_ops = [];
+    recommended_ops = [];
+    raw_winners = [];
+    unsafe_selected_ops = [];
+    policy_note = "";
+
+    for row in results {
+        if not row or "op" not in row or not row["op"] {
+            continue;
+        }
+        info = _benchmark_row_details(row);
+        entry = _selection_entry_for_policy(active_policy, info);
+        if info["raw_winner"] {
+            raw_winners.append(info["op"]);
+        }
+        if info["export_allowed"] {
+            recommended_ops.append(info["op"]);
+        }
+        if entry["policy_note"] and not policy_note {
+            policy_note = str(entry["policy_note"]);
+        }
+        if entry["selected"] {
+            selected_ops.append(info["op"]);
+            selected_details.append(entry);
+            if entry["warning"] or entry["unsafe_override_required"] {
+                unsafe_selected_ops.append(entry);
+            }
+        } else {
+            excluded_ops.append(entry);
+        }
+    }
+
+    return {
+        "selection_policy": active_policy,
+        "available_modes": (
+            payload["available_modes"]
+            if payload and "available_modes" in payload and payload["available_modes"]
+            else ["micro", "deployment", "stress", "e2e"]
+        ),
+        "default_mode": (
+            str(payload["default_mode"])
+            if payload and "default_mode" in payload and payload["default_mode"]
+            else "deployment"
+        ),
+        "selected_ops": selected_ops,
+        "selected_details": selected_details,
+        "excluded_ops": excluded_ops,
+        "recommended_ops": recommended_ops,
+        "raw_winners": raw_winners,
+        "unsafe_selected_ops": unsafe_selected_ops,
+        "requires_unsafe_ack": len(unsafe_selected_ops) > 0,
+        "policy_note": policy_note
+    };
+}
+
 def _file_kind(fname: str) -> str {
     if fname.endswith(".cu")
     or fname.endswith(".txt")
@@ -726,110 +1063,52 @@ walker:pub GetProjectBenchmarks {
     has projectName: str;
 
     can run with entry {
-        bench_path = path.join(
-            _project_dir(self.projectName), "benchmarks", "op_benchmarks.json"
+        payload = _load_project_benchmark_payload(self.projectName);
+        preview = _selection_preview_from_payload(payload);
+        report {
+            "results": payload["results"] if "results" in payload else [],
+            "winners": (
+                preview["recommended_ops"] if "recommended_ops" in preview else []
+            ),
+            "recommended_ops": (
+                preview["recommended_ops"] if "recommended_ops" in preview else []
+            ),
+            "raw_winners": (
+                preview["raw_winners"] if "raw_winners" in preview else []
+            ),
+            "unsafe_ops": (
+                preview["excluded_ops"] if "excluded_ops" in preview else []
+            ),
+            "selection_preview": preview,
+            "available_modes": (
+                payload["available_modes"]
+                if "available_modes" in payload and payload["available_modes"]
+                else ["micro", "deployment", "stress", "e2e"]
+            ),
+            "default_mode": (
+                str(payload["default_mode"])
+                if "default_mode" in payload and payload["default_mode"]
+                else "deployment"
+            ),
+            "selection_policy": (
+                str(payload["selection_policy"])
+                if "selection_policy" in payload and payload["selection_policy"]
+                else "safe"
+            )
+        };
+    }
+}
+
+walker:pub GetProjectSelectionPreview {
+    has projectName: str,
+        selectionPolicy: str = "";
+
+    can run with entry {
+        payload = _load_project_benchmark_payload(self.projectName);
+        preview = _selection_preview_from_payload(
+            payload, self.selectionPolicy
         );
-        if not path.exists(bench_path) {
-            report {
-                "results": [],
-                "winners": [],
-                "recommended_ops": [],
-                "raw_winners": [],
-                "unsafe_ops": [],
-                "available_modes": ["micro", "deployment", "stress", "e2e"],
-                "default_mode": "deployment",
-                "selection_policy": "safe"
-            };
-            disengage;
-        }
-        try {
-            with open(bench_path, "r") as f {
-                data = load(f);
-            }
-            results = data["results"] if data and "results" in data else [];
-            if data and "benchmarks" in data and data["benchmarks"] {
-                results = data["benchmarks"];
-            }
-            raw_winners = [];
-            recommended_ops = [];
-            unsafe_ops = [];
-            for r in results {
-                if not r or "op" not in r or not r["op"] {
-                    continue;
-                }
-                op_name = str(r["op"]);
-
-                raw_win = False;
-                if "winner" in r and r["winner"] {
-                    raw_win = (str(r["winner"]) == "optimized");
-                }
-                if raw_win {
-                    raw_winners.append(op_name);
-                }
-
-                recommended = False;
-                reason = "not deployment-safe";
-                if "selection" in r and r["selection"] {
-                    sel = r["selection"];
-                    if "recommended_backend" in sel and sel["recommended_backend"] {
-                        recommended = (str(sel["recommended_backend"]) == "optimized");
-                    }
-                    if "recommended_reason" in sel and sel["recommended_reason"] {
-                        reason = str(sel["recommended_reason"]);
-                    }
-                } elif "deployment_safe_winner" in r and r["deployment_safe_winner"] {
-                    recommended = (str(r["deployment_safe_winner"]) == "optimized");
-                    reason = (
-                        "legacy deployment-safe winner"
-                        if recommended
-                        else "legacy deployment-safe check rejected this op"
-                    );
-                } elif raw_win {
-                    reason = "legacy raw winner fallback";
-                    recommended = True;
-                }
-
-                if recommended {
-                    recommended_ops.append(op_name);
-                } else {
-                    unsafe_ops.append({"op": op_name, "reason": reason});
-                }
-            }
-            report {
-                "results": results,
-                "winners": recommended_ops,
-                "recommended_ops": recommended_ops,
-                "raw_winners": raw_winners,
-                "unsafe_ops": unsafe_ops,
-                "available_modes": (
-                    data["available_modes"]
-                    if data and "available_modes" in data and data["available_modes"]
-                    else ["micro", "deployment", "stress", "e2e"]
-                ),
-                "default_mode": (
-                    str(data["default_mode"])
-                    if data and "default_mode" in data and data["default_mode"]
-                    else "deployment"
-                ),
-                "selection_policy": (
-                    str(data["selection_policy"])
-                    if data and "selection_policy" in data and data["selection_policy"]
-                    else "safe"
-                )
-            };
-        } except Exception as e {
-            print(f"Error reading benchmarks: {e}");
-            report {
-                "results": [],
-                "winners": [],
-                "recommended_ops": [],
-                "raw_winners": [],
-                "unsafe_ops": [],
-                "available_modes": ["micro", "deployment", "stress", "e2e"],
-                "default_mode": "deployment",
-                "selection_policy": "safe"
-            };
-        }
+        report preview;
     }
 }
 

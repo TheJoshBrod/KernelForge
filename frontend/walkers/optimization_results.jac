@@ -820,7 +820,8 @@ print(
 walker:pub DownloadCast {
     has projectName: str,
         backend: str = "CUDA",
-        selectedKernels: dict = {};
+        selectedKernels: dict = {},
+        selectedOps: list = [];
 
     can run with entry {
         project_dir = _project_dir(self.projectName);
@@ -831,9 +832,20 @@ walker:pub DownloadCast {
 
         # ── Resolve kernel files ──────────────────────────────────────
         kernel_map = {};
+        requested_ops = {};
+        if self.selectedOps {
+            for op_name in self.selectedOps {
+                if op_name {
+                    requested_ops[str(op_name)] = True;
+                }
+            }
+        }
 
         if self.selectedKernels {
             for op_name in self.selectedKernels {
+                if requested_ops and not (str(op_name) in requested_ops) {
+                    continue;
+                }
                 rel = str(self.selectedKernels[op_name]);
                 full = path.join(repo_root, rel);
                 if path.exists(full) {
@@ -846,6 +858,12 @@ walker:pub DownloadCast {
             opt_base = _find_optimized_dir(self.projectName);
             if opt_base and path.exists(opt_base) {
                 for op_name in listdir(opt_base) {
+                    if requested_ops and not (str(op_name) in requested_ops) {
+                        continue;
+                    }
+                    if op_name in kernel_map {
+                        continue;
+                    }
                     op_dir = path.join(opt_base, op_name);
                     if not path.isdir(op_dir) {
                         continue;

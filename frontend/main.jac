@@ -27,6 +27,7 @@ import from walkers.project_admin {
     GetProjectOps,
     GetProjectStatus,
     GetProjectBenchmarks,
+    GetProjectSelectionPreview,
     ExportProject,
     DownloadExport,
     ReadRepoFile,
