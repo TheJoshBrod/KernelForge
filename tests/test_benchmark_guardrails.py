@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.optimizer.benchmarking import benchmark_ops
 from src.optimizer.backends.cuda import loader as cuda_loader
 from src.optimizer.backends.cuda import verifier as cuda_verifier
+from src.optimizer.core import mcts
+from src.optimizer.core.types import KernelNode
 from src.optimizer import workflow
 from src.optimizer import tree_store
 
@@ -457,3 +459,41 @@ def test_publish_generated_root_preserves_existing_search_value_and_writes_bench
     assert meta["search_best_subtree_value_ms"] == 0.91
     assert meta["benchmarks"]["micro"]["kernel_ms"] == 0.42
     assert meta["benchmarks"]["micro"]["backend"] == "cuda"
+
+
+def test_collect_ancestry_keeps_legacy_mean_time_ms_for_optimizer_history(tmp_path: Path):
+    paths = {"proj_dir": tmp_path}
+    mcts.init_db(paths)
+
+    root = KernelNode(
+        id=0,
+        parent=-1,
+        children=[1],
+        visits=1,
+        value=5.0,
+        best_subtree_value=5.0,
+        code="root.cu",
+        improvement_description="Baseline",
+    )
+    child = KernelNode(
+        id=1,
+        parent=0,
+        children=[],
+        visits=1,
+        value=2.5,
+        best_subtree_value=2.5,
+        code="child.cu",
+        improvement_description="Candidate",
+    )
+
+    mcts.save_node(paths, root)
+    mcts.save_node(paths, child)
+
+    history, codes = mcts.collect_ancestry(paths, child, code_depth=0)
+
+    assert codes == []
+    assert history[0]["results"]["min_time_ms"] == 5.0
+    assert history[0]["results"]["mean_time_ms"] == 5.0
+    assert history[1]["results"]["min_time_ms"] == 2.5
+    assert history[1]["results"]["mean_time_ms"] == 2.5
+    assert history[1]["speedup_vs_baseline"] == 2.0

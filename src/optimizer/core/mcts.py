@@ -10,6 +10,19 @@ from src.optimizer.config.settings import settings
 
 _NODE_CACHE: Dict[int, KernelNode] = {}
 
+
+def _history_runtime_ms(results: dict) -> float:
+    """Read a history runtime field across legacy and current schemas."""
+    if not isinstance(results, dict):
+        return float("inf")
+    runtime = results.get("mean_time_ms")
+    if runtime is None:
+        runtime = results.get("min_time_ms")
+    try:
+        return float(runtime) if runtime is not None else float("inf")
+    except Exception:
+        return float("inf")
+
 def get_db_path(paths: dict) -> Path:
     return paths["proj_dir"] / "nodes.db"
 
@@ -412,7 +425,10 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
             "iteration": current.id,
             "attempted": current.improvement_description or "Baseline",
             "results": {
-                "min_time_ms": runtime
+                "min_time_ms": runtime,
+                # Keep legacy mean_time_ms populated for optimizer history consumers
+                # that have not fully migrated to the min-time schema.
+                "mean_time_ms": runtime,
             },
             "speedup_vs_parent": getattr(current, "speedup_vs_parent", 1.0) or 1.0
         }
@@ -461,10 +477,10 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
 
     # 3. Calculate "Speedup vs Baseline"
     if history:
-        baseline_time = history[0]["results"]["mean_time_ms"]
+        baseline_time = _history_runtime_ms(history[0].get("results"))
         
         for h in history:
-            current_time = h["results"]["mean_time_ms"]
+            current_time = _history_runtime_ms(h.get("results"))
             if (baseline_time > 0 and baseline_time != float('inf')
                     and current_time > 0 and current_time != float('inf')):
                 h["speedup_vs_baseline"] = baseline_time / current_time

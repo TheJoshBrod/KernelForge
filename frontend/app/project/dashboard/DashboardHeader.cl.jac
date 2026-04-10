@@ -41,27 +41,27 @@ def:pub DashboardHeader(props: any) -> Any {
                     }
                 }}
                 className={
-                    "text-[10px] px-2 py-0.5 rounded-full border uppercase tracking-wide transition-colors " + (
-                        "border-emerald-700 text-emerald-300 bg-emerald-900/30"
+                    "text-[10px] px-2 py-0.5 rounded-full border tracking-wide transition-colors " + (
+                        "border-emerald-700 text-emerald-300 bg-emerald-900/20"
                         if is_active
-                        else "border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500"
+                        else "border-zinc-700 text-zinc-500 hover:text-zinc-200 hover:border-zinc-500"
                     )
                 }
             >
-                Mode: {mode_text}
+                {mode_text}
             </button>
         );
     }
 
     policy_chip = <span className="text-[10px] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 uppercase tracking-wide">
-        Policy: {selectionPolicyText}
+        {selectionPolicyText} policy
     </span>;
     if onSelectionPolicyClick {
         policy_chip = <button
             onClick={lambda -> None { onSelectionPolicyClick(); }}
             className="text-[10px] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 uppercase tracking-wide transition-colors hover:text-zinc-100 hover:border-zinc-500"
         >
-            Policy: {selectionPolicyText}
+            {selectionPolicyText} policy
         </button>;
     }
 
