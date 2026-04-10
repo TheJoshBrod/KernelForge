@@ -748,26 +748,21 @@ def main() -> int:
     dag_path = out_dir.parent / "dag.json"
     dag_data = {"nodes": [], "edges": []}
 
-    # Maps JIT aten op names -> display names for meaningful NN ops.
-    # Primitives (add, reshape, etc.) are absent and will be propagated-through
-    # so the graph stays fully connected across them.
-    # NOTE: torch.jit inlined graphs lower conv2d -> _convolution, so that is
-    # the key we actually see; we display it as "conv2d".
+    # JIT aten op name -> display name. Ops absent from this map are filtered
+    # out but their data-flow connections are propagated to keep the graph
+    # connected. "_convolution" is the inlined form of conv2d in JIT graphs.
     _DAG_OPS: dict[str, str] = {
-        # Convolutions (JIT lowers all conv variants to _convolution)
         "_convolution": "conv2d",
         "conv1d": "conv1d",
         "conv2d": "conv2d",
         "conv3d": "conv3d",
         "conv_transpose1d": "conv_transpose1d",
         "conv_transpose2d": "conv_transpose2d",
-        # Normalization
         "batch_norm": "batch_norm",
         "native_batch_norm": "batch_norm",
         "layer_norm": "layer_norm",
         "group_norm": "group_norm",
         "instance_norm": "instance_norm",
-        # Activations
         "relu": "relu",
         "gelu": "gelu",
         "silu": "silu",
@@ -779,7 +774,6 @@ def main() -> int:
         "log_softmax": "log_softmax",
         "hardtanh": "hardtanh",
         "mish": "mish",
-        # Pooling
         "max_pool1d": "max_pool1d",
         "max_pool2d": "max_pool2d",
         "max_pool3d": "max_pool3d",
@@ -789,11 +783,9 @@ def main() -> int:
         "adaptive_avg_pool1d": "adaptive_avg_pool1d",
         "adaptive_avg_pool2d": "adaptive_avg_pool2d",
         "adaptive_max_pool2d": "adaptive_max_pool2d",
-        # Linear
         "linear": "linear",
         "addmm": "linear",
         "mm": "mm",
-        # Other NN ops
         "dropout": "dropout",
         "embedding": "embedding",
         "scaled_dot_product_attention": "attention",
@@ -857,8 +849,8 @@ def main() -> int:
                     value_to_sources[out.unique()] = {node_id}
 
                 idx += 1
-            elif display_op is None:
-                # Filtered op: pass sources through so the chain stays connected
+            else:
+                # Propagate sources through filtered ops so the chain stays connected
                 for out in jit_node.outputs():
                     value_to_sources[out.unique()] = input_sources.copy()
 

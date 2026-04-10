@@ -42,7 +42,7 @@ def:pub DataFlowView -> Any {
             return;
         }
 
-        nodes_list = dag_data["nodes"] if "nodes" in dag_data else [];
+        nodes_list = dag_data["nodes"];
         edges_list = dag_data["edges"] if "edges" in dag_data else [];
 
         for n in nodes_list {
@@ -123,23 +123,17 @@ def:pub DataFlowView -> Any {
     }
 
     def exportToMermaid -> None {
+        node_labels = {};
+        for n in nodes {
+            node_labels[n["id"]] = n["data"]["label"].replace("\n", " ");
+        }
+
         mermaid = "graph TD;\n";
         for edge in edges {
             source_id = edge["source"];
             target_id = edge["target"];
-
-            s_label = source_id;
-            t_label = target_id;
-
-            for n in nodes {
-                if n["id"] == source_id {
-                    s_label = n["data"]["label"].replace("\n", " ");
-                }
-                if n["id"] == target_id {
-                    t_label = n["data"]["label"].replace("\n", " ");
-                }
-            }
-
+            s_label = node_labels[source_id] if source_id in node_labels else source_id;
+            t_label = node_labels[target_id] if target_id in node_labels else target_id;
             mermaid = mermaid + f"    {source_id}[\"{s_label}\"] --> {target_id}[\"{t_label}\"];\n";
         }
 

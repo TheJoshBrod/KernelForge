@@ -617,50 +617,52 @@ walker:pub GetProjectOps {
             summary_path = path.join(
                 _project_dir(self.projectName), "io", "summary.json"
             );
-            if path.exists(summary_path) {
-                try {
-                    with open(summary_path, "r") as f {
-                        summary = load(f);
-                    }
-                    op_counts = summary["op_counts"]
-                    if summary and "op_counts" in summary
-                    else {};
-                    for full_name in op_counts {
-                        op_name = _normalize_metric_op_name(full_name);
-                        if not op_name {
-                            continue;
-                        }
-                        c = op_counts[full_name];
-                        try {
-                            c = int(c);
-                        } except Exception {
-                            c = 0;
-                        }
-                        ops_map[op_name] = c;
-                    }
-                } except Exception as e {
-                    print(f"Error reading summary for ops: {e}");
+            try {
+                with open(summary_path, "r") as f {
+                    summary = load(f);
                 }
+                op_counts = summary["op_counts"]
+                if summary and "op_counts" in summary
+                else {};
+                for full_name in op_counts {
+                    op_name = _normalize_metric_op_name(full_name);
+                    if not op_name {
+                        continue;
+                    }
+                    c = op_counts[full_name];
+                    try {
+                        c = int(c);
+                    } except Exception {
+                        c = 0;
+                    }
+                    ops_map[op_name] = c;
+                }
+            } except Exception as e {
+                print(f"Error reading summary for ops: {e}");
             }
 
             # Fallback: count entry files if summary.json has nothing
-            if len(ops_map) == 0 and path.exists(base_dir) {
-                for name in listdir(base_dir) {
-                    full_path = path.join(base_dir, name);
-                    if path.isdir(full_path) {
-                        count = 0;
-                        try {
-                            entries = [
-                                f
-                                for f in listdir(full_path)
-                                if f.startswith("entry_") and f.endswith(".pt")
-                            ];
-                            count = len(entries);
-                        } except Exception {
+            if len(ops_map) == 0 {
+                try {
+                    for name in listdir(base_dir) {
+                        full_path = path.join(base_dir, name);
+                        if path.isdir(full_path) {
                             count = 0;
+                            try {
+                                entries = [
+                                    f
+                                    for f in listdir(full_path)
+                                    if f.startswith("entry_") and f.endswith(".pt")
+                                ];
+                                count = len(entries);
+                            } except Exception {
+                                count = 0;
+                            }
+                            ops_map[name] = count;
                         }
-                        ops_map[name] = count;
                     }
+                } except Exception {
+                    pass;
                 }
             }
 
