@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from run_cast import CastModelRuntime, load_cast
+from kernelforge.run_cast import CastModelRuntime, load_cast
 
 
 def load(
