@@ -60,6 +60,32 @@ def:pub Project -> Any {
         return raw_text.replace("_", ".");
     }
 
+    def recommendedBenchOps() -> list {
+        recommended = [];
+        for r in benchResults {
+            if not r or "op" not in r or not r["op"] {
+                continue;
+            }
+            selection = r["selection"] if "selection" in r and r["selection"] else {};
+            if (
+                selection
+                and "recommended_backend" in selection
+                and str(selection["recommended_backend"]) == "optimized"
+            ) {
+                recommended = recommended.concat([r["op"]]);
+                continue;
+            }
+            if (
+                "deployment_safe_winner" in r
+                and r["deployment_safe_winner"]
+                and str(r["deployment_safe_winner"]) == "optimized"
+            ) {
+                recommended = recommended.concat([r["op"]]);
+            }
+        }
+        return recommended;
+    }
+
     async def refreshOps -> None {
         loading = True;
         try {
@@ -200,8 +226,12 @@ def:pub Project -> Any {
                 else {};
                 if data and data["results"] {
                     benchResults = data["results"];
-                    if selectedOps.length == 0 and data["winners"] {
-                        selectedOps = data["winners"];
+                    if selectedOps.length == 0 {
+                        if data["recommended_ops"] {
+                            selectedOps = data["recommended_ops"];
+                        } elif data["winners"] {
+                            selectedOps = data["winners"];
+                        }
                     }
                 } else {
                     benchResults = [];
@@ -359,13 +389,7 @@ def:pub Project -> Any {
         if name {
             export_ops = selectedOps;
             if export_ops.length == 0 {
-                winners = [];
-                for r in benchResults {
-                    if r["winner"] {
-                        winners = winners.concat([r["op"]]);
-                    }
-                }
-                export_ops = winners;
+                export_ops = recommendedBenchOps();
             }
             resp = await __jacSpawn(
                 "ExportProject", "", {"projectName": name, "ops": export_ops}
@@ -385,13 +409,7 @@ def:pub Project -> Any {
             try {
                 export_ops = selectedOps;
                 if export_ops.length == 0 {
-                    winners = [];
-                    for r in benchResults {
-                        if r["winner"] {
-                            winners = winners.concat([r["op"]]);
-                        }
-                    }
-                    export_ops = winners;
+                    export_ops = recommendedBenchOps();
                 }
                 resp = await __jacSpawn(
                     "DownloadExport", "", {"projectName": name, "ops": export_ops}

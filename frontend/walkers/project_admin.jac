@@ -725,7 +725,16 @@ walker:pub GetProjectBenchmarks {
             _project_dir(self.projectName), "benchmarks", "op_benchmarks.json"
         );
         if not path.exists(bench_path) {
-            report {"results": [], "winners": []};
+            report {
+                "results": [],
+                "winners": [],
+                "recommended_ops": [],
+                "raw_winners": [],
+                "unsafe_ops": [],
+                "available_modes": ["micro", "deployment", "stress", "e2e"],
+                "default_mode": "deployment",
+                "selection_policy": "safe"
+            };
             disengage;
         }
         try {
@@ -733,16 +742,88 @@ walker:pub GetProjectBenchmarks {
                 data = load(f);
             }
             results = data["results"] if data and "results" in data else [];
-            winners = [];
+            if data and "benchmarks" in data and data["benchmarks"] {
+                results = data["benchmarks"];
+            }
+            raw_winners = [];
+            recommended_ops = [];
+            unsafe_ops = [];
             for r in results {
-                if r and r["winner"] {
-                    winners.append(r["op"]);
+                if not r or "op" not in r or not r["op"] {
+                    continue;
+                }
+                op_name = str(r["op"]);
+
+                raw_win = False;
+                if "winner" in r and r["winner"] {
+                    raw_win = (str(r["winner"]) == "optimized");
+                }
+                if raw_win {
+                    raw_winners.append(op_name);
+                }
+
+                recommended = False;
+                reason = "not deployment-safe";
+                if "selection" in r and r["selection"] {
+                    sel = r["selection"];
+                    if "recommended_backend" in sel and sel["recommended_backend"] {
+                        recommended = (str(sel["recommended_backend"]) == "optimized");
+                    }
+                    if "recommended_reason" in sel and sel["recommended_reason"] {
+                        reason = str(sel["recommended_reason"]);
+                    }
+                } elif "deployment_safe_winner" in r and r["deployment_safe_winner"] {
+                    recommended = (str(r["deployment_safe_winner"]) == "optimized");
+                    reason = (
+                        "legacy deployment-safe winner"
+                        if recommended
+                        else "legacy deployment-safe check rejected this op"
+                    );
+                } elif raw_win {
+                    reason = "legacy raw winner fallback";
+                    recommended = True;
+                }
+
+                if recommended {
+                    recommended_ops.append(op_name);
+                } else {
+                    unsafe_ops.append({"op": op_name, "reason": reason});
                 }
             }
-            report {"results": results, "winners": winners};
+            report {
+                "results": results,
+                "winners": recommended_ops,
+                "recommended_ops": recommended_ops,
+                "raw_winners": raw_winners,
+                "unsafe_ops": unsafe_ops,
+                "available_modes": (
+                    data["available_modes"]
+                    if data and "available_modes" in data and data["available_modes"]
+                    else ["micro", "deployment", "stress", "e2e"]
+                ),
+                "default_mode": (
+                    str(data["default_mode"])
+                    if data and "default_mode" in data and data["default_mode"]
+                    else "deployment"
+                ),
+                "selection_policy": (
+                    str(data["selection_policy"])
+                    if data and "selection_policy" in data and data["selection_policy"]
+                    else "safe"
+                )
+            };
         } except Exception as e {
             print(f"Error reading benchmarks: {e}");
-            report {"results": [], "winners": []};
+            report {
+                "results": [],
+                "winners": [],
+                "recommended_ops": [],
+                "raw_winners": [],
+                "unsafe_ops": [],
+                "available_modes": ["micro", "deployment", "stress", "e2e"],
+                "default_mode": "deployment",
+                "selection_policy": "safe"
+            };
         }
     }
 }
