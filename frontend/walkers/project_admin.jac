@@ -613,12 +613,42 @@ walker:pub GetProjectOps {
             );
             ops_map = {};
 
-            if path.exists(base_dir) {
+            # Primary source: summary.json op_counts (single forward pass counts)
+            summary_path = path.join(
+                _project_dir(self.projectName), "io", "summary.json"
+            );
+            if path.exists(summary_path) {
+                try {
+                    with open(summary_path, "r") as f {
+                        summary = load(f);
+                    }
+                    op_counts = summary["op_counts"]
+                    if summary and "op_counts" in summary
+                    else {};
+                    for full_name in op_counts {
+                        op_name = _normalize_metric_op_name(full_name);
+                        if not op_name {
+                            continue;
+                        }
+                        c = op_counts[full_name];
+                        try {
+                            c = int(c);
+                        } except Exception {
+                            c = 0;
+                        }
+                        ops_map[op_name] = c;
+                    }
+                } except Exception as e {
+                    print(f"Error reading summary for ops: {e}");
+                }
+            }
+
+            # Fallback: count entry files if summary.json has nothing
+            if len(ops_map) == 0 and path.exists(base_dir) {
                 for name in listdir(base_dir) {
                     full_path = path.join(base_dir, name);
                     if path.isdir(full_path) {
                         count = 0;
-                        # Quick count: list only entry files
                         try {
                             entries = [
                                 f
@@ -630,37 +660,6 @@ walker:pub GetProjectOps {
                             count = 0;
                         }
                         ops_map[name] = count;
-                    }
-                }
-            }
-
-            if len(ops_map) == 0 {
-                summary_path = path.join(
-                    _project_dir(self.projectName), "io", "summary.json"
-                );
-                if path.exists(summary_path) {
-                    try {
-                        with open(summary_path, "r") as f {
-                            summary = load(f);
-                        }
-                        op_counts = summary["op_counts"]
-                        if summary and "op_counts" in summary
-                        else {};
-                        for full_name in op_counts {
-                            op_name = _normalize_metric_op_name(full_name);
-                            if not op_name {
-                                continue;
-                            }
-                            c = op_counts[full_name];
-                            try {
-                                c = int(c);
-                            } except Exception {
-                                c = 0;
-                            }
-                            ops_map[op_name] = c;
-                        }
-                    } except Exception as e {
-                        print(f"Error reading summary for ops: {e}");
                     }
                 }
             }

@@ -19,6 +19,7 @@ clsx = "latest"
 watchdog = "latest"
 "@vitejs/plugin-react" = "^4.0.0"
 reactflow = "latest"
+dagre = "latest"
 
 [dependencies.npm.dev]
 "@jac-client/dev-deps" = "2.0.0"

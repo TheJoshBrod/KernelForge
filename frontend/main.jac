@@ -59,6 +59,7 @@ cl import from .app.project.ProjectLayout { ProjectLayout }
 cl import from .app.project.dashboard.Dashboard { Dashboard }
 cl import from .app.project.operator_workbench.OperatorWorkbench { OperatorWorkbench }
 cl import from .app.project.export.Export { Export }
+cl import from .app.project.data_flow.DataFlowView { DataFlowView }
 cl import "./styles.css";
 
 cl {
@@ -76,19 +77,14 @@ cl {
 
     def:pub app {
         useEffect(
-            lambda -> None {
-                window.Exception = Error;
-                document.title = "Kernel Forge";
-                
-                # Dynamic Favicon
-                link = document.querySelector("link[rel~='icon']");
-                if not link {
-                    link = document.createElement("link");
-                    link.rel = "icon";
-                    document.head.appendChild(link);
-                }
-                link.href = "/KernelForge.svg";
-            }, []
+            lambda -> None { window.Exception = Error;document.title = "Kernel Forge";
+            # Dynamic Favicon
+            link = document.querySelector("link[rel~='icon']");if not link {
+                link = document.createElement("link");
+                link.rel = "icon";
+                document.head.appendChild(link);
+            }link.href = "/KernelForge.svg";},
+            []
         );
         return
             <Router>
@@ -120,6 +116,7 @@ cl {
                                     element={<OperatorWorkbench/>}
                                 />
                                 <Route path="export" element={<Export/>}/>
+                                <Route path="data-flow" element={<DataFlowView/>}/>
                             </Route>
                             <Route path="*" element={<NotFound/>}/>
                         </Routes>

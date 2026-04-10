@@ -687,19 +687,27 @@ def main() -> int:
     op_totals: dict[str, int] = {}
     op_profile_ms: dict[str, float] = {}
 
-    with torch.no_grad():
-        for sample in samples:
-            args_tuple, kwargs = normalize_inputs(sample)
-            args_tuple = move_to_device(args_tuple, device)
-            kwargs = move_to_device(kwargs, device)
-            try:
-                model(*args_tuple, **kwargs)
-            except TypeError:
-                model(*args_tuple)
+    def _run_sample(sample):
+        args_tuple, kwargs = normalize_inputs(sample)
+        args_tuple = move_to_device(args_tuple, device)
+        kwargs = move_to_device(kwargs, device)
+        try:
+            model(*args_tuple, **kwargs)
+        except TypeError:
+            model(*args_tuple)
 
-            batch_counts = flush_calls(str(out_dir))
-            for k, v in batch_counts.items():
-                op_totals[k] = op_totals.get(k, 0) + v
+    with torch.no_grad():
+        # First pass: capture op counts (single forward pass = canonical call count)
+        _run_sample(samples[0])
+        first_pass_counts = flush_calls(str(out_dir))
+        for k, v in first_pass_counts.items():
+            op_totals[k] = v
+
+        # Remaining passes: capture more timing entries from the full validation set
+        # (benchmark_ops replays these for avg latency) — counts are not accumulated
+        for sample in samples[1:]:
+            _run_sample(sample)
+            flush_calls(str(out_dir))  # writes entries for timing, counts discarded
 
     if samples and len(op_totals) < 3:
         fallback_stats = _collect_fallback_aten_stats(model, samples[0], device)
@@ -735,6 +743,135 @@ def main() -> int:
     write_json_file(summary_path, summary)
     print(f"Saved profiling entries to {out_dir}")
     print(f"Summary written to {summary_path}")
+
+    # Export op-level DAG via torch.jit.trace (records actual execution with real data)
+    dag_path = out_dir.parent / "dag.json"
+    dag_data = {"nodes": [], "edges": []}
+
+    # Maps JIT aten op names -> display names for meaningful NN ops.
+    # Primitives (add, reshape, etc.) are absent and will be propagated-through
+    # so the graph stays fully connected across them.
+    # NOTE: torch.jit inlined graphs lower conv2d -> _convolution, so that is
+    # the key we actually see; we display it as "conv2d".
+    _DAG_OPS: dict[str, str] = {
+        # Convolutions (JIT lowers all conv variants to _convolution)
+        "_convolution": "conv2d",
+        "conv1d": "conv1d",
+        "conv2d": "conv2d",
+        "conv3d": "conv3d",
+        "conv_transpose1d": "conv_transpose1d",
+        "conv_transpose2d": "conv_transpose2d",
+        # Normalization
+        "batch_norm": "batch_norm",
+        "native_batch_norm": "batch_norm",
+        "layer_norm": "layer_norm",
+        "group_norm": "group_norm",
+        "instance_norm": "instance_norm",
+        # Activations
+        "relu": "relu",
+        "gelu": "gelu",
+        "silu": "silu",
+        "hardswish": "hardswish",
+        "leaky_relu": "leaky_relu",
+        "sigmoid": "sigmoid",
+        "tanh": "tanh",
+        "softmax": "softmax",
+        "log_softmax": "log_softmax",
+        "hardtanh": "hardtanh",
+        "mish": "mish",
+        # Pooling
+        "max_pool1d": "max_pool1d",
+        "max_pool2d": "max_pool2d",
+        "max_pool3d": "max_pool3d",
+        "avg_pool1d": "avg_pool1d",
+        "avg_pool2d": "avg_pool2d",
+        "avg_pool3d": "avg_pool3d",
+        "adaptive_avg_pool1d": "adaptive_avg_pool1d",
+        "adaptive_avg_pool2d": "adaptive_avg_pool2d",
+        "adaptive_max_pool2d": "adaptive_max_pool2d",
+        # Linear
+        "linear": "linear",
+        "addmm": "linear",
+        "mm": "mm",
+        # Other NN ops
+        "dropout": "dropout",
+        "embedding": "embedding",
+        "scaled_dot_product_attention": "attention",
+        "matmul": "matmul",
+        "bmm": "bmm",
+        "upsample_bilinear2d": "upsample_bilinear2d",
+        "upsample_nearest2d": "upsample_nearest2d",
+    }
+
+    try:
+        sample = samples[0]
+        args_tuple, kwargs = normalize_inputs(sample)
+        args_tuple = move_to_device(args_tuple, device)
+        kwargs = move_to_device(kwargs, device)
+
+        with torch.no_grad():
+            if kwargs and not args_tuple:
+                traced = torch.jit.trace(
+                    model, example_kwarg_inputs=kwargs, strict=False
+                )
+            else:
+                traced = torch.jit.trace(model, args_tuple, strict=False)
+
+        graph = traced.inlined_graph
+
+        # Maps output-value unique() -> set of meaningful node_ids that produced it.
+        # Filtered (non-DAG_OPS) nodes propagate their inputs' sources to their
+        # outputs so downstream meaningful ops stay connected across primitives.
+        value_to_sources: dict[int, set[str]] = {}
+        seen_edges: set[tuple[str, str]] = set()
+        idx = 0
+
+        for jit_node in graph.nodes():
+            kind = jit_node.kind()  # e.g. "aten::conv2d"
+            if "::" not in kind:
+                continue
+            short_op = kind.split("::")[1].rstrip("_")
+
+            # Collect all meaningful source nodes reachable via inputs
+            input_sources: set[str] = set()
+            for inp in jit_node.inputs():
+                srcs = value_to_sources.get(inp.unique())
+                if srcs:
+                    input_sources.update(srcs)
+
+            display_op = _DAG_OPS.get(short_op)
+            if display_op is not None:
+                node_id = f"{display_op}_{idx}"
+                dag_data["nodes"].append({"id": node_id, "op": display_op})
+
+                for src_id in input_sources:
+                    edge_key = (src_id, node_id)
+                    if edge_key not in seen_edges:
+                        dag_data["edges"].append(
+                            {"source": src_id, "target": node_id}
+                        )
+                        seen_edges.add(edge_key)
+
+                # This node's outputs originate from this node
+                for out in jit_node.outputs():
+                    value_to_sources[out.unique()] = {node_id}
+
+                idx += 1
+            elif display_op is None:
+                # Filtered op: pass sources through so the chain stays connected
+                for out in jit_node.outputs():
+                    value_to_sources[out.unique()] = input_sources.copy()
+
+        print(
+            f"JIT trace DAG: {len(dag_data['nodes'])} nodes, "
+            f"{len(dag_data['edges'])} edges"
+        )
+    except Exception as e:
+        print(f"JIT trace DAG failed: {e}")
+
+    write_json_file(dag_path, dag_data)
+    print(f"DAG written to {dag_path}")
+
     return 0
 
 

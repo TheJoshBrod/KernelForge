@@ -199,18 +199,18 @@ def _reconcile_legacy_profile_state(
 
     profile_status = (
         str(profile["status"]).strip().lower()
-        if "status" in profile and profile["status"]
-        else ""
+            if "status" in profile and profile["status"]
+            else ""
     );
     prepare_status = (
         str(prepare["status"]).strip().lower()
-        if "status" in prepare and prepare["status"]
-        else ""
+            if "status" in prepare and prepare["status"]
+            else ""
     );
     profile_message = (
         str(profile["message"]).strip().lower()
-        if "message" in profile and profile["message"]
-        else ""
+            if "message" in profile and profile["message"]
+            else ""
     );
 
     if not (
@@ -288,8 +288,8 @@ def _reconcile_legacy_profile_state(
 
     profile_status = (
         str(profile["status"]).strip().lower()
-        if "status" in profile and profile["status"]
-        else ""
+            if "status" in profile and profile["status"]
+            else ""
     );
     if (
         profile_status == "completed"
@@ -302,8 +302,9 @@ def _reconcile_legacy_profile_state(
         if not ("phase" in profile) or not profile["phase"] {
             profile["phase"] = (
                 "done"
-                if profile_status == "completed" or profile_status == "success"
-                else "error"
+                    if profile_status == "completed"
+                    or profile_status == "success"
+                    else "error"
             );
         }
     }
@@ -340,8 +341,8 @@ def:pub _normalize_job_flags(project_name: str, state: dict, state_path: str) ->
         status_raw = str(job["status"]).strip().lower() if job["status"] else "";
         control_raw = (
             str(job["control"]).strip().lower()
-            if "control" in job and job["control"]
-            else ""
+                if "control" in job and job["control"]
+                else ""
         );
         pid_val = job["pid"] if "pid" in job else None;
         has_live_pid = _pid_is_alive(pid_val);
@@ -368,8 +369,8 @@ def:pub _normalize_job_flags(project_name: str, state: dict, state_path: str) ->
             if not ("phase" in job) or not job["phase"] {
                 job["phase"] = (
                     "done"
-                    if status_raw == "completed" or status_raw == "success"
-                    else "error"
+                        if status_raw == "completed" or status_raw == "success"
+                        else "error"
                 );
             }
             if (status_raw == "completed" or status_raw == "success")
@@ -400,29 +401,34 @@ def:pub _normalize_job_flags(project_name: str, state: dict, state_path: str) ->
             }
             started_at = (
                 str(job["started_at"])
-                if "started_at" in job and job["started_at"]
-                else ""
+                    if "started_at" in job and job["started_at"]
+                    else ""
             );
-            progress_raw = job["progress"] if "progress" in job and job["progress"] else {};
+            progress_raw = job["progress"]
+                if "progress" in job and job["progress"]
+                else {};
             progress_total = 0;
             progress_current = 0;
             try {
-                progress_total = int(progress_raw["total"]) if "total" in progress_raw else 0;
+                progress_total = int(progress_raw["total"])
+                    if "total" in progress_raw
+                    else 0;
             } except Exception {
                 progress_total = 0;
             }
             try {
                 progress_current = int(progress_raw["current"])
-                if "current" in progress_raw
-                else 0;
+                    if "current" in progress_raw
+                    else 0;
             } except Exception {
                 progress_current = 0;
             }
-            progress_complete = progress_total > 0 and progress_current >= progress_total;
+            progress_complete = progress_total > 0
+            and progress_current >= progress_total;
             message_text = (
                 str(job["message"]).strip().lower()
-                if "message" in job and job["message"]
-                else ""
+                    if "message" in job and job["message"]
+                    else ""
             );
             optimize_result_status = "";
             if job_key == "optimize" and "log" in job and job["log"] {
@@ -449,7 +455,9 @@ def:pub _normalize_job_flags(project_name: str, state: dict, state_path: str) ->
                     and (
                         _has_generate_outputs_after(project_name, started_at)
                         or _has_optimize_outputs_after(project_name, started_at)
-                        or _has_benchmark_outputs_after(project_name, started_at)
+                        or _has_benchmark_outputs_after(
+                            project_name, started_at
+                        )
                         or nonfatal_generate_summary
                     )
                 )
@@ -497,7 +505,9 @@ def:pub _normalize_job_flags(project_name: str, state: dict, state_path: str) ->
                 } elif (
                     not ("message" in job)
                     or not job["message"]
-                    or str(job["message"]).strip().lower().startswith("queued for optimization")
+                    or str(job["message"]).strip().lower().startswith(
+                        "queued for optimization"
+                    )
                 ) {
                     job["message"] = "Kernel optimization completed.";
                 }
@@ -590,12 +600,11 @@ def:pub _update_job_state(project_name: str, job_key: str, updates: dict) -> Non
     _upsert_project_catalog(project_name, _project_dir(project_name));
     status_text = (
         str(job_state["status"]).strip().lower()
-        if "status" in job_state and job_state["status"]
-        else ""
+            if "status" in job_state and job_state["status"]
+            else ""
     );
-    if (
-        status_text == "completed" or status_text == "success"
-    ) and (
+    if (status_text == "completed" or status_text == "success")
+    and (
         job_key == "profile"
         or job_key == "generate"
         or job_key == "optimize"
@@ -653,20 +662,18 @@ def _job_launch_in_grace(job: dict, grace_seconds: float = 15.0) -> bool {
     }
     recent_at = (
         str(job["updated_at"])
-        if "updated_at" in job and job["updated_at"]
-        else (
-            str(job["started_at"])
-            if "started_at" in job and job["started_at"]
-            else ""
-        )
+            if "updated_at" in job and job["updated_at"]
+            else (
+                str(job["started_at"])
+                    if "started_at" in job and job["started_at"]
+                    else ""
+            )
     );
     if not recent_at {
         return False;
     }
     try {
-        age_seconds = (
-            datetime.now() - datetime.fromisoformat(recent_at)
-        ).total_seconds();
+        age_seconds = (datetime.now() - datetime.fromisoformat(recent_at)).total_seconds();
         return age_seconds >= 0 and age_seconds < grace_seconds;
     } except Exception {
         return False;
@@ -709,7 +716,7 @@ def _iso_to_epoch(iso_value: str) -> float {
     try {
         text = str(iso_value);
         if text.endswith("Z") {
-            text = text[0 : len(text) - 1] + "+00:00";
+            text = text[0:len(text) - 1] + "+00:00";
         }
         return datetime.fromisoformat(text).timestamp();
     } except Exception {
@@ -801,7 +808,9 @@ def _load_tree_best_by_op(project_name: str) -> dict {
         try {
             conn = sqlite3.connect(db_path);
             cursor = conn.cursor();
-            cursor.execute("SELECT MIN(value) FROM nodes WHERE value IS NOT NULL AND value > 0");
+            cursor.execute(
+                "SELECT MIN(value) FROM nodes WHERE value IS NOT NULL AND value > 0"
+            );
             row = cursor.fetchone();
             conn.close();
             if row and row[0] is not None {
@@ -921,7 +930,10 @@ def _read_optimize_result_status(log_path: str) -> str {
     while idx >= 0 {
         line_lower = str(lines[idx]).strip().lower();
         if (
-            ("[optimize-result]" in line_lower or "[workflow-optimize-result]" in line_lower)
+            (
+                "[optimize-result]" in line_lower
+                or "[workflow-optimize-result]" in line_lower
+            )
             and "status=" in line_lower
         ) {
             if "status=no_improvement" in line_lower {
@@ -1112,16 +1124,16 @@ def _launching_job_active(queue_state: dict, grace_seconds: float = 30.0) -> boo
     }
     launch = (
         queue_state["launching_job"]
-        if "launching_job" in queue_state and queue_state["launching_job"]
-        else {}
+            if "launching_job" in queue_state and queue_state["launching_job"]
+            else {}
     );
     if not launch {
         return False;
     }
     started_at = (
         str(launch["started_at"])
-        if "started_at" in launch and launch["started_at"]
-        else ""
+            if "started_at" in launch and launch["started_at"]
+            else ""
     );
     if not started_at {
         return False;
@@ -1137,15 +1149,16 @@ def _launching_job_active(queue_state: dict, grace_seconds: float = 30.0) -> boo
 }
 
 def:pub _mark_job_launching(
-    project_name: str,
-    job_key: str,
-    ops_list: list = [],
-    tag: str = ""
+    project_name: str, job_key: str, ops_list: list = [], tag: str = ""
 ) -> None {
     q_state = _read_queue_state(project_name);
     q_state["launching_job"] = {
         "job_key": job_key,
-        "ops_list": [str(op) for op in ops_list if op],
+        "ops_list": [
+            str(op)
+            for op in ops_list
+            if op
+        ],
         "tag": str(tag) if tag else "",
         "started_at": datetime.now().isoformat()
     };
@@ -1156,7 +1169,11 @@ def:pub _mark_job_launching(
         "marked job launching",
         {
             "job_key": job_key,
-            "ops_list": [str(op) for op in ops_list if op],
+            "ops_list": [
+                str(op)
+                for op in ops_list
+                if op
+            ],
             "tag": str(tag) if tag else ""
         }
     );
@@ -1166,43 +1183,33 @@ def:pub _clear_job_launching(project_name: str, job_key: str = "") -> None {
     q_state = _read_queue_state(project_name);
     launch = (
         q_state["launching_job"]
-        if "launching_job" in q_state and q_state["launching_job"]
-        else {}
+            if "launching_job" in q_state and q_state["launching_job"]
+            else {}
     );
     if not launch {
         return;
     }
-    launch_key = str(launch["job_key"]) if "job_key" in launch and launch["job_key"] else "";
+    launch_key = str(launch["job_key"])
+        if "job_key" in launch and launch["job_key"]
+        else "";
     if job_key and launch_key and launch_key != str(job_key) {
         return;
     }
     q_state["launching_job"] = {};
     _write_queue_state(project_name, q_state);
     _append_queue_debug(
-        project_name,
-        "launch",
-        "cleared launching marker",
-        {"job_key": launch_key}
+        project_name, "launch", "cleared launching marker", {"job_key": launch_key}
     );
 }
 
 def _append_queue_debug(
-    project_name: str,
-    source: str,
-    message: str,
-    payload: dict = {}
+    project_name: str, source: str, message: str, payload: dict = {}
 ) -> None {
     try {
         logs_dir = path.join(_project_dir(project_name), "logs");
         _ensure_dir(logs_dir);
         log_path = path.join(logs_dir, "queue_debug.log");
-        line = (
-            datetime.now().isoformat()
-            + " | "
-            + str(source)
-            + " | "
-            + str(message)
-        );
+        line = datetime.now().isoformat() + " | " + str(source) + " | " + str(message);
         if payload and len(payload) > 0 {
             line = line + " | " + dumps(payload);
         }
@@ -1226,8 +1233,8 @@ def _terminal_queue_tasks(active_tasks: dict) -> dict {
         }
         current_step = (
             str(task["current_step"])
-            if "current_step" in task and task["current_step"]
-            else ""
+                if "current_step" in task and task["current_step"]
+                else ""
         );
         if current_step == "Done" or current_step == "Failed" {
             preserved[str(task_key)] = task;
@@ -1279,12 +1286,9 @@ def:pub _write_queue_state(project_name: str, queue_state: dict) -> None {
     }
     try {
         tmp_path = (
-            queue_path
-            + "."
-            + str(os.getpid())
-            + "."
-            + str(int(datetime.now().timestamp() * 1000))
-            + ".tmp"
+            queue_path + "." + str(os.getpid()) + "." + str(
+                int(datetime.now().timestamp() * 1000)
+            ) + ".tmp"
         );
         with open(tmp_path, "w") as f {
             dump(state, f, indent=2);
@@ -1303,14 +1307,10 @@ def _job_is_active(job: dict) -> bool {
         return True;
     }
     status_text = (
-        str(job["status"]).strip().lower()
-        if "status" in job and job["status"]
-        else ""
+        str(job["status"]).strip().lower() if "status" in job and job["status"] else ""
     );
     return (
-        status_text == "running"
-        or status_text == "queued"
-        or status_text == "paused"
+        status_text == "running" or status_text == "queued" or status_text == "paused"
     );
 }
 
@@ -1324,13 +1324,15 @@ def _queue_has_running_work(queue_state: dict) -> bool {
     if "current_operator" in queue_state and queue_state["current_operator"] {
         return True;
     }
-    active_tasks = queue_state["active_tasks"] if "active_tasks" in queue_state and queue_state["active_tasks"] else {};
+    active_tasks = queue_state["active_tasks"]
+        if "active_tasks" in queue_state and queue_state["active_tasks"]
+        else {};
     for task_key in active_tasks {
         task = active_tasks[task_key];
         current_step = (
             str(task["current_step"])
-            if task and "current_step" in task and task["current_step"]
-            else ""
+                if task and "current_step" in task and task["current_step"]
+                else ""
         );
         if current_step != "Done" and current_step != "Failed" {
             return True;
@@ -1343,13 +1345,17 @@ def _queue_has_backlog(queue_state: dict) -> bool {
     if not queue_state {
         return False;
     }
-    if "job_queue" in queue_state and queue_state["job_queue"] and len(queue_state["job_queue"]) > 0 {
+    if "job_queue" in queue_state
+    and queue_state["job_queue"]
+    and len(queue_state["job_queue"]) > 0 {
         return True;
     }
     return False;
 }
 
-def:pub _get_active_project_job(project_name: str, include_backlog: bool = True) -> dict {
+def:pub _get_active_project_job(
+    project_name: str, include_backlog: bool = True
+) -> dict {
     state = _read_state(project_name);
     for job_key in ["profile", "generate", "optimize", "benchmark"] {
         job = state[job_key] if state and job_key in state else {};
@@ -1362,10 +1368,7 @@ def:pub _get_active_project_job(project_name: str, include_backlog: bool = True)
     }
     queue_state = _read_queue_state(project_name);
     if _queue_has_running_work(queue_state) {
-        return {
-            "jobKey": "queue",
-            "message": "project work already in progress."
-        };
+        return {"jobKey": "queue", "message": "project work already in progress."};
     }
     if include_backlog and _queue_has_backlog(queue_state) {
         return {
@@ -1377,10 +1380,14 @@ def:pub _get_active_project_job(project_name: str, include_backlog: bool = True)
 }
 
 def _apply_job_queue_state(project_name: str, job_request: dict) -> None {
-    job_key = str(job_request["job_key"]) if "job_key" in job_request and job_request["job_key"] else "";
+    job_key = str(job_request["job_key"])
+        if "job_key" in job_request and job_request["job_key"]
+        else "";
     tag = str(job_request["tag"]) if "tag" in job_request and job_request["tag"] else "";
     ops_list = [];
-    raw_ops = job_request["ops_list"] if "ops_list" in job_request and job_request["ops_list"] else [];
+    raw_ops = job_request["ops_list"]
+        if "ops_list" in job_request and job_request["ops_list"]
+        else [];
     for op in raw_ops {
         if op {
             ops_list.append(str(op));
@@ -1418,14 +1425,18 @@ def _apply_job_queue_state(project_name: str, job_request: dict) -> None {
 
 def:pub _enqueue_project_job(project_name: str, job_request: dict) -> dict {
     q_state = _read_queue_state(project_name);
-    job_queue = q_state["job_queue"] if "job_queue" in q_state and q_state["job_queue"] else [];
+    job_queue = q_state["job_queue"]
+        if "job_queue" in q_state and q_state["job_queue"]
+        else [];
 
     request_copy = {};
     for key in job_request {
         request_copy[key] = job_request[key];
     }
     queue_id = (
-        str(request_copy["job_key"]) + ":" + str(int(datetime.now().timestamp() * 1000))
+        str(request_copy["job_key"]) + ":" + str(
+            int(datetime.now().timestamp() * 1000)
+        )
     );
     request_copy["queue_id"] = queue_id;
     request_copy["enqueued_at"] = datetime.now().isoformat();
@@ -1442,13 +1453,11 @@ def:pub _enqueue_project_job(project_name: str, job_request: dict) -> dict {
             "queue_len": len(job_queue),
             "active_tasks": (
                 len(q_state["active_tasks"])
-                if "active_tasks" in q_state and q_state["active_tasks"]
-                else 0
+                    if "active_tasks" in q_state and q_state["active_tasks"]
+                    else 0
             ),
             "current_operator": (
-                q_state["current_operator"]
-                if "current_operator" in q_state
-                else ""
+                q_state["current_operator"] if "current_operator" in q_state else ""
             )
         }
     );
@@ -1456,11 +1465,7 @@ def:pub _enqueue_project_job(project_name: str, job_request: dict) -> dict {
 }
 
 def:pub _queue_or_start_job(
-    project_name: str,
-    job_key: str,
-    cmd: list,
-    log_name: str,
-    job_request: dict = {}
+    project_name: str, job_key: str, cmd: list, log_name: str, job_request: dict = {}
 ) -> dict {
     active_job = _get_active_project_job(project_name);
     request = {};
@@ -1476,7 +1481,9 @@ def:pub _queue_or_start_job(
         "received request",
         {
             "job_key": job_key,
-            "active_job": active_job["jobKey"] if active_job and "jobKey" in active_job else "",
+            "active_job": active_job["jobKey"]
+                if active_job and "jobKey" in active_job
+                else "",
             "ops_list": request["ops_list"] if "ops_list" in request else []
         }
     );
@@ -1500,9 +1507,9 @@ def:pub _queue_or_start_job(
             "queued": True,
             "reason": "queued",
             "message": (
-                f"Queued {job_key} job behind "
-                + str(active_job["jobKey"] if "jobKey" in active_job else "active")
-                + "."
+                f"Queued {job_key} job behind " + str(
+                    active_job["jobKey"] if "jobKey" in active_job else "active"
+                ) + "."
             ),
             "position": queued["position"] if "position" in queued else 1,
             "jobKey": job_key
@@ -1518,7 +1525,8 @@ def:pub _queue_or_start_job(
     try {
         result = _start_job(project_name, job_key, cmd, log_name);
         if result
-        and "success" in result and result["success"]
+        and "success" in result
+        and result["success"]
         and not ("skipped" in result and result["skipped"]) {
             _apply_job_queue_state(project_name, request);
         }
@@ -1528,8 +1536,12 @@ def:pub _queue_or_start_job(
             "return start result",
             {
                 "job_key": job_key,
-                "success": bool(result["success"]) if result and "success" in result else False,
-                "skipped": bool(result["skipped"]) if result and "skipped" in result else False,
+                "success": bool(result["success"])
+                    if result and "success" in result
+                    else False,
+                "skipped": bool(result["skipped"])
+                    if result and "skipped" in result
+                    else False,
                 "pid": result["pid"] if result and "pid" in result else None
             }
         );
@@ -1550,22 +1562,29 @@ def:pub _start_next_queued_job(project_name: str) -> dict {
     }
 
     q_state = _read_queue_state(project_name);
-    job_queue = q_state["job_queue"] if "job_queue" in q_state and q_state["job_queue"] else [];
+    job_queue = q_state["job_queue"]
+        if "job_queue" in q_state and q_state["job_queue"]
+        else [];
     if len(job_queue) == 0 {
         return {"success": False, "reason": "empty"};
     }
 
     next_job = job_queue[0];
-    next_key = str(next_job["job_key"]) if "job_key" in next_job and next_job["job_key"] else "";
+    next_key = str(next_job["job_key"])
+        if "job_key" in next_job and next_job["job_key"]
+        else "";
     next_cmd = next_job["cmd"] if "cmd" in next_job and next_job["cmd"] else [];
-    next_log = str(next_job["log_name"]) if "log_name" in next_job and next_job["log_name"] else (next_key + ".log");
+    next_log = str(next_job["log_name"])
+        if "log_name" in next_job and next_job["log_name"]
+        else (next_key + ".log");
     if not next_key or len(next_cmd) == 0 {
         return {"success": False, "reason": "invalid_job"};
     }
 
     result = _start_job(project_name, next_key, next_cmd, next_log);
     if result
-    and "success" in result and result["success"]
+    and "success" in result
+    and result["success"]
     and not ("skipped" in result and result["skipped"]) {
         remaining = [];
         idx = 0;
@@ -1598,21 +1617,27 @@ def:pub _start_next_queued_job(project_name: str) -> dict {
             "failed to start queued job",
             {
                 "job_key": next_key,
-                "success": bool(result["success"]) if result and "success" in result else False,
-                "skipped": bool(result["skipped"]) if result and "skipped" in result else False
+                "success": bool(result["success"])
+                    if result and "success" in result
+                    else False,
+                "skipped": bool(result["skipped"])
+                    if result and "skipped" in result
+                    else False
             }
         );
     }
     return result;
 }
 
-def:pub _start_job(project_name: str, job_key: str, cmd: list, log_name: str) -> dict {
+def:pub _start_job(
+    project_name: str, job_key: str, cmd: list, log_name: str, force: bool = False
+) -> dict {
     state = _read_state(project_name);
     current = state[job_key] if state and job_key in state else {};
     current_status = (
         str(current["status"]).strip().lower()
-        if current and "status" in current and current["status"]
-        else ""
+            if current and "status" in current and current["status"]
+            else ""
     );
     current_pid = current["pid"] if current and "pid" in current else None;
 
@@ -1631,7 +1656,7 @@ def:pub _start_job(project_name: str, job_key: str, cmd: list, log_name: str) ->
         };
     }
 
-    if job_key == "profile" and _has_profile_outputs(project_name) {
+    if not force and job_key == "profile" and _has_profile_outputs(project_name) {
         updates = {
             "status": "completed",
             "control": "idle",
@@ -1707,11 +1732,7 @@ def:pub _start_job(project_name: str, job_key: str, cmd: list, log_name: str) ->
     child_env["PYTHONUNBUFFERED"] = "1";
     log_file = open(log_path, "a");
     proc = subprocess.Popen(
-        cmd,
-        cwd=repo_root,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        env=child_env
+        cmd, cwd=repo_root, stdout=log_file, stderr=subprocess.STDOUT, env=child_env
     );
     log_file.close();
     _update_job_state(project_name, job_key, {"pid": proc.pid});
@@ -1819,7 +1840,6 @@ def:pub _find_optimized_dir(project_name: str) -> str {
 }
 
 # --- Metrics computation (lives here to avoid circular imports with optimization_results) ---
-
 def:pub _normalize_metric_op_name(raw: Any) -> str {
     text = str(raw).strip().lower() if raw is not None else "";
     if not text {
@@ -1868,17 +1888,21 @@ def _compute_project_metrics(project_name: str) -> dict {
                 bench_data = load(f);
             }
             bench_results = bench_data["results"]
-            if bench_data and "results" in bench_data
-            else [];
+                if bench_data and "results" in bench_data
+                else [];
             bench_file_status = (
                 str(bench_data["status"])
-                if bench_data and "status" in bench_data and bench_data["status"]
-                else ""
+                    if bench_data
+                    and "status" in bench_data
+                    and bench_data["status"]
+                    else ""
             );
             bench_errors = (
                 bench_data["errors"]
-                if bench_data and "errors" in bench_data and bench_data["errors"]
-                else []
+                    if bench_data
+                    and "errors" in bench_data
+                    and bench_data["errors"]
+                    else []
             );
         } except Exception as e {
             print(f"Error reading op_benchmarks.json: {e}");
@@ -1897,11 +1921,11 @@ def _compute_project_metrics(project_name: str) -> dict {
                 summary_data = load(f);
             }
             op_counts = summary_data["op_counts"]
-            if summary_data and "op_counts" in summary_data
-            else {};
+                if summary_data and "op_counts" in summary_data
+                else {};
             op_profile_ms = summary_data["op_profile_ms"]
-            if summary_data and "op_profile_ms" in summary_data
-            else {};
+                if summary_data and "op_profile_ms" in summary_data
+                else {};
         } except Exception as e {
             print(f"Error reading io/summary.json: {e}");
             op_counts = {};
@@ -1964,8 +1988,7 @@ def _compute_project_metrics(project_name: str) -> dict {
         if ms_val is None {
             continue;
         }
-        if not (norm_name in tree_best_by_op)
-        or ms_val < tree_best_by_op[norm_name] {
+        if not (norm_name in tree_best_by_op) or ms_val < tree_best_by_op[norm_name] {
             tree_best_by_op[norm_name] = ms_val;
         }
     }
@@ -1995,16 +2018,14 @@ def _compute_project_metrics(project_name: str) -> dict {
         b_row = bench_by_op[op_name];
         kernel_status = (
             str(b_row["kernel_status"]).lower()
-            if "kernel_status" in b_row and b_row["kernel_status"]
-            else ""
+                if "kernel_status" in b_row and b_row["kernel_status"]
+                else ""
         );
         if kernel_status != "ok" {
             continue;
         }
         kernel_ms = (
-            _to_positive_float(b_row["kernel_ms"])
-            if "kernel_ms" in b_row
-            else None
+            _to_positive_float(b_row["kernel_ms"]) if "kernel_ms" in b_row else None
         );
         if kernel_ms is not None {
             forged_best_by_op[op_name] = kernel_ms;
@@ -2075,7 +2096,9 @@ def _compute_project_metrics(project_name: str) -> dict {
         }
 
         effective_ms = forged_ms if forged_ms is not None else pytorch_ms;
-        total_time_ms = effective_ms * count if effective_ms is not None and count > 0 else 0.0;
+        total_time_ms = effective_ms * count
+            if effective_ms is not None and count > 0
+            else 0.0;
 
         row = {
             "name": op_name,
@@ -2114,9 +2137,7 @@ def _compute_project_metrics(project_name: str) -> dict {
     if state and "profile" in state and state["profile"] {
         p = state["profile"];
         profile_status = str(p["status"]) if "status" in p and p["status"] else "";
-        profile_message = (
-            str(p["message"]) if "message" in p and p["message"] else ""
-        );
+        profile_message = str(p["message"]) if "message" in p and p["message"] else "";
     }
 
     chart_status = "ready";
@@ -2126,9 +2147,7 @@ def _compute_project_metrics(project_name: str) -> dict {
             chart_status = "partial";
         } elif bench_file_status and bench_file_status != "ready" {
             chart_status = bench_file_status;
-        } elif p_status == "running"
-        or p_status == "queued"
-        or p_status == "paused" {
+        } elif p_status == "running" or p_status == "queued" or p_status == "paused" {
             chart_status = "pending";
         } elif p_status == "error" {
             chart_status = "error";
@@ -2172,24 +2191,26 @@ def:pub _collect_project_metrics(project_name: str) -> dict {
             version_val = _to_int(persisted["metrics_version"]);
         }
         rows_len = (
-            len(persisted["rows"])
-            if "rows" in persisted and persisted["rows"]
-            else 0
+            len(persisted["rows"]) if "rows" in persisted and persisted["rows"] else 0
         );
         if version_val > 0 or rows_len > 0 {
             persisted_updated_at = (
                 str(persisted["updated_at"])
-                if "updated_at" in persisted and persisted["updated_at"]
-                else ""
+                    if "updated_at" in persisted and persisted["updated_at"]
+                    else ""
             );
             summary_path = path.join(_project_dir(project_name), "io", "summary.json");
             needs_refresh = False;
             if persisted_updated_at {
                 if _modified_after(summary_path, persisted_updated_at) {
                     needs_refresh = True;
-                } elif _has_benchmark_outputs_after(project_name, persisted_updated_at) {
+                } elif _has_benchmark_outputs_after(
+                    project_name, persisted_updated_at
+                ) {
                     needs_refresh = True;
-                } elif _has_optimize_outputs_after(project_name, persisted_updated_at) {
+                } elif _has_optimize_outputs_after(
+                    project_name, persisted_updated_at
+                ) {
                     needs_refresh = True;
                 }
             }

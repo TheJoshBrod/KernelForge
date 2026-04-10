@@ -14,6 +14,26 @@ Runtime artifacts are written under:
 
 ### Profile stage
 
+The `profile` job runs `profile_project.py` which does two things in sequence:
+
+**1. Op counting and entry capture** (`torch.nn.functional` hooks)
+
+All samples from the model's dataloader are run through the model. The **first pass** sets the canonical call counts written to `summary.json → op_counts` (single forward pass). All subsequent passes write additional captured tensor input/output pairs to `individual_ops/<op>/` — these extra entries are used by `benchmark_ops` to average latency over the full validation set without inflating call counts.
+
+**2. DAG export** (`torch.jit.trace`)
+
+A single forward pass is traced using `torch.jit.trace(model, samples[0])`. The inlined JIT graph is walked to extract meaningful NN ops and their tensor data-flow connections. Primitive ops (`reshape`, `add`, `flatten`, etc.) are filtered out but their connections are propagated so the graph remains fully connected across them. The result is written to `io/dag.json` and displayed in the **Data Flow view**.
+
+### Stat sources by UI section
+
+| Stat | Source file | Scope |
+|------|-------------|-------|
+| Calls (dashboard & workbench) | `summary.json → op_counts` | Single forward pass |
+| PyTorch ms | `op_benchmarks.json → pytorch_ms` | Average over full validation set (up to 50 entries replayed) |
+| Kernel ms (generated, not optimized) | `op_benchmarks.json → kernel_ms` | Average over same validation entries |
+| Kernel ms (MCTS-optimized) | `nodes.db` or `improvement_log.json` | Best result from optimization search |
+| Data Flow graph nodes/edges | `io/dag.json` | Single forward pass |
+
 The `profile` job prepares project inputs and baseline benchmark data.
 
 ### Generate stage (standard path)

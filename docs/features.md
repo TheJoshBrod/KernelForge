@@ -41,6 +41,37 @@ Provider is inferred automatically from the selected model name.
 - **Automatic mode:** forge all discovered operators in one click.
 - **Manual mode:** select specific operators to target.
 
+### Dashboard — Operator Results table
+
+| Column | What it shows | Scope |
+|--------|--------------|-------|
+| Op | Operator name (e.g. `conv2d`) | — |
+| PyTorch ms | Average PyTorch latency per call | Average over full validation set |
+| % Time | Share of total inference time (`avg_ms × calls / total`) | Derived |
+| Calls | Number of times the op runs per inference | Single forward pass |
+| Kernel ms | Optimized kernel latency per call | Best result from MCTS search (if optimized); otherwise average over full validation set |
+| Speedup | PyTorch ms / Kernel ms | Derived |
+
+### Operator Workbench
+
+Lists every profiled operator with call frequency and timing. Selecting an operator opens the MCTS tree inspector for that op.
+
+| Badge mode | Source |
+|-----------|--------|
+| Frequency (# calls) | Single forward pass count from `summary.json` |
+| % Time | Derived from avg latency × calls / total |
+| Avg ms | Average PyTorch latency over full validation set |
+
+### Data Flow view
+
+Renders the operator-level compute graph for a single forward pass so you can identify where kernel fusions could be made.
+
+- **Nodes** — each meaningful NN op (`conv2d`, `batch_norm`, `relu`, `max_pool2d`, etc.). Primitive tensor ops (`reshape`, `add`, `flatten`, etc.) are hidden but their data-flow connections are preserved so the graph stays fully connected.
+- **Edges** — directed tensor data flow. Multiple incoming edges on a node indicate a residual/skip connection.
+- **Node IDs** — formatted as `<op>_<N>` where `N` is the op's position in the global execution sequence (not the Nth call of that op type). There can be 53 `conv2d` nodes even though the highest-numbered one might be `conv2d_82`, because batch_norm and relu nodes occupy the indices in between.
+- **Re-Profile** — triggers a fresh profiling run and polls every 10 seconds, auto-updating the graph when the new `dag.json` is written.
+- **Export to Mermaid** — copies the graph as Mermaid `graph TD` syntax for use in documentation or external tools.
+
 ## Operators profiled
 
 The profiling system targets `torch.nn.functional` operators by default:

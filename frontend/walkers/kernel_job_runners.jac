@@ -41,9 +41,15 @@ def _write_benchmarked_gpu(project_name: str, gpu_info: Any) -> None {
                 cfg = load(f);
             }
         }
-        gpu_uuid = str(gpu_info["uuid"]) if "uuid" in gpu_info and gpu_info["uuid"] else "";
-        gpu_name = str(gpu_info["name"]) if "name" in gpu_info and gpu_info["name"] else "Unknown";
-        gpu_conn = str(gpu_info["connection"]) if "connection" in gpu_info and gpu_info["connection"] else "local";
+        gpu_uuid = str(gpu_info["uuid"])
+            if "uuid" in gpu_info and gpu_info["uuid"]
+            else "";
+        gpu_name = str(gpu_info["name"])
+            if "name" in gpu_info and gpu_info["name"]
+            else "Unknown";
+        gpu_conn = str(gpu_info["connection"])
+            if "connection" in gpu_info and gpu_info["connection"]
+            else "local";
         identity = gpu_uuid if gpu_uuid else f"{gpu_name}:{gpu_conn}";
         cfg["benchmarked_gpu"] = {
             "uuid": gpu_uuid,
@@ -60,7 +66,8 @@ def _write_benchmarked_gpu(project_name: str, gpu_info: Any) -> None {
 }
 
 walker:pub StartProfile {
-    has projectName: str;
+    has projectName: str,
+        force: bool = False;
 
     can run with entry {
         cmd = [
@@ -71,7 +78,7 @@ walker:pub StartProfile {
             "--project",
             self.projectName
         ];
-        result = _start_job(self.projectName, "profile", cmd, "profile.log");
+        result = _start_job(self.projectName, "profile", cmd, "profile.log", self.force);
         report result;
     }
 }
@@ -90,10 +97,7 @@ walker:pub StartGenerate {
 
     can run with entry {
         _append_queue_debug(
-            self.projectName,
-            "StartGenerate",
-            "walker entry",
-            {"ops": self.ops}
+            self.projectName, "StartGenerate", "walker entry", {"ops": self.ops}
         );
         ops_list = [];
         for o in self.ops {
@@ -114,12 +118,16 @@ walker:pub StartGenerate {
                     with open(cfg_path, "r") as f {
                         project_cfg = load(f);
                     }
-                    if project_cfg and "backend" in project_cfg and project_cfg["backend"] {
+                    if project_cfg
+                    and "backend" in project_cfg
+                    and project_cfg["backend"] {
                         target_device = str(project_cfg["backend"]).lower();
                     } elif project_cfg
                     and "generator" in project_cfg
                     and "target_device" in project_cfg["generator"] {
-                        target_device = str(project_cfg["generator"]["target_device"]).lower();
+                        target_device = str(
+                            project_cfg["generator"]["target_device"]
+                        ).lower();
                     }
                 } except Exception as e {
                     print(f"Failed reading config target_device: {e}");
@@ -127,7 +135,10 @@ walker:pub StartGenerate {
             }
         }
         if target_device not in ["cuda", "mps", "metal", "triton", "cpu"] {
-            report {"success": False, "error": f"Unsupported target device: {target_device}"};
+            report {
+                "success": False,
+                "error": f"Unsupported target device: {target_device}"
+            };
             disengage;
         }
         if len(ops_list) == 0 and path.exists(io_dir) {
@@ -197,11 +208,7 @@ walker:pub StartGenerate {
             "generate",
             cmd,
             "generate.log",
-            {
-                "ops_list": ops_list,
-                "tag": "[GEN]",
-                "workers": 1
-            }
+            {"ops_list": ops_list, "tag": "[GEN]", "workers": 1}
         );
         if result {
             gen_cc = str(gen_gpu_info["compute_capability"])
@@ -308,11 +315,7 @@ walker:pub StartOptimize {
             "optimize",
             cmd,
             "optimize.log",
-            {
-                "ops_list": ops_list,
-                "tag": "[OPT]",
-                "workers": self.workers
-            }
+            {"ops_list": ops_list, "tag": "[OPT]", "workers": self.workers}
         );
         if result {
             opt_cc = str(opt_gpu_info["compute_capability"])
@@ -391,7 +394,11 @@ walker:pub ClearProjectQueue {
                 job = job_state[job_key] if job_state and job_key in job_state else {};
                 job_status = str(job["status"] if "status" in job else "").lower();
                 if job_status == "running" or job_status == "queued" {
-                    _update_job_state(self.projectName, job_key, {"control": "cancelled", "status": "cancelled"});
+                    _update_job_state(
+                        self.projectName,
+                        job_key,
+                        {"control": "cancelled", "status": "cancelled"}
+                    );
                 }
             }
             # Clear the queue file.
@@ -430,7 +437,11 @@ walker:pub GetJobLog {
                 disengage;
             }
             text = _read_log_excerpt(log_path, 8192);
-            all_lines = [l for l in text.splitlines() if l.strip()];
+            all_lines = [
+                l
+                for l in text.splitlines()
+                if l.strip()
+            ];
             n = self.lines if self.lines > 0 else 15;
             tail = all_lines[-n:] if len(all_lines) > n else all_lines;
             report {"lines": tail, "path": log_path};
