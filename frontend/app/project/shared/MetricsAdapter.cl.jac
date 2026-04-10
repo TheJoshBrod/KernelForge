@@ -161,13 +161,21 @@ def:pub pick_pytorch_ms(row: Any) -> Any {
     return to_num(pytorch_raw);
 }
 
-def:pub pick_forged_ms(row: Any) -> Any {
+def:pub pick_forged_ms(row: Any, benchmark_mode: str = "deployment") -> Any {
     if not row {
         return None;
     }
     forged_raw = None;
+    if benchmark_mode == "micro" and "micro_forged" in row {
+        forged_raw = row["micro_forged"];
+    }
+    if benchmark_mode == "micro" and forged_raw is None and "micro_forged_ms" in row {
+        forged_raw = row["micro_forged_ms"];
+    }
     if "forged" in row {
-        forged_raw = row["forged"];
+        if forged_raw is None {
+            forged_raw = row["forged"];
+        }
     }
     if forged_raw is None and "optimized" in row {
         forged_raw = row["optimized"];
@@ -181,7 +189,7 @@ def:pub pick_forged_ms(row: Any) -> Any {
     return to_num(forged_raw);
 }
 
-def:pub normalize_speed_rows(rows: Any) -> list {
+def:pub normalize_speed_rows(rows: Any, benchmark_mode: str = "deployment") -> list {
     out = [];
     idx = 0;
     for row in to_list(rows) {
@@ -192,7 +200,7 @@ def:pub normalize_speed_rows(rows: Any) -> list {
 
         row_name = pick_row_name(row, idx);
         pytorch_val = pick_pytorch_ms(row);
-        forged_val = pick_forged_ms(row);
+        forged_val = pick_forged_ms(row, benchmark_mode);
 
         if pytorch_val is None and forged_val is None {
             idx += 1;
@@ -235,8 +243,12 @@ def:pub get_metrics_speed_source(metrics_data: Any) -> list {
     return [];
 }
 
-def:pub get_metrics_speed_rows(metrics_data: Any) -> list {
-    return normalize_speed_rows(get_metrics_speed_source(metrics_data));
+def:pub get_metrics_speed_rows(
+    metrics_data: Any, benchmark_mode: str = "deployment"
+) -> list {
+    return normalize_speed_rows(
+        get_metrics_speed_source(metrics_data), benchmark_mode
+    );
 }
 
 def:pub get_metric_row_for_op(metrics_data: Any, op_name: Any) -> Any {
@@ -319,8 +331,12 @@ def sort_rows_desc_by(rows: Any, key_name: str) -> list {
     return sorted_rows;
 }
 
-def:pub compute_speed_kpis(speed_rows: Any, op_rows: Any) -> dict {
-    normalized_rows = normalize_speed_rows(speed_rows);
+def:pub compute_speed_kpis(
+    speed_rows: Any,
+    op_rows: Any,
+    benchmark_mode: str = "deployment"
+) -> dict {
+    normalized_rows = normalize_speed_rows(speed_rows, benchmark_mode);
 
     op_count_by_name = {};
     for op in to_list(op_rows) {
@@ -349,7 +365,7 @@ def:pub compute_speed_kpis(speed_rows: Any, op_rows: Any) -> dict {
         }
         row_name = pick_row_name(row);
         pytorch_ms = pick_pytorch_ms(row);
-        forged_ms = pick_forged_ms(row);
+        forged_ms = pick_forged_ms(row, benchmark_mode);
 
         pytorch_num = to_num(pytorch_ms);
         forged_num = to_num(forged_ms);
@@ -387,9 +403,10 @@ def:pub build_dashboard_metrics_view(
     op_time_mode: str,
     comparison_view: str,
     speed_limit: int = 8,
-    time_limit: int = 12
+    time_limit: int = 12,
+    benchmark_mode: str = "deployment"
 ) -> dict {
-    normalized_speed_rows = normalize_speed_rows(speed_rows);
+    normalized_speed_rows = normalize_speed_rows(speed_rows, benchmark_mode);
 
     op_count_by_name = {};
     for op in to_list(op_rows) {
@@ -416,7 +433,7 @@ def:pub build_dashboard_metrics_view(
         }
         row_name = pick_row_name(row);
         pytorch_ms = pick_pytorch_ms(row);
-        forged_ms = pick_forged_ms(row);
+        forged_ms = pick_forged_ms(row, benchmark_mode);
 
         selected_ms = None;
         if op_time_mode == "pytorch" {
@@ -523,7 +540,7 @@ def:pub build_dashboard_metrics_view(
         }
         row_name = pick_row_name(row);
         pytorch_ms = pick_pytorch_ms(row);
-        forged_ms = pick_forged_ms(row);
+        forged_ms = pick_forged_ms(row, benchmark_mode);
 
         sort_ms = forged_ms;
         if pytorch_ms != None {

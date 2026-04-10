@@ -20,6 +20,7 @@ import from ..shared.MetricsAdapter {
     list_len,
     op_matches,
     normalize_op_name,
+    pick_forged_ms,
     get_metrics_speed_source,
     build_dashboard_metrics_view,
     compute_speed_kpis
@@ -145,6 +146,40 @@ def:pub Dashboard -> Any {
     metricsMeta = metrics_meta_state[0];
     setMetricsMeta = metrics_meta_state[1];
 
+    benchmark_mode_state = useState("");
+    benchmarkMode = benchmark_mode_state[0];
+    setBenchmarkMode = benchmark_mode_state[1];
+
+    selection_policy_state = useState("");
+    selectionPolicy = selection_policy_state[0];
+    setSelectionPolicy = selection_policy_state[1];
+
+    selection_preview_state = useState(
+        {
+            "selection_policy": "safe",
+            "selected_ops": [],
+            "selected_details": [],
+            "excluded_ops": [],
+            "recommended_ops": [],
+            "raw_winners": [],
+            "unsafe_selected_ops": [],
+            "requires_unsafe_ack": False,
+            "available_modes": ["micro", "deployment", "stress", "e2e"],
+            "default_mode": "deployment",
+            "policy_note": ""
+        }
+    );
+    selectionPreview = selection_preview_state[0];
+    setSelectionPreview = selection_preview_state[1];
+
+    selection_preview_loading_state = useState(False);
+    selectionPreviewLoading = selection_preview_loading_state[0];
+    setSelectionPreviewLoading = selection_preview_loading_state[1];
+
+    allow_unsafe_selection_state = useState(False);
+    allowUnsafeSelection = allow_unsafe_selection_state[0];
+    setAllowUnsafeSelection = allow_unsafe_selection_state[1];
+
     op_time_mode_state = useState("best");
     opTimeMode = op_time_mode_state[0];
     setOpTimeMode = op_time_mode_state[1];
@@ -217,8 +252,31 @@ def:pub Dashboard -> Any {
     gpuMismatchModalOpen = gpu_mismatch_modal_open_state[0];
     setGpuMismatchModalOpen = gpu_mismatch_modal_open_state[1];
 
+    metricsDefaultModePref = (
+        str(metricsMeta["default_mode"])
+        if metricsMeta and "default_mode" in metricsMeta and metricsMeta["default_mode"]
+        else "deployment"
+    );
+    metricsSelectionPolicyPref = (
+        str(metricsMeta["selection_policy"])
+        if metricsMeta and "selection_policy" in metricsMeta and metricsMeta["selection_policy"]
+        else "safe"
+    );
+    effectiveBenchmarkMode = (
+        str(benchmarkMode) if benchmarkMode else metricsDefaultModePref
+    );
+    effectiveSelectionPolicy = (
+        str(selectionPolicy) if selectionPolicy else metricsSelectionPolicyPref
+    );
+
     metricsView = build_dashboard_metrics_view(
-        to_list(speedData), to_list(ops), opTimeMode, comparisonView, 8, 12
+        to_list(speedData),
+        to_list(ops),
+        opTimeMode,
+        comparisonView,
+        8,
+        12,
+        effectiveBenchmarkMode
     );
 
     rawTimeListRows = to_list(
@@ -491,6 +549,41 @@ def:pub Dashboard -> Any {
             }
         } except Exception as e {
             console.error("Failed to fetch project status:", e);
+        }
+    }
+
+    async def refreshSelectionPreview(policy_override: str = "") -> None {
+        if not name {
+            return;
+        }
+        active_policy = policy_override;
+        if not active_policy {
+            active_policy = effectiveSelectionPolicy;
+        }
+        setSelectionPreviewLoading(True);
+        try {
+            preview_resp = await __jacSpawn(
+                "GetProjectSelectionPreview",
+                "",
+                {"projectName": name, "selectionPolicy": active_policy}
+            );
+            preview_data = preview_resp.reports[0]
+            if preview_resp and preview_resp.reports
+            else {};
+            if preview_data {
+                setSelectionPreview(preview_data);
+            }
+        } except Exception as e {
+            console.error("Failed to fetch selection preview:", e);
+        } finally {
+            setSelectionPreviewLoading(False);
+        }
+    }
+
+    def scrollToSelectionPolicyPanel -> None {
+        panel = document.getElementById("selection-policy-panel");
+        if panel and panel.scrollIntoView {
+            panel.scrollIntoView({"behavior": "smooth", "block": "start"});
         }
     }
 
@@ -997,6 +1090,24 @@ def:pub Dashboard -> Any {
             # React batches these with the cache writes below, so no flash occurs.
             setOps([]);
             setSpeedData([]);
+            setBenchmarkMode("");
+            setSelectionPolicy("");
+            setSelectionPreview(
+                {
+                    "selection_policy": "safe",
+                    "selected_ops": [],
+                    "selected_details": [],
+                    "excluded_ops": [],
+                    "recommended_ops": [],
+                    "raw_winners": [],
+                    "unsafe_selected_ops": [],
+                    "requires_unsafe_ack": False,
+                    "available_modes": ["micro", "deployment", "stress", "e2e"],
+                    "default_mode": "deployment",
+                    "policy_note": ""
+                }
+            );
+            setAllowUnsafeSelection(False);
             cached = read_dashboard_cache(name);
             if cached {
                 if "operator_usage" in cached {
@@ -1024,6 +1135,25 @@ def:pub Dashboard -> Any {
     );
 
     useEffect(lambda -> None { refreshData();}, [name]);
+    useEffect(
+        lambda -> None {
+            if not benchmarkMode and metricsDefaultModePref {
+                setBenchmarkMode(metricsDefaultModePref);
+            }
+            if not selectionPolicy and metricsSelectionPolicyPref {
+                setSelectionPolicy(metricsSelectionPolicyPref);
+            }
+        },
+        [name, metricsMeta]
+    );
+    useEffect(
+        lambda -> None {
+            if name and effectiveSelectionPolicy {
+                refreshSelectionPreview(effectiveSelectionPolicy);
+            }
+        },
+        [name, effectiveSelectionPolicy]
+    );
 
     # Stable boolean dep for the polling effect — only flips when jobs start/stop,
     # not on every status object update.  Computed before the effect so it is
@@ -1913,7 +2043,7 @@ def:pub Dashboard -> Any {
                 b_val_raw = b_val;
                 if b_val != None { baseline_ms = format_tick_ms(b_val); }
 
-                f_val = to_num(sd["forged"] if "forged" in sd else None);
+                f_val = pick_forged_ms(sd, effectiveBenchmarkMode);
                 metrics_best_raw = f_val;
                 break;
             }
@@ -2044,21 +2174,145 @@ def:pub Dashboard -> Any {
     }
 
     projectBackend = status["backend"] if status and "backend" in status else "CUDA";
-    metricsDefaultMode = (
-        str(metricsMeta["default_mode"])
-        if metricsMeta and "default_mode" in metricsMeta and metricsMeta["default_mode"]
-        else "deployment"
-    );
-    metricsSelectionPolicy = (
-        str(metricsMeta["selection_policy"])
-        if metricsMeta and "selection_policy" in metricsMeta and metricsMeta["selection_policy"]
-        else "safe"
-    );
     speedupLabel = (
         str(metricsMeta["speedup_label"])
         if metricsMeta and "speedup_label" in metricsMeta and metricsMeta["speedup_label"]
         else "Estimated Op-Level Speedup"
     );
+
+    previewSelectedDetails = to_list(
+        selectionPreview["selected_details"]
+        if selectionPreview and "selected_details" in selectionPreview
+        else []
+    );
+    previewExcludedOps = to_list(
+        selectionPreview["excluded_ops"]
+        if selectionPreview and "excluded_ops" in selectionPreview
+        else []
+    );
+    previewUnsafeOps = to_list(
+        selectionPreview["unsafe_selected_ops"]
+        if selectionPreview and "unsafe_selected_ops" in selectionPreview
+        else []
+    );
+    benchmarkModeOptions = to_list(
+        selectionPreview["available_modes"]
+        if selectionPreview and "available_modes" in selectionPreview
+        else ["deployment", "micro", "stress", "e2e"]
+    );
+    filteredBenchmarkModeOptions = [];
+    for mode_name in benchmarkModeOptions {
+        mode_text = str(mode_name);
+        if mode_text == "deployment" or mode_text == "micro" {
+            filteredBenchmarkModeOptions.push(mode_text);
+        }
+    }
+    benchmarkModeOptions = filteredBenchmarkModeOptions;
+    if benchmarkModeOptions.length == 0 {
+        benchmarkModeOptions = ["deployment", "micro"];
+    }
+    policyOptions = ["safe", "mixed", "fastest", "custom_only"];
+    selectedPreviewNodes = [];
+    selected_preview_idx = 0;
+    while selected_preview_idx < previewSelectedDetails.length and selected_preview_idx < 8 {
+        entry = previewSelectedDetails[selected_preview_idx];
+        tag_nodes = [];
+        for tag in to_list(entry["tags"] if entry and "tags" in entry else []) {
+            tag_nodes.push(
+                <span
+                    key={str(tag)}
+                    className="text-[10px] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 uppercase tracking-wide"
+                >
+                    {tag}
+                </span>
+            );
+        }
+        selectedPreviewNodes.push(
+            <div
+                key={entry["op"] if entry and "op" in entry else f"selected-{selected_preview_idx}"}
+                className={"rounded-lg border px-3 py-2 " + (
+                    "border-amber-800/70 bg-amber-950/30"
+                    if entry and "warning" in entry and entry["warning"]
+                    else "border-zinc-800 bg-zinc-950/60"
+                )}
+            >
+                <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <div className="font-mono text-xs text-zinc-200 truncate">
+                            {entry["op"] if entry and "op" in entry else ""}
+                        </div>
+                        <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+                            {entry["reason"] if entry and "reason" in entry else ""}
+                        </div>
+                    </div>
+                    <span className={"text-[10px] px-2 py-0.5 rounded-full border uppercase tracking-wide shrink-0 " + (
+                        "border-amber-700 text-amber-300 bg-amber-900/30"
+                        if entry and "warning" in entry and entry["warning"]
+                        else "border-emerald-700 text-emerald-300 bg-emerald-900/20"
+                    )}>
+                        {"unsafe" if entry and "warning" in entry and entry["warning"] else "safe"}
+                    </span>
+                </div>
+                {<div className="flex flex-wrap gap-2 mt-2">
+                    {tag_nodes}
+                </div>
+                if tag_nodes.length > 0
+                else <span/>}
+            </div>
+        );
+        selected_preview_idx += 1;
+    }
+    excludedPreviewNodes = [];
+    excluded_preview_idx = 0;
+    while excluded_preview_idx < previewExcludedOps.length and excluded_preview_idx < 8 {
+        entry = previewExcludedOps[excluded_preview_idx];
+        tag_nodes = [];
+        for tag in to_list(entry["tags"] if entry and "tags" in entry else []) {
+            tag_nodes.push(
+                <span
+                    key={str(tag)}
+                    className="text-[10px] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 uppercase tracking-wide"
+                >
+                    {tag}
+                </span>
+            );
+        }
+        excludedPreviewNodes.push(
+            <div
+                key={entry["op"] if entry and "op" in entry else f"excluded-{excluded_preview_idx}"}
+                className="rounded-lg border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+            >
+                <div className="font-mono text-xs text-zinc-300 truncate">
+                    {entry["op"] if entry and "op" in entry else ""}
+                </div>
+                <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+                    {entry["reason"] if entry and "reason" in entry else ""}
+                </div>
+                {<div className="flex flex-wrap gap-2 mt-2">
+                    {tag_nodes}
+                </div>
+                if tag_nodes.length > 0
+                else <span/>}
+            </div>
+        );
+        excluded_preview_idx += 1;
+    }
+    benchmarkModeOptionNodes = [];
+    for mode_name in benchmarkModeOptions {
+        benchmarkModeOptionNodes.push(
+            <option key={str(mode_name)} value={str(mode_name)}>
+                {str(mode_name)}
+            </option>
+        );
+    }
+    policyOptionNodes = [];
+    for policy_value in policyOptions {
+        policyOptionNodes.push(
+            <option key={policy_value} value={policy_value}>
+                {policy_value}
+            </option>
+        );
+    }
 
     return
         <div className="p-6 md:p-8 max-w-7xl mx-auto space-y-6">
@@ -2068,8 +2322,11 @@ def:pub Dashboard -> Any {
                 opsCount={list_len(to_list(ops))}
                 modelSpeedupRatio={modelSpeedupRatio}
                 speedupLabel={speedupLabel}
-                benchmarkMode={metricsDefaultMode}
-                selectionPolicy={metricsSelectionPolicy}
+                benchmarkMode={effectiveBenchmarkMode}
+                benchmarkModeOptions={benchmarkModeOptions}
+                onBenchmarkModeChange={lambda mode_value: any -> None { setBenchmarkMode(str(mode_value)); }}
+                selectionPolicy={effectiveSelectionPolicy}
+                onSelectionPolicyClick={scrollToSelectionPolicyPanel}
                 hardwareStatus={hardwareStatus}
                 projectBackend={projectBackend}
                 forgedTooltipPos={forgedTooltipPos}
@@ -2082,6 +2339,158 @@ def:pub Dashboard -> Any {
                 onDismiss={handleDismissGpuMismatch}
                 cloneBusy={gpuCloneBusy}
             /> if gpuMismatch and not gpuMismatchDismissed else <span/>}
+            <div
+                id="selection-policy-panel"
+                className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]"
+            >
+                <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-0)] p-5 space-y-4">
+                    <div className="flex flex-col gap-1">
+                        <div className="text-sm font-semibold text-zinc-100">
+                            Selection Policy
+                        </div>
+                        <div className="text-sm text-zinc-400">
+                            Preview which operators are selected for deployment-safe export and policy-driven review.
+                        </div>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                        <label className="space-y-2">
+                            <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                                Benchmark Mode
+                            </span>
+                            <select
+                                value={effectiveBenchmarkMode}
+                                onChange={lambda e: any -> None { setBenchmarkMode(str(e.target.value)); }}
+                                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200"
+                            >
+                                {benchmarkModeOptionNodes}
+                            </select>
+                        </label>
+                        <label className="space-y-2">
+                            <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                                Selection Policy
+                            </span>
+                            <select
+                                value={effectiveSelectionPolicy}
+                                onChange={lambda e: any -> None {
+                                    setAllowUnsafeSelection(False);
+                                    setSelectionPolicy(str(e.target.value));
+                                }}
+                                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200"
+                            >
+                                {policyOptionNodes}
+                            </select>
+                        </label>
+                    </div>
+                    {<div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-400">
+                        Loading policy preview...
+                    </div>
+                    if selectionPreviewLoading
+                    else <span/>}
+                    {<div className="rounded-lg border border-indigo-800/60 bg-indigo-950/30 px-3 py-2 text-sm text-indigo-200">
+                        {selectionPreview["policy_note"]}
+                    </div>
+                    if selectionPreview and "policy_note" in selectionPreview and selectionPreview["policy_note"]
+                    else <span/>}
+                    {<label className="flex items-start gap-3 rounded-lg border border-amber-800/70 bg-amber-950/30 px-3 py-3 text-sm text-amber-100">
+                        <input
+                            type="checkbox"
+                            checked={allowUnsafeSelection}
+                            onChange={lambda e: any -> None { setAllowUnsafeSelection(bool(e.target.checked)); }}
+                            className="mt-0.5"
+                        />
+                        <span>
+                            Allow unsafe policy selections for manual forge/export review. Unsafe selections may be microbenchmark-only or have incomplete deployment evidence.
+                        </span>
+                    </label>
+                    if selectionPreview and "requires_unsafe_ack" in selectionPreview and selectionPreview["requires_unsafe_ack"]
+                    else <span/>}
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400">
+                        <span className="px-2 py-1 rounded-full border border-emerald-700/60 bg-emerald-950/20 text-emerald-200">
+                            {previewSelectedDetails.length} selected
+                        </span>
+                        <span className="px-2 py-1 rounded-full border border-zinc-700 text-zinc-300">
+                            {previewExcludedOps.length} excluded
+                        </span>
+                        <span className="px-2 py-1 rounded-full border border-amber-700/60 bg-amber-950/20 text-amber-200">
+                            {previewUnsafeOps.length} unsafe selected
+                        </span>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                        <button
+                            onClick={lambda -> None {
+                                selected_names = [];
+                                for preview_entry in previewSelectedDetails {
+                                    if preview_entry and "op" in preview_entry and preview_entry["op"] {
+                                        selected_names.push(str(preview_entry["op"]));
+                                    }
+                                }
+                                setManualOps(selected_names);
+                                setForgeMode("manual");
+                                setForgeNotice(
+                                    f"Loaded {selected_names.length} operator(s) from the {effectiveSelectionPolicy} preview into manual forge selection."
+                                );
+                            }}
+                            disabled={
+                                selectionPreviewLoading
+                                or previewSelectedDetails.length == 0
+                                or (
+                                    selectionPreview
+                                    and "requires_unsafe_ack" in selectionPreview
+                                    and selectionPreview["requires_unsafe_ack"]
+                                    and not allowUnsafeSelection
+                                )
+                            }
+                            className="rounded-lg border border-emerald-700/60 bg-emerald-950/20 px-4 py-2 text-sm font-medium text-emerald-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            Load Preview Into Manual Forge
+                        </button>
+                        <button
+                            onClick={lambda -> None { navigate(f"/project/{name}/export"); }}
+                            className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:text-zinc-100 hover:border-zinc-500 transition-colors"
+                        >
+                            Open Export Review
+                        </button>
+                    </div>
+                </div>
+                <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-0)] p-5 space-y-4">
+                    <div className="flex items-center justify-between gap-3">
+                        <div>
+                            <div className="text-sm font-semibold text-zinc-100">
+                                Selection Preview
+                            </div>
+                            <div className="text-sm text-zinc-400">
+                                Included and excluded operators with policy reasons.
+                            </div>
+                        </div>
+                    </div>
+                    <div className="space-y-3">
+                        <div>
+                            <div className="text-[11px] uppercase tracking-wide text-zinc-500 mb-2">
+                                Included
+                            </div>
+                            {<div className="space-y-2">
+                                {selectedPreviewNodes}
+                            </div>
+                            if selectedPreviewNodes.length > 0
+                            else <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 px-3 py-3 text-sm text-zinc-500">
+                                No operators are currently selected by this policy.
+                            </div>}
+                        </div>
+                        <div>
+                            <div className="text-[11px] uppercase tracking-wide text-zinc-500 mb-2">
+                                Excluded
+                            </div>
+                            {<div className="space-y-2">
+                                {excludedPreviewNodes}
+                            </div>
+                            if excludedPreviewNodes.length > 0
+                            else <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 px-3 py-3 text-sm text-zinc-500">
+                                No exclusions for this policy.
+                            </div>}
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div className="space-y-4">
                 <WorkQueuePanel
                     name={name}

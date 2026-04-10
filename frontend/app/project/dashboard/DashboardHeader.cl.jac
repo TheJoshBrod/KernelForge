@@ -10,7 +10,10 @@ def:pub DashboardHeader(props: any) -> Any {
     modelSpeedupRatio = props.modelSpeedupRatio;
     speedupLabel = props.speedupLabel;
     benchmarkMode = props.benchmarkMode;
+    benchmarkModeOptions = props.benchmarkModeOptions;
+    onBenchmarkModeChange = props.onBenchmarkModeChange;
     selectionPolicy = props.selectionPolicy;
+    onSelectionPolicyClick = props.onSelectionPolicyClick;
     hardwareStatus = props.hardwareStatus;
     projectBackend = props.projectBackend;
     forgedTooltipPos = props.forgedTooltipPos;
@@ -23,6 +26,44 @@ def:pub DashboardHeader(props: any) -> Any {
     speedupHeading = speedupLabel if speedupLabel else "Estimated Op-Level Speedup";
     benchmarkModeText = benchmarkMode if benchmarkMode else "deployment";
     selectionPolicyText = selectionPolicy if selectionPolicy else "safe";
+    mode_options = benchmarkModeOptions if benchmarkModeOptions else ["deployment", "micro"];
+
+    mode_nodes = [];
+    for mode_name in mode_options {
+        mode_text = str(mode_name);
+        is_active = mode_text == benchmarkModeText;
+        mode_nodes.push(
+            <button
+                key={mode_text}
+                onClick={lambda -> None {
+                    if onBenchmarkModeChange {
+                        onBenchmarkModeChange(mode_text);
+                    }
+                }}
+                className={
+                    "text-[10px] px-2 py-0.5 rounded-full border uppercase tracking-wide transition-colors " + (
+                        "border-emerald-700 text-emerald-300 bg-emerald-900/30"
+                        if is_active
+                        else "border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500"
+                    )
+                }
+            >
+                Mode: {mode_text}
+            </button>
+        );
+    }
+
+    policy_chip = <span className="text-[10px] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 uppercase tracking-wide">
+        Policy: {selectionPolicyText}
+    </span>;
+    if onSelectionPolicyClick {
+        policy_chip = <button
+            onClick={lambda -> None { onSelectionPolicyClick(); }}
+            className="text-[10px] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 uppercase tracking-wide transition-colors hover:text-zinc-100 hover:border-zinc-500"
+        >
+            Policy: {selectionPolicyText}
+        </button>;
+    }
 
     return
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[var(--surface-0)] border border-[var(--border)] rounded-lg p-4 shadow-sm">
@@ -38,12 +79,8 @@ def:pub DashboardHeader(props: any) -> Any {
                         Forge command center · {name}
                     </p>
                     <div className="flex flex-wrap items-center gap-2 mt-2">
-                        <span className="text-[10px] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 uppercase tracking-wide">
-                            Mode: {benchmarkModeText}
-                        </span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 uppercase tracking-wide">
-                            Policy: {selectionPolicyText}
-                        </span>
+                        {mode_nodes}
+                        {policy_chip}
                     </div>
                 </div>
             </div>
