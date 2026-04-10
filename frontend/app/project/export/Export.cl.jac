@@ -41,7 +41,7 @@ def:pub Export -> Any {
                         </h3>
                     </div>
                     <p className="text-zinc-400 text-sm leading-relaxed flex-1">
-                        Bundle your model weights and the KernelForge-optimized CUDA kernels into a self-contained {" "} <span className="font-mono text-xs bg-zinc-800 px-1 py-0.5 rounded">.cast</span> inference package. Anyone with the {" "} <span className="text-[var(--text-light)] font-medium">cast runtime</span> can load it and run inference immediately. No Kernel Forge installation required.
+                        Bundle your model weights and the KernelForge-optimized CUDA kernels into a self-contained {" "} <span className="font-mono text-xs bg-zinc-800 px-1 py-0.5 rounded">.cast</span> inference package. Review the benchmark policy first, then export only the operators you want to ship. Anyone with the {" "} <span className="text-[var(--text-light)] font-medium">cast runtime</span> can load it and run inference immediately.
                     </p>
                     <GlowButton
                         label="Download Cast"

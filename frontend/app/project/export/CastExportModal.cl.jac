@@ -34,6 +34,40 @@ def:pub CastExportModal(props: any) -> Any {
     benchmarks = benchmarks_state[0];
     setBenchmarks = benchmarks_state[1];
 
+    benchmark_mode_state = useState("deployment");
+    benchmarkMode = benchmark_mode_state[0];
+    setBenchmarkMode = benchmark_mode_state[1];
+
+    selection_policy_state = useState("safe");
+    selectionPolicy = selection_policy_state[0];
+    setSelectionPolicy = selection_policy_state[1];
+
+    selection_preview_state = useState(
+        {
+            "selection_policy": "safe",
+            "selected_ops": [],
+            "selected_details": [],
+            "excluded_ops": [],
+            "recommended_ops": [],
+            "raw_winners": [],
+            "unsafe_selected_ops": [],
+            "requires_unsafe_ack": False,
+            "available_modes": ["micro", "deployment", "stress", "e2e"],
+            "default_mode": "deployment",
+            "policy_note": ""
+        }
+    );
+    selectionPreview = selection_preview_state[0];
+    setSelectionPreview = selection_preview_state[1];
+
+    preview_loading_state = useState(False);
+    previewLoading = preview_loading_state[0];
+    setPreviewLoading = preview_loading_state[1];
+
+    allow_unsafe_export_state = useState(False);
+    allowUnsafeExport = allow_unsafe_export_state[0];
+    setAllowUnsafeExport = allow_unsafe_export_state[1];
+
     selected_kernels_state = useState({});
     selectedKernels = selected_kernels_state[0];
     setSelectedKernels = selected_kernels_state[1];
@@ -85,6 +119,8 @@ def:pub CastExportModal(props: any) -> Any {
         lambda -> None { if isOpen {
             setOpDetails({});
             setExpandedOp("");
+            setSelectedKernels({});
+            setAllowUnsafeExport(False);
             if projectName {
                 async def fetchData -> None {
                     setLoading(True);
@@ -113,22 +149,22 @@ def:pub CastExportModal(props: any) -> Any {
                         );
 
                         bench_map = {};
-                        init_selection = {};
                         for r in bench_results {
                             if r and "op" in r and r["op"] {
                                 bench_map[r["op"]] = r;
-                                if "winner" in r and r["winner"] {
-                                    w = str(r["winner"]);
-                                    w_name = w.split("/").pop();
-                                    init_selection[r["op"]] = {
-                                        "path": w,
-                                        "name": w_name
-                                    };
-                                }
                             }
                         }
                         setBenchmarks(bench_map);
-                        setSelectedKernels(init_selection);
+                        if data_bench and "default_mode" in data_bench and data_bench["default_mode"] {
+                            setBenchmarkMode(str(data_bench["default_mode"]));
+                        } else {
+                            setBenchmarkMode("deployment");
+                        }
+                        if data_bench and "selection_policy" in data_bench and data_bench["selection_policy"] {
+                            setSelectionPolicy(str(data_bench["selection_policy"]));
+                        } else {
+                            setSelectionPolicy("safe");
+                        }
                     } except Exception as e {
                         console.error("Error loading cast config data:", e);
                     } finally {
@@ -139,6 +175,64 @@ def:pub CastExportModal(props: any) -> Any {
             }
         }},
         [isOpen, projectName]
+    );
+
+    useEffect(
+        lambda -> None { if isOpen and projectName {
+            async def fetchPreview -> None {
+                setPreviewLoading(True);
+                try {
+                    resp_preview = await __jacSpawn(
+                        "GetProjectSelectionPreview",
+                        "",
+                        {
+                            "projectName": projectName,
+                            "selectionPolicy": selectionPolicy
+                        }
+                    );
+                    data_preview = resp_preview.reports[0]
+                        if resp_preview and resp_preview.reports
+                        else {};
+                    if data_preview {
+                        setSelectionPreview(data_preview);
+                    }
+                } except Exception as e {
+                    console.error("Error loading selection preview:", e);
+                } finally {
+                    setPreviewLoading(False);
+                }
+            }
+            fetchPreview();
+        }},
+        [isOpen, projectName, selectionPolicy]
+    );
+
+    useEffect(
+        lambda -> None { if isOpen {
+            selected_map = {};
+            for op_name in to_list(
+                selectionPreview["selected_ops"]
+                if selectionPreview and "selected_ops" in selectionPreview
+                else []
+            ) {
+                if op_name {
+                    selected_map[str(op_name)] = True;
+                }
+            }
+            next_selection = {};
+            changed = False;
+            for op_name in Object.keys(selectedKernels) {
+                if op_name in selected_map {
+                    next_selection[op_name] = selectedKernels[op_name];
+                } else {
+                    changed = True;
+                }
+            }
+            if changed {
+                setSelectedKernels(next_selection);
+            }
+        }},
+        [isOpen, selectionPreview]
     );
 
     async def handleToggleOp(op_name: str) -> None {
@@ -219,10 +313,37 @@ def:pub CastExportModal(props: any) -> Any {
         if not projectName {
             return;
         }
+        selected_ops = to_list(
+            selectionPreview["selected_ops"]
+            if selectionPreview and "selected_ops" in selectionPreview
+            else []
+        );
+        if selected_ops.length == 0 {
+            alert("No operators are selected by the current export policy.");
+            return;
+        }
+        if (
+            selectionPreview
+            and "requires_unsafe_ack" in selectionPreview
+            and selectionPreview["requires_unsafe_ack"]
+            and not allowUnsafeExport
+        ) {
+            alert("Acknowledge the unsafe export warning before downloading this cast.");
+            return;
+        }
         setDownloading(True);
         try {
             kernel_sel = {};
+            selected_op_map = {};
+            for op_name in selected_ops {
+                if op_name {
+                    selected_op_map[str(op_name)] = True;
+                }
+            }
             for op_name in Object.keys(selectedKernels) {
+                if not (op_name in selected_op_map) {
+                    continue;
+                }
                 entry = selectedKernels[op_name];
                 if entry and "path" in entry and entry["path"] {
                     kernel_sel[op_name] = entry["path"];
@@ -234,7 +355,8 @@ def:pub CastExportModal(props: any) -> Any {
                 {
                     "projectName": projectName,
                     "backend": backend,
-                    "selectedKernels": kernel_sel
+                    "selectedKernels": kernel_sel,
+                    "selectedOps": selected_ops
                 }
             );
             data = resp.reports[0] if resp and resp.reports else {};
@@ -297,22 +419,175 @@ def:pub CastExportModal(props: any) -> Any {
     }
     gpu_label = gpu_names.join(", ") if gpu_names.length > 0 else "Unknown GPU";
 
+    preview_selected_details = to_list(
+        selectionPreview["selected_details"]
+        if selectionPreview and "selected_details" in selectionPreview
+        else []
+    );
+    preview_excluded_ops = to_list(
+        selectionPreview["excluded_ops"]
+        if selectionPreview and "excluded_ops" in selectionPreview
+        else []
+    );
+    preview_selected_map = {};
+    preview_selected_detail_map = {};
+    for entry in preview_selected_details {
+        if entry and "op" in entry and entry["op"] {
+            op_name = str(entry["op"]);
+            preview_selected_map[op_name] = True;
+            preview_selected_detail_map[op_name] = entry;
+        }
+    }
+    benchmark_mode_options = to_list(
+        selectionPreview["available_modes"]
+        if selectionPreview and "available_modes" in selectionPreview
+        else ["micro", "deployment", "stress", "e2e"]
+    );
+    filtered_benchmark_mode_options = [];
+    for mode_name in benchmark_mode_options {
+        mode_text = str(mode_name);
+        if mode_text == "deployment" or mode_text == "micro" {
+            filtered_benchmark_mode_options.push(mode_text);
+        }
+    }
+    benchmark_mode_options = filtered_benchmark_mode_options;
+    if benchmark_mode_options.length == 0 {
+        benchmark_mode_options = ["deployment", "micro"];
+    }
+    benchmark_mode_option_nodes = [];
+    for mode_name in benchmark_mode_options {
+        benchmark_mode_option_nodes.push(
+            <option key={str(mode_name)} value={str(mode_name)}>
+                {str(mode_name)}
+            </option>
+        );
+    }
+    selection_policy_options = ["safe", "mixed", "fastest", "custom_only"];
+    selection_policy_option_nodes = [];
+    for policy_name in selection_policy_options {
+        selection_policy_option_nodes.push(
+            <option key={policy_name} value={policy_name}>
+                {policy_name}
+            </option>
+        );
+    }
+
+    selected_preview_nodes = [];
+    selected_preview_idx = 0;
+    while selected_preview_idx < preview_selected_details.length and selected_preview_idx < 8 {
+        entry = preview_selected_details[selected_preview_idx];
+        tag_nodes = [];
+        for tag in to_list(entry["tags"] if entry and "tags" in entry else []) {
+            tag_nodes.push(
+                <span
+                    key={str(tag)}
+                    className="text-[10px] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 uppercase tracking-wide"
+                >
+                    {tag}
+                </span>
+            );
+        }
+        selected_preview_nodes.push(
+            <div
+                key={entry["op"] if entry and "op" in entry else f"selected-{selected_preview_idx}"}
+                className={"rounded-lg border px-3 py-2 " + (
+                    "border-amber-800/70 bg-amber-950/30"
+                    if entry and "warning" in entry and entry["warning"]
+                    else "border-zinc-800 bg-zinc-950/60"
+                )}
+            >
+                <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <div className="font-mono text-xs text-zinc-200 truncate">
+                            {entry["op"] if entry and "op" in entry else ""}
+                        </div>
+                        <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+                            {entry["reason"] if entry and "reason" in entry else ""}
+                        </div>
+                    </div>
+                    <span className={"text-[10px] px-2 py-0.5 rounded-full border uppercase tracking-wide shrink-0 " + (
+                        "border-amber-700 text-amber-300 bg-amber-900/30"
+                        if entry and "warning" in entry and entry["warning"]
+                        else "border-emerald-700 text-emerald-300 bg-emerald-900/20"
+                    )}>
+                        {"unsafe" if entry and "warning" in entry and entry["warning"] else "safe"}
+                    </span>
+                </div>
+                {<div className="flex flex-wrap gap-2 mt-2">
+                    {tag_nodes}
+                </div>
+                if tag_nodes.length > 0
+                else <span/>}
+            </div>
+        );
+        selected_preview_idx += 1;
+    }
+    excluded_preview_nodes = [];
+    excluded_preview_idx = 0;
+    while excluded_preview_idx < preview_excluded_ops.length and excluded_preview_idx < 8 {
+        entry = preview_excluded_ops[excluded_preview_idx];
+        tag_nodes = [];
+        for tag in to_list(entry["tags"] if entry and "tags" in entry else []) {
+            tag_nodes.push(
+                <span
+                    key={str(tag)}
+                    className="text-[10px] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 uppercase tracking-wide"
+                >
+                    {tag}
+                </span>
+            );
+        }
+        excluded_preview_nodes.push(
+            <div
+                key={entry["op"] if entry and "op" in entry else f"excluded-{excluded_preview_idx}"}
+                className="rounded-lg border border-zinc-800 bg-zinc-950/40 px-3 py-2"
+            >
+                <div className="font-mono text-xs text-zinc-300 truncate">
+                    {entry["op"] if entry and "op" in entry else ""}
+                </div>
+                <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+                    {entry["reason"] if entry and "reason" in entry else ""}
+                </div>
+                {<div className="flex flex-wrap gap-2 mt-2">
+                    {tag_nodes}
+                </div>
+                if tag_nodes.length > 0
+                else <span/>}
+            </div>
+        );
+        excluded_preview_idx += 1;
+    }
+
     op_rows = [];
     for op in to_list(ops) {
         op_name = op["name"];
+        if preview_selected_details.length > 0 and not (op_name in preview_selected_map) {
+            continue;
+        }
         bench = benchmarks[op_name] if op_name in benchmarks else {};
+        preview_entry = (
+            preview_selected_detail_map[op_name]
+            if op_name in preview_selected_detail_map
+            else {}
+        );
 
         pytorch_ms = None;
         forged_ms = None;
         try {
-            if bench and "pytorch_ms" in bench and bench["pytorch_ms"] {
+            if benchmarkMode == "deployment" and bench and "deployment" in bench and bench["deployment"] and "replay_pytorch_ms" in bench["deployment"] and bench["deployment"]["replay_pytorch_ms"] {
+                pytorch_ms = bench["deployment"]["replay_pytorch_ms"] * 1;
+            } elif bench and "pytorch_ms" in bench and bench["pytorch_ms"] {
                 pytorch_ms = bench["pytorch_ms"] * 1;
             }
         } except Exception {
         # no-op
         }
         try {
-            if bench and "forged_ms" in bench and bench["forged_ms"] {
+            if benchmarkMode == "deployment" and bench and "deployment" in bench and bench["deployment"] and "replay_kernel_ms" in bench["deployment"] and bench["deployment"]["replay_kernel_ms"] {
+                forged_ms = bench["deployment"]["replay_kernel_ms"] * 1;
+            } elif bench and "micro" in bench and bench["micro"] and "kernel_ms" in bench["micro"] and bench["micro"]["kernel_ms"] {
+                forged_ms = bench["micro"]["kernel_ms"] * 1;
+            } elif bench and "forged_ms" in bench and bench["forged_ms"] {
                 forged_ms = bench["forged_ms"] * 1;
             }
         } except Exception {
@@ -322,12 +597,16 @@ def:pub CastExportModal(props: any) -> Any {
         if pytorch_ms and forged_ms and forged_ms > 0 {
             speedup = (pytorch_ms / forged_ms).toFixed(2);
         }
-        has_kernel = bench and "winner" in bench and bench["winner"];
+        has_kernel = preview_entry or (bench and "winner" in bench and bench["winner"]);
         sel = selectedKernels[op_name] if op_name in selectedKernels else {};
         sel_name = (
             sel["name"]
             if sel and "name" in sel and sel["name"]
-            else "default best"
+            else (
+                preview_entry["reason"]
+                if preview_entry and "reason" in preview_entry and preview_entry["reason"]
+                else "default best"
+            )
         );
         is_expanded = expandedOp == op_name;
         kernels_for_op_list = to_list(
@@ -536,10 +815,112 @@ def:pub CastExportModal(props: any) -> Any {
                         Additional backends coming soon.
                     </p>
                 </div>
+                <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4 space-y-4">
+                    <div>
+                        <div className="text-sm font-medium text-zinc-200">
+                            Export Review
+                        </div>
+                        <div className="text-xs text-zinc-500 mt-1">
+                            Choose a selection policy, review included operators, and override kernels only where needed.
+                        </div>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                        <label className="space-y-2">
+                            <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                                Benchmark Mode
+                            </span>
+                            <select
+                                value={benchmarkMode}
+                                onChange={lambda e: any -> None { setBenchmarkMode(str(e.target.value)); }}
+                                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200"
+                            >
+                                {benchmark_mode_option_nodes}
+                            </select>
+                        </label>
+                        <label className="space-y-2">
+                            <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                                Selection Policy
+                            </span>
+                            <select
+                                value={selectionPolicy}
+                                onChange={lambda e: any -> None {
+                                    setAllowUnsafeExport(False);
+                                    setSelectionPolicy(str(e.target.value));
+                                }}
+                                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200"
+                            >
+                                {selection_policy_option_nodes}
+                            </select>
+                        </label>
+                    </div>
+                    {<div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-400">
+                        Loading selection preview...
+                    </div>
+                    if previewLoading
+                    else <span/>}
+                    {<div className="rounded-lg border border-indigo-800/60 bg-indigo-950/30 px-3 py-2 text-sm text-indigo-200">
+                        {selectionPreview["policy_note"]}
+                    </div>
+                    if selectionPreview and "policy_note" in selectionPreview and selectionPreview["policy_note"]
+                    else <span/>}
+                    {<label className="flex items-start gap-3 rounded-lg border border-amber-800/70 bg-amber-950/30 px-3 py-3 text-sm text-amber-100">
+                        <input
+                            type="checkbox"
+                            checked={allowUnsafeExport}
+                            onChange={lambda e: any -> None { setAllowUnsafeExport(bool(e.target.checked)); }}
+                            className="mt-0.5"
+                        />
+                        <span>
+                            Allow unsafe export for this cast. Unsafe selections may rely on microbenchmark-only winners or incomplete deployment evidence.
+                        </span>
+                    </label>
+                    if selectionPreview and "requires_unsafe_ack" in selectionPreview and selectionPreview["requires_unsafe_ack"]
+                    else <span/>}
+                    <div className="flex flex-wrap gap-3 text-xs">
+                        <span className="px-2 py-1 rounded-full border border-emerald-700/60 bg-emerald-950/20 text-emerald-200">
+                            {preview_selected_details.length} included
+                        </span>
+                        <span className="px-2 py-1 rounded-full border border-zinc-700 text-zinc-300">
+                            {preview_excluded_ops.length} excluded
+                        </span>
+                        <span className="px-2 py-1 rounded-full border border-amber-700/60 bg-amber-950/20 text-amber-200">
+                            {to_list(selectionPreview["unsafe_selected_ops"] if selectionPreview and "unsafe_selected_ops" in selectionPreview else []).length} unsafe included
+                        </span>
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                        <div className="space-y-2">
+                            <div className="text-[11px] uppercase tracking-wide text-zinc-500">
+                                Included
+                            </div>
+                            {<div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                                {selected_preview_nodes}
+                            </div>
+                            if selected_preview_nodes.length > 0
+                            else <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 px-3 py-3 text-sm text-zinc-500">
+                                No operators are included by the current policy.
+                            </div>}
+                        </div>
+                        <div className="space-y-2">
+                            <div className="text-[11px] uppercase tracking-wide text-zinc-500">
+                                Excluded
+                            </div>
+                            {<div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                                {excluded_preview_nodes}
+                            </div>
+                            if excluded_preview_nodes.length > 0
+                            else <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 px-3 py-3 text-sm text-zinc-500">
+                                No exclusions for this policy.
+                            </div>}
+                        </div>
+                    </div>
+                </div>
                 <div className="space-y-2">
                     <label className="text-sm font-medium text-zinc-300">
                         Operator Kernels
                     </label>
+                    <p className="text-[10px] text-zinc-500 px-1">
+                        Only included operators appear below. Expanding a row lets you override the default best kernel for that op.
+                    </p>
                     {<div
                         className="flex items-center justify-center py-8 text-zinc-500 text-sm"
                     >
@@ -564,7 +945,16 @@ def:pub CastExportModal(props: any) -> Any {
                     </button>
                     <button
                         onClick={handleDownload}
-                        disabled={downloading}
+                        disabled={
+                            downloading
+                            or preview_selected_details.length == 0
+                            or (
+                                selectionPreview
+                                and "requires_unsafe_ack" in selectionPreview
+                                and selectionPreview["requires_unsafe_ack"]
+                                and not allowUnsafeExport
+                            )
+                        }
                         className={"px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-all shadow-lg hover:shadow-indigo-500/20 flex items-center gap-2 " + (
                             "opacity-50 cursor-not-allowed" if downloading else ""
                         )}
