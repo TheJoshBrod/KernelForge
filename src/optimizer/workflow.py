@@ -350,7 +350,13 @@ def _load_kernel_benchmark(project_dir: Path, op_name: str) -> tuple[float | Non
     except Exception:
         return None, ""
 
-    results = payload.get("results") if isinstance(payload, dict) else []
+    results = []
+    if isinstance(payload, dict):
+        for key in ("benchmarks", "results"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                results = value
+                break
     if not isinstance(results, list):
         return None, ""
 
@@ -359,19 +365,30 @@ def _load_kernel_benchmark(project_dir: Path, op_name: str) -> tuple[float | Non
             continue
         if str(row.get("op", "")) != op_name:
             continue
-        if str(row.get("kernel_status", "")) != "ok":
-            continue
-        kernel_entry_latencies = row.get("kernel_entry_latencies_ms")
+        micro = row.get("micro") if isinstance(row.get("micro"), dict) else {}
+        micro_status = str(micro.get("status", "") or "").lower()
+        legacy_status = str(row.get("kernel_status", "") or "").lower()
+        if micro:
+            if micro_status not in {"ready", "ok"}:
+                continue
+            kernel_entry_latencies = micro.get("entry_latencies_ms")
+            kernel_ms = micro.get("kernel_ms")
+            backend = str(micro.get("backend", "") or row.get("backend", "") or "")
+        else:
+            if legacy_status != "ok":
+                continue
+            kernel_entry_latencies = row.get("kernel_entry_latencies_ms")
+            kernel_ms = row.get("kernel_ms")
+            backend = str(row.get("backend", "") or "")
         if not isinstance(kernel_entry_latencies, list) or not kernel_entry_latencies:
             return None, ""
-        kernel_ms = row.get("kernel_ms")
         try:
             parsed_ms = float(kernel_ms)
         except Exception:
             return None, ""
         if parsed_ms <= 0.0:
             return None, ""
-        return parsed_ms, str(row.get("backend", "") or "")
+        return parsed_ms, backend
     return None, ""
 
 

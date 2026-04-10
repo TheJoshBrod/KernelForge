@@ -13,6 +13,7 @@ from src.optimizer.benchmarking import benchmark_ops
 from src.optimizer.backends.cuda import loader as cuda_loader
 from src.optimizer.backends.cuda import verifier as cuda_verifier
 from src.optimizer import workflow
+from src.optimizer import tree_store
 
 
 def test_discover_captured_op_dirs_ignores_empty_directories(tmp_path: Path):
@@ -327,3 +328,94 @@ def test_load_kernel_benchmark_accepts_measured_rows(tmp_path: Path):
         0.5,
         "cuda",
     )
+
+
+def test_load_kernel_benchmark_accepts_schema_v2_micro_rows(tmp_path: Path):
+    project_dir = tmp_path / "project"
+    bench_dir = project_dir / "benchmarks"
+    bench_dir.mkdir(parents=True)
+    (bench_dir / "op_benchmarks.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "benchmarks": [
+                    {
+                        "op": "torch_nn_functional_linear",
+                        "micro": {
+                            "status": "ready",
+                            "kernel_ms": 0.45,
+                            "backend": "cuda",
+                            "entry_latencies_ms": [0.44, 0.46],
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert workflow._load_kernel_benchmark(project_dir, "torch_nn_functional_linear") == (
+        0.45,
+        "cuda",
+    )
+
+
+def test_publish_generated_root_preserves_existing_search_value_and_writes_benchmark_meta(
+    tmp_path: Path,
+):
+    project_dir = tmp_path / "project"
+    op_name = "torch_nn_functional_linear"
+    generated_op_dir = (
+        project_dir
+        / "kernels"
+        / "generated"
+        / "individual_op_kernels"
+        / op_name
+    )
+    generated_op_dir.mkdir(parents=True)
+    (generated_op_dir / "kernel.cu").write_text("// kernel", encoding="utf-8")
+
+    tree_op_dir = project_dir / "trees" / op_name
+    db_path = tree_op_dir / "nodes.db"
+    tree_store._ensure_tree_schema(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO nodes
+            (id, visits, value, best_subtree_value, code, improvement_description, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                0,
+                3,
+                1.23,
+                0.91,
+                f"{op_name}/kernels/kernel_0.cu",
+                "Existing root",
+                0.0,
+            ),
+        )
+        conn.commit()
+
+    result = tree_store.publish_generated_root(
+        project_dir,
+        op_name,
+        kernel_ms=0.42,
+        backend="cuda",
+        description="Generated baseline kernel (benchmarked)",
+    )
+
+    assert result["ok"] is True
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT value, best_subtree_value FROM nodes WHERE id = 0"
+        ).fetchone()
+    assert row == (1.23, 0.91)
+
+    meta_path = tree_op_dir / "generated_root.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta["search_value_ms"] == 1.23
+    assert meta["search_best_subtree_value_ms"] == 0.91
+    assert meta["benchmarks"]["micro"]["kernel_ms"] == 0.42
+    assert meta["benchmarks"]["micro"]["backend"] == "cuda"

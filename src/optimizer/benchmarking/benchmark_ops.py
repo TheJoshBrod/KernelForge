@@ -15,7 +15,7 @@ import torch
 import torch.nn.functional as F
 
 from src.progress import update_job_progress
-from src.optimizer.tree_store import update_root_value
+from src.optimizer.tree_store import write_root_benchmark_metadata
 
 from .harness import (
     DEFAULT_TIMED_RUNS,
@@ -33,6 +33,7 @@ from .paths import find_latest_optimized_dir, project_dir_for_name
 from .state import read_json_file, write_json_file
 
 BenchmarkEntry = tuple[str, Any, dict[str, Any], Any]
+BENCHMARK_SCHEMA_VERSION = 2
 
 STRICT_CORRECTNESS_ATOL = 1e-4
 STRICT_CORRECTNESS_RTOL = 1e-3
@@ -854,6 +855,248 @@ def _select_candidate_ops(
     return candidate_ops, allowed_existing_ops
 
 
+def _benchmark_rows_from_payload(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    for key in ("benchmarks", "results"):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return rows
+    return []
+
+
+def _normalize_measurement_status(status: str) -> str:
+    raw = str(status or "").strip().lower()
+    if raw in {"ok", "ready"}:
+        return "ready"
+    if raw.startswith("missing"):
+        return "missing"
+    if "error" in raw:
+        return "error"
+    return raw or "unknown"
+
+
+def _selection_reason(
+    *,
+    winner: str,
+    deployment_winner: str,
+    deployment_safe_winner: str,
+    integrated_kernel_status: str,
+    correctness_summary: dict[str, Any] | None,
+) -> str:
+    if deployment_safe_winner == "optimized":
+        return "strict-pass + speedup + deployment replay success"
+    strict_pass = bool(
+        isinstance(correctness_summary, dict)
+        and correctness_summary.get("strict_pass") is True
+    )
+    if deployment_winner == "optimized" and not strict_pass:
+        return "faster in deployment replay but failed strict correctness"
+    if deployment_winner == "optimized" and integrated_kernel_status != "ok":
+        return "faster in replay candidate path but integrated benchmark did not complete cleanly"
+    if winner == "optimized":
+        return "microbenchmark win only; deployment-safe evidence insufficient"
+    return "PyTorch remains the recommended backend"
+
+
+def _build_benchmark_row(
+    *,
+    op_name: str,
+    benchmarked_entry_count: int,
+    available_entries: int,
+    benchmarked_entry_files: list[str],
+    pytorch_ms: float,
+    pytorch_entry_latencies: list[float],
+    kernel_ms: float | None,
+    kernel_entry_latencies: list[float],
+    kernel_status: str,
+    winner: str,
+    integrated_kernel_ms: float | None,
+    integrated_kernel_entry_latencies: list[float],
+    integrated_kernel_status: str,
+    deployment_winner: str,
+    deployment_safe_winner: str,
+    baseline_source: str,
+    backend: str,
+    integrated_kernel_source: str,
+    integrated_adapter_stats: dict[str, int],
+    integrated_correctness_summary: dict[str, Any] | None,
+    kernel_estimated: bool,
+    kernel_benchmarked_entry_files: list[str],
+    integrated_kernel_benchmarked_entry_files: list[str],
+) -> dict[str, Any]:
+    speedup = (
+        float(pytorch_ms / kernel_ms)
+        if pytorch_ms and kernel_ms and kernel_ms > 0
+        else None
+    )
+    deployment_speedup = (
+        float(pytorch_ms / integrated_kernel_ms)
+        if pytorch_ms and integrated_kernel_ms and integrated_kernel_ms > 0
+        else None
+    )
+    selection_backend = (
+        "optimized" if deployment_safe_winner == "optimized" else "pytorch"
+    )
+    selection_reason = _selection_reason(
+        winner=winner,
+        deployment_winner=deployment_winner,
+        deployment_safe_winner=deployment_safe_winner,
+        integrated_kernel_status=integrated_kernel_status,
+        correctness_summary=integrated_correctness_summary,
+    )
+
+    micro_payload: dict[str, Any] = {
+        "status": _normalize_measurement_status(kernel_status),
+        "sample_count": int(benchmarked_entry_count),
+        "pytorch_ms": float(pytorch_ms),
+        "kernel_ms": float(kernel_ms) if kernel_ms is not None else None,
+        "speedup": speedup,
+        "winner": winner,
+        "entry_files": list(benchmarked_entry_files),
+        "entry_latencies_ms": list(kernel_entry_latencies),
+        "baseline_entry_latencies_ms": list(pytorch_entry_latencies),
+    }
+    if backend:
+        micro_payload["backend"] = backend
+    if kernel_estimated:
+        micro_payload["estimated"] = True
+
+    deployment_payload: dict[str, Any] = {
+        "status": _normalize_measurement_status(integrated_kernel_status),
+        "sample_count": int(benchmarked_entry_count),
+        "replay_pytorch_ms": float(pytorch_ms),
+        "replay_kernel_ms": (
+            float(integrated_kernel_ms) if integrated_kernel_ms is not None else None
+        ),
+        "replay_speedup": deployment_speedup,
+        "winner": deployment_winner,
+        "safe": deployment_safe_winner == "optimized",
+        "recommended_backend": selection_backend,
+        "entry_files": list(integrated_kernel_benchmarked_entry_files or benchmarked_entry_files),
+        "entry_latencies_ms": list(integrated_kernel_entry_latencies),
+        "coverage": {
+            "adapter_stats": dict(integrated_adapter_stats),
+        },
+        "fallback": {
+            "supported": integrated_kernel_status == "ok",
+            "observed": 0 if integrated_kernel_status == "ok" else None,
+            "reasons": [] if integrated_kernel_status == "ok" else [integrated_kernel_status],
+        },
+    }
+    if integrated_correctness_summary:
+        deployment_payload["correctness"] = dict(integrated_correctness_summary)
+    if integrated_kernel_source:
+        deployment_payload["kernel_source"] = integrated_kernel_source
+    if backend:
+        deployment_payload["backend"] = backend
+
+    row: dict[str, Any] = {
+        "op": op_name,
+        "selection": {
+            "recommended_mode": "deployment",
+            "recommended_backend": selection_backend,
+            "recommended_reason": selection_reason,
+            "export_allowed": selection_backend == "optimized",
+            "unsafe_override_required": (
+                winner == "optimized" and selection_backend != "optimized"
+            ),
+        },
+        "micro": micro_payload,
+        "deployment": deployment_payload,
+        "stress": {
+            "status": "not_run",
+        },
+        "e2e": {
+            "status": "not_run",
+        },
+        # Legacy fields retained for readers that still expect the flat schema.
+        "entries": benchmarked_entry_count,
+        "available_entries": available_entries,
+        "benchmarked_entry_count": benchmarked_entry_count,
+        "benchmarked_entry_files": benchmarked_entry_files,
+        "pytorch_ms": float(pytorch_ms),
+        "pytorch_entry_latencies_ms": pytorch_entry_latencies,
+        "kernel_ms": float(kernel_ms) if kernel_ms is not None else None,
+        "kernel_entry_latencies_ms": kernel_entry_latencies,
+        "kernel_status": kernel_status,
+        "winner": winner,
+        "integrated_kernel_ms": (
+            float(integrated_kernel_ms) if integrated_kernel_ms is not None else None
+        ),
+        "integrated_kernel_entry_latencies_ms": integrated_kernel_entry_latencies,
+        "integrated_kernel_status": integrated_kernel_status,
+        "deployment_winner": deployment_winner,
+        "deployment_safe_winner": deployment_safe_winner,
+        "baseline_source": baseline_source,
+    }
+    if kernel_benchmarked_entry_files:
+        row["kernel_benchmarked_entry_files"] = kernel_benchmarked_entry_files
+    if integrated_kernel_benchmarked_entry_files:
+        row["integrated_kernel_benchmarked_entry_files"] = (
+            integrated_kernel_benchmarked_entry_files
+        )
+    if backend:
+        row["backend"] = backend
+    if integrated_kernel_source:
+        row["deployment_kernel_source"] = integrated_kernel_source
+    if integrated_adapter_stats:
+        row["integration_adapter_stats"] = integrated_adapter_stats
+    if integrated_correctness_summary:
+        row["deployment_correctness"] = integrated_correctness_summary
+    if kernel_estimated:
+        row["kernel_estimated"] = True
+    if speedup is not None:
+        row["speedup"] = speedup
+    if deployment_speedup is not None:
+        row["deployment_speedup"] = deployment_speedup
+    return row
+
+
+def _build_output_payload(
+    *,
+    project: str,
+    status: str,
+    device: str,
+    runtime_fingerprint: str,
+    optimized_root: Path | None,
+    rows: list[dict[str, Any]],
+    errors: list[str],
+    current: int | None = None,
+    total: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
+        "project": project,
+        "timestamp": _now_iso(),
+        "status": status,
+        "device": device,
+        "available_modes": ["micro", "deployment", "stress", "e2e"],
+        "default_mode": "deployment",
+        "selection_policy": "safe",
+        "benchmark_protocol": {
+            "warmup_runs": DEFAULT_WARMUP_RUNS,
+            "timed_runs": DEFAULT_TIMED_RUNS,
+            "notes": (
+                "Direct kernel replay and deployment-style integrated replay; "
+                "no confidence intervals."
+            ),
+        },
+        "runtime_fingerprint": json.loads(runtime_fingerprint),
+        "optimized_dir": str(optimized_root) if optimized_root else "",
+        "benchmarks": rows,
+        "results": rows,
+        "errors": errors,
+    }
+    if current is not None and total is not None:
+        payload["progress"] = {
+            "current": int(current),
+            "total": int(total),
+            "percent": (float(current) / float(total)) if total else 0.0,
+        }
+    return payload
+
+
 def _apply_generated_profile_result(
     *,
     op_name: str,
@@ -961,9 +1204,14 @@ def main() -> int:
             write_json_file(
                 output_path,
                 {
+                    "schema_version": BENCHMARK_SCHEMA_VERSION,
                     "project": args.project,
                     "timestamp": _now_iso(),
                     "status": "empty",
+                    "available_modes": ["micro", "deployment", "stress", "e2e"],
+                    "default_mode": "deployment",
+                    "selection_policy": "safe",
+                    "benchmarks": [],
                     "results": [],
                     "errors": ["No profiling entries or summary found under io/"],
                 },
@@ -994,15 +1242,14 @@ def main() -> int:
 
         existing_payload = read_json_file(output_path, {})
         if isinstance(existing_payload, dict):
-            existing_results = existing_payload.get("results")
-            if isinstance(existing_results, list):
-                for r in existing_results:
-                    if not (isinstance(r, dict) and r.get("op")):
-                        continue
-                    op_name = str(r["op"])
-                    if allowed_existing_ops and op_name not in allowed_existing_ops:
-                        continue
-                    results_by_op[op_name] = r
+            existing_results = _benchmark_rows_from_payload(existing_payload)
+            for r in existing_results:
+                if not (isinstance(r, dict) and r.get("op")):
+                    continue
+                op_name = str(r["op"])
+                if allowed_existing_ops and op_name not in allowed_existing_ops:
+                    continue
+                results_by_op[op_name] = r
         if selected_ops:
             for op_name in selected_ops:
                 results_by_op.pop(op_name, None)
@@ -1034,46 +1281,34 @@ def main() -> int:
 
         if total_ops <= 0:
             write_json_file(cache_path, cache)
+            rows = [results_by_op[k] for k in sorted(results_by_op.keys())]
             write_json_file(
                 output_path,
-                {
-                    "project": args.project,
-                    "timestamp": _now_iso(),
-                    "status": "empty",
-                    "device": device,
-                    "runtime_fingerprint": json.loads(runtime_fingerprint),
-                    "optimized_dir": str(optimized_root) if optimized_root else "",
-                    "results": [results_by_op[k] for k in sorted(results_by_op.keys())],
-                    "errors": errors,
-                },
+                _build_output_payload(
+                    project=args.project,
+                    status="empty",
+                    device=device,
+                    runtime_fingerprint=runtime_fingerprint,
+                    optimized_root=optimized_root,
+                    rows=rows,
+                    errors=errors,
+                ),
             )
             print(f"[benchmarking.benchmark_ops] Wrote {output_path}")
             return 0
 
         def _write_incremental(status: str, current: int, total: int) -> None:
-            payload = {
-                "project": args.project,
-                "timestamp": _now_iso(),
-                "status": status,
-                "device": device,
-                "benchmark_protocol": {
-                    "warmup_runs": DEFAULT_WARMUP_RUNS,
-                    "timed_runs": DEFAULT_TIMED_RUNS,
-                    "notes": (
-                        "Direct kernel replay and deployment-style integrated replay; "
-                        "no confidence intervals."
-                    ),
-                },
-                "runtime_fingerprint": json.loads(runtime_fingerprint),
-                "optimized_dir": str(optimized_root) if optimized_root else "",
-                "results": [results_by_op[k] for k in sorted(results_by_op.keys())],
-                "errors": errors,
-                "progress": {
-                    "current": int(current),
-                    "total": int(total),
-                    "percent": (float(current) / float(total)) if total else 0.0,
-                },
-            }
+            payload = _build_output_payload(
+                project=args.project,
+                status=status,
+                device=device,
+                runtime_fingerprint=runtime_fingerprint,
+                optimized_root=optimized_root,
+                rows=[results_by_op[k] for k in sorted(results_by_op.keys())],
+                errors=errors,
+                current=current,
+                total=total,
+            )
             write_json_file(output_path, payload)
 
         for idx, op_name in enumerate(candidate_ops):
@@ -1308,61 +1543,41 @@ def main() -> int:
                 correctness_summary=integrated_correctness_summary,
             )
 
-            row = {
-                "op": op_name,
-                "entries": benchmarked_entry_count,
-                "available_entries": count,
-                "benchmarked_entry_count": benchmarked_entry_count,
-                "benchmarked_entry_files": benchmarked_entry_files,
-                "pytorch_ms": float(pytorch_ms),
-                "pytorch_entry_latencies_ms": pytorch_entry_latencies,
-                "kernel_ms": float(kernel_ms) if kernel_ms is not None else None,
-                "kernel_entry_latencies_ms": kernel_entry_latencies,
-                "kernel_status": kernel_status,
-                "winner": winner,
-                "integrated_kernel_ms": (
-                    float(integrated_kernel_ms)
-                    if integrated_kernel_ms is not None
-                    else None
-                ),
-                "integrated_kernel_entry_latencies_ms": integrated_kernel_entry_latencies,
-                "integrated_kernel_status": integrated_kernel_status,
-                "deployment_winner": deployment_winner,
-                "deployment_safe_winner": deployment_safe_winner,
-                "baseline_source": baseline_source,
-            }
-            if kernel_benchmarked_entry_files:
-                row["kernel_benchmarked_entry_files"] = kernel_benchmarked_entry_files
-            if integrated_kernel_benchmarked_entry_files:
-                row["integrated_kernel_benchmarked_entry_files"] = (
-                    integrated_kernel_benchmarked_entry_files
-                )
-            if backend:
-                row["backend"] = backend
-            if integrated_kernel_source:
-                row["deployment_kernel_source"] = integrated_kernel_source
-            if integrated_adapter_stats:
-                row["integration_adapter_stats"] = integrated_adapter_stats
-            if integrated_correctness_summary:
-                row["deployment_correctness"] = integrated_correctness_summary
-            if kernel_estimated:
-                row["kernel_estimated"] = True
-            if pytorch_ms and kernel_ms:
-                row["speedup"] = float(pytorch_ms / kernel_ms) if kernel_ms > 0 else None
-            if pytorch_ms and integrated_kernel_ms:
-                row["deployment_speedup"] = (
-                    float(pytorch_ms / integrated_kernel_ms)
-                    if integrated_kernel_ms > 0
-                    else None
-                )
+            row = _build_benchmark_row(
+                op_name=op_name,
+                benchmarked_entry_count=benchmarked_entry_count,
+                available_entries=count,
+                benchmarked_entry_files=benchmarked_entry_files,
+                pytorch_ms=pytorch_ms,
+                pytorch_entry_latencies=pytorch_entry_latencies,
+                kernel_ms=kernel_ms,
+                kernel_entry_latencies=kernel_entry_latencies,
+                kernel_status=kernel_status,
+                winner=winner,
+                integrated_kernel_ms=integrated_kernel_ms,
+                integrated_kernel_entry_latencies=integrated_kernel_entry_latencies,
+                integrated_kernel_status=integrated_kernel_status,
+                deployment_winner=deployment_winner,
+                deployment_safe_winner=deployment_safe_winner,
+                baseline_source=baseline_source,
+                backend=backend,
+                integrated_kernel_source=integrated_kernel_source,
+                integrated_adapter_stats=integrated_adapter_stats,
+                integrated_correctness_summary=integrated_correctness_summary,
+                kernel_estimated=kernel_estimated,
+                kernel_benchmarked_entry_files=kernel_benchmarked_entry_files,
+                integrated_kernel_benchmarked_entry_files=integrated_kernel_benchmarked_entry_files,
+            )
             results_by_op[op_name] = row
-            if kernel_status == "ok" and kernel_ms is not None:
+            if kernel_status == "ok" or integrated_kernel_status == "ok":
                 try:
-                    update_root_value(
+                    write_root_benchmark_metadata(
                         project_dir,
                         op_name,
-                        kernel_ms,
-                        description="Generated baseline kernel (benchmarked)",
+                        micro_kernel_ms=kernel_ms,
+                        deployment_kernel_ms=integrated_kernel_ms,
+                        backend=backend,
+                        benchmark_source="benchmark_ops_refresh",
                     )
                 except Exception as e:
                     errors.append(f"{op_name}: tree sync failed: {e}")
@@ -1389,9 +1604,14 @@ def main() -> int:
         write_json_file(
             output_path,
             {
+                "schema_version": BENCHMARK_SCHEMA_VERSION,
                 "project": args.project,
                 "timestamp": _now_iso(),
                 "status": "error",
+                "available_modes": ["micro", "deployment", "stress", "e2e"],
+                "default_mode": "deployment",
+                "selection_policy": "safe",
+                "benchmarks": [],
                 "results": [],
                 "errors": [str(e)],
             },
