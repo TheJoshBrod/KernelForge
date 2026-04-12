@@ -1321,21 +1321,20 @@ walker:pub ProposeFusions {
             }
 
             adj_out = {};
-            in_degree = {};
+            adj_in = {};
             for edge in dag_edges {
                 src = edge["source"] if "source" in edge else "";
                 tgt = edge["target"] if "target" in edge else "";
                 if not src or not tgt {
                     continue;
                 }
-                if src not in adj_out {
-                    adj_out[src] = [];
-                }
-                adj_out[src].append(tgt);
-                in_degree[tgt] = in_degree.get(tgt, 0) + 1;
+                adj_out.setdefault(src, []).append(tgt);
+                adj_in.setdefault(tgt, []).append(src);
             }
 
-            # Walk linear chains from each chain-start (nodes with in_degree != 1)
+            # Walk linear chains. For each unvisited node, walk backward first to find
+            # the true chain head (so iteration order doesn't split chains), then walk
+            # forward to collect the full sequence.
             visited = set();
             all_chains = [];
             for n in dag_nodes {
@@ -1343,31 +1342,51 @@ walker:pub ProposeFusions {
                 if not nid or nid in visited {
                     continue;
                 }
-                if in_degree.get(nid, 0) != 1 {
-                    chain = [nid];
-                    visited.add(nid);
-                    current = nid;
-                    while True {
-                        outs = adj_out.get(current, []);
-                        if len(outs) != 1 {
-                            break;
-                        }
-                        next_id = outs[0];
-                        if in_degree.get(next_id, 0) != 1 {
-                            break;
-                        }
-                        chain.append(next_id);
-                        visited.add(next_id);
-                        current = next_id;
+
+                # Backward walk — find chain head.
+                # Uses a local set: global visited is still empty for this chain's nodes,
+                # so it can't guard against cycles here on its own.
+                head = nid;
+                backward_visited = {nid};
+                while True {
+                    preds = adj_in.get(head, []);
+                    if len(preds) != 1 {
+                        break;
                     }
-                    all_chains.append(chain);
+                    pred = preds[0];
+                    if len(adj_out.get(pred, [])) != 1 {
+                        break;
+                    }
+                    if pred in visited or pred in backward_visited {
+                        break;
+                    }
+                    backward_visited.add(pred);
+                    head = pred;
                 }
-            }
-            for n in dag_nodes {
-                nid = n["id"] if "id" in n else "";
-                if nid and nid not in visited {
-                    all_chains.append([nid]);
-                    visited.add(nid);
+
+                # Forward walk from head
+                chain = [head];
+                visited.add(head);
+                current = head;
+                while True {
+                    outs = adj_out.get(current, []);
+                    if len(outs) != 1 {
+                        break;
+                    }
+                    next_id = outs[0];
+                    if len(adj_in.get(next_id, [])) != 1 {
+                        break;
+                    }
+                    if next_id in visited {
+                        break;
+                    }
+                    chain.append(next_id);
+                    visited.add(next_id);
+                    current = next_id;
+                }
+
+                if len(chain) >= 2 {
+                    all_chains.append(chain);
                 }
             }
 
