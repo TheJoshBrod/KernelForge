@@ -662,7 +662,7 @@ walker:pub GetProjectOps {
                         }
                     }
                 } except Exception {
-                    pass;
+                    ops_map = {};
                 }
             }
 
@@ -1008,6 +1008,587 @@ walker:pub CloneProjectForGpu {
             report {"success": True, "newProjectName": new_name};
         } except Exception as e {
             print(f"Error cloning project: {e}");
+            report {"success": False, "error": str(e)};
+        }
+    }
+}
+
+walker:pub GetEnrichedDAG {
+    has projectName: str;
+
+    can run with entry {
+        try {
+            proj_dir = _project_dir(self.projectName);
+
+            # Read dag.json
+            dag_nodes = [];
+            dag_edges = [];
+            try {
+                dag_path = path.join(proj_dir, "io", "dag.json");
+                with open(dag_path, "r") as f {
+                    dag_data = load(f);
+                }
+                dag_nodes = dag_data["nodes"] if dag_data and "nodes" in dag_data else [];
+                dag_edges = dag_data["edges"] if dag_data and "edges" in dag_data else [];
+            } except Exception as e {
+                print(f"GetEnrichedDAG: dag.json: {e}");
+            }
+
+            # Read summary.json for single-pass call counts
+            count_map = {};
+            try {
+                summary_path = path.join(proj_dir, "io", "summary.json");
+                with open(summary_path, "r") as f {
+                    summary = load(f);
+                }
+                op_counts = summary["op_counts"] if summary and "op_counts" in summary else {};
+                for full_name in op_counts {
+                    normalized = _normalize_metric_op_name(full_name);
+                    short = normalized[len("torch_nn_functional_"):] if normalized.startswith("torch_nn_functional_") else normalized;
+                    try {
+                        count_map[short] = int(op_counts[full_name]);
+                    } except Exception {
+                        count_map[short] = 0;
+                    }
+                }
+            } except Exception as e {
+                print(f"GetEnrichedDAG: summary.json: {e}");
+            }
+
+            # Read op_benchmarks.json
+            bench_map = {};
+            bench_op_for = {};
+            try {
+                bench_path = path.join(proj_dir, "benchmarks", "op_benchmarks.json");
+                with open(bench_path, "r") as f {
+                    bench_data = load(f);
+                }
+                bench_results = bench_data["results"] if bench_data and "results" in bench_data else [];
+                for r in bench_results {
+                    if not r {
+                        continue;
+                    }
+                    bench_op = r["op"] if "op" in r and r["op"] else "";
+                    if not bench_op {
+                        continue;
+                    }
+                    short = bench_op[len("torch_nn_functional_"):] if bench_op.startswith("torch_nn_functional_") else bench_op;
+                    bench_map[short] = r;
+                    bench_op_for[short] = bench_op;
+                }
+            } except Exception as e {
+                print(f"GetEnrichedDAG: op_benchmarks.json: {e}");
+            }
+
+            # Read fusion_groups.json (optional)
+            fusion_groups = [];
+            try {
+                fg_path = path.join(proj_dir, "fusion_groups.json");
+                with open(fg_path, "r") as f {
+                    fg_data = load(f);
+                }
+                fusion_groups = fg_data["groups"] if fg_data and "groups" in fg_data else [];
+            } except Exception {
+                fusion_groups = [];
+            }
+
+            # Build enriched nodes
+            total_pytorch_ms = 0.0;
+            enriched_nodes = [];
+            for n in dag_nodes {
+                node_id = n["id"] if "id" in n and n["id"] else "";
+                op = n["op"] if "op" in n and n["op"] else "";
+                if not node_id or not op {
+                    continue;
+                }
+
+                call_count = count_map[op] if op in count_map else 0;
+                bench = bench_map[op] if op in bench_map else {};
+                full_bench_op = bench_op_for[op] if op in bench_op_for else f"torch_nn_functional_{op}";
+
+                pytorch_ms = None;
+                kernel_ms = None;
+                winner = "";
+                speedup = None;
+                status = "pending";
+
+                if bench {
+                    pm = bench.get("pytorch_ms");
+                    km = bench.get("kernel_ms");
+                    wn = bench.get("winner", "");
+                    sp = bench.get("speedup");
+                    if pm is not None {
+                        try { pytorch_ms = float(pm); } except Exception { }
+                    }
+                    if km is not None {
+                        try { kernel_ms = float(km); } except Exception { }
+                    }
+                    if sp is not None {
+                        try { speedup = float(sp); } except Exception { }
+                    }
+                    winner = str(wn) if wn else "";
+                    if winner == "optimized" {
+                        status = "forged";
+                    } elif pytorch_ms is not None {
+                        status = "benchmarked";
+                    }
+                }
+
+                if pytorch_ms is not None {
+                    total_pytorch_ms = total_pytorch_ms + pytorch_ms;
+                }
+
+                enriched_nodes.append({
+                    "id": node_id,
+                    "op": op,
+                    "bench_op": full_bench_op,
+                    "call_count": call_count,
+                    "pytorch_ms": pytorch_ms,
+                    "kernel_ms": kernel_ms,
+                    "winner": winner,
+                    "speedup": speedup,
+                    "status": status
+                });
+            }
+
+            report {
+                "nodes": enriched_nodes,
+                "edges": dag_edges,
+                "fusion_groups": fusion_groups,
+                "total_pytorch_ms": total_pytorch_ms
+            };
+        } except Exception as e {
+            print(f"GetEnrichedDAG error: {e}");
+            report {"nodes": [], "edges": [], "fusion_groups": [], "total_pytorch_ms": 0.0};
+        }
+    }
+}
+
+walker:pub SaveFusionGroups {
+    has projectName: str,
+        groups: list = [];
+
+    can run with entry {
+        try {
+            proj_dir = _project_dir(self.projectName);
+            fg_path = path.join(proj_dir, "fusion_groups.json");
+            fg_data = {"version": 1, "groups": self.groups};
+            with open(fg_path, "w") as f {
+                dump(fg_data, f, indent=2);
+            }
+            report {"success": True};
+        } except Exception as e {
+            print(f"SaveFusionGroups error: {e}");
+            report {"success": False, "error": str(e)};
+        }
+    }
+}
+
+walker:pub UpdateFusionGroup {
+    has projectName: str,
+        groupId: str,
+        action: str,
+        payload: dict = {};
+
+    can run with entry {
+        try {
+            proj_dir = _project_dir(self.projectName);
+            fg_path = path.join(proj_dir, "fusion_groups.json");
+
+            try {
+                with open(fg_path, "r") as f {
+                    fg_data = load(f);
+                }
+            } except Exception {
+                fg_data = {"version": 1, "groups": []};
+            }
+
+            groups = fg_data["groups"] if fg_data and "groups" in fg_data else [];
+
+            # Find the target group to get its pattern_name
+            target_pattern = None;
+            for g in groups {
+                if g.get("id") == self.groupId {
+                    target_pattern = g.get("pattern_name", g.get("id"));
+                    break;
+                }
+            }
+
+            if target_pattern is not None {
+                for g in groups {
+                    g_pname = g.get("pattern_name", g.get("id"));
+                    if g_pname == target_pattern {
+                        if self.action == "accept" {
+                            g["status"] = "accepted";
+                        } elif self.action == "reject" {
+                            g["status"] = "rejected";
+                        } elif self.action == "rename" {
+                            new_name = self.payload.get("name", "");
+                            if new_name {
+                                g["name"] = new_name;
+                            }
+                        }
+                    }
+                }
+            }
+
+            fg_data["groups"] = groups;
+            with open(fg_path, "w") as f {
+                dump(fg_data, f, indent=2);
+            }
+
+            report {"success": True, "groups": groups};
+        } except Exception as e {
+            print(f"UpdateFusionGroup error: {e}");
+            report {"success": False, "error": str(e)};
+        }
+    }
+}
+
+walker:pub ProposeFusions {
+    has projectName: str,
+        model: str = "claude-sonnet-4-5-20251001";
+
+    can run with entry {
+        import json;
+        import from .globals { config_path }
+
+        try {
+            proj_dir = _project_dir(self.projectName);
+
+            # Load API keys
+            api_keys = {};
+            try {
+                with open(config_path, "r") as f {
+                    cfg = json.load(f);
+                }
+                api_keys = cfg["api_keys"] if cfg and "api_keys" in cfg else {};
+            } except Exception as e {
+                print(f"ProposeFusions: config error: {e}");
+            }
+
+            # Read dag.json
+            dag_nodes = [];
+            dag_edges = [];
+            try {
+                dag_path = path.join(proj_dir, "io", "dag.json");
+                with open(dag_path, "r") as f {
+                    dag_data = load(f);
+                }
+                dag_nodes = dag_data["nodes"] if dag_data and "nodes" in dag_data else [];
+                dag_edges = dag_data["edges"] if dag_data and "edges" in dag_data else [];
+            } except Exception as e {
+                report {"success": False, "error": f"No DAG found — run profiling first. ({e})"};
+                return;
+            }
+
+            if not dag_nodes {
+                report {"success": False, "error": "DAG is empty — run profiling first."};
+                return;
+            }
+
+            # Read op_benchmarks.json for timing context
+            bench_map = {};
+            try {
+                bench_path = path.join(proj_dir, "benchmarks", "op_benchmarks.json");
+                with open(bench_path, "r") as f {
+                    bench_data = load(f);
+                }
+                bench_results = bench_data["results"] if bench_data and "results" in bench_data else [];
+                for r in bench_results {
+                    if not r {
+                        continue;
+                    }
+                    bench_op = r["op"] if "op" in r and r["op"] else "";
+                    if not bench_op {
+                        continue;
+                    }
+                    short = bench_op[len("torch_nn_functional_"):] if bench_op.startswith("torch_nn_functional_") else bench_op;
+                    bench_map[short] = r;
+                }
+            } except Exception as e {
+                print(f"ProposeFusions: benchmarks: {e}");
+            }
+
+            # Build node op map and adjacency
+            node_ops = {};
+            for n in dag_nodes {
+                nid = n["id"] if "id" in n else "";
+                op = n["op"] if "op" in n else "";
+                if nid and op {
+                    node_ops[nid] = op;
+                }
+            }
+
+            adj_out = {};
+            in_degree = {};
+            for edge in dag_edges {
+                src = edge["source"] if "source" in edge else "";
+                tgt = edge["target"] if "target" in edge else "";
+                if not src or not tgt {
+                    continue;
+                }
+                if src not in adj_out {
+                    adj_out[src] = [];
+                }
+                adj_out[src].append(tgt);
+                in_degree[tgt] = in_degree.get(tgt, 0) + 1;
+            }
+
+            # Walk linear chains from each chain-start (nodes with in_degree != 1)
+            visited = set();
+            all_chains = [];
+            for n in dag_nodes {
+                nid = n["id"] if "id" in n else "";
+                if not nid or nid in visited {
+                    continue;
+                }
+                if in_degree.get(nid, 0) != 1 {
+                    chain = [nid];
+                    visited.add(nid);
+                    current = nid;
+                    while True {
+                        outs = adj_out.get(current, []);
+                        if len(outs) != 1 {
+                            break;
+                        }
+                        next_id = outs[0];
+                        if in_degree.get(next_id, 0) != 1 {
+                            break;
+                        }
+                        chain.append(next_id);
+                        visited.add(next_id);
+                        current = next_id;
+                    }
+                    all_chains.append(chain);
+                }
+            }
+            for n in dag_nodes {
+                nid = n["id"] if "id" in n else "";
+                if nid and nid not in visited {
+                    all_chains.append([nid]);
+                    visited.add(nid);
+                }
+            }
+
+            # Group chains by op sequence
+            pattern_groups = {};
+            for chain in all_chains {
+                if len(chain) < 2 {
+                    continue;
+                }
+                op_seq_list = [];
+                for nid in chain {
+                    op_seq_list.append(node_ops.get(nid, "?"));
+                }
+                key = "|".join(op_seq_list);
+                if key not in pattern_groups {
+                    pattern_groups[key] = {"ops": op_seq_list, "instances": []};
+                }
+                pattern_groups[key]["instances"].append(chain);
+            }
+
+            # Build prompt lines (sorted by frequency)
+            sorted_patterns = sorted(
+                pattern_groups.items(),
+                key=lambda x : -len(x[1]["instances"])
+            );
+            pattern_lines = [];
+            for (key, pg) in sorted_patterns[:20] {
+                ops = pg["ops"];
+                freq = len(pg["instances"]);
+                combined_ms = 0.0;
+                for op in ops {
+                    pm = bench_map.get(op, {}).get("pytorch_ms");
+                    if pm {
+                        try { combined_ms = combined_ms + float(pm); } except Exception { combined_ms = combined_ms; }
+                    }
+                }
+                ms_str = f"{combined_ms:.3f}ms" if combined_ms > 0 else "N/A";
+                pattern_lines.append(f"  [{', '.join(ops)}] x{freq} — {ms_str}/instance");
+            }
+
+            op_timing_lines = [];
+            for short_op in sorted(bench_map.keys())[:30] {
+                r = bench_map[short_op];
+                pm = r.get("pytorch_ms");
+                km = r.get("kernel_ms");
+                winner = r.get("winner", "");
+                if pm {
+                    status_tag = " [FORGED]" if winner == "optimized" else "";
+                    km_str = f" / kernel={km:.3f}ms" if km else "";
+                    op_timing_lines.append(f"  {short_op}: pytorch={pm:.3f}ms{km_str}{status_tag}");
+                }
+            }
+
+            pattern_text = "\n".join(pattern_lines) if pattern_lines else "  (no repeated patterns)";
+            op_timing_text = "\n".join(op_timing_lines) if op_timing_lines else "  (no benchmark data)";
+            total_nodes = len(dag_nodes);
+
+            system_prompt = """You are a GPU kernel fusion expert analyzing a neural network computation graph.
+Identify which adjacent operator chains are strong candidates for kernel fusion to reduce global memory traffic and kernel launch overhead.
+
+Return ONLY valid JSON (no markdown fences, no text outside JSON) in this exact schema:
+{
+  "fusion_groups": [
+    {
+      "name": "short_identifier",
+      "pattern_ops": ["op1", "op2", "op3"],
+      "estimated_speedup": 1.8,
+      "rationale": "one sentence explanation"
+    }
+  ]
+}
+
+Rules:
+- Only propose fusions for ops in the listed patterns (adjacent in the graph)
+- Prioritize high-frequency patterns (many instances) for maximum model-wide impact
+- Skip patterns where all ops are already [FORGED]
+- Common wins: conv+batch_norm+relu, linear+gelu, linear+relu, adaptive_avg_pool2d+linear
+- estimated_speedup must be between 1.1 and 3.5""";
+
+            user_prompt = f"""Project: {self.projectName}
+Total ops in graph: {total_nodes}
+
+Repeated adjacent-op patterns (op sequence → instances → combined timing/instance):
+{pattern_text}
+
+Per-op baseline timing:
+{op_timing_text}
+
+Propose the best fusion candidates.""";
+
+            # Call LLM
+            model_name = self.model;
+            response_text = "";
+
+            if model_name.startswith("claude") {
+                import anthropic;
+                api_key = api_keys.get("anthropic", "");
+                if not api_key {
+                    report {"success": False, "error": "No Anthropic API key configured"};
+                    return;
+                }
+                ant_client = anthropic.Anthropic(api_key=api_key);
+                ant_msg = ant_client.messages.create(
+                    model=model_name,
+                    max_tokens=2048,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}]
+                );
+                response_text = ant_msg.content[0].text;
+            } elif model_name.startswith("gpt") or model_name.startswith("o1") or model_name.startswith("o3") or model_name.startswith("o4") {
+                import openai;
+                api_key = api_keys.get("openai", "");
+                if not api_key {
+                    report {"success": False, "error": "No OpenAI API key configured"};
+                    return;
+                }
+                oai_client = openai.OpenAI(api_key=api_key);
+                oai_resp = oai_client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    max_tokens=2048
+                );
+                response_text = oai_resp.choices[0].message.content;
+            } elif model_name.startswith("gemini") {
+                import from google { genai }
+                api_key = api_keys.get("google", "");
+                if not api_key {
+                    report {"success": False, "error": "No Google API key configured"};
+                    return;
+                }
+                gem_client = genai.Client(api_key=api_key);
+                gem_resp = gem_client.models.generate_content(
+                    model=model_name,
+                    contents=user_prompt,
+                    config={"system_instruction": system_prompt}
+                );
+                response_text = gem_resp.text;
+            } else {
+                report {"success": False, "error": f"Unknown model provider for: {model_name}"};
+                return;
+            }
+
+            # Parse response
+            parsed = None;
+            try {
+                text = response_text.strip();
+                if text.startswith("```") {
+                    lines = text.split("\n");
+                    inner = lines[1:] if len(lines) > 1 else [];
+                    if inner and inner[-1].strip().startswith("```") {
+                        inner = inner[:-1];
+                    }
+                    text = "\n".join(inner);
+                }
+                parsed = json.loads(text);
+            } except Exception as e {
+                report {"success": False, "error": f"LLM response parse error: {e}\nRaw: {response_text[:500]}"};
+                return;
+            }
+
+            proposed = parsed.get("fusion_groups", []) if parsed else [];
+
+            # Expand pattern-level proposals to instance-level fusion groups
+            new_groups = [];
+            group_idx = 0;
+            used_color = 0;
+            for prop in proposed {
+                pattern_ops = prop.get("pattern_ops", []);
+                if not pattern_ops {
+                    continue;
+                }
+                prop_name = prop.get("name", "_".join(pattern_ops));
+                est_speedup = prop.get("estimated_speedup", 1.5);
+                rationale = prop.get("rationale", "");
+                key = "|".join(pattern_ops);
+
+                pg = pattern_groups.get(key);
+                instances = pg["instances"] if pg else [];
+
+                if not instances {
+                    # Partial match fallback
+                    for (k2, pg2) in pattern_groups.items() {
+                        if k2.startswith(key) or key in k2 {
+                            instances = pg2["instances"];
+                            break;
+                        }
+                    }
+                }
+
+                inst_idx = 0;
+                for instance in instances {
+                    new_groups.append({
+                        "id": f"fg_{group_idx}",
+                        "pattern_name": prop_name,
+                        "name": f"{prop_name}_{inst_idx}",
+                        "members": instance,
+                        "status": "proposed",
+                        "estimated_speedup": est_speedup,
+                        "rationale": rationale,
+                        "color_index": used_color % 8
+                    });
+                    group_idx = group_idx + 1;
+                    inst_idx = inst_idx + 1;
+                }
+
+                used_color = used_color + 1;
+            }
+
+            # Save fusion_groups.json
+            fg_path = path.join(proj_dir, "fusion_groups.json");
+            fg_save = {"version": 1, "model_used": model_name, "groups": new_groups};
+            with open(fg_path, "w") as f {
+                dump(fg_save, f, indent=2);
+            }
+
+            report {"success": True, "groups": new_groups};
+        } except Exception as e {
+            print(f"ProposeFusions error: {e}");
             report {"success": False, "error": str(e)};
         }
     }

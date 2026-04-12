@@ -30,7 +30,11 @@ import from walkers.project_admin {
     ExportProject,
     DownloadExport,
     ReadRepoFile,
-    CloneProjectForGpu
+    CloneProjectForGpu,
+    GetEnrichedDAG,
+    SaveFusionGroups,
+    UpdateFusionGroup,
+    ProposeFusions
 }
 import from walkers.optimization_results {
     GetDashboardCharts,
