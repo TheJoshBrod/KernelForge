@@ -26,19 +26,11 @@ def:pub FusionGroupCard(props: any) -> Any {
         if onSelect { onSelect(patternName); }
     }
 
-    def handleAccept -> None {
-        if onAccept and instances and instances.length > 0 {
+    def handleAction(cb: any) -> None {
+        if cb and instances and instances.length > 0 {
             first = instances[0];
             gid = first["id"] if first and "id" in first else "";
-            if gid { onAccept(gid); }
-        }
-    }
-
-    def handleReject -> None {
-        if onReject and instances and instances.length > 0 {
-            first = instances[0];
-            gid = first["id"] if first and "id" in first else "";
-            if gid { onReject(gid); }
+            if gid { cb(gid); }
         }
     }
 
@@ -149,7 +141,7 @@ def:pub FusionGroupCard(props: any) -> Any {
     if status == "proposed" {
         accept_btn =
             <button
-                onClick={lambda e: any  -> None { e.stopPropagation(); handleAccept(); }}
+                onClick={lambda e: any  -> None { e.stopPropagation(); handleAction(onAccept); }}
                 title="Accept all instances"
                 style={{
                     "background": "rgba(39,174,96,0.1)",
@@ -165,7 +157,7 @@ def:pub FusionGroupCard(props: any) -> Any {
             </button>;
         reject_btn =
             <button
-                onClick={lambda e: any  -> None { e.stopPropagation(); handleReject(); }}
+                onClick={lambda e: any  -> None { e.stopPropagation(); handleAction(onReject); }}
                 title="Reject all instances"
                 style={{
                     "background": "rgba(214,48,49,0.1)",

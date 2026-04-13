@@ -1,6 +1,6 @@
 """Data Flow View — Operator compute graph with kernel fusion management."""
 
-import from react { useState, useEffect, useRef, useMemo }
+import from react { useState, useEffect, useMemo }
 import from "react-router-dom" { useParams, useNavigate }
 import from reactflow {
     ReactFlow,
@@ -11,7 +11,7 @@ import from reactflow {
     useEdgesState
 }
 import from "./dagreWrap.js" { createGraph, layoutGraph as dagreLayout }
-import from "./fusionColors.js" { FUSION_COLORS }
+import from .fusionColors { FUSION_COLORS }
 import from ....components.ui.GlowButton { GlowButton }
 import from ....components.ui.Icons { BrainIcon, RefreshIcon, DownloadIcon, MenuIcon }
 import from ....context.ConfigContext { useConfig }
@@ -61,7 +61,9 @@ def:pub DataFlowView -> Any {
     proposalModalOpen = proposal_modal_state[0];
     setProposalModalOpen = proposal_modal_state[1];
 
-    pollRef = useRef(None);
+    pattern_color_map_state = useState({});
+    patternColorMap = pattern_color_map_state[0];
+    setPatternColorMap = pattern_color_map_state[1];
 
     # Stable nodeTypes reference — prevents ReactFlow re-mount on each render
     nodeTypes_memo = useMemo(
@@ -178,7 +180,6 @@ def:pub DataFlowView -> Any {
             cidx_raw = pattern_color_map[fg_pattern];
             fg_name = fg["name"] if "name" in fg else fg_id;
             fg_speedup = fg["estimated_speedup"] if "estimated_speedup" in fg else None;
-            fg_status_val = fg_status;
 
             # Register group node with dagre (dagre computes size from children)
             g.setNode(
@@ -197,7 +198,7 @@ def:pub DataFlowView -> Any {
                 "color_index": cidx_raw,
                 "name": fg_name,
                 "speedup": fg_speedup,
-                "status": fg_status_val
+                "status": fg_status
             };
             active_fg_list.push(fg_id);
 
@@ -227,11 +228,11 @@ def:pub DataFlowView -> Any {
         }
 
         dagreLayout(g);
+        setPatternColorMap(pattern_color_map);
 
         new_nodes = [];
 
-        # Build ReactFlow group nodes from dagre output.
-        # Also cache each group's layout rect so child nodes can compute relative positions
+        # Cache each group's layout rect so child nodes can compute relative positions
         # without a second g.node() call per child.
         group_rects = {};
         for fg_id in active_fg_list {
@@ -273,7 +274,6 @@ def:pub DataFlowView -> Any {
             );
         }
 
-        # Build ReactFlow op nodes
         for n in enriched_nodes {
             n_id = n["id"] if "id" in n else "";
             if not n_id {
@@ -315,16 +315,13 @@ def:pub DataFlowView -> Any {
         }
 
         new_edges = [];
-        idx = 0;
         for e in enriched_edges {
             src = e["source"] if "source" in e else "";
             tgt = e["target"] if "target" in e else "";
             if not src or not tgt {
-                idx = idx + 1;
                 continue;
             }
             if src in active_fg_ids or tgt in active_fg_ids {
-                idx = idx + 1;
                 continue;
             }
 
@@ -335,7 +332,7 @@ def:pub DataFlowView -> Any {
             intra = bool(src_fg) and bool(tgt_fg) and src_fg == tgt_fg;
 
             edge_entry = {
-                "id": f"e_{idx}",
+                "id": f"e_{new_edges.length}",
                 "source": src,
                 "target": tgt,
                 "type": "default"
@@ -352,7 +349,6 @@ def:pub DataFlowView -> Any {
             }
 
             new_edges.push(edge_entry);
-            idx = idx + 1;
         }
 
         setNodes(new_nodes);
@@ -374,11 +370,6 @@ def:pub DataFlowView -> Any {
                     setAllNodes(enriched_nodes);
                     setFusionGroups(fg_list);
                     buildLayout(data, fg_list);
-                    if pollRef.current {
-                        clearInterval(pollRef.current);
-                        pollRef.current = None;
-                        setProfileStatus("idle");
-                    }
                 }
             }
         } except Exception as e {
@@ -464,7 +455,7 @@ def:pub DataFlowView -> Any {
         }
     }
 
-    async def handleAcceptGroup(group_id: str) -> None {
+    async def handleGroupAction(group_id: str, action: str) -> None {
         if not group_id {
             return;
         }
@@ -475,40 +466,18 @@ def:pub DataFlowView -> Any {
                 {
                     "projectName": projectName,
                     "groupId": group_id,
-                    "action": "accept",
+                    "action": action,
                     "payload": {}
                 }
             );
             await refreshDAG();
         } except Exception as e {
-            console.error("handleAcceptGroup error:", e);
-        }
-    }
-
-    async def handleRejectGroup(group_id: str) -> None {
-        if not group_id {
-            return;
-        }
-        try {
-            await __jacSpawn(
-                "UpdateFusionGroup",
-                "",
-                {
-                    "projectName": projectName,
-                    "groupId": group_id,
-                    "action": "reject",
-                    "payload": {}
-                }
-            );
-            await refreshDAG();
-        } except Exception as e {
-            console.error("handleRejectGroup error:", e);
+            console.error("handleGroupAction error:", e);
         }
     }
 
     async def handleProposalComplete(new_groups: list) -> None {
         setProposalModalOpen(False);
-        setFusionGroups(new_groups);
         setPanelOpen(True);
         await refreshDAG();
     }
@@ -543,10 +512,11 @@ def:pub DataFlowView -> Any {
         panel_el = <FusionPanel
             fusionGroups={fusionGroups}
             allNodes={allNodes}
+            patternColorMap={patternColorMap}
             selectedPatternName={selectedPatternName}
             onSelectPattern={setSelectedPatternName}
-            onAccept={handleAcceptGroup}
-            onReject={handleRejectGroup}
+            onAccept={lambda gid: any -> None { handleGroupAction(gid, "accept");}}
+            onReject={lambda gid: any -> None { handleGroupAction(gid, "reject");}}
             onPropose={lambda -> None { setProposalModalOpen(True);}}
             onClose={lambda -> None { setPanelOpen(False);}}
         />;

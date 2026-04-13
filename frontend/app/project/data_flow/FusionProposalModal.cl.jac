@@ -196,9 +196,7 @@ def:pub FusionProposalModal(props: any) -> Any {
                     >
                         Cancel
                     </button>
-                    <GlowButton color="accent" onClick={runProposal} disabled={run_disabled}>
-                        {run_label}
-                    </GlowButton>
+                    <GlowButton label={run_label} onClick={runProposal} disabled={run_disabled}/>
                 </div>
             </div>
         </Modal>;

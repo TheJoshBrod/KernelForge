@@ -6,11 +6,12 @@ Passes callbacks directly (no lambdas over loop vars) to avoid closure issues.
 
 import from ....components.ui.GlowButton { GlowButton }
 import from .FusionGroupCard { FusionGroupCard }
-import from "./fusionColors.js" { FUSION_COLORS }
+import from .fusionColors { FUSION_COLORS }
 
 def:pub FusionPanel(props: any) -> Any {
     fusionGroups = props.fusionGroups if props and props.fusionGroups else [];
     allNodes = props.allNodes if props and props.allNodes else [];
+    patternColorMap = props.patternColorMap if props and props.patternColorMap else {};
     selectedPatternName = props.selectedPatternName if props and props.selectedPatternName else None;
     onSelectPattern = props.onSelectPattern if props and props.onSelectPattern else None;
     onAccept = props.onAccept if props and props.onAccept else None;
@@ -35,8 +36,7 @@ def:pub FusionPanel(props: any) -> Any {
         if not pname { continue; }
 
         if not (pname in patterns_map) {
-            cidx_raw = g["color_index"] if "color_index" in g else 0;
-            cidx = cidx_raw if cidx_raw else 0;
+            cidx = patternColorMap[pname] if pname in patternColorMap else 0;
             color = FUSION_COLORS[cidx % FUSION_COLORS.length];
             patterns_map[pname] = {
                 "pattern_name": pname,
@@ -127,9 +127,7 @@ def:pub FusionPanel(props: any) -> Any {
                 >
                     No fusion groups yet. Run the LLM analyzer to detect candidates.
                 </p>
-                <GlowButton color="accent" onClick={onPropose}>
-                    Propose Fusions
-                </GlowButton>
+                <GlowButton label="Propose Fusions" onClick={onPropose}/>
             </div>;
     } else {
         propose_section =
