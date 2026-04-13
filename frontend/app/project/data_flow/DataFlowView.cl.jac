@@ -10,7 +10,7 @@ import from reactflow {
     useNodesState,
     useEdgesState
 }
-import from "./dagreWrap.js" { createGraph, layoutGraph as dagreLayout }
+import from .dagreWrap { createGraph, layoutGraph as dagreLayout }
 import from .fusionColors { FUSION_COLORS }
 import from ....components.ui.GlowButton { GlowButton }
 import from ....components.ui.Icons { BrainIcon, RefreshIcon, DownloadIcon, MenuIcon }
