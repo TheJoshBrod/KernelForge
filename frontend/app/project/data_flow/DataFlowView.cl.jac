@@ -13,6 +13,7 @@ import from reactflow {
 import from "./dagreWrap.js" { createGraph, layoutGraph as dagreLayout }
 import from "./fusionColors.js" { FUSION_COLORS }
 import from ....components.ui.GlowButton { GlowButton }
+import from ....components.ui.Icons { BrainIcon, RefreshIcon, DownloadIcon, MenuIcon }
 import from ....context.ConfigContext { useConfig }
 import from .OpNode { OpNode }
 import from .FusionGroupNode { FusionGroupNode }
@@ -385,7 +386,21 @@ def:pub DataFlowView -> Any {
         }
     }
 
-    useEffect(lambda -> None { refreshDAG();}, [projectName]);
+    # Continuous auto-update polling (15s idle, 3s when profiling)
+    useEffect(
+        lambda -> None { refreshDAG();def tick() -> None {
+            if window and window["__kf_data_flow_busy"] {
+                return;
+            }
+            window["__kf_data_flow_busy"] = True;
+            refreshDAG().finally(
+                lambda -> None { window["__kf_data_flow_busy"] = False;}
+            );
+        } interval_ms = 3000 if profileStatus == "running" else 15000;bgPollId = setInterval(
+            tick, interval_ms
+        );return lambda -> None { clearInterval(bgPollId);}; },
+        [projectName, profileStatus]
+    );
 
     async def startProfile -> None {
         try {
@@ -393,15 +408,8 @@ def:pub DataFlowView -> Any {
             await __jacSpawn(
                 "StartProfile", "", {"projectName": projectName, "force": True}
             );
-            pollRef.current = setInterval(lambda -> None { refreshDAG();}, 10000);
-            setTimeout(
-                lambda -> None { if pollRef.current {
-                    clearInterval(pollRef.current);
-                    pollRef.current = None;
-                    setProfileStatus("idle");
-                }},
-                120000
-            );
+            # Auto-polling will handle the refresh due to profileStatus dependency
+            setTimeout(lambda -> None { setProfileStatus("idle");}, 120000);
         } except Exception as e {
             console.error("Failed to start profile:", e);
             setProfileStatus("idle");
@@ -509,7 +517,26 @@ def:pub DataFlowView -> Any {
     profileBtnDisabled = profileStatus == "running";
 
     fg_count = fusionGroups.length if fusionGroups else 0;
-    panel_btn_label = "Fusions (" + fg_count + ")" if fg_count > 0 else "Manage Fusions";
+    panel_btn_label = "Manage Fusions (" + str(fg_count) + ")"
+        if fg_count > 0
+        else "Fusions";
+
+    fusions_button = <span/>;
+    if fg_count == 0 {
+        fusions_button = <GlowButton
+            label="Propose Fusions"
+            onClick={lambda -> None { setProposalModalOpen(True);}}
+        />;
+    } else {
+        fusions_button = <button
+            onClick={lambda -> None { setPanelOpen(not panelOpen);}}
+            className="px-3 py-2 bg-[var(--surface-0)] hover:bg-[var(--surface-1)] text-[var(--text-light)] text-xs font-mono uppercase tracking-widest rounded border border-[var(--border)] transition-colors flex items-center gap-2"
+            title="Manage Fusions"
+        >
+            <MenuIcon className="w-4 h-4"/>
+            {panel_btn_label}
+        </button>;
+    }
 
     panel_el = <span></span>;
     if panelOpen {
@@ -541,36 +568,30 @@ def:pub DataFlowView -> Any {
                     </p>
                 </div>
                 <div className="flex items-center gap-2">
+                    {fusions_button}
+                    <div className="w-px h-6 bg-[var(--border)] mx-1"></div>
                     <button
                         onClick={startProfile}
                         disabled={profileBtnDisabled}
-                        className="px-3 py-2 bg-[var(--surface-0)] hover:bg-[var(--surface-1)] text-[var(--text-light)] text-xs font-mono uppercase tracking-widest rounded border border-[var(--border)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Sync Graph / Re-Profile"
+                        className={"p-2 rounded border transition-all " + (
+                            "bg-[var(--accent-orange)]/20 text-[var(--accent-orange)] border-[var(--accent-orange)]/50 animate-pulse"
+                                if profileStatus == "running"
+                                else "bg-[var(--surface-0)] hover:bg-[var(--surface-1)] text-[var(--text-muted)] hover:text-[var(--text-light)] border-transparent hover:border-[var(--border)]"
+                        )}
                     >
-                        {profileBtnLabel}
+                        <RefreshIcon
+                            className={"w-4 h-4 " + (
+                                "animate-spin" if profileStatus == "running" else ""
+                            )}
+                        />
                     </button>
-                    <button
-                        onClick={refreshDAG}
-                        className="px-3 py-2 bg-[var(--surface-0)] hover:bg-[var(--surface-1)] text-[var(--text-light)] text-xs font-mono uppercase tracking-widest rounded border border-[var(--border)] transition-colors"
-                    >
-                        Refresh
-                    </button>
-                    <button
-                        onClick={lambda -> None { setPanelOpen(not panelOpen);}}
-                        className="px-3 py-2 bg-[var(--surface-0)] hover:bg-[var(--surface-1)] text-[var(--text-light)] text-xs font-mono uppercase tracking-widest rounded border border-[var(--border)] transition-colors"
-                    >
-                        {panel_btn_label}
-                    </button>
-                    <GlowButton
-                        color="accent"
-                        onClick={lambda -> None { setProposalModalOpen(True);}}
-                    >
-                        Propose Fusions
-                    </GlowButton>
                     <button
                         onClick={exportToMermaid}
-                        className="px-3 py-2 bg-[var(--surface-0)] hover:bg-[var(--surface-1)] text-[var(--text-light)] text-xs font-mono uppercase tracking-widest rounded border border-[var(--border)] transition-colors"
+                        title="Export to Mermaid"
+                        className="p-2 bg-[var(--surface-0)] hover:bg-[var(--surface-1)] text-[var(--text-muted)] hover:text-[var(--text-light)] rounded border border-transparent hover:border-[var(--border)] transition-all"
                     >
-                        Export
+                        <DownloadIcon className="w-4 h-4"/>
                     </button>
                 </div>
             </div>
