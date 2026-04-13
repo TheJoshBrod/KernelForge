@@ -3,12 +3,16 @@
 def:pub FusionGroupNode(props: any) -> Any {
     data = props.data if props and props.data else {};
     name = data["name"] if "name" in data else "Fusion Group";
-    estimated_speedup = data["estimated_speedup"] if "estimated_speedup" in data else None;
-    color = data["color"] if "color" in data else {"bg": "rgba(199,91,57,0.12)", "border": "#c75b39"};
+    estimated_speedup = data["estimated_speedup"]
+        if "estimated_speedup" in data
+        else None;
+    color = data["color"]
+        if "color" in data
+        else {"bg": "rgba(199,91,57,0.12)", "border": "#c75b39"};
     status = data["status"] if "status" in data else "proposed";
 
     speedup_label = "";
-    if estimated_speedup is not None {
+    if estimated_speedup {
         speedup_label = "~" + estimated_speedup.toFixed(1) + "x";
     }
 
@@ -33,6 +37,7 @@ def:pub FusionGroupNode(props: any) -> Any {
                 "width": "100%",
                 "height": "100%",
                 "position": "relative",
+                "boxSizing": "border-box",
                 "overflow": "hidden"
             }}
         >
@@ -48,11 +53,13 @@ def:pub FusionGroupNode(props: any) -> Any {
                     "display": "flex",
                     "justifyContent": "space-between",
                     "alignItems": "center",
+                    "boxSizing": "border-box",
                     "borderTopLeftRadius": "6px",
                     "borderTopRightRadius": "6px"
                 }}
             >
                 <span
+                    title={name}
                     style={{
                         "fontFamily": "Oswald, sans-serif",
                         "fontSize": "9px",
@@ -63,7 +70,8 @@ def:pub FusionGroupNode(props: any) -> Any {
                         "overflow": "hidden",
                         "textOverflow": "ellipsis",
                         "whiteSpace": "nowrap",
-                        "flex": "1"
+                        "flex": "1",
+                        "minWidth": "0"
                     }}
                 >
                     {name}

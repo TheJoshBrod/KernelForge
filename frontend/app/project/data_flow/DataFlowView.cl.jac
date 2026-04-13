@@ -77,14 +77,89 @@ def:pub DataFlowView -> Any {
         enriched_edges = enriched_data["edges"] if "edges" in enriched_data else [];
 
         g = createGraph();
-        g.setGraph({"rankdir": "TB", "ranksep": 70, "nodesep": 40});
+        g.setGraph({"rankdir": "TB", "ranksep": 120, "nodesep": 120, "edgesep": 40});
         g.setDefaultEdgeLabel(lambda -> dict { return {}; });
+
+        # Build immediate adjacency for topological partitioning
+        local_adj = {};
+        for e in enriched_edges {
+            s = e["source"] if "source" in e else "";
+            t = e["target"] if "target" in e else "";
+            if s and t {
+                if s not in local_adj {
+                    local_adj[s] = [];
+                }
+                local_adj[s].push(t);
+                if t not in local_adj {
+                    local_adj[t] = [];
+                }
+                local_adj[t].push(s);
+            }
+        }
+
+        partitioned_fg_list = [];
+        for fg in fg_list {
+            orig_members = fg["members"] if "members" in fg else [];
+            if not orig_members {
+                partitioned_fg_list.push(fg);
+                continue;
+            }
+
+            mem_set = {};
+            for m in orig_members {
+                mem_set[m] = True;
+            }
+            visited = {};
+
+            inst_count = 0;
+            for start_node in orig_members {
+                if start_node not in visited {
+                    comp = [];
+                    queue = [start_node];
+                    visited[start_node] = True;
+
+                    while queue.length > 0 {
+                        curr = queue.pop();
+                        comp.push(curr);
+                        nbrs = local_adj[curr] if curr in local_adj else [];
+                        for nbr in nbrs {
+                            if nbr in mem_set and nbr not in visited {
+                                visited[nbr] = True;
+                                queue.push(nbr);
+                            }
+                        }
+                    }
+
+                    # Create a simple shallow copy to avoid .keys() on JS objects
+                    new_fg = {
+                        "id": fg["id"] if "id" in fg else "",
+                        "name": fg["name"] if "name" in fg else "",
+                        "pattern_name": fg["pattern_name"]
+                            if "pattern_name" in fg
+                            else "",
+                        "status": fg["status"] if "status" in fg else "",
+                        "estimated_speedup": fg["estimated_speedup"]
+                            if "estimated_speedup" in fg
+                            else None,
+                        "members": comp
+                    };
+
+                    if orig_members.length > comp.length {
+                        new_fg["id"] = str(new_fg["id"]) + "_inst_" + str(inst_count);
+                    }
+                    partitioned_fg_list.push(new_fg);
+                    inst_count = inst_count + 1;
+                }
+            }
+        }
 
         # active_fg_list preserves insertion order — JS for-in on plain objects is unreliable.
         member_to_group = {};
         active_fg_ids = {};
         active_fg_list = [];
-        for fg in fg_list {
+        pattern_color_map = {};
+        color_counter = 0;
+        for fg in partitioned_fg_list {
             fg_status = fg["status"] if "status" in fg else "";
             if fg_status == "rejected" {
                 continue;
@@ -94,13 +169,28 @@ def:pub DataFlowView -> Any {
                 continue;
             }
             members = fg["members"] if "members" in fg else [];
-            cidx_raw = fg["color_index"] if "color_index" in fg else 0;
+            fg_pattern = fg["pattern_name"] if "pattern_name" in fg else fg_id;
+            if fg_pattern not in pattern_color_map {
+                pattern_color_map[fg_pattern] = color_counter;
+                color_counter = color_counter + 1;
+            }
+            cidx_raw = pattern_color_map[fg_pattern];
             fg_name = fg["name"] if "name" in fg else fg_id;
             fg_speedup = fg["estimated_speedup"] if "estimated_speedup" in fg else None;
             fg_status_val = fg_status;
 
             # Register group node with dagre (dagre computes size from children)
-            g.setNode(fg_id, {"label": fg_name, "clusterLabelPos": "top", "paddingTop": 28, "paddingBottom": 10, "paddingLeft": 10, "paddingRight": 10});
+            g.setNode(
+                fg_id,
+                {
+                    "label": fg_name,
+                    "clusterLabelPos": "top",
+                    "paddingTop": 60,
+                    "paddingBottom": 24,
+                    "paddingLeft": 24,
+                    "paddingRight": 24
+                }
+            );
             active_fg_ids[fg_id] = {
                 "id": fg_id,
                 "color_index": cidx_raw,
@@ -120,7 +210,7 @@ def:pub DataFlowView -> Any {
             if not n_id {
                 continue;
             }
-            g.setNode(n_id, {"width": 180, "height": 76});
+            g.setNode(n_id, {"width": 190, "height": 80});
             fg_id = member_to_group[n_id] if n_id in member_to_group else None;
             if fg_id {
                 g.setParent(n_id, fg_id);
@@ -155,21 +245,31 @@ def:pub DataFlowView -> Any {
             group_h = pos.height if pos.height else 120;
             group_left = pos.x - group_w / 2;
             group_top = pos.y - group_h / 2;
-            group_rects[fg_id] = {"left": group_left, "top": group_top, "w": group_w, "h": group_h};
+            HEADER_PAD = 36;
+            group_h = group_h + HEADER_PAD;
+            group_rects[fg_id] = {
+                "left": group_left,
+                "top": group_top,
+                "pad": HEADER_PAD,
+                "w": group_w,
+                "h": group_h
+            };
 
-            new_nodes.push({
-                "id": fg_id,
-                "type": "fusionGroup",
-                "position": {"x": group_left, "y": group_top},
-                "style": {"width": group_w, "height": group_h, "zIndex": -1},
-                "data": {
-                    "name": fg_info["name"],
-                    "estimated_speedup": fg_info["speedup"],
-                    "color": color,
-                    "status": fg_info["status"]
-                },
-                "selectable": True
-            });
+            new_nodes.push(
+                {
+                    "id": fg_id,
+                    "type": "fusionGroup",
+                    "position": {"x": group_left, "y": group_top},
+                    "style": {"width": group_w, "height": group_h, "zIndex": -1},
+                    "data": {
+                        "name": fg_info["name"],
+                        "estimated_speedup": fg_info["speedup"],
+                        "color": color,
+                        "status": fg_info["status"]
+                    },
+                    "selectable": True
+                }
+            );
         }
 
         # Build ReactFlow op nodes
@@ -204,7 +304,7 @@ def:pub DataFlowView -> Any {
                 node_entry["extent"] = "parent";
                 node_entry["position"] = {
                     "x": pos.x - 90 - rect["left"],
-                    "y": pos.y - 38 - rect["top"]
+                    "y": pos.y - 38 - rect["top"] + rect["pad"]
                 };
             } else {
                 node_entry["position"] = {"x": pos.x - 90, "y": pos.y - 38};
@@ -222,16 +322,22 @@ def:pub DataFlowView -> Any {
                 idx = idx + 1;
                 continue;
             }
+            if src in active_fg_ids or tgt in active_fg_ids {
+                idx = idx + 1;
+                continue;
+            }
 
             src_fg = member_to_group[src] if src in member_to_group else None;
             tgt_fg = member_to_group[tgt] if tgt in member_to_group else None;
-            intra = src_fg is not None and tgt_fg is not None and src_fg == tgt_fg;
+
+            # Use raw truthy check, Jac 'is not None' compiles to '!== undefined' and lets 'null' pass
+            intra = bool(src_fg) and bool(tgt_fg) and src_fg == tgt_fg;
 
             edge_entry = {
                 "id": f"e_{idx}",
                 "source": src,
                 "target": tgt,
-                "type": "smoothstep"
+                "type": "default"
             };
 
             if intra {
@@ -279,7 +385,7 @@ def:pub DataFlowView -> Any {
         }
     }
 
-    useEffect(lambda -> None { refreshDAG(); }, [projectName]);
+    useEffect(lambda -> None { refreshDAG();}, [projectName]);
 
     async def startProfile -> None {
         try {
@@ -287,18 +393,13 @@ def:pub DataFlowView -> Any {
             await __jacSpawn(
                 "StartProfile", "", {"projectName": projectName, "force": True}
             );
-            pollRef.current = setInterval(
-                lambda -> None { refreshDAG(); },
-                10000
-            );
+            pollRef.current = setInterval(lambda -> None { refreshDAG();}, 10000);
             setTimeout(
-                lambda -> None {
-                    if pollRef.current {
-                        clearInterval(pollRef.current);
-                        pollRef.current = None;
-                        setProfileStatus("idle");
-                    }
-                },
+                lambda -> None { if pollRef.current {
+                    clearInterval(pollRef.current);
+                    pollRef.current = None;
+                    setProfileStatus("idle");
+                }},
                 120000
             );
         } except Exception as e {
@@ -337,11 +438,15 @@ def:pub DataFlowView -> Any {
             for fg in fusionGroups {
                 if fg["id"] == fg_id {
                     pname = fg["pattern_name"] if "pattern_name" in fg else "";
-                    if pname { setSelectedPatternName(pname); }
+                    if pname {
+                        setSelectedPatternName(pname);
+                    }
                     break;
                 }
             }
-            if not panelOpen { setPanelOpen(True); }
+            if not panelOpen {
+                setPanelOpen(True);
+            }
             return;
         }
         n_data = rf_node["data"] if rf_node and "data" in rf_node else {};
@@ -352,14 +457,20 @@ def:pub DataFlowView -> Any {
     }
 
     async def handleAcceptGroup(group_id: str) -> None {
-        if not group_id { return; }
+        if not group_id {
+            return;
+        }
         try {
-            await __jacSpawn("UpdateFusionGroup", "", {
-                "projectName": projectName,
-                "groupId": group_id,
-                "action": "accept",
-                "payload": {}
-            });
+            await __jacSpawn(
+                "UpdateFusionGroup",
+                "",
+                {
+                    "projectName": projectName,
+                    "groupId": group_id,
+                    "action": "accept",
+                    "payload": {}
+                }
+            );
             await refreshDAG();
         } except Exception as e {
             console.error("handleAcceptGroup error:", e);
@@ -367,14 +478,20 @@ def:pub DataFlowView -> Any {
     }
 
     async def handleRejectGroup(group_id: str) -> None {
-        if not group_id { return; }
+        if not group_id {
+            return;
+        }
         try {
-            await __jacSpawn("UpdateFusionGroup", "", {
-                "projectName": projectName,
-                "groupId": group_id,
-                "action": "reject",
-                "payload": {}
-            });
+            await __jacSpawn(
+                "UpdateFusionGroup",
+                "",
+                {
+                    "projectName": projectName,
+                    "groupId": group_id,
+                    "action": "reject",
+                    "payload": {}
+                }
+            );
             await refreshDAG();
         } except Exception as e {
             console.error("handleRejectGroup error:", e);
@@ -396,17 +513,16 @@ def:pub DataFlowView -> Any {
 
     panel_el = <span></span>;
     if panelOpen {
-        panel_el =
-            <FusionPanel
-                fusionGroups={fusionGroups}
-                allNodes={allNodes}
-                selectedPatternName={selectedPatternName}
-                onSelectPattern={setSelectedPatternName}
-                onAccept={handleAcceptGroup}
-                onReject={handleRejectGroup}
-                onPropose={lambda -> None { setProposalModalOpen(True); }}
-                onClose={lambda -> None { setPanelOpen(False); }}
-            />;
+        panel_el = <FusionPanel
+            fusionGroups={fusionGroups}
+            allNodes={allNodes}
+            selectedPatternName={selectedPatternName}
+            onSelectPattern={setSelectedPatternName}
+            onAccept={handleAcceptGroup}
+            onReject={handleRejectGroup}
+            onPropose={lambda -> None { setProposalModalOpen(True);}}
+            onClose={lambda -> None { setPanelOpen(False);}}
+        />;
     }
 
     return
@@ -439,12 +555,15 @@ def:pub DataFlowView -> Any {
                         Refresh
                     </button>
                     <button
-                        onClick={lambda -> None { setPanelOpen(not panelOpen); }}
+                        onClick={lambda -> None { setPanelOpen(not panelOpen);}}
                         className="px-3 py-2 bg-[var(--surface-0)] hover:bg-[var(--surface-1)] text-[var(--text-light)] text-xs font-mono uppercase tracking-widest rounded border border-[var(--border)] transition-colors"
                     >
                         {panel_btn_label}
                     </button>
-                    <GlowButton color="accent" onClick={lambda -> None { setProposalModalOpen(True); }}>
+                    <GlowButton
+                        color="accent"
+                        onClick={lambda -> None { setProposalModalOpen(True);}}
+                    >
                         Propose Fusions
                     </GlowButton>
                     <button
@@ -483,7 +602,7 @@ def:pub DataFlowView -> Any {
             </div>
             <FusionProposalModal
                 isOpen={proposalModalOpen}
-                onClose={lambda -> None { setProposalModalOpen(False); }}
+                onClose={lambda -> None { setProposalModalOpen(False);}}
                 onComplete={handleProposalComplete}
                 projectName={projectName}
                 config={config}
