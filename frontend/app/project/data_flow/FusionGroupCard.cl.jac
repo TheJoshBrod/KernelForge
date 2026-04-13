@@ -13,6 +13,7 @@ def:pub FusionGroupCard(props: any) -> Any {
     isSelected = props.isSelected if props and "isSelected" in props else False;
     colorBorder = props.colorBorder if props and props.colorBorder else "#c75b39";
     colorBg = props.colorBg if props and props.colorBg else "rgba(199,91,57,0.12)";
+    score = props.score if props and "score" in props else None;
     estimatedSpeedup = props.estimatedSpeedup if props and "estimatedSpeedup" in props else None;
     rationale = props.rationale if props and props.rationale else "";
     status = props.status if props and props.status else "proposed";
@@ -70,6 +71,41 @@ def:pub FusionGroupCard(props: any) -> Any {
 
     card_border = "1px solid " + colorBorder if isSelected else "1px solid var(--border)";
     card_bg = colorBg if isSelected else "var(--bg-charcoal)";
+
+    score_pct = "50%";
+    score_color = "var(--text-muted)";
+    if score is not None {
+        score_pct = (score * 100).toFixed(0) + "%";
+        if score >= 0.7 {
+            score_color = "#27ae60";
+        } elif score >= 0.4 {
+            score_color = "var(--molten-gold)";
+        } else {
+            score_color = "#d63031";
+        }
+    }
+    score_el = <span></span>;
+    if score is not None {
+        score_el =
+            <div
+                style={{
+                    "height": "2px",
+                    "background": "var(--surface-0)",
+                    "borderRadius": "1px",
+                    "marginBottom": "8px",
+                    "overflow": "hidden"
+                }}
+            >
+                <div
+                    style={{
+                        "height": "100%",
+                        "width": score_pct,
+                        "background": score_color,
+                        "borderRadius": "1px"
+                    }}
+                />
+            </div>;
+    }
 
     op_chips = [];
     chip_idx = 0;
@@ -219,11 +255,12 @@ def:pub FusionGroupCard(props: any) -> Any {
                     "flexWrap": "wrap",
                     "gap": "3px",
                     "alignItems": "center",
-                    "marginBottom": "8px"
+                    "marginBottom": "6px"
                 }}
             >
                 {op_chips}
             </div>
+            {score_el}
             <div
                 style={{
                     "display": "flex",

@@ -465,6 +465,7 @@ def:pub DataFlowView -> Any {
                         onNodeClick={onNodeClick}
                         nodeTypes={nodeTypes_memo}
                         fitView={True}
+                        proOptions={{"hideAttribution": True}}
                     >
                         <Controls
                             className="bg-[var(--bg-panel)] border-[var(--border)] fill-[var(--text-light)] shadow-none"

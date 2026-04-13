@@ -1407,24 +1407,31 @@ walker:pub ProposeFusions {
                 pattern_groups[key]["instances"].append(chain);
             }
 
-            # Build prompt lines (sorted by frequency)
+            # Sort patterns by frequency and compute per-pattern timing
             sorted_patterns = sorted(
                 pattern_groups.items(),
                 key=lambda x : -len(x[1]["instances"])
             );
-            pattern_lines = [];
-            for (key, pg) in sorted_patterns[:20] {
-                ops = pg["ops"];
-                freq = len(pg["instances"]);
+
+            # Attach timing to each pattern entry so we can use it during expansion
+            for (key, pg) in sorted_patterns {
                 combined_ms = 0.0;
-                for op in ops {
+                for op in pg["ops"] {
                     pm = bench_map.get(op, {}).get("pytorch_ms");
                     if pm {
                         try { combined_ms = combined_ms + float(pm); } except Exception { combined_ms = combined_ms; }
                     }
                 }
-                ms_str = f"{combined_ms:.3f}ms" if combined_ms > 0 else "N/A";
-                pattern_lines.append(f"  [{', '.join(ops)}] x{freq} — {ms_str}/instance");
+                pg["combined_ms"] = combined_ms;
+            }
+
+            # Build the candidate list sent to the LLM (top 20 by frequency)
+            pattern_lines = [];
+            for (key, pg) in sorted_patterns[:20] {
+                ops = pg["ops"];
+                freq = len(pg["instances"]);
+                ms_str = f"{pg['combined_ms']:.3f}ms" if pg["combined_ms"] > 0 else "N/A";
+                pattern_lines.append(f"  {key}: x{freq} — {ms_str}/instance");
             }
 
             op_timing_lines = [];
@@ -1444,38 +1451,38 @@ walker:pub ProposeFusions {
             op_timing_text = "\n".join(op_timing_lines) if op_timing_lines else "  (no benchmark data)";
             total_nodes = len(dag_nodes);
 
-            system_prompt = """You are a GPU kernel fusion expert analyzing a neural network computation graph.
-Identify which adjacent operator chains are strong candidates for kernel fusion to reduce global memory traffic and kernel launch overhead.
+            system_prompt = """You are a GPU kernel fusion expert. The algorithm has already identified every valid linear chain in the compute graph. Your job is to RANK them — not select them. Every pattern will be shown to the user; your scores determine sort order and help them prioritize.
 
 Return ONLY valid JSON (no markdown fences, no text outside JSON) in this exact schema:
 {
-  "fusion_groups": [
+  "rankings": [
     {
-      "name": "short_identifier",
-      "pattern_ops": ["op1", "op2", "op3"],
+      "pattern_key": "op1|op2|op3",
+      "score": 0.95,
       "estimated_speedup": 1.8,
-      "rationale": "one sentence explanation"
+      "rationale": "one sentence: why this fusion is or isn't worth doing"
     }
   ]
 }
 
-Rules:
-- Only propose fusions for ops in the listed patterns (adjacent in the graph)
-- Prioritize high-frequency patterns (many instances) for maximum model-wide impact
-- Skip patterns where all ops are already [FORGED]
-- Common wins: conv+batch_norm+relu, linear+gelu, linear+relu, adaptive_avg_pool2d+linear
-- estimated_speedup must be between 1.1 and 3.5""";
+Scoring rules:
+- score is 0.0–1.0; higher = stronger fusion candidate
+- Score high (0.8–1.0): memory-bound chains where fusing eliminates global memory round-trips (conv+bn+relu, linear+gelu, linear+relu)
+- Score medium (0.4–0.7): chains with mixed compute/memory profile or uncertain benefit
+- Score low (0.0–0.3): already-[FORGED] chains, compute-bound ops unlikely to benefit, or very short chains with high launch overhead relative to compute
+- estimated_speedup is the realistic multiplier assuming the fusion is implemented well (1.0 = no gain)
+- You MUST return an entry for every pattern key listed — do not drop any""";
 
             user_prompt = f"""Project: {self.projectName}
 Total ops in graph: {total_nodes}
 
-Repeated adjacent-op patterns (op sequence → instances → combined timing/instance):
+Candidate fusion patterns (key: op|op|... → frequency → combined timing/instance):
 {pattern_text}
 
 Per-op baseline timing:
 {op_timing_text}
 
-Propose the best fusion candidates.""";
+Score every pattern listed above.""";
 
             # Call LLM
             model_name = self.model;
@@ -1532,7 +1539,7 @@ Propose the best fusion candidates.""";
                 return;
             }
 
-            # Parse response
+            # Parse rankings from LLM response
             parsed = None;
             try {
                 text = response_text.strip();
@@ -1550,52 +1557,57 @@ Propose the best fusion candidates.""";
                 return;
             }
 
-            proposed = parsed.get("fusion_groups", []) if parsed else [];
+            rankings = parsed.get("rankings", []) if parsed else [];
 
-            # Expand pattern-level proposals to instance-level fusion groups
+            # Build a score lookup keyed by pattern_key
+            score_map = {};
+            for r in rankings {
+                pk = r.get("pattern_key", "");
+                if pk {
+                    score_map[pk] = {
+                        "score": float(r.get("score", 0.5)),
+                        "estimated_speedup": float(r.get("estimated_speedup", 1.0)),
+                        "rationale": r.get("rationale", "")
+                    };
+                }
+            }
+
+            # Expand ALL discovered patterns to instance-level groups, sorted by LLM score.
+            # The LLM ranks; the user decides what to accept.
+            scored_patterns = sorted(
+                sorted_patterns,
+                key=lambda x : -score_map.get(x[0], {}).get("score", 0.0)
+            );
+
             new_groups = [];
             group_idx = 0;
-            used_color = 0;
-            for prop in proposed {
-                pattern_ops = prop.get("pattern_ops", []);
-                if not pattern_ops {
-                    continue;
-                }
-                prop_name = prop.get("name", "_".join(pattern_ops));
-                est_speedup = prop.get("estimated_speedup", 1.5);
-                rationale = prop.get("rationale", "");
-                key = "|".join(pattern_ops);
-
-                pg = pattern_groups.get(key);
-                instances = pg["instances"] if pg else [];
-
-                if not instances {
-                    # Partial match fallback
-                    for (k2, pg2) in pattern_groups.items() {
-                        if k2.startswith(key) or key in k2 {
-                            instances = pg2["instances"];
-                            break;
-                        }
-                    }
-                }
+            color_idx = 0;
+            for (key, pg) in scored_patterns {
+                ops = pg["ops"];
+                instances = pg["instances"];
+                scoring = score_map.get(key, {});
+                score = scoring.get("score", 0.5);
+                est_speedup = scoring.get("estimated_speedup", 1.0);
+                rationale = scoring.get("rationale", "");
+                pattern_name = "_".join(ops);
 
                 inst_idx = 0;
                 for instance in instances {
                     new_groups.append({
                         "id": f"fg_{group_idx}",
-                        "pattern_name": prop_name,
-                        "name": f"{prop_name}_{inst_idx}",
+                        "pattern_name": pattern_name,
+                        "name": f"{pattern_name}_{inst_idx}",
                         "members": instance,
                         "status": "proposed",
+                        "score": score,
                         "estimated_speedup": est_speedup,
                         "rationale": rationale,
-                        "color_index": used_color % 8
+                        "color_index": color_idx % 8
                     });
                     group_idx = group_idx + 1;
                     inst_idx = inst_idx + 1;
                 }
-
-                used_color = used_color + 1;
+                color_idx = color_idx + 1;
             }
 
             # Save fusion_groups.json

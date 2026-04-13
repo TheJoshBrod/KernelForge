@@ -42,6 +42,7 @@ def:pub FusionPanel(props: any) -> Any {
                 "pattern_name": pname,
                 "instances": [],
                 "color": color,
+                "score": g["score"] if "score" in g else 0.5,
                 "estimated_speedup": g["estimated_speedup"] if "estimated_speedup" in g else None,
                 "rationale": g["rationale"] if "rationale" in g else "",
                 "status": g_status
@@ -54,6 +55,10 @@ def:pub FusionPanel(props: any) -> Any {
             patterns_map[pname]["status"] = "accepted";
         }
     }
+
+    # patterns_order is already score-sorted: the walker emits groups in descending
+    # score order, and we push pattern names in first-seen order while iterating
+    # fusionGroups, so insertion order == score order.
 
     total_count = patterns_order.length;
     has_groups = total_count > 0;
@@ -87,6 +92,7 @@ def:pub FusionPanel(props: any) -> Any {
                 isSelected={pname == selectedPatternName}
                 colorBorder={color["border"]}
                 colorBg={color["bg"]}
+                score={pat["score"]}
                 estimatedSpeedup={pat["estimated_speedup"]}
                 rationale={pat["rationale"]}
                 status={pat["status"]}
