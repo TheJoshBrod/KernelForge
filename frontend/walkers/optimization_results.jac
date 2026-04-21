@@ -415,6 +415,17 @@ walker:pub GetOpDetails {
 
     can run with entry {
         project_dir = _project_dir(self.projectName);
+        kernel_timings = _load_kernel_timings(project_dir, self.opName);
+        runtime_by_path = (
+            kernel_timings["by_path"]
+            if kernel_timings and "by_path" in kernel_timings and kernel_timings["by_path"]
+            else {}
+        );
+        root_runtime_ms = (
+            kernel_timings["root_runtime_ms"]
+            if kernel_timings and "root_runtime_ms" in kernel_timings
+            else None
+        );
         profile_dir = path.join(project_dir, "io", "individual_ops", self.opName);
         entry_files = [];
         entry_count = 0;
@@ -434,10 +445,17 @@ walker:pub GetOpDetails {
         );
         gen_kernel_dir = path.join(generated_dir, "kernel");
         gen_attempt_dir = path.join(generated_dir, "attempts");
-        gen_kernels = _list_files(gen_kernel_dir, [".cu", ".so"]);
+        gen_kernels = [];
+        for kernel_file in _list_files(gen_kernel_dir, [".cu", ".so"]) {
+            gen_kernels.append(_attach_runtime(kernel_file, runtime_by_path));
+        }
         gen_logs = _list_files(gen_attempt_dir, [".txt", ".log", ".json"]);
         gen_best_path = path.join(generated_dir, "kernel.cu");
-        gen_best = _file_info(gen_best_path) if path.exists(gen_best_path) else {};
+        gen_best = (
+            _attach_runtime(_file_info(gen_best_path), runtime_by_path, root_runtime_ms)
+            if path.exists(gen_best_path)
+            else {}
+        );
 
         opt_base = _find_optimized_dir(self.projectName);
         if not opt_base {
@@ -445,11 +463,15 @@ walker:pub GetOpDetails {
         }
         opt_dir = path.join(opt_base, self.opName) if opt_base else "";
         opt_kernel_dir = path.join(opt_dir, "kernels") if opt_dir else "";
-        opt_kernels = (
+        opt_kernel_files = (
             _list_files(opt_kernel_dir, [".cu", ".py", ".metal", ".so"])
             if opt_kernel_dir and path.exists(opt_kernel_dir)
             else _list_files(opt_dir, [".cu", ".py", ".metal", ".so"])
         );
+        opt_kernels = [];
+        for kernel_file in opt_kernel_files {
+            opt_kernels.append(_attach_runtime(kernel_file, runtime_by_path));
+        }
         opt_logs = _list_files(opt_dir, [".txt", ".log", ".json"]);
 
         report {
@@ -1186,6 +1208,117 @@ def _file_info(full_path: str) -> dict {
         "mtime": path.getmtime(full_path),
         "kind": _file_kind(path.basename(full_path))
     };
+}
+
+def _positive_float(value: Any) -> float {
+    try {
+        parsed = float(value);
+        if parsed > 0.0 {
+            return parsed;
+        }
+    } except Exception {
+        _ = 0;
+    }
+    return None;
+}
+
+def _resolve_tree_kernel_path(project_dir: str, op_name: str, node_id: int, code_ref: str) -> str {
+    candidates = [];
+
+    code_text = str(code_ref).strip() if code_ref is not None else "";
+    if code_text {
+        if path.isabs(code_text) {
+            candidates.append(code_text);
+        } else {
+            candidates.append(path.join(project_dir, "trees", code_text));
+            candidates.append(path.join(project_dir, code_text));
+            candidates.append(path.join(repo_root, code_text));
+        }
+    }
+
+    kernel_dir = path.join(project_dir, "trees", op_name, "kernels");
+    candidates.append(path.join(kernel_dir, f"kernel_{node_id}.cu"));
+    candidates.append(path.join(kernel_dir, f"kernel_{node_id}.py"));
+    candidates.append(path.join(kernel_dir, f"kernel_{node_id}.metal"));
+
+    for candidate in candidates {
+        if candidate and path.exists(candidate) and path.isfile(candidate) {
+            return candidate;
+        }
+    }
+    return "";
+}
+
+def _load_kernel_timings(project_dir: str, op_name: str) -> dict {
+    db_path = path.join(project_dir, "trees", op_name, "nodes.db");
+    by_path = {};
+    root_runtime_ms = None;
+
+    if not path.exists(db_path) {
+        return {"by_path": by_path, "root_runtime_ms": root_runtime_ms};
+    }
+
+    conn = None;
+    try {
+        conn = sqlite3.connect(db_path);
+        cursor = conn.cursor();
+        cursor.execute(
+            "SELECT id, value, code FROM nodes WHERE value IS NOT NULL AND value > 0"
+        );
+        rows = cursor.fetchall();
+        for row in rows {
+            runtime_ms = _positive_float(row[1]);
+            if runtime_ms is None {
+                continue;
+            }
+
+            resolved_path = _resolve_tree_kernel_path(
+                project_dir, op_name, int(row[0]), row[2]
+            );
+            if resolved_path {
+                by_path[path.relpath(resolved_path, repo_root)] = runtime_ms;
+            }
+            if int(row[0]) == 0 and root_runtime_ms is None {
+                root_runtime_ms = runtime_ms;
+            }
+        }
+    } except Exception {
+        _ = 0;
+    } finally {
+        if conn {
+            try {
+                conn.close();
+            } except Exception {
+                _ = 0;
+            }
+        }
+    }
+
+    return {"by_path": by_path, "root_runtime_ms": root_runtime_ms};
+}
+
+def _attach_runtime(file_entry: dict, runtime_by_path: dict, fallback_runtime: float = None) -> dict {
+    if not file_entry {
+        return file_entry;
+    }
+
+    enriched = {**file_entry};
+    rel_path = str(file_entry["path"]) if "path" in file_entry and file_entry["path"] else "";
+    if rel_path and runtime_by_path and rel_path in runtime_by_path {
+        runtime_ms = _positive_float(runtime_by_path[rel_path]);
+        if runtime_ms is not None {
+            enriched["runtime_ms"] = runtime_ms;
+            return enriched;
+        }
+    }
+
+    if fallback_runtime is not None {
+        runtime_ms = _positive_float(fallback_runtime);
+        if runtime_ms is not None {
+            enriched["runtime_ms"] = runtime_ms;
+        }
+    }
+    return enriched;
 }
 
 def _list_files(dir_path: str, exts: list = None, max_files: int = 200) -> list {
