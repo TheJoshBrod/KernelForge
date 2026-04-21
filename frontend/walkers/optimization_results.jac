@@ -449,6 +449,7 @@ walker:pub GetOpDetails {
         for kernel_file in _list_files(gen_kernel_dir, [".cu", ".so"]) {
             gen_kernels.append(_attach_runtime(kernel_file, runtime_by_path));
         }
+        gen_kernels.sort(key=_cast_kernel_sort_key);
         gen_logs = _list_files(gen_attempt_dir, [".txt", ".log", ".json"]);
         gen_best_path = path.join(generated_dir, "kernel.cu");
         gen_best = (
@@ -472,6 +473,7 @@ walker:pub GetOpDetails {
         for kernel_file in opt_kernel_files {
             opt_kernels.append(_attach_runtime(kernel_file, runtime_by_path));
         }
+        opt_kernels.sort(key=_cast_kernel_sort_key);
         opt_logs = _list_files(opt_dir, [".txt", ".log", ".json"]);
 
         report {
@@ -842,10 +844,17 @@ walker:pub DownloadCast {
 
         # ── Resolve kernel files ──────────────────────────────────────
         kernel_map = {};
+        selected_ops = {};
+        skipped_ops = {};
 
         if self.selectedKernels {
             for op_name in self.selectedKernels {
+                selected_ops[op_name] = True;
                 rel = str(self.selectedKernels[op_name]);
+                if rel == "__PYTORCH__" {
+                    skipped_ops[op_name] = True;
+                    continue;
+                }
                 full = path.join(repo_root, rel);
                 if path.exists(full) {
                     kernel_map[op_name] = full;
@@ -857,7 +866,12 @@ walker:pub DownloadCast {
         if opt_base and path.exists(opt_base) {
             for op_name in listdir(opt_base) {
                 op_dir = path.join(opt_base, op_name);
-                if not path.isdir(op_dir) or op_name in kernel_map {
+                if (
+                    not path.isdir(op_dir)
+                    or op_name in kernel_map
+                    or op_name in skipped_ops
+                    or (self.selectedKernels and op_name in selected_ops)
+                ) {
                     continue;
                 }
                 best_entry = _best_cast_kernel_entry(project_dir, self.projectName, op_name);
