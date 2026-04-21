@@ -853,28 +853,16 @@ walker:pub DownloadCast {
             }
         }
 
-        if not kernel_map {
-            opt_base = _find_optimized_dir(self.projectName);
-            if opt_base and path.exists(opt_base) {
-                for op_name in listdir(opt_base) {
-                    op_dir = path.join(opt_base, op_name);
-                    if not path.isdir(op_dir) {
-                        continue;
-                    }
-                    best = path.join(op_dir, "kernel.cu");
-                    if path.exists(best) {
-                        kernel_map[op_name] = best;
-                        continue;
-                    }
-                    kernel_dir = path.join(op_dir, "kernels");
-                    if path.exists(kernel_dir) {
-                        for kf in listdir(kernel_dir) {
-                            if kf.endswith(".cu") {
-                                kernel_map[op_name] = path.join(kernel_dir, kf);
-                                break;
-                            }
-                        }
-                    }
+        opt_base = _find_optimized_dir(self.projectName);
+        if opt_base and path.exists(opt_base) {
+            for op_name in listdir(opt_base) {
+                op_dir = path.join(opt_base, op_name);
+                if not path.isdir(op_dir) or op_name in kernel_map {
+                    continue;
+                }
+                best_entry = _best_cast_kernel_entry(project_dir, self.projectName, op_name);
+                if best_entry and "path" in best_entry and best_entry["path"] {
+                    kernel_map[op_name] = path.join(repo_root, best_entry["path"]);
                 }
             }
         }
@@ -1319,6 +1307,117 @@ def _attach_runtime(file_entry: dict, runtime_by_path: dict, fallback_runtime: f
         }
     }
     return enriched;
+}
+
+def _cast_kernel_label_rank(label: str) -> int {
+    if label == "Best Generated" {
+        return 0;
+    }
+    if label == "Optimized" {
+        return 1;
+    }
+    if label == "Generated" {
+        return 2;
+    }
+    return 3;
+}
+
+def _cast_kernel_sort_key(item: dict) -> list {
+    runtime_ms = (
+        _positive_float(item["runtime_ms"])
+        if item and "runtime_ms" in item
+        else None
+    );
+    runtime_sort = runtime_ms if runtime_ms is not None else 1e300;
+    label = str(item["label"]) if item and "label" in item and item["label"] else "";
+    name = str(item["name"]) if item and "name" in item and item["name"] else "";
+    return [
+        1 if runtime_ms is None else 0,
+        runtime_sort,
+        _cast_kernel_label_rank(label),
+        name
+    ];
+}
+
+def _collect_cast_kernel_candidates(project_dir: str, project_name: str, op_name: str) -> list {
+    kernel_timings = _load_kernel_timings(project_dir, op_name);
+    runtime_by_path = (
+        kernel_timings["by_path"]
+        if kernel_timings and "by_path" in kernel_timings and kernel_timings["by_path"]
+        else {}
+    );
+    root_runtime_ms = (
+        kernel_timings["root_runtime_ms"]
+        if kernel_timings and "root_runtime_ms" in kernel_timings
+        else None
+    );
+
+    candidates = [];
+
+    generated_dir = path.join(
+        project_dir, "kernels", "generated", "individual_op_kernels", op_name
+    );
+    gen_best_path = path.join(generated_dir, "kernel.cu");
+    if path.exists(gen_best_path) {
+        candidates.append(
+            {
+                **_attach_runtime(
+                    _file_info(gen_best_path),
+                    runtime_by_path,
+                    root_runtime_ms
+                ),
+                "label": "Best Generated"
+            }
+        );
+    }
+
+    opt_base = _find_optimized_dir(project_name);
+    if not opt_base {
+        opt_base = path.join(repo_root, "kernels", "optimized");
+    }
+    opt_dir = path.join(opt_base, op_name) if opt_base else "";
+    opt_kernel_dir = path.join(opt_dir, "kernels") if opt_dir else "";
+    opt_kernel_files = (
+        _list_files(opt_kernel_dir, [".cu", ".py", ".metal", ".so"])
+        if opt_kernel_dir and path.exists(opt_kernel_dir)
+        else _list_files(opt_dir, [".cu", ".py", ".metal", ".so"])
+    );
+    for kernel_file in opt_kernel_files {
+        candidates.append(
+            {**_attach_runtime(kernel_file, runtime_by_path), "label": "Optimized"}
+        );
+    }
+
+    gen_kernel_dir = path.join(generated_dir, "kernel");
+    best_path = (
+        path.relpath(gen_best_path, repo_root)
+        if path.exists(gen_best_path)
+        else ""
+    );
+    for kernel_file in _list_files(gen_kernel_dir, [".cu", ".so"]) {
+        rel_path = (
+            str(kernel_file["path"])
+            if "path" in kernel_file and kernel_file["path"]
+            else ""
+        );
+        if best_path and rel_path == best_path {
+            continue;
+        }
+        candidates.append(
+            {**_attach_runtime(kernel_file, runtime_by_path), "label": "Generated"}
+        );
+    }
+
+    candidates.sort(key=_cast_kernel_sort_key);
+    return candidates;
+}
+
+def _best_cast_kernel_entry(project_dir: str, project_name: str, op_name: str) -> dict {
+    candidates = _collect_cast_kernel_candidates(project_dir, project_name, op_name);
+    if candidates and len(candidates) > 0 {
+        return candidates[0];
+    }
+    return {};
 }
 
 def _list_files(dir_path: str, exts: list = None, max_files: int = 200) -> list {

@@ -174,20 +174,64 @@ def:pub CastExportModal(props: any) -> Any {
                             else []
                         );
 
+                        resp_summary = await __jacSpawn(
+                            "GetProjectMctsSummary", "", {"projectName": projectName}
+                        );
+                        data_summary = resp_summary.reports[0]
+                            if resp_summary and resp_summary.reports
+                            else {};
+                        summary_ops = to_list(
+                            data_summary["ops"]
+                            if data_summary and "ops" in data_summary
+                            else []
+                        );
+
                         bench_map = {};
-                        init_selection = {};
+                        summary_by_op = {};
                         for r in bench_results {
                             if r and "op" in r and r["op"] {
                                 bench_map[r["op"]] = r;
-                                if "winner" in r and r["winner"] {
-                                    w = str(r["winner"]);
-                                    w_name = w.split("/").pop();
-                                    init_selection[r["op"]] = {
-                                        "path": w,
-                                        "name": w_name
-                                    };
-                                }
                             }
+                        }
+                        for item in summary_ops {
+                            if item and "op" in item and item["op"] {
+                                summary_by_op[item["op"]] = item;
+                            }
+                        }
+
+                        init_selection = {};
+                        for item in op_list {
+                            op_name = (
+                                item["name"]
+                                if item and "name" in item and item["name"]
+                                else ""
+                            );
+                            if not op_name or not (op_name in summary_by_op) {
+                                continue;
+                            }
+                            summary_entry = summary_by_op[op_name];
+                            best_node_id = (
+                                summary_entry["best_node_id"]
+                                if summary_entry
+                                    and "best_node_id" in summary_entry
+                                    and summary_entry["best_node_id"] is not None
+                                else None
+                            );
+                            if best_node_id is None {
+                                continue;
+                            }
+                            kernel_name = "kernel_" + str(best_node_id) + ".cu";
+                            init_selection[op_name] = {
+                                "path": (
+                                    "kernels/projects/"
+                                    + projectName
+                                    + "/trees/"
+                                    + op_name
+                                    + "/kernels/"
+                                    + kernel_name
+                                ),
+                                "name": kernel_name
+                            };
                         }
                         setBenchmarks(bench_map);
                         setSelectedKernels(init_selection);
@@ -259,7 +303,21 @@ def:pub CastExportModal(props: any) -> Any {
             new_details = {**opDetails};
             new_details[op_name] = all_kernels;
             setOpDetails(new_details);
-            if not (op_name in selectedKernels) and all_kernels.length > 0 {
+            selected_entry = selectedKernels[op_name] if op_name in selectedKernels else {};
+            selected_path = (
+                selected_entry["path"]
+                if selected_entry and "path" in selected_entry and selected_entry["path"]
+                else ""
+            );
+            has_valid_selection = False;
+            if selected_path {
+                for item in all_kernels {
+                    if item and "path" in item and item["path"] == selected_path {
+                        has_valid_selection = True;
+                    }
+                }
+            }
+            if not has_valid_selection and all_kernels.length > 0 {
                 new_sel = {**selectedKernels};
                 new_sel[op_name] = {
                     "path": all_kernels[0]["path"],
