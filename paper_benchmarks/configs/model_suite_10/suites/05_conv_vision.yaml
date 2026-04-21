@@ -1,0 +1,29 @@
+suite_id: conv_vision_suite
+benchmark_mode: e2e_model
+description: Conv/vision validation suite template.
+workload_type: image_folder
+workload_path: /abs/path/to/frozen/conv_vision_images
+synthetic_workload: false
+variants:
+  - eager
+  - torch_compile
+  - kf_cast
+stages:
+  - load
+  - compile
+  - warmup
+  - total_generate
+batch_sizes:
+  - 1
+  - 32
+shape_or_length_buckets:
+  - bucket_id: image_224
+    image_size: 224
+warmup_runs: 1
+timed_runs: 5
+generation_mode: greedy
+include_tokenization_in_timing: false
+measure_prefill_decode_separately: false
+device: cuda
+notes:
+  - Conv-heavy workloads are expected to produce neutral or regression-capable outcomes and must stay in the suite.

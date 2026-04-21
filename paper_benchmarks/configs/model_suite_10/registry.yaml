@@ -1,0 +1,52 @@
+version: 1
+models:
+  - model_id: moe_decoder_llm_qwen_style
+    category: MoE decoder LLM
+    model_config: models/01_moe_decoder_llm_qwen_style.yaml
+    suite_config: suites/01_moe_decoder_llm_qwen_style.yaml
+    benchmark_expectation: candidate
+  - model_id: dense_decoder_llm
+    category: Dense decoder LLM
+    model_config: models/02_dense_decoder_llm.yaml
+    suite_config: suites/02_dense_decoder_llm.yaml
+    benchmark_expectation: candidate
+  - model_id: transformer_encoder
+    category: Transformer encoder model
+    model_config: models/03_transformer_encoder.yaml
+    suite_config: suites/03_transformer_encoder.yaml
+    benchmark_expectation: neutral
+  - model_id: vision_transformer
+    category: Vision transformer
+    model_config: models/04_vision_transformer.yaml
+    suite_config: suites/04_vision_transformer.yaml
+    benchmark_expectation: neutral
+  - model_id: conv_vision
+    category: Conv/vision model
+    model_config: models/05_conv_vision.yaml
+    suite_config: suites/05_conv_vision.yaml
+    benchmark_expectation: neutral
+  - model_id: seq2seq_encoder_decoder
+    category: Seq2seq or encoder-decoder model
+    model_config: models/06_seq2seq_encoder_decoder.yaml
+    suite_config: suites/06_seq2seq_encoder_decoder.yaml
+    benchmark_expectation: candidate
+  - model_id: embedding_heavy
+    category: Embedding-heavy model
+    model_config: models/07_embedding_heavy.yaml
+    suite_config: suites/07_embedding_heavy.yaml
+    benchmark_expectation: neutral
+  - model_id: dynamic_shape_workload
+    category: Dynamic-shape workload
+    model_config: models/08_dynamic_shape_workload.yaml
+    suite_config: suites/08_dynamic_shape_workload.yaml
+    benchmark_expectation: regression
+  - model_id: batch1_latency_workload
+    category: Batch-1 latency workload
+    model_config: models/09_batch1_latency_workload.yaml
+    suite_config: suites/09_batch1_latency_workload.yaml
+    benchmark_expectation: candidate
+  - model_id: batched_throughput_workload
+    category: Batched throughput workload
+    model_config: models/10_batched_throughput_workload.yaml
+    suite_config: suites/10_batched_throughput_workload.yaml
+    benchmark_expectation: candidate

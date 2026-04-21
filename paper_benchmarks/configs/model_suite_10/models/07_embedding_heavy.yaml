@@ -1,0 +1,31 @@
+model_id: embedding_heavy
+category: Embedding-heavy model
+loader_kind: transformers_auto_model
+model_resolver: huggingface://org/embedding_heavy
+task_type: embedding_heavy
+torch_dtype: bf16
+device: cuda
+validation_suite_path: ../suites/07_embedding_heavy.yaml
+workload_hash:
+batch_sizes:
+  - 1
+  - 64
+shape_or_length_buckets:
+  - bucket_id: seq_64
+    max_tokens: 64
+  - bucket_id: seq_256
+    min_tokens: 65
+    max_tokens: 256
+correctness_comparator: embedding_cosine_similarity_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+deployment_artifact_path:
+expected_memory_footprint_notes:
+  - Record embedding table residency and lookup working-set size.
+paper_eligible: false
+benchmark_expectation: neutral
+notes:
+  - Include realistic vocabulary and sparse-lookup pressure in the final workload.
+  - Keep this category even if it is deployment-incomplete or neutral.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kernelforge.run_cast import CastModelRuntime, load_cast
+from kernelforge.run_cast import CastModelRuntime, get_runtime_stats, load_cast, reset_runtime_stats
 
 
 def load(
@@ -22,4 +22,4 @@ def load(
     )
 
 
-__all__ = ["CastModelRuntime", "load", "load_cast"]
+__all__ = ["CastModelRuntime", "get_runtime_stats", "load", "load_cast", "reset_runtime_stats"]

@@ -1,0 +1,32 @@
+suite_id: embedding_heavy_suite
+benchmark_mode: e2e_model
+description: Embedding-heavy workload validation suite template.
+workload_type: embedding_batch
+workload_path: /abs/path/to/frozen/embedding_heavy_inputs.jsonl
+synthetic_workload: false
+variants:
+  - eager
+  - torch_compile
+  - kf_cast
+stages:
+  - load
+  - compile
+  - warmup
+  - total_generate
+batch_sizes:
+  - 1
+  - 64
+shape_or_length_buckets:
+  - bucket_id: seq_64
+    max_tokens: 64
+  - bucket_id: seq_256
+    min_tokens: 65
+    max_tokens: 256
+warmup_runs: 1
+timed_runs: 5
+generation_mode: greedy
+include_tokenization_in_timing: false
+measure_prefill_decode_separately: false
+device: cuda
+notes:
+  - Freeze sparse lookup distributions before benchmarking; do not replace them with easier dense batches later.

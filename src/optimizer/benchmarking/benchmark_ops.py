@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -269,6 +270,52 @@ def _coerce_cached_measurement(value: Any) -> dict[str, Any] | None:
         "warmup_runs": int(value.get("warmup_runs", DEFAULT_WARMUP_RUNS)),
         "timed_runs": int(value.get("timed_runs", DEFAULT_TIMED_RUNS)),
     }
+
+
+def _sha256_file(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _resolve_best_kernel_source(op_dir: Path) -> tuple[Path | None, float | None]:
+    db_file = op_dir / "nodes.db"
+    if not db_file.exists():
+        return None, None
+    try:
+        import sqlite3 as _sqlite3
+
+        conn = _sqlite3.connect(str(db_file))
+        row = conn.execute(
+            """
+            SELECT id, code, timestamp
+            FROM nodes
+            WHERE value IS NOT NULL AND value > 0
+            ORDER BY value ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        conn.close()
+        if not row:
+            return None, None
+        node_id = int(row[0])
+        code_rel = str(row[1] or "").strip()
+        timestamp = float(row[2]) if row[2] is not None else None
+        if code_rel:
+            candidate = (op_dir.parent / code_rel).resolve()
+            if candidate.exists():
+                return candidate, timestamp
+        for suffix in (".cu", ".py", ".metal", ".so"):
+            candidate = op_dir / "kernels" / f"kernel_{node_id}{suffix}"
+            if candidate.exists():
+                return candidate.resolve(), timestamp
+    except Exception:
+        return None, None
+    return None, None
 
 
 def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
@@ -616,10 +663,17 @@ def main() -> int:
             kernel_status = "missing"
             backend = ""
             kernel_estimated = False
+            kernel_source_path: Path | None = None
+            kernel_source_hash: str | None = None
+            kernel_source_origin = ""
             kernel_entry_latencies = []
             kernel_benchmarked_entry_files = []
             if optimized_root:
                 kernel_ms, kernel_status, backend = _read_best_kernel_ms(optimized_root / op_name)
+                kernel_source_path, _ = _resolve_best_kernel_source(optimized_root / op_name)
+                if kernel_source_path is not None:
+                    kernel_source_hash = _sha256_file(kernel_source_path)
+                    kernel_source_origin = "optimized_tree"
             else:
                 kernel_status = "missing_optimized_dir"
 
@@ -652,12 +706,26 @@ def main() -> int:
                     ) or []
                     if generated_backend:
                         backend = generated_backend
+                    generated_kernel_path = project_dir / "kernels" / "generated" / "individual_op_kernels" / op_name / (
+                        "kernel.py" if generated_backend == "triton" else "kernel.cu"
+                    )
+                    if generated_kernel_path.exists():
+                        kernel_source_path = generated_kernel_path.resolve()
+                        kernel_source_hash = _sha256_file(kernel_source_path)
+                        kernel_source_origin = "generated_root"
                 elif generated_status == "generated_profile_error_ninja" and pytorch_ms > 0.0:
                     kernel_ms = float(pytorch_ms)
                     kernel_status = "ok"
                     kernel_estimated = True
                     if generated_backend and not backend:
                         backend = generated_backend
+                    generated_kernel_path = project_dir / "kernels" / "generated" / "individual_op_kernels" / op_name / (
+                        "kernel.py" if generated_backend == "triton" else "kernel.cu"
+                    )
+                    if generated_kernel_path.exists():
+                        kernel_source_path = generated_kernel_path.resolve()
+                        kernel_source_hash = _sha256_file(kernel_source_path)
+                        kernel_source_origin = "generated_root_estimated"
                     errors.append(
                         f"{op_name}: generated kernel profiling unavailable (install ninja for direct kernel benchmarking)"
                     )
@@ -708,6 +776,10 @@ def main() -> int:
                 row["backend"] = backend
             if kernel_estimated:
                 row["kernel_estimated"] = True
+            if kernel_source_path is not None:
+                row["kernel_source_path"] = str(kernel_source_path)
+                row["kernel_source_hash"] = kernel_source_hash
+                row["kernel_source_origin"] = kernel_source_origin
             if pytorch_ms and kernel_ms:
                 row["speedup"] = float(pytorch_ms / kernel_ms) if kernel_ms > 0 else None
             results_by_op[op_name] = row

@@ -1,0 +1,50 @@
+suite_id: qwen35a3b_pilot_suite
+benchmark_mode: e2e_model
+description: Pilot MoE decoder LLM suite for Qwen3.5-35B-A3B.
+prompt_file: /abs/path/to/frozen/qwen35a3b_pilot_prompts.yaml
+workload_type: prompt_records
+synthetic_workload: false
+variants:
+  - eager
+  - torch_compile
+  - kf_cast
+stages:
+  - load
+  - compile
+  - warmup
+  - prefill
+  - decode
+  - total_generate
+batch_sizes:
+  - 1
+  - 2
+prompt_length_buckets:
+  - bucket_id: short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: medium
+    min_tokens: 129
+    max_tokens: 512
+  - bucket_id: long
+    min_tokens: 513
+    max_tokens: 1024
+shape_or_length_buckets:
+  - bucket_id: short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: medium
+    min_tokens: 129
+    max_tokens: 512
+  - bucket_id: long
+    min_tokens: 513
+    max_tokens: 1024
+max_new_tokens: 128
+warmup_runs: 5
+timed_runs: 20
+generation_mode: greedy
+include_tokenization_in_timing: false
+measure_prefill_decode_separately: true
+device: cuda
+notes:
+  - Freeze prompt ids before the first real pilot run.
+  - Do not collapse the suite to only the longest or shortest prompts after seeing results.

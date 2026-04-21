@@ -1,0 +1,14 @@
+version: 1
+models:
+  - model_id: qwen35_demo
+    loader_kind: transformers_causal_lm
+    model_path: /abs/path/to/local/model
+    tokenizer_path: /abs/path/to/local/model
+    model_config_path: /abs/path/to/local/model/config.json
+    cast_package_path: /abs/path/to/exported/model.cast
+    trust_remote_code: false
+    torch_dtype: bfloat16
+    device: cuda
+    notes:
+      - Replace the placeholder paths before running real benchmarks.
+

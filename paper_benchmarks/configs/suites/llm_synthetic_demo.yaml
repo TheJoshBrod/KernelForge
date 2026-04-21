@@ -1,0 +1,24 @@
+suite_id: llm_synthetic_demo
+benchmark_mode: e2e_model
+description: Synthetic demo suite for CLI and schema validation only.
+workload_type: prompt_jsonl
+workload_path: /abs/path/to/frozen_prompts.jsonl
+synthetic_workload: true
+variants:
+  - eager
+  - torch_compile
+stages:
+  - load
+  - compile
+  - warmup
+  - prefill
+  - decode
+  - total_generate
+warmup_count: 1
+timed_run_count: 2
+batch_size: 1
+max_new_tokens: 4
+device: cuda
+notes:
+  - Synthetic demo suites are never paper-eligible.
+

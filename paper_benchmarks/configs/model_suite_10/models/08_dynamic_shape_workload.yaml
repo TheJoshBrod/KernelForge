@@ -1,0 +1,32 @@
+model_id: dynamic_shape_workload
+category: Dynamic-shape workload
+loader_kind: transformers_causal_lm
+model_path: /abs/path/to/dynamic_shape_workload
+tokenizer_path: /abs/path/to/dynamic_shape_workload
+model_config_path: /abs/path/to/dynamic_shape_workload/config.json
+task_type: dynamic_shape_workload
+torch_dtype: bf16
+device: cuda
+validation_suite_path: ../suites/08_dynamic_shape_workload.yaml
+workload_hash:
+batch_sizes:
+  - 1
+shape_or_length_buckets:
+  - bucket_id: short_dynamic
+    min_tokens: 1
+    max_tokens: 64
+  - bucket_id: long_dynamic
+    min_tokens: 65
+    max_tokens: 1024
+correctness_comparator: exact_token_match_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+deployment_artifact_path:
+expected_memory_footprint_notes:
+  - Record shape-polymorphic cache pressure and recompilation behavior.
+paper_eligible: false
+benchmark_expectation: regression
+notes:
+  - This category is allowed to be neutral or regression and must still be reported.

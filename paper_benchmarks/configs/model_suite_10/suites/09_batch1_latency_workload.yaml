@@ -1,0 +1,40 @@
+suite_id: batch1_latency_workload_suite
+benchmark_mode: e2e_model
+description: Batch-1 latency validation suite template.
+workload_type: prompt_records
+workload_path: /abs/path/to/frozen/batch1_latency_prompts.yaml
+synthetic_workload: false
+variants:
+  - eager
+  - torch_compile
+  - kf_cast
+stages:
+  - load
+  - compile
+  - warmup
+  - prefill
+  - decode
+  - total_generate
+batch_sizes:
+  - 1
+prompt_length_buckets:
+  - bucket_id: latency_short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: latency_medium
+    min_tokens: 129
+    max_tokens: 512
+shape_or_length_buckets:
+  - bucket_id: latency_short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: latency_medium
+    min_tokens: 129
+    max_tokens: 512
+max_new_tokens: 64
+warmup_runs: 1
+timed_runs: 5
+generation_mode: greedy
+include_tokenization_in_timing: false
+measure_prefill_decode_separately: true
+device: cuda

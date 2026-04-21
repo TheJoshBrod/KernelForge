@@ -1,0 +1,32 @@
+suite_id: resnet50_conv_vision_pilot_suite
+benchmark_mode: e2e_model
+description: Pilot conv-heavy vision suite for ResNet50.
+workload_type: image_folder
+workload_path: /abs/path/to/frozen/resnet50_pilot_images
+synthetic_workload: false
+variants:
+  - eager
+  - torch_compile
+  - kf_cast
+stages:
+  - load
+  - compile
+  - warmup
+  - total_generate
+batch_sizes:
+  - 1
+  - 32
+shape_or_length_buckets:
+  - bucket_id: image_224
+    image_size: 224
+  - bucket_id: image_384
+    image_size: 384
+warmup_runs: 20
+timed_runs: 20
+generation_mode: greedy
+include_tokenization_in_timing: false
+measure_prefill_decode_separately: false
+device: cuda
+notes:
+  - Current external harness is still causal-LM-centric, so this suite is configuration-complete but preflight-only until a generic non-LLM runner lands.
+  - Do not replace this with a friendlier vision model if ResNet50 is neutral or slower.

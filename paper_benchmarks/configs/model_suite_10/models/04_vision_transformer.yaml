@@ -1,0 +1,30 @@
+model_id: vision_transformer
+category: Vision transformer
+loader_kind: timm_model
+model_path: /abs/path/to/vision_transformer
+task_type: vision_transformer
+torch_dtype: fp16
+device: cuda
+validation_suite_path: ../suites/04_vision_transformer.yaml
+workload_hash:
+batch_sizes:
+  - 1
+  - 16
+shape_or_length_buckets:
+  - bucket_id: image_224
+    image_size: 224
+  - bucket_id: image_384
+    image_size: 384
+correctness_comparator: logits_allclose_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+deployment_artifact_path:
+expected_memory_footprint_notes:
+  - Record ViT activation memory for batch-1 and batched runs.
+paper_eligible: false
+benchmark_expectation: neutral
+notes:
+  - Include at least one larger image-size bucket.
+  - Do not remove the vision transformer if deployment support lags the LLM path.

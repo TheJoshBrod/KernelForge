@@ -1,0 +1,50 @@
+suite_id: llama31_8b_dense_pilot_suite
+benchmark_mode: e2e_model
+description: Pilot dense decoder LLM suite for Llama 3.1 8B Instruct.
+prompt_file: /abs/path/to/frozen/llama31_8b_pilot_prompts.yaml
+workload_type: prompt_records
+synthetic_workload: false
+variants:
+  - eager
+  - torch_compile
+  - kf_cast
+stages:
+  - load
+  - compile
+  - warmup
+  - prefill
+  - decode
+  - total_generate
+batch_sizes:
+  - 1
+  - 4
+prompt_length_buckets:
+  - bucket_id: short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: medium
+    min_tokens: 129
+    max_tokens: 512
+  - bucket_id: long
+    min_tokens: 513
+    max_tokens: 1024
+shape_or_length_buckets:
+  - bucket_id: short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: medium
+    min_tokens: 129
+    max_tokens: 512
+  - bucket_id: long
+    min_tokens: 513
+    max_tokens: 1024
+max_new_tokens: 128
+warmup_runs: 5
+timed_runs: 20
+generation_mode: greedy
+include_tokenization_in_timing: false
+measure_prefill_decode_separately: true
+device: cuda
+notes:
+  - Use the same frozen prompt-selection policy as the Qwen pilot.
+  - Dense decoder is included to test whether a Qwen result is architecture-specific.

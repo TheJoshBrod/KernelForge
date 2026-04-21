@@ -1,0 +1,49 @@
+suite_id: qwen_llm_smoke
+benchmark_mode: e2e_model
+description: Lightweight smoke-run causal LM suite for Qwen-style benchmarking on the frozen Qwen prompt pack.
+prompt_file: /home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/workloads/qwen35a3b/qwen_paper_prompts_v1.jsonl
+workload_type: prompt_records
+synthetic_workload: false
+variants:
+  - eager
+  - torch_compile
+  - kf_cast
+stages:
+  - load
+  - compile
+  - warmup
+  - prefill
+  - decode
+  - total_generate
+prompt_length_buckets:
+  - bucket_id: short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: medium
+    min_tokens: 129
+    max_tokens: 512
+  - bucket_id: long
+    min_tokens: 513
+    max_tokens: 1024
+shape_or_length_buckets:
+  - bucket_id: short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: medium
+    min_tokens: 129
+    max_tokens: 512
+  - bucket_id: long
+    min_tokens: 513
+    max_tokens: 1024
+batch_sizes:
+  - 1
+max_new_tokens: 16
+warmup_runs: 1
+timed_runs: 2
+generation_mode: greedy
+include_tokenization_in_timing: false
+measure_prefill_decode_separately: true
+device: cuda
+notes:
+  - Uses the same frozen Qwen prompt pack as the paper suite, but with short timing loops for preflight and smoke validation only.
+  - This suite is not a paper-result configuration.

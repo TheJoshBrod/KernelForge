@@ -1,0 +1,41 @@
+suite_id: batched_throughput_workload_suite
+benchmark_mode: e2e_model
+description: Batched throughput validation suite template.
+workload_type: prompt_records
+workload_path: /abs/path/to/frozen/batched_throughput_prompts.yaml
+synthetic_workload: false
+variants:
+  - eager
+  - torch_compile
+  - kf_cast
+stages:
+  - load
+  - compile
+  - warmup
+  - prefill
+  - decode
+  - total_generate
+batch_sizes:
+  - 8
+  - 16
+prompt_length_buckets:
+  - bucket_id: throughput_medium
+    min_tokens: 64
+    max_tokens: 256
+  - bucket_id: throughput_long
+    min_tokens: 257
+    max_tokens: 1024
+shape_or_length_buckets:
+  - bucket_id: throughput_medium
+    min_tokens: 64
+    max_tokens: 256
+  - bucket_id: throughput_long
+    min_tokens: 257
+    max_tokens: 1024
+max_new_tokens: 128
+warmup_runs: 1
+timed_runs: 5
+generation_mode: greedy
+include_tokenization_in_timing: false
+measure_prefill_decode_separately: true
+device: cuda

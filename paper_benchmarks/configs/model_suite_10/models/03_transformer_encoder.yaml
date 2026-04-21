@@ -1,0 +1,32 @@
+model_id: transformer_encoder
+category: Transformer encoder model
+loader_kind: transformers_auto_model
+model_resolver: huggingface://org/transformer_encoder
+model_config_path: /abs/path/to/transformer_encoder/config.json
+task_type: transformer_encoder
+torch_dtype: bf16
+device: cuda
+validation_suite_path: ../suites/03_transformer_encoder.yaml
+workload_hash:
+batch_sizes:
+  - 1
+  - 8
+shape_or_length_buckets:
+  - bucket_id: seq_128
+    max_tokens: 128
+  - bucket_id: seq_512
+    min_tokens: 129
+    max_tokens: 512
+correctness_comparator: hidden_state_allclose_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+deployment_artifact_path:
+expected_memory_footprint_notes:
+  - Record encoder-only memory footprint for sequence-length buckets.
+paper_eligible: false
+benchmark_expectation: neutral
+notes:
+  - Resolver-based template for mirrored encoder checkpoints.
+  - Keep this model in the suite even if Kernel Forge only supports operator-tier evidence first.

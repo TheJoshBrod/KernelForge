@@ -1,0 +1,33 @@
+model_id: batched_throughput_workload
+category: Batched throughput workload
+loader_kind: transformers_causal_lm
+model_path: /abs/path/to/batched_throughput_workload
+tokenizer_path: /abs/path/to/batched_throughput_workload
+model_config_path: /abs/path/to/batched_throughput_workload/config.json
+task_type: batched_throughput
+torch_dtype: bf16
+device: cuda
+validation_suite_path: ../suites/10_batched_throughput_workload.yaml
+workload_hash:
+batch_sizes:
+  - 8
+  - 16
+shape_or_length_buckets:
+  - bucket_id: throughput_medium
+    min_tokens: 64
+    max_tokens: 256
+  - bucket_id: throughput_long
+    min_tokens: 257
+    max_tokens: 1024
+correctness_comparator: exact_token_match_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+deployment_artifact_path:
+expected_memory_footprint_notes:
+  - Record throughput-oriented memory limits and saturation points.
+paper_eligible: false
+benchmark_expectation: candidate
+notes:
+  - Keep batch schedules fixed before benchmarking.

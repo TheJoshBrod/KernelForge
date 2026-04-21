@@ -1,0 +1,46 @@
+model_id: qwen35a3b
+category: MoE decoder LLM
+loader_kind: transformers_causal_lm
+model_path: /home/gb10/model-cache/Qwen3.5-35B-A3B
+tokenizer_path: /home/gb10/model-cache/Qwen3.5-35B-A3B
+model_config_path: /home/gb10/model-cache/Qwen3.5-35B-A3B/config.json
+cast_package_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/test_qwen - NVIDIA GB10/exports/test_qwen - NVIDIA GB10.cast
+deployment_artifact_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/test_qwen - NVIDIA GB10/exports/test_qwen - NVIDIA GB10.cast
+task_type: moe_decoder_llm
+torch_dtype: bf16
+device_map: auto
+device: cuda
+trust_remote_code: false
+local_files_only: true
+attn_implementation: eager
+validation_suite_path: ../suites/qwen_llm_paper.yaml
+workload_hash: bf02a32ec3e11fe8a5eec24da64b75d1794a621112e36f51a16dae24b3092b93
+batch_sizes:
+  - 1
+shape_or_length_buckets:
+  - bucket_id: short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: medium
+    min_tokens: 129
+    max_tokens: 512
+  - bucket_id: long
+    min_tokens: 513
+    max_tokens: 1024
+correctness_comparator: exact_token_match_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+expected_memory_footprint_notes:
+  - The frozen v1 prompt suite has 20 prompts per bucket, so paper-default runs are pinned to batch size 1 with no on-the-fly sampling.
+  - Record observed memory headroom and freeze a larger prompt pack before promoting any larger batch size to paper-eligible end-to-end runs.
+paper_eligible: false
+benchmark_expectation: candidate
+notes:
+  - Uses the locally mirrored Qwen snapshot discovered on the GB10 benchmark host.
+  - The cast package path points at the canonical export path for project/test_qwen%20-%20NVIDIA%20GB10/.
+  - The workload hash is pinned to paper_benchmarks/workloads/qwen35a3b/qwen_paper_prompts_v1.jsonl.
+  - Attention mode is pinned to eager to match the canonical Qwen project export wrapper and avoid changing the workload definition between eager, torch.compile, and kf_cast.
+  - Raw prompt text should remain redacted in benchmark artifacts unless --store-prompts is explicitly enabled.
+expected_model_config_hash: 5e4d7f74fec2f360eb9cfbfcd6ec0c4c76e684d3a11caaed259d9fd9bfbc7944

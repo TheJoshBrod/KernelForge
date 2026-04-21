@@ -3,6 +3,7 @@
 
 import argparse
 import contextlib
+import copy
 import glob
 import hashlib
 import inspect
@@ -145,6 +146,83 @@ _FOCUS_OPS = {
 _KERNEL_POLICIES = ("all", "skip_aten", "known_fast", "focus_ops")
 
 
+def _fresh_runtime_stats() -> dict[str, Any]:
+    return {
+        "patched_calls": 0,
+        "kernel_launches_attempted": 0,
+        "kernel_launches_succeeded": 0,
+        "kernel_launches_failed": 0,
+        "fallbacks_to_original": 0,
+        "exception_fallback_count": 0,
+        "contiguous_copy_count": 0,
+        "adaptation_count": 0,
+        "per_op": {},
+    }
+
+
+def _ensure_per_op_stats(runtime_stats: dict[str, Any] | None, op_name: str) -> dict[str, Any] | None:
+    if runtime_stats is None:
+        return None
+    per_op = runtime_stats.setdefault("per_op", {})
+    return per_op.setdefault(
+        op_name,
+        {
+            "patched_calls": 0,
+            "kernel_launches_attempted": 0,
+            "kernel_launches_succeeded": 0,
+            "kernel_launches_failed": 0,
+            "fallbacks_to_original": 0,
+            "exception_fallback_count": 0,
+            "contiguous_copy_count": 0,
+            "adaptation_count": 0,
+            "last_exception": None,
+            "fallback_reasons": {},
+        },
+    )
+
+
+def _increment_stat(bucket: dict[str, Any] | None, key: str, amount: int = 1) -> None:
+    if bucket is None:
+        return
+    bucket[key] = int(bucket.get(key, 0)) + amount
+
+
+def _record_fallback(
+    runtime_stats: dict[str, Any] | None,
+    op_name: str,
+    reason: str,
+    *,
+    exception: Exception | None = None,
+) -> None:
+    if runtime_stats is None:
+        return
+    op_stats = _ensure_per_op_stats(runtime_stats, op_name)
+    _increment_stat(runtime_stats, "fallbacks_to_original")
+    _increment_stat(op_stats, "fallbacks_to_original")
+    if exception is not None:
+        _increment_stat(runtime_stats, "exception_fallback_count")
+        _increment_stat(op_stats, "exception_fallback_count")
+        op_stats["last_exception"] = f"{type(exception).__name__}: {exception}"
+    reasons = op_stats.setdefault("fallback_reasons", {})
+    reasons[reason] = int(reasons.get(reason, 0)) + 1
+
+
+def get_runtime_stats(model: Any | None = None) -> dict[str, Any]:
+    stats = getattr(model, "_kf_runtime_stats", None)
+    if not isinstance(stats, dict):
+        return _fresh_runtime_stats()
+    return copy.deepcopy(stats)
+
+
+def reset_runtime_stats(model: Any | None = None) -> dict[str, Any]:
+    stats = getattr(model, "_kf_runtime_stats", None)
+    if not isinstance(stats, dict):
+        return _fresh_runtime_stats()
+    stats.clear()
+    stats.update(_fresh_runtime_stats())
+    return get_runtime_stats(model)
+
+
 def _patch_stack() -> list[dict[str, Callable[..., Any]]]:
     stack = getattr(_PATCH_STATE, "stack", None)
     if stack is None:
@@ -257,10 +335,14 @@ def _build_functional_patch(
     orig_fn: Callable[..., Any],
     n_launch: int | None,
     orig_params: list[str] | None,
+    runtime_stats: dict[str, Any] | None = None,
 ) -> Callable[..., Any]:
     import torch
 
     def patched(*args, **kwargs):
+        op_stats = _ensure_per_op_stats(runtime_stats, op_name)
+        _increment_stat(runtime_stats, "patched_calls")
+        _increment_stat(op_stats, "patched_calls")
         try:
             if orig_params is not None:
                 resolved = {orig_params[i]: value for i, value in enumerate(args) if i < len(orig_params)}
@@ -275,22 +357,38 @@ def _build_functional_patch(
             for value in ordered[:limit]:
                 if isinstance(value, torch.Tensor):
                     tensor_args.append(value)
+                    if not value.is_contiguous():
+                        _increment_stat(runtime_stats, "contiguous_copy_count")
+                        _increment_stat(runtime_stats, "adaptation_count")
+                        _increment_stat(op_stats, "contiguous_copy_count")
+                        _increment_stat(op_stats, "adaptation_count")
                     call_args.append(value.contiguous())
                 else:
                     call_args.append(value)
 
             if not tensor_args:
+                _record_fallback(runtime_stats, op_name, "no_tensor_args")
                 return orig_fn(*args, **kwargs)
 
             if any(not tensor.is_cuda for tensor in tensor_args):
+                _record_fallback(runtime_stats, op_name, "non_cuda_tensor")
                 return orig_fn(*args, **kwargs)
 
             first_device = tensor_args[0].device
             if any(tensor.device != first_device for tensor in tensor_args):
+                _record_fallback(runtime_stats, op_name, "mixed_device_tensor")
                 return orig_fn(*args, **kwargs)
 
-            return ext.launch(*call_args)
-        except Exception:
+            _increment_stat(runtime_stats, "kernel_launches_attempted")
+            _increment_stat(op_stats, "kernel_launches_attempted")
+            result = ext.launch(*call_args)
+            _increment_stat(runtime_stats, "kernel_launches_succeeded")
+            _increment_stat(op_stats, "kernel_launches_succeeded")
+            return result
+        except Exception as exc:
+            _increment_stat(runtime_stats, "kernel_launches_failed")
+            _increment_stat(op_stats, "kernel_launches_failed")
+            _record_fallback(runtime_stats, op_name, "kernel_exception", exception=exc)
             return orig_fn(*args, **kwargs)
 
     patched.__name__ = f"cast_patch_{op_name}"
@@ -328,6 +426,100 @@ class CastModelRuntime(nn.Module):
         return self(*args, **kwargs)
 
 
+def _load_model_module(module_name: str, model_py: str):
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location(module_name, model_py)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to create a module spec for {model_py}")
+
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = mod
+    try:
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    except Exception:
+        del sys.modules[module_name]
+        raise
+    return mod
+
+
+def _resolve_model_class(mod, model_class_name: str):
+    if model_class_name and hasattr(mod, model_class_name):
+        return getattr(mod, model_class_name)
+    candidates = [
+        value for value in vars(mod).values()
+        if isinstance(value, type) and issubclass(value, nn.Module) and value.__module__ not in ("torch.nn", "builtins")
+    ]
+    return candidates[-1] if candidates else None
+
+
+def _build_model_from_class(ModelClass, manifest: dict[str, Any], model_args: dict | None, cache_dir: str):
+    model_init_args = manifest.get("model_init_args") or {}
+    model_config_file = os.path.join(cache_dir, "model_config.json")
+
+    if model_args:
+        try:
+            from transformers import AutoConfig
+
+            cfg_dict = dict(model_args)
+            model_type = cfg_dict.pop("model_type", None)
+            config = AutoConfig.for_model(model_type, **cfg_dict)
+            return ModelClass(config)
+        except Exception as exc:
+            raise RuntimeError(f"Failed to instantiate model from --model-args: {exc}") from exc
+
+    if model_init_args:
+        return ModelClass(**model_init_args)
+
+    if os.path.exists(model_config_file):
+        try:
+            from transformers import AutoConfig
+
+            cfg_dict = json.load(open(model_config_file))
+            model_type = cfg_dict.pop("model_type", None)
+            n_labels = cfg_dict.get("num_labels")
+            if n_labels:
+                cfg_dict["id2label"] = {str(i): f"LABEL_{i}" for i in range(n_labels)}
+                cfg_dict["label2id"] = {f"LABEL_{i}": i for i in range(n_labels)}
+            config = AutoConfig.for_model(model_type, **cfg_dict)
+            return ModelClass(config)
+        except Exception as exc:
+            raise RuntimeError(f"Failed to instantiate model from model_config.json: {exc}") from exc
+
+    return None
+
+
+def _invoke_entrypoint(fn, *, weight_file: str | None, device: str | None, model_args: dict | None):
+    signature = inspect.signature(fn)
+    params = list(signature.parameters.values())
+    accepts_var_kw = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params)
+    accepts_var_args = any(param.kind == inspect.Parameter.VAR_POSITIONAL for param in params)
+    kwargs: dict[str, Any] = {}
+
+    if model_args:
+        for key, value in model_args.items():
+            if accepts_var_kw or key in signature.parameters:
+                kwargs[key] = value
+
+    if device is not None and (accepts_var_kw or "device" in signature.parameters):
+        kwargs["device"] = device
+
+    args: list[Any] = []
+    if weight_file is not None:
+        positional_params = [
+            param for param in params
+            if param.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        ]
+        if positional_params or accepts_var_args:
+            args.append(weight_file)
+
+    return fn(*args, **kwargs)
+
+
 def load_cast(
     cast_path: str,
     model_args: dict | None = None,
@@ -335,9 +527,22 @@ def load_cast(
     opt_level: str = "-O3",
     device: str | None = None,
     kernel_policy: str = "all",
+    allow_jit: bool = True,
+    require_precompiled: bool = False,
+    record_runtime_stats: bool = False,
 ):
     import torch
 
+    def _file_sha256(path: str) -> str | None:
+        if not os.path.exists(path) or not os.path.isfile(path):
+            return None
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    load_started = time.perf_counter()
     cast_path = os.path.abspath(cast_path)
     cache_key = hashlib.sha256(open(cast_path, "rb").read()).hexdigest()
     cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "cast", cache_key)
@@ -372,6 +577,24 @@ def load_cast(
 
     _F_PREFIX = "torch_nn_functional_"
     functional_patches: dict[str, Callable[..., Any]] = {}
+    runtime_stats = _fresh_runtime_stats()
+    runtime_report: dict[str, Any] = {
+        "cast_path": cast_path,
+        "cache_key": cache_key,
+        "cache_dir": cache_dir,
+        "kernel_policy": kernel_policy,
+        "allow_jit": bool(allow_jit),
+        "require_precompiled": bool(require_precompiled),
+        "record_runtime_stats": bool(record_runtime_stats),
+        "runtime_patch_enabled": False,
+        "selected_ops": [],
+        "loaded_kernels": [],
+        "op_reports": [],
+        "kernel_source_hashes": {},
+        "precompiled_binary_hashes": {},
+        "jit_compile_time_ms": 0.0,
+        "precompiled_load_time_ms": 0.0,
+    }
 
     if kernel_policy not in _KERNEL_POLICIES:
         raise ValueError(
@@ -381,18 +604,37 @@ def load_cast(
     for op in manifest["ops"]:
         op_name = op["name"]
         kernel_cu = os.path.join(cache_dir, op["cuda_source"])
+        op_report: dict[str, Any] = {
+            "op_name": op_name,
+            "cuda_source": op.get("cuda_source"),
+            "kernel_source_path": kernel_cu,
+            "kernel_source_hash": _file_sha256(kernel_cu),
+            "load_mode": "skipped",
+            "skip_reason": None,
+            "patch_registered": False,
+            "precompiled_binary_path": None,
+            "precompiled_binary_hash": None,
+        }
+        if op_report["kernel_source_hash"] is not None and op.get("cuda_source"):
+            runtime_report["kernel_source_hashes"][op["cuda_source"]] = op_report["kernel_source_hash"]
 
         if no_kernels:
             print(f"  [--no-kernels] Skipping kernel for {op_name}")
+            op_report["skip_reason"] = "no_kernels"
+            runtime_report["op_reports"].append(op_report)
             continue
 
         if not torch.cuda.is_available():
             print(f"  [WARN] CUDA not available — skipping kernel for {op_name}")
+            op_report["skip_reason"] = "cuda_unavailable"
+            runtime_report["op_reports"].append(op_report)
             continue
 
         skip_reason = _kernel_policy_skip_reason(op_name, kernel_cu, kernel_policy)
         if skip_reason:
             print(f"  [kernel-policy={kernel_policy}] Skipping kernel for {op_name}: {skip_reason}")
+            op_report["skip_reason"] = skip_reason
+            runtime_report["op_reports"].append(op_report)
             continue
 
         # Try precompiled .so for the current GPU first
@@ -406,34 +648,61 @@ def load_cast(
             try:
                 import importlib.util as _ilu
 
+                precompiled_started = time.perf_counter()
                 _spec = _ilu.spec_from_file_location(op_name, so_path)
                 ext = _ilu.module_from_spec(_spec)
                 _spec.loader.exec_module(ext)  # type: ignore[union-attr]
+                runtime_report["precompiled_load_time_ms"] += (time.perf_counter() - precompiled_started) * 1000.0
+                op_report["load_mode"] = "precompiled"
+                op_report["precompiled_binary_path"] = so_path
+                op_report["precompiled_binary_hash"] = _file_sha256(so_path)
+                if so_rel and op_report["precompiled_binary_hash"] is not None:
+                    runtime_report["precompiled_binary_hashes"][so_rel] = op_report["precompiled_binary_hash"]
                 print(f"  Loaded precompiled {op_name} ({gpu_sm})")
             except Exception as exc:
                 print(f"  [WARN] Failed to load precompiled {op_name} ({gpu_sm}): {exc}")
+                op_report["precompiled_load_error"] = f"{type(exc).__name__}: {exc}"
 
         if ext is None:
             if so_rel:
                 print(f"  [WARN] Precompiled .so not found for {gpu_sm}, falling back to JIT")
+            if require_precompiled:
+                raise RuntimeError(
+                    f"Precompiled kernel required for {op_name} on {gpu_sm}, but no usable shared object was available."
+                )
+            if not allow_jit:
+                raise RuntimeError(
+                    f"JIT loading is disabled and no usable precompiled kernel was available for {op_name} on {gpu_sm}."
+                )
             if not os.path.exists(kernel_cu):
                 print(f"  [WARN] No kernel.cu for {op_name}, skipping")
+                op_report["skip_reason"] = "kernel_source_missing"
+                runtime_report["op_reports"].append(op_report)
                 continue
             try:
+                jit_started = time.perf_counter()
                 ext = compile_kernel(kernel_cu, op_name, build_dir, opt_level=opt_level)
+                runtime_report["jit_compile_time_ms"] += (time.perf_counter() - jit_started) * 1000.0
+                op_report["load_mode"] = "jit"
             except Exception as exc:
                 print(f"  [WARN] Failed to prepare kernel for {op_name}, using native PyTorch: {exc}")
+                op_report["skip_reason"] = f"jit_failed: {type(exc).__name__}: {exc}"
+                runtime_report["op_reports"].append(op_report)
                 continue
 
         # Generic patch: decode torch.nn.functional.<attr> from the op_name convention.
         if not op_name.startswith(_F_PREFIX):
             print(f"  [WARN] '{op_name}' does not follow torch_nn_functional_* convention, skipping patch")
+            op_report["skip_reason"] = "unsupported_op_naming"
+            runtime_report["op_reports"].append(op_report)
             continue
 
         fn_attr = op_name[len(_F_PREFIX):]
         original = _ensure_functional_dispatch(fn_attr)
         if original is None:
             print(f"  [WARN] torch.nn.functional.{fn_attr} not found, skipping patch")
+            op_report["skip_reason"] = f"functional_target_missing:{fn_attr}"
+            runtime_report["op_reports"].append(op_report)
             continue
 
         n_launch = _launch_arity(kernel_cu, ext)
@@ -451,90 +720,109 @@ def load_cast(
             orig_fn=original,
             n_launch=n_launch,
             orig_params=orig_params,
+            runtime_stats=runtime_stats if record_runtime_stats else None,
         )
+        op_report["patch_registered"] = True
+        runtime_report["selected_ops"].append(op_name)
+        runtime_report["loaded_kernels"].append(
+            {
+                "op_name": op_name,
+                "fn_attr": fn_attr,
+                "load_mode": op_report["load_mode"],
+                "kernel_source_path": kernel_cu,
+                "kernel_source_hash": op_report["kernel_source_hash"],
+                "precompiled_binary_path": op_report["precompiled_binary_path"],
+                "precompiled_binary_hash": op_report["precompiled_binary_hash"],
+            }
+        )
+        runtime_report["op_reports"].append(op_report)
         print(f"  Registered runtime patch torch.nn.functional.{fn_attr} → {op_name}")
 
-    # 5. Load model class from model.py
-    import importlib.util
-    import sys
-
+    # 5. Load model implementation from model.py
     model_py = os.path.join(cache_dir, "model.py")
-    spec = importlib.util.spec_from_file_location("cast_model", model_py)
-    mod = importlib.util.module_from_spec(spec)
-    # Register before exec so inspect.getfile can resolve the module via
-    # sys.modules — without this, inspect raises "is a built-in class".
-    sys.modules["cast_model"] = mod
-    try:
-        spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    except Exception:
-        del sys.modules["cast_model"]
-        raise
+    module_name = f"cast_model_{cache_key[:12]}"
+    mod = _load_model_module(module_name, model_py)
 
-    model_class_name = manifest.get("model_class", "")
-    if model_class_name and hasattr(mod, model_class_name):
-        ModelClass = getattr(mod, model_class_name)
-    else:
-        candidates = [
-            v for v in vars(mod).values()
-            if isinstance(v, type) and issubclass(v, nn.Module) and v.__module__ not in ("torch.nn", "builtins")
-        ]
-        if not candidates:
-            raise RuntimeError("No model class found in model.py")
-        ModelClass = candidates[-1]
+    model_class_name = str(manifest.get("model_class") or "").strip()
+    model_entrypoints = manifest.get("model_entrypoints", {}) if isinstance(manifest.get("model_entrypoints"), dict) else {}
+    build_model_fn = getattr(mod, "build_model", None) if model_entrypoints.get("build_model") or hasattr(mod, "build_model") else None
+    load_weights_fn = getattr(mod, "load_weights", None) if model_entrypoints.get("load_weights") or hasattr(mod, "load_weights") else None
+    ModelClass = _resolve_model_class(mod, model_class_name)
 
-    print(f"  Model class: {ModelClass.__name__}")
+    model = None
+    model_load_strategy = None
+    weight_relpath = str(manifest.get("weight_file") or "").strip()
+    weight_file = os.path.join(cache_dir, weight_relpath) if weight_relpath else None
 
-    # 6. Instantiate model
-    model_init_args = manifest.get("model_init_args") or {}
-    model_config_file = os.path.join(cache_dir, "model_config.json")
-    if model_args:
-        # CLI override: --model-args '{"model_type": "resnet", ...}'
-        try:
-            from transformers import AutoConfig
-            cfg_dict = dict(model_args)
-            model_type = cfg_dict.pop("model_type", None)
-            config = AutoConfig.for_model(model_type, **cfg_dict)
-            model = ModelClass(config)
-        except Exception as e:
-            raise RuntimeError(f"Failed to instantiate model from --model-args: {e}") from e
-    elif model_init_args:
-        model = ModelClass(**model_init_args)
-    elif os.path.exists(model_config_file):
-        # HuggingFace model — load config from the bundled model_config.json
-        try:
-            from transformers import AutoConfig
-            cfg_dict = json.load(open(model_config_file))
-            model_type = cfg_dict.pop("model_type", None)
-            # Rebuild id2label/label2id to be consistent with num_labels so
-            # HuggingFace doesn't override num_labels with len(id2label).
-            n = cfg_dict.get("num_labels")
-            if n:
-                cfg_dict["id2label"] = {str(i): f"LABEL_{i}" for i in range(n)}
-                cfg_dict["label2id"] = {f"LABEL_{i}": i for i in range(n)}
-            config = AutoConfig.for_model(model_type, **cfg_dict)
-            model = ModelClass(config)
-        except Exception as e:
-            raise RuntimeError(f"Failed to instantiate model from model_config.json: {e}") from e
-    else:
+    if ModelClass is not None:
+        print(f"  Model class: {ModelClass.__name__}")
+        model = _build_model_from_class(ModelClass, manifest, model_args, cache_dir)
+        if model is not None:
+            model_load_strategy = "model_class"
+            if weight_file:
+                import torch
+
+                print(f"  Loading weights from {weight_relpath} ...")
+                state_dict = torch.load(weight_file, map_location="cpu", weights_only=True)
+                model.load_state_dict(state_dict)
+
+    if model is None and callable(load_weights_fn):
+        print("  Loading model via model.py::load_weights(...)")
+        model = _invoke_entrypoint(
+            load_weights_fn,
+            weight_file=weight_file or "",
+            device=device or "cpu",
+            model_args=model_args,
+        )
+        model_load_strategy = "load_weights"
+
+    if model is None and callable(build_model_fn):
+        print("  Loading model via model.py::build_model(...)")
+        model = _invoke_entrypoint(
+            build_model_fn,
+            weight_file=None,
+            device=device,
+            model_args=model_args,
+        )
+        model_load_strategy = "build_model"
+
+    if model is None:
         raise RuntimeError(
-            "Cannot instantiate model: no model_init_args in manifest and "
-            "no model_config.json bundled in the .cast file.\n"
-            "Pass --model-args '{\"model_type\": ...}' or re-export with a "
-            "model_config.json saved alongside model.py in the project."
+            "Cannot instantiate model from the .cast package. "
+            "Expected a loadable model_class or model.py build_model/load_weights entrypoint."
         )
 
-    # 7. Load weights
-    import torch
-    weight_file = os.path.join(cache_dir, manifest["weight_file"])
-    print(f"  Loading weights from {manifest['weight_file']} ...")
-    state_dict = torch.load(weight_file, map_location="cpu", weights_only=True)
-    model.load_state_dict(state_dict)
+    if not isinstance(model, nn.Module):
+        raise RuntimeError(f"Loaded object from .cast is not an nn.Module: {type(model).__name__}")
+
     model.eval()
 
     runtime_model = CastModelRuntime(model, functional_patches)
     runtime_model.eval()
     if device:
         runtime_model = runtime_model.to(device)
+
+    runtime_report["runtime_patch_enabled"] = bool(functional_patches)
+    runtime_report["load_modes"] = {
+        entry["op_name"]: entry.get("load_mode")
+        for entry in runtime_report["op_reports"]
+    }
+    runtime_report["selected_ops"] = sorted(dict.fromkeys(runtime_report["selected_ops"]))
+    runtime_report["runtime_load_time_ms"] = (time.perf_counter() - load_started) * 1000.0
+    runtime_report["setup_time_ms"] = max(
+        float(runtime_report["runtime_load_time_ms"]) - float(runtime_report["jit_compile_time_ms"]),
+        0.0,
+    )
+    runtime_report["model_load_strategy"] = model_load_strategy
+    runtime_report["model_entrypoints"] = {
+        "model_class": model_class_name,
+        "build_model": bool(callable(build_model_fn)),
+        "load_weights": bool(callable(load_weights_fn)),
+    }
+
+    runtime_model._kf_runtime_report = runtime_report
+    runtime_model._kf_runtime_stats = runtime_stats
+    runtime_model._kf_runtime_stats_recording_enabled = bool(record_runtime_stats)
 
     return runtime_model
 

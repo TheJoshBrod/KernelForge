@@ -1,0 +1,32 @@
+model_id: moe_decoder_llm_qwen_style
+category: MoE decoder LLM
+loader_kind: transformers_causal_lm
+model_path: /abs/path/to/moe_decoder_llm_qwen_style
+tokenizer_path: /abs/path/to/moe_decoder_llm_qwen_style
+model_config_path: /abs/path/to/moe_decoder_llm_qwen_style/config.json
+task_type: moe_decoder_llm
+torch_dtype: bf16
+device_map: auto
+validation_suite_path: ../suites/01_moe_decoder_llm_qwen_style.yaml
+workload_hash:
+batch_sizes:
+  - 1
+shape_or_length_buckets:
+  - bucket_id: short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: medium
+    min_tokens: 129
+    max_tokens: 512
+correctness_comparator: exact_token_match_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+deployment_artifact_path:
+expected_memory_footprint_notes:
+  - Fill in measured peak HBM usage before enabling paper_eligible.
+paper_eligible: false
+benchmark_expectation: candidate
+notes:
+  - Qwen-style MoE decoder representative.

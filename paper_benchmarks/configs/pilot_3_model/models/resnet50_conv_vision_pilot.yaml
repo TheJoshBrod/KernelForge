@@ -1,0 +1,33 @@
+model_id: resnet50_conv_vision_pilot
+category: Conv/vision model
+loader_kind: torchvision_model
+model_resolver: torchvision.models.resnet50
+model_path: /abs/path/to/resnet50_imagenet_weights.pt
+model_config_path: /abs/path/to/resnet50_imagenet_model_config.json
+task_type: conv_vision
+dtype: fp16
+device: cuda
+validation_suite_path: ../suites/resnet50_conv_vision_pilot.yaml
+workload_hash:
+batch_sizes:
+  - 1
+  - 32
+shape_or_length_buckets:
+  - bucket_id: image_224
+    image_size: 224
+  - bucket_id: image_384
+    image_size: 384
+correctness_comparator: logits_allclose_and_top1_exact_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+deployment_artifact_path: /abs/path/to/exported/resnet50.cast
+expected_memory_footprint_notes:
+  - Record activation memory and workspace behavior for batch 1 and batch 32.
+  - End-to-end execution remains preflight-only until a generic non-LLM runner lands; do not claim paper readiness before that.
+paper_eligible: false
+benchmark_expectation: neutral
+notes:
+  - Included specifically to prevent the pilot from being all-autoregressive.
+  - Conv-heavy vision should stay in scope even if it becomes a negative result for Kernel Forge.

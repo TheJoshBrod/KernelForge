@@ -1,0 +1,42 @@
+model_id: qwen35a3b_pilot
+category: MoE decoder LLM
+loader_kind: transformers_causal_lm
+model_path: /home/gb10/model-cache/Qwen3.5-35B-A3B
+tokenizer_path: /home/gb10/model-cache/Qwen3.5-35B-A3B
+model_config_path: /home/gb10/model-cache/Qwen3.5-35B-A3B/config.json
+task_type: moe_decoder_llm
+dtype: bf16
+device_map: auto
+local_files_only: true
+trust_remote_code: false
+attn_implementation: sdpa
+expected_model_config_hash: 5e4d7f74fec2f360eb9cfbfcd6ec0c4c76e684d3a11caaed259d9fd9bfbc7944
+validation_suite_path: ../suites/qwen35a3b_pilot.yaml
+workload_hash:
+batch_sizes:
+  - 1
+  - 2
+shape_or_length_buckets:
+  - bucket_id: short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: medium
+    min_tokens: 129
+    max_tokens: 512
+  - bucket_id: long
+    min_tokens: 513
+    max_tokens: 1024
+correctness_comparator: exact_token_match_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+deployment_artifact_path: /abs/path/to/exported/qwen35a3b.cast
+expected_memory_footprint_notes:
+  - Use the local DGX Spark Qwen3.5-35B-A3B snapshot, but do not mark paper-ready until the frozen prompt pack and cast bundle are pinned.
+  - Record observed peak HBM for batch 1 and batch 2 before enabling paper_eligible.
+paper_eligible: false
+benchmark_expectation: candidate
+notes:
+  - Primary MoE decoder pilot.
+  - Supports end-to-end model and deployment claims only after frozen prompts, cast hash, and exact-token correctness are present.

@@ -1,0 +1,32 @@
+model_id: seq2seq_encoder_decoder
+category: Seq2seq or encoder-decoder model
+loader_kind: transformers_seq2seq
+model_path: /abs/path/to/seq2seq_encoder_decoder
+tokenizer_path: /abs/path/to/seq2seq_encoder_decoder
+model_config_path: /abs/path/to/seq2seq_encoder_decoder/config.json
+task_type: seq2seq_encoder_decoder
+torch_dtype: bf16
+device_map: auto
+validation_suite_path: ../suites/06_seq2seq_encoder_decoder.yaml
+workload_hash:
+batch_sizes:
+  - 1
+shape_or_length_buckets:
+  - bucket_id: src_short_tgt_short
+    source_max_tokens: 128
+    target_max_tokens: 64
+  - bucket_id: src_long_tgt_medium
+    source_max_tokens: 512
+    target_max_tokens: 128
+correctness_comparator: exact_token_match_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+deployment_artifact_path:
+expected_memory_footprint_notes:
+  - Record encoder and decoder memory separately when possible.
+paper_eligible: false
+benchmark_expectation: candidate
+notes:
+  - Seq2seq workloads should not be reduced to decoder-only prompts.

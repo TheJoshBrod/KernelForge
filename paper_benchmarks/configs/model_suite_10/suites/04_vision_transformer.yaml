@@ -1,0 +1,31 @@
+suite_id: vision_transformer_suite
+benchmark_mode: e2e_model
+description: Vision transformer validation suite template.
+workload_type: image_folder
+workload_path: /abs/path/to/frozen/vision_transformer_images
+synthetic_workload: false
+variants:
+  - eager
+  - torch_compile
+  - kf_cast
+stages:
+  - load
+  - compile
+  - warmup
+  - total_generate
+batch_sizes:
+  - 1
+  - 16
+shape_or_length_buckets:
+  - bucket_id: image_224
+    image_size: 224
+  - bucket_id: image_384
+    image_size: 384
+warmup_runs: 1
+timed_runs: 5
+generation_mode: greedy
+include_tokenization_in_timing: false
+measure_prefill_decode_separately: false
+device: cuda
+notes:
+  - Keep the frozen image-set manifest fixed before any result is collected.

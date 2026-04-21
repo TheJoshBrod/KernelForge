@@ -1,0 +1,17 @@
+version: 1
+models:
+  - model_id: qwen35a3b_pilot
+    category: MoE decoder LLM
+    model_config: models/qwen35a3b_pilot.yaml
+    suite_config: suites/qwen35a3b_pilot.yaml
+    benchmark_expectation: candidate
+  - model_id: llama31_8b_dense_pilot
+    category: Dense decoder LLM
+    model_config: models/llama31_8b_dense_pilot.yaml
+    suite_config: suites/llama31_8b_dense_pilot.yaml
+    benchmark_expectation: neutral
+  - model_id: resnet50_conv_vision_pilot
+    category: Conv/vision model
+    model_config: models/resnet50_conv_vision_pilot.yaml
+    suite_config: suites/resnet50_conv_vision_pilot.yaml
+    benchmark_expectation: neutral

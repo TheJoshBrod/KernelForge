@@ -1,0 +1,41 @@
+model_id: llama31_8b_dense_pilot
+category: Dense decoder LLM
+loader_kind: transformers_causal_lm
+model_path: /abs/path/to/Meta-Llama-3.1-8B-Instruct
+tokenizer_path: /abs/path/to/Meta-Llama-3.1-8B-Instruct
+model_config_path: /abs/path/to/Meta-Llama-3.1-8B-Instruct/config.json
+task_type: dense_decoder_llm
+dtype: bf16
+device_map: auto
+local_files_only: true
+trust_remote_code: false
+attn_implementation: sdpa
+validation_suite_path: ../suites/llama31_8b_dense_pilot.yaml
+workload_hash:
+batch_sizes:
+  - 1
+  - 4
+shape_or_length_buckets:
+  - bucket_id: short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: medium
+    min_tokens: 129
+    max_tokens: 512
+  - bucket_id: long
+    min_tokens: 513
+    max_tokens: 1024
+correctness_comparator: exact_token_match_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+deployment_artifact_path: /abs/path/to/exported/llama31_8b.cast
+expected_memory_footprint_notes:
+  - Fill in measured dense-decoder peak HBM before enabling paper_eligible.
+  - Keep the same frozen prompt policy as Qwen so the dense baseline cannot be accused of favorable workload selection.
+paper_eligible: false
+benchmark_expectation: neutral
+notes:
+  - Included to test whether gains generalize beyond MoE routing.
+  - Must remain in the pilot even if the result is neutral or slower than torch.compile.

@@ -1,0 +1,32 @@
+model_id: dense_decoder_llm
+category: Dense decoder LLM
+loader_kind: transformers_causal_lm
+model_path: /abs/path/to/dense_decoder_llm
+tokenizer_path: /abs/path/to/dense_decoder_llm
+model_config_path: /abs/path/to/dense_decoder_llm/config.json
+task_type: dense_decoder_llm
+torch_dtype: bf16
+device_map: auto
+validation_suite_path: ../suites/02_dense_decoder_llm.yaml
+workload_hash:
+batch_sizes:
+  - 1
+shape_or_length_buckets:
+  - bucket_id: short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: long
+    min_tokens: 129
+    max_tokens: 1024
+correctness_comparator: exact_token_match_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+deployment_artifact_path:
+expected_memory_footprint_notes:
+  - Fill in dense decoder peak HBM estimate and observed runtime memory.
+paper_eligible: false
+benchmark_expectation: candidate
+notes:
+  - Dense decoder baseline should not be cherry-picked for favorable length buckets only.

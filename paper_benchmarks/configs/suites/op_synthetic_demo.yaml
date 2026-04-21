@@ -1,0 +1,21 @@
+suite_id: op_synthetic_demo
+benchmark_mode: operator
+description: Synthetic operator demo suite for scaffold validation.
+workload_type: operator_entries
+workload_path: /abs/path/to/operator_entries
+synthetic_workload: true
+variants:
+  - eager
+  - torch_compile
+stages:
+  - load
+  - compile
+  - warmup
+  - operator
+warmup_count: 1
+timed_run_count: 3
+callable_name: torch.nn.functional.relu
+device: cuda
+notes:
+  - Operator entries should be .pt payloads containing args/kwargs dicts.
+

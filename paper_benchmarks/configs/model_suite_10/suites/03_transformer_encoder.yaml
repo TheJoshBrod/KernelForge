@@ -1,0 +1,32 @@
+suite_id: transformer_encoder_suite
+benchmark_mode: e2e_model
+description: Transformer encoder validation suite template.
+workload_type: encoder_inputs
+workload_path: /abs/path/to/frozen/transformer_encoder_inputs.jsonl
+synthetic_workload: false
+variants:
+  - eager
+  - torch_compile
+  - kf_cast
+stages:
+  - load
+  - compile
+  - warmup
+  - total_generate
+batch_sizes:
+  - 1
+  - 8
+shape_or_length_buckets:
+  - bucket_id: seq_128
+    max_tokens: 128
+  - bucket_id: seq_512
+    min_tokens: 129
+    max_tokens: 512
+warmup_runs: 1
+timed_runs: 5
+generation_mode: greedy
+include_tokenization_in_timing: false
+measure_prefill_decode_separately: false
+device: cuda
+notes:
+  - End-to-end execution stays non-paper until the generic encoder runner and deployment path are filled.

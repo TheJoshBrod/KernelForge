@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "prompt_file": "/home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/workloads/qwen35a3b/qwen_paper_prompts_v1.jsonl",
+  "prompt_file_hash": "bf02a32ec3e11fe8a5eec24da64b75d1794a621112e36f51a16dae24b3092b93",
+  "prompt_count": 60,
+  "source_dataset_provenance": [
+    {
+      "name": "MT-Bench",
+      "repository": "lm-sys/FastChat",
+      "source_type": "benchmark_dataset",
+      "file": "fastchat/llm_judge/data/mt_bench/question.jsonl",
+      "url": "https://raw.githubusercontent.com/lm-sys/FastChat/main/fastchat/llm_judge/data/mt_bench/question.jsonl",
+      "selected_bucket": "short",
+      "selected_count": 20
+    },
+    {
+      "name": "ShareGPT Prompts Annotated",
+      "repository": "lewtun/sharegpt_prompts_annotated",
+      "source_type": "public_prompt_dataset",
+      "file": "data/no_code-00000-of-00001-5253f60a2fdb7a13.parquet",
+      "url": "https://huggingface.co/datasets/lewtun/sharegpt_prompts_annotated",
+      "selected_bucket": "medium",
+      "selected_count": 20
+    },
+    {
+      "name": "LongBench multi_news",
+      "repository": "THUDM/LongBench",
+      "source_type": "benchmark_dataset",
+      "file": "data/multi_news.jsonl",
+      "url": "https://huggingface.co/datasets/THUDM/LongBench",
+      "selected_bucket": "long",
+      "selected_count": 20
+    }
+  ],
+  "selection_method": {
+    "name": "stable_source_order_by_bucket",
+    "description": "Use stable source order with no random sampling. Select the first prompts whose Qwen tokenizer lengths fall into the configured bucket ranges.",
+    "bucket_ranges_tokens": {
+      "short": [
+        1,
+        128
+      ],
+      "medium": [
+        129,
+        512
+      ],
+      "long": [
+        513,
+        1024
+      ]
+    },
+    "target_counts": {
+      "short": 20,
+      "medium": 20,
+      "long": 20
+    },
+    "sampling": "none",
+    "deduplication": {
+      "sharegpt_prompts_annotated": "drop duplicate prompt_id rows before selection"
+    },
+    "order": [
+      "short prompts from MT-Bench in source order by question_id and turn index",
+      "medium prompts from ShareGPT no_code in stable parquet order after prompt_id deduplication",
+      "long prompts from LongBench multi_news in source file order"
+    ]
+  },
+  "bucket_counts": {
+    "short": 20,
+    "medium": 20,
+    "long": 20
+  },
+  "tokenizer_used": {
+    "path": "/home/gb10/model-cache/Qwen3.5-35B-A3B",
+    "class": "TokenizersBackend"
+  },
+  "creation_command": "/usr/bin/python3.12 paper_benchmarks/scripts/generate_qwen_prompt_suite.py",
+  "creation_timestamp": "2026-04-21T20:43:20.875659Z",
+  "prompt_text_may_be_stored_in_raw_artifacts": false,
+  "synthetic_workload": false,
+  "notes": [
+    "Prompt text comes from public benchmark and public prompt datasets only.",
+    "Raw benchmark artifacts should redact prompt text unless --store-prompts is explicitly enabled.",
+    "This suite is frozen in file order and must not be sampled or reshuffled at benchmark time."
+  ]
+}

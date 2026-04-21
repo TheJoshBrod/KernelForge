@@ -1,0 +1,32 @@
+model_id: batch1_latency_workload
+category: Batch-1 latency workload
+loader_kind: transformers_causal_lm
+model_path: /abs/path/to/batch1_latency_workload
+tokenizer_path: /abs/path/to/batch1_latency_workload
+model_config_path: /abs/path/to/batch1_latency_workload/config.json
+task_type: batch1_latency
+torch_dtype: bf16
+device: cuda
+validation_suite_path: ../suites/09_batch1_latency_workload.yaml
+workload_hash:
+batch_sizes:
+  - 1
+shape_or_length_buckets:
+  - bucket_id: latency_short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: latency_medium
+    min_tokens: 129
+    max_tokens: 512
+correctness_comparator: exact_token_match_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+deployment_artifact_path:
+expected_memory_footprint_notes:
+  - Record batch-1 resident memory and kernel launch sensitivity.
+paper_eligible: false
+benchmark_expectation: candidate
+notes:
+  - This category is for latency, not peak throughput.

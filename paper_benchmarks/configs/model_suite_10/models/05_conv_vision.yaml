@@ -1,0 +1,28 @@
+model_id: conv_vision
+category: Conv/vision model
+loader_kind: torchvision_model
+model_path: /abs/path/to/conv_vision
+task_type: conv_vision
+torch_dtype: fp16
+device: cuda
+validation_suite_path: ../suites/05_conv_vision.yaml
+workload_hash:
+batch_sizes:
+  - 1
+  - 32
+shape_or_length_buckets:
+  - bucket_id: image_224
+    image_size: 224
+correctness_comparator: logits_allclose_against_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+deployment_artifact_path:
+expected_memory_footprint_notes:
+  - Record conv backbone memory footprint and expected workspace usage.
+paper_eligible: false
+benchmark_expectation: neutral
+notes:
+  - Keep the conv baseline even if it is a neutral or regression result.
+  - Conv-heavy vision is included to avoid an all-transformer benchmark suite.
