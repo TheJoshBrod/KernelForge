@@ -81,6 +81,68 @@ def:pub CastExportModal(props: any) -> Any {
         }
     }
 
+    def runtime_ms_for(item: dict) -> float {
+        if not item or not ("runtime_ms" in item) or item["runtime_ms"] is None {
+            return None;
+        }
+        try {
+            parsed = item["runtime_ms"] * 1;
+            if parsed > 0 {
+                return parsed;
+            }
+        } except Exception {
+        # no-op
+        }
+        return None;
+    }
+
+    def sort_kernel_list(items: list) -> list {
+        sorted_items = [];
+        for item in to_list(items) {
+            if item {
+                sorted_items.push(item);
+            }
+        }
+
+        sorted_items.sort(lambda a: dict, b: dict -> int {
+            if not a and not b { return 0; }
+            if not a { return 1; }
+            if not b { return -1; }
+
+            ms_a = runtime_ms_for(a);
+            ms_b = runtime_ms_for(b);
+            if ms_a is not None and ms_b is not None {
+                if ms_a < ms_b { return -1; }
+                if ms_a > ms_b { return 1; }
+            } elif ms_a is not None {
+                return -1;
+            } elif ms_b is not None {
+                return 1;
+            }
+
+            label_a = str(a["label"]) if "label" in a and a["label"] else "";
+            label_b = str(b["label"]) if "label" in b and b["label"] else "";
+            if label_a < label_b { return -1; }
+            if label_a > label_b { return 1; }
+
+            name_a = (
+                str(a["name"])
+                if "name" in a and a["name"]
+                else (str(a["path"]) if "path" in a and a["path"] else "")
+            );
+            name_b = (
+                str(b["name"])
+                if "name" in b and b["name"]
+                else (str(b["path"]) if "path" in b and b["path"] else "")
+            );
+            if name_a < name_b { return -1; }
+            if name_a > name_b { return 1; }
+            return 0;
+        });
+
+        return sorted_items;
+    }
+
     useEffect(
         lambda -> None { if isOpen {
             setOpDetails({});
@@ -193,6 +255,7 @@ def:pub CastExportModal(props: any) -> Any {
                     all_kernels.push({**k, "label": "Generated"});
                 }
             }
+            all_kernels = sort_kernel_list(all_kernels);
             new_details = {**opDetails};
             new_details[op_name] = all_kernels;
             setOpDetails(new_details);
