@@ -7,6 +7,7 @@ import argparse
 import tempfile
 import queue
 import os
+import time
 from pathlib import Path
 
 import torch
@@ -58,10 +59,13 @@ def update_queue_state(proj_base_dir: Path, updates: dict):
                 pass
         
         if "active_tasks" in updates:
+            now_ts = time.time()
             for k, v in updates["active_tasks"].items():
                 if k not in state["active_tasks"]:
                     state["active_tasks"][k] = {}
-                state["active_tasks"][k].update(v)
+                task_update = dict(v) if isinstance(v, dict) else {}
+                task_update["updated_at"] = now_ts
+                state["active_tasks"][k].update(task_update)
         if "remove_tasks" in updates:
             for k in updates["remove_tasks"]:
                 state["active_tasks"].pop(str(k), None)
