@@ -142,12 +142,12 @@ _WORKER_Q_OUT = None
 def _validate_worker_loop(q_in, q_out):
     """
     Persistent worker loop.
-    Waits for (generated_cu_code, tmpdir, io_dir) tuples.
+    Waits for job tuples (see validate_kernel for layout).
     Sends back (is_valid, log_message).
     """
     # Set environment variables ONCE
     import sys
-    
+
     # Delegate environment setup to loader
     if loader.target_device() == "cuda":
         loader.ensure_cuda_env()
@@ -162,7 +162,20 @@ def _validate_worker_loop(q_in, q_out):
             if job is None:
                 break  # Sentinel to exit
 
-            generated_cu_code, tmpdir, io_dir, cache_name, cache_dir = job
+            (generated_cu_code, tmpdir, io_dir, cache_name, cache_dir,
+             proj_root, job_key, operator, iteration, attempt) = job
+
+            # Register LiteLLM success callback so any LLM call made by the
+            # verifier's byllm-decorated summarizer gets logged to the project
+            # usage DB with step_type='verifier_summary'.
+            if proj_root is not None:
+                try:
+                    from src.llm.litellm_callback import register_worker_usage_callback
+                    register_worker_usage_callback(
+                        proj_root, job_key, operator, iteration, attempt
+                    )
+                except Exception:
+                    pass
 
             # Run the validation logic
             try:
@@ -398,9 +411,20 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
     except Exception as compile_err:
         return False, f"[Compilation Failed]\n{compile_err}"
 
+    # Derive usage-tracking context from paths (project root, operator, etc.)
+    op_proj_dir = paths.get("proj_dir") if isinstance(paths, dict) else None
+    proj_root = op_proj_dir.parent if op_proj_dir is not None else None
+    operator = op_proj_dir.name if op_proj_dir is not None else None
+    iteration = paths.get("iteration") if isinstance(paths, dict) else None
+    attempt = paths.get("attempt") if isinstance(paths, dict) else None
+    job_key = os.environ.get("KFORGE_JOB_KEY")
+
     # Send to worker (cache_name + cache_dir so it loads the pre-built .so)
     _ensure_worker_alive()
-    _WORKER_Q_IN.put((generated_cu_code, str(tmpdir), str(io_dir), cache_name, cache_dir))
+    _WORKER_Q_IN.put((
+        generated_cu_code, str(tmpdir), str(io_dir), cache_name, cache_dir,
+        proj_root, job_key, operator, iteration, attempt,
+    ))
 
     # Wait for result with timeout
     import time

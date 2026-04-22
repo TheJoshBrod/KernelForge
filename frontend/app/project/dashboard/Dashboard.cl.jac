@@ -137,6 +137,17 @@ def:pub Dashboard -> Any {
     speedData = speedData_state[0];
     setSpeedData = speedData_state[1];
 
+    llm_usage_state = useState({
+        "exists": False,
+        "project_totals": {
+            "input_tokens": 0, "output_tokens": 0,
+            "reasoning_tokens": 0, "total_cost_usd": 0.0, "calls": 0
+        },
+        "per_operator": []
+    });
+    llmUsage = llm_usage_state[0];
+    setLlmUsage = llm_usage_state[1];
+
     op_time_mode_state = useState("best");
     opTimeMode = op_time_mode_state[0];
     setOpTimeMode = op_time_mode_state[1];
@@ -908,11 +919,13 @@ def:pub Dashboard -> Any {
                 hw_req = __jacSpawn("DetectHardware", "", {});
                 metrics_req = __jacSpawn("GetProjectMetrics", "", {"projectName": name});
                 mcts_req = __jacSpawn("GetProjectMctsSummary", "", {"projectName": name});
+                llm_usage_req = __jacSpawn("GetLlmUsage", "", {"projectName": name, "recentLimit": 10});
                 status_resp = await status_req;
                 ops_resp = await ops_req;
                 hw_resp = await hw_req;
                 metrics_resp = await metrics_req;
                 mcts_resp = await mcts_req;
+                llm_usage_resp = await llm_usage_req;
                 # Process Status first so queue updates are not blocked by metrics.
                 status_data = status_resp.reports[0]
                 if status_resp and status_resp.reports
@@ -953,6 +966,13 @@ def:pub Dashboard -> Any {
                 if mcts_resp and mcts_resp.reports
                 else {};
                 setMctsSummary(mcts_data or {});
+                # Process LLM usage (OpenAI token/cost tracking)
+                llm_usage_data = llm_usage_resp.reports[0]
+                    if llm_usage_resp and llm_usage_resp.reports
+                    else {};
+                if llm_usage_data {
+                    setLlmUsage(llm_usage_data);
+                }
                 persist_dashboard_cache(name);
             }
         } except Exception as e {
@@ -2050,6 +2070,32 @@ def:pub Dashboard -> Any {
                     mctsSummary={mctsSummary}
                     onClearQueue={handleClearQueue}
                 />
+                {<div className="rounded-lg border border-slate-700 bg-slate-900/60 p-4">
+                    <div className="flex items-center justify-between mb-3">
+                        <div className="text-sm font-semibold text-slate-200">LLM Usage</div>
+                        <div className="text-xs text-slate-400">{str(llmUsage["project_totals"]["calls"]) + " calls"}</div>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                        <div>
+                            <div className="text-slate-400">Input tokens</div>
+                            <div className="text-slate-100 font-mono">{llmUsage["project_totals"]["input_tokens"].toLocaleString()}</div>
+                        </div>
+                        <div>
+                            <div className="text-slate-400">Output tokens</div>
+                            <div className="text-slate-100 font-mono">{llmUsage["project_totals"]["output_tokens"].toLocaleString()}</div>
+                        </div>
+                        <div>
+                            <div className="text-slate-400">Reasoning tokens</div>
+                            <div className="text-slate-100 font-mono">{llmUsage["project_totals"]["reasoning_tokens"].toLocaleString()}</div>
+                        </div>
+                        <div>
+                            <div className="text-slate-400">Cost (USD)</div>
+                            <div className="text-emerald-300 font-mono">{"$" + llmUsage["project_totals"]["total_cost_usd"].toFixed(4)}</div>
+                        </div>
+                    </div>
+                </div>
+                if llmUsage and llmUsage["exists"]
+                else <span/>}
                 <OperatorResultsTable
                     operatorRows={operatorRows}
                     name={name}
@@ -2059,6 +2105,7 @@ def:pub Dashboard -> Any {
                     loading={loading}
                     profiling={profile_active}
                     gpuMismatch={gpuMismatch}
+                    llmUsage={llmUsage}
                 />
             </div>
             {<GenerateModal

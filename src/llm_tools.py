@@ -25,11 +25,15 @@ class GenModel:
         self.sys_prompt = sys_prompt
         self.history: List[Dict[str, Any]] = []
         self.tools: Dict[str, callable] = {}
+        # Populated by provider-specific methods after each successful call.
+        # Callers read this to log token usage + cost.
+        self.last_usage: Dict[str, Any] | None = None
 
     def chat(self, user_msg: str, model: str) -> str:
         if not user_msg or not model:
             return ""
         self.__user(user_msg)
+        self.last_usage = None
 
         response = ""
 
@@ -165,6 +169,18 @@ class GenModel:
                 messages=messages,
                 max_completion_tokens=4096
             )
+
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                details = getattr(usage, "completion_tokens_details", None)
+                reasoning = getattr(details, "reasoning_tokens", 0) if details else 0
+                self.last_usage = {
+                    "provider": "openai",
+                    "model": model,
+                    "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                    "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+                    "reasoning_tokens": int(reasoning or 0),
+                }
 
             return response.choices[0].message.content
 

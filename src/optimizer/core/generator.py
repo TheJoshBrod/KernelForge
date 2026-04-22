@@ -7,11 +7,14 @@ from pathlib import Path
 from typing import Optional
 from typing import Tuple
 
+import os
+
 from src.llm_tools import GenModel
 from src.config import ensure_llm_config
 from src.optimizer.core.types import GPUSpecs
 from src.optimizer.config.settings import settings
 from src.optimizer.core.backend import Backend
+from src.llm.usage_db import log_llm_call
 import src.optimizer.core.mcts as mcts
 
 
@@ -150,6 +153,17 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
         Tuple[str, bool, str]: _description_
     """
     response = llm.chat(msg, model)
+    op_proj_dir = paths.get("proj_dir") if isinstance(paths, dict) else None
+    if op_proj_dir is not None and getattr(llm, "last_usage", None):
+        log_llm_call(
+            op_proj_dir.parent,
+            llm.last_usage,
+            step_type="optimize",
+            job_key=os.environ.get("KFORGE_JOB_KEY"),
+            operator=op_proj_dir.name,
+            iteration=paths.get("iteration"),
+            attempt=paths.get("attempt"),
+        )
     feedback, cu_code = extract_feedback_and_code(response)
 
     if status_callback:

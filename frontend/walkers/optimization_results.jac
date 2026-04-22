@@ -640,6 +640,116 @@ walker:pub GetProjectMetrics {
     }
 }
 
+def _llm_usage_db_path(project_name: str) -> str {
+    return path.join(_project_dir(project_name), "llm_usage.db");
+}
+
+def _empty_llm_totals() -> dict {
+    return {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "total_cost_usd": 0.0,
+        "calls": 0
+    };
+}
+
+def _read_llm_usage(project_name: str, recent_limit: int) -> dict {
+    db_path = _llm_usage_db_path(project_name);
+    result = {
+        "exists": False,
+        "project_totals": _empty_llm_totals(),
+        "per_operator": [],
+        "recent_calls": []
+    };
+    if not path.exists(db_path) {
+        return result;
+    }
+    result["exists"] = True;
+    try {
+        conn = sqlite3.connect(db_path);
+        try {
+            conn.execute("PRAGMA journal_mode=WAL;");
+            cur = conn.cursor();
+            cur.execute(
+                "SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), "
+                + "COALESCE(SUM(reasoning_tokens),0), COALESCE(SUM(total_cost_usd),0.0), "
+                + "COUNT(*) FROM llm_calls"
+            );
+            row = cur.fetchone();
+            if row {
+                result["project_totals"] = {
+                    "input_tokens": int(row[0] or 0),
+                    "output_tokens": int(row[1] or 0),
+                    "reasoning_tokens": int(row[2] or 0),
+                    "total_cost_usd": float(row[3] or 0.0),
+                    "calls": int(row[4] or 0)
+                };
+            }
+
+            cur.execute(
+                "SELECT COALESCE(operator, ''), COALESCE(SUM(input_tokens),0), "
+                + "COALESCE(SUM(output_tokens),0), COALESCE(SUM(reasoning_tokens),0), "
+                + "COALESCE(SUM(total_cost_usd),0.0), COUNT(*) FROM llm_calls "
+                + "GROUP BY operator ORDER BY SUM(total_cost_usd) DESC"
+            );
+            op_rows = cur.fetchall();
+            per_op = [];
+            for r in op_rows {
+                per_op.append({
+                    "operator": r[0],
+                    "input_tokens": int(r[1] or 0),
+                    "output_tokens": int(r[2] or 0),
+                    "reasoning_tokens": int(r[3] or 0),
+                    "total_cost_usd": float(r[4] or 0.0),
+                    "calls": int(r[5] or 0)
+                });
+            }
+            result["per_operator"] = per_op;
+
+            limit = recent_limit if recent_limit > 0 else 50;
+            cur.execute(
+                "SELECT ts, COALESCE(operator,''), step_type, iteration, attempt, "
+                + "provider, model, input_tokens, output_tokens, reasoning_tokens, "
+                + "total_cost_usd FROM llm_calls ORDER BY ts DESC LIMIT ?",
+                (limit,)
+            );
+            recent_rows = cur.fetchall();
+            recent = [];
+            for r in recent_rows {
+                recent.append({
+                    "ts": float(r[0] or 0.0),
+                    "operator": r[1],
+                    "step_type": r[2],
+                    "iteration": r[3],
+                    "attempt": r[4],
+                    "provider": r[5],
+                    "model": r[6],
+                    "input_tokens": int(r[7] or 0),
+                    "output_tokens": int(r[8] or 0),
+                    "reasoning_tokens": int(r[9] or 0),
+                    "total_cost_usd": float(r[10] or 0.0)
+                });
+            }
+            result["recent_calls"] = recent;
+        } finally {
+            conn.close();
+        }
+    } except Exception as e {
+        result["error"] = str(e);
+    }
+    return result;
+}
+
+walker:pub GetLlmUsage {
+    has projectName: str,
+        recentLimit: int = 50;
+
+    can run with entry {
+        report _read_llm_usage(self.projectName, self.recentLimit);
+    }
+}
+
 walker:pub GetOperatorMetrics {
     has projectName: str,
         opName: str;
