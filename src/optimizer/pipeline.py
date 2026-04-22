@@ -872,12 +872,23 @@ Examples:
     )
 
     parser.add_argument(
+        "--n-kernels",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Stop after N kernel candidates have been sampled/profiled and "
+             "return the best one found in that window. Overrides --max-iterations."
+    )
+
+    parser.add_argument(
         "--op",
         type=str,
         metavar="OP_NAME",
         help="Optimize only a specific operator"
     )
     args = parser.parse_args()
+    if args.n_kernels and args.n_kernels > 0:
+        args.max_iterations = args.n_kernels
     io_parent_dir = args.io_dir
     optional_proj_name = args.project_name
 
@@ -1063,6 +1074,16 @@ Examples:
             op_last_reason = ""
             task_key = f"seq_opt_{op_name}"
             retry_limit = getattr(settings, 'retry_limit', 3)
+
+            # Load tree so we can resolve the Phase-1 baseline (root) runtime
+            mcts.load_tree_once(paths)
+            baseline_node = mcts._NODE_CACHE.get(0)
+            baseline_time = baseline_node.median_time_ms if baseline_node else None
+            best_time = baseline_time if baseline_time is not None else float("inf")
+            best_kernel_node = baseline_node
+            n_kernels_cap = args.n_kernels if args.n_kernels and args.n_kernels > 0 else None
+            kernels_sampled = 0
+
             for i in range(args.max_iterations):
                 if check_cancelled():
                     break
@@ -1116,12 +1137,83 @@ Examples:
                         "status": "Failed",
                     }}})
 
+                if new_node is not None:
+                    kernels_sampled += 1
+                    if new_node.value is not None and new_node.value < best_time:
+                        best_time = new_node.value
+                        best_kernel_node = new_node
+                    if baseline_time is not None and best_time > 0 and best_time != float("inf"):
+                        best_speedup = baseline_time / best_time
+                    else:
+                        best_speedup = 1.0
+                    best_id = best_kernel_node.id if best_kernel_node is not None else -1
+                    print(
+                        f"[n-kernels] op={op_name} i={kernels_sampled}"
+                        f"{f'/{n_kernels_cap}' if n_kernels_cap else ''} "
+                        f"best_speedup={best_speedup:.2f}x best_kernel_id={best_id} "
+                        f"best_time_ms={best_time:.4f}"
+                    )
+                    if n_kernels_cap is not None and kernels_sampled >= n_kernels_cap:
+                        print(
+                            f"[n-kernels] cap reached ({kernels_sampled}/{n_kernels_cap}); "
+                            f"stopping search for {op_name}."
+                        )
+                        break
+
                 if (i + 1) % 10 == 0:
                     print(f"  Progress: {i+1}/{args.max_iterations} iterations")
             update_queue_state(proj_base_dir, {
                 "current_operator": "",
                 "pending_operators": remaining_ops,
             })
+            if n_kernels_cap is not None and best_kernel_node is not None:
+                best_id = best_kernel_node.id
+                best_code_rel = best_kernel_node.code or ""
+                best_code_path = Path(best_code_rel)
+                if not best_code_path.is_absolute():
+                    best_code_path = paths["proj_dir"].parent / best_code_rel
+                final_speedup = (baseline_time / best_time
+                                 if baseline_time is not None and best_time > 0
+                                    and best_time != float("inf")
+                                 else 1.0)
+                print(
+                    f"[n-kernels-result] op={op_name} sampled={kernels_sampled} "
+                    f"best_kernel_id={best_id} best_time_ms={best_time:.4f} "
+                    f"baseline_time_ms={baseline_time if baseline_time is not None else 'n/a'} "
+                    f"best_speedup={final_speedup:.2f}x "
+                    f"best_code_path={best_code_path}"
+                )
+                best_source = ""
+                try:
+                    if best_code_path.exists():
+                        best_source = best_code_path.read_text()
+                        print(f"--- BEST KERNEL SOURCE ({best_code_path.name}) ---")
+                        print(best_source)
+                        print("--- END BEST KERNEL SOURCE ---")
+                except Exception as e:
+                    print(f"[n-kernels-result] failed to read best kernel source: {e}")
+
+                best_record = {
+                    "op_name": op_name,
+                    "n_kernels_cap": n_kernels_cap,
+                    "kernels_sampled": kernels_sampled,
+                    "baseline_kernel_id": baseline_node.id if baseline_node else None,
+                    "baseline_time_ms": baseline_time,
+                    "best_kernel_id": best_id,
+                    "best_time_ms": best_time if best_time != float("inf") else None,
+                    "best_speedup_vs_baseline": final_speedup,
+                    "best_improvement_description": getattr(best_kernel_node, "improvement_description", None),
+                    "best_code_path": str(best_code_path),
+                    "best_code_source": best_source,
+                    "timestamp": time.time(),
+                }
+                best_json_path = paths["proj_dir"] / "best.json"
+                try:
+                    best_json_path.write_text(json.dumps(best_record, indent=2))
+                    print(f"[n-kernels-result] wrote {best_json_path}")
+                except Exception as e:
+                    print(f"[n-kernels-result] failed to write best.json: {e}")
+
             if op_new_nodes > 0:
                 print(
                     f"[optimize-result] op={op_name} status=improved "
