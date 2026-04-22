@@ -11,11 +11,12 @@ from src.optimizer.config.settings import settings
 _NODE_CACHE: Dict[int, KernelNode] = {}
 _NODE_SELECT_COLUMNS = (
     "id, visits, value, median_time_ms, best_subtree_value, code, "
-    "improvement_description, timestamp"
+    "improvement_description, timestamp, attempts_to_correct, phase"
 )
 _NODE_SELECT_COLUMNS_QUALIFIED = (
     "n.id, n.visits, n.value, n.median_time_ms, n.best_subtree_value, "
-    "n.code, n.improvement_description, n.timestamp"
+    "n.code, n.improvement_description, n.timestamp, "
+    "n.attempts_to_correct, n.phase"
 )
 
 def get_db_path(paths: dict) -> Path:
@@ -31,12 +32,18 @@ def _ensure_tree_schema(conn: sqlite3.Connection) -> None:
             best_subtree_value REAL,
             code TEXT,
             improvement_description TEXT,
-            timestamp REAL
+            timestamp REAL,
+            attempts_to_correct INTEGER,
+            phase TEXT
         )
     """)
     node_columns = {row[1] for row in conn.execute("PRAGMA table_info(nodes)")}
     if "median_time_ms" not in node_columns:
         conn.execute("ALTER TABLE nodes ADD COLUMN median_time_ms REAL")
+    if "attempts_to_correct" not in node_columns:
+        conn.execute("ALTER TABLE nodes ADD COLUMN attempts_to_correct INTEGER")
+    if "phase" not in node_columns:
+        conn.execute("ALTER TABLE nodes ADD COLUMN phase TEXT")
     # Backfill median_time_ms from legacy mean_time_ms column when present
     if "mean_time_ms" in node_columns:
         conn.execute(
@@ -70,7 +77,8 @@ def _node_from_row(row: Any, parent_id: Optional[int] = None, children_ids: List
     # row keys: id, visits, value, median_time_ms, best_subtree, code, imp_desc, timestamp
 
     # Handle tuple from fetchone/fetchall
-    (nid, vis, val, median_time_ms, best_val, code, imp_desc, ts) = row
+    (nid, vis, val, median_time_ms, best_val, code, imp_desc, ts,
+     attempts_to_correct, phase) = row
     canonical_value = median_time_ms if median_time_ms is not None else val
 
     return KernelNode(
@@ -84,7 +92,9 @@ def _node_from_row(row: Any, parent_id: Optional[int] = None, children_ids: List
         code=code,
         improvement_description=imp_desc,
         timestamp=ts if ts is not None else 0.0,
-        speedup_vs_parent=None # Not stored in DB anymore
+        speedup_vs_parent=None, # Not stored in DB anymore
+        attempts_to_correct=attempts_to_correct,
+        phase=phase,
     )
 
 def load_tree_once(paths: dict):
@@ -168,9 +178,9 @@ def update_tree(paths: dict, new_node: KernelNode):
 
             # Upsert current node properties
             conn.execute("""
-                INSERT OR REPLACE INTO nodes 
-                (id, visits, value, median_time_ms, best_subtree_value, code, improvement_description, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO nodes
+                (id, visits, value, median_time_ms, best_subtree_value, code, improvement_description, timestamp, attempts_to_correct, phase)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 current.id,
                 current.visits,
@@ -179,7 +189,9 @@ def update_tree(paths: dict, new_node: KernelNode):
                 current.best_subtree_value,
                 current.code,
                 current.improvement_description,
-                current.timestamp
+                current.timestamp,
+                current.attempts_to_correct,
+                current.phase,
             ))
 
             if current.parent_id == -1 or current.parent_id is None:
