@@ -275,7 +275,10 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
     # Pass 1: Find best across full lineage
     if improvement_log:
         for entry in improvement_log:
-            rt = entry.get('results', {}).get('min_time_ms', float('inf'))
+            _res = entry.get('results', {}) or {}
+            rt = _res.get('median_time_ms')
+            if rt is None:
+                rt = _res.get('mean_time_ms', float('inf'))
             if rt < best_runtime:
                 best_runtime = rt
                 best_iter = entry.get('iteration', 0)
@@ -286,7 +289,10 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
     # Baseline reference from root (first entry — collect_ancestry returns root→leaf)
     baseline_ref = ""
     if improvement_log:
-        root_rt = improvement_log[0].get('results', {}).get('min_time_ms', float('inf'))
+        _root_res = improvement_log[0].get('results', {}) or {}
+        root_rt = _root_res.get('median_time_ms')
+        if root_rt is None:
+            root_rt = _root_res.get('mean_time_ms', float('inf'))
         root_id = improvement_log[0].get('iteration', 0)
         if 0 < root_rt < float('inf'):
             baseline_ref = f"> Baseline: {root_rt:.4f} ms (root iteration {root_id})"
@@ -301,7 +307,10 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
     if not best_in_window and best_iter != 0:
         best_entry = next((e for e in improvement_log if e.get('iteration') == best_iter), None)
         if best_entry:
-            bt = best_entry.get('results', {}).get('min_time_ms', 0.0)
+            _best_res = best_entry.get('results', {}) or {}
+            bt = _best_res.get('median_time_ms')
+            if bt is None:
+                bt = _best_res.get('mean_time_ms', 0.0)
             best_anchor = (
                 f"### >>> TARGET TO BEAT — ITERATION {best_iter}:"
                 f" BEST IN LINEAGE | {best_speedup:.2f}x vs baseline <<<\n"
@@ -317,7 +326,10 @@ def generate_gpu_optimization_prompt(gpu_info: dict,
         for entry in window:
             iter_num = entry.get('iteration', '?')
             strategy_text = entry.get('attempted', 'No description.')
-            rt = entry.get('results', {}).get('min_time_ms', 0.0)
+            _res = entry.get('results', {}) or {}
+            rt = _res.get('median_time_ms')
+            if rt is None:
+                rt = _res.get('mean_time_ms', 0.0)
             speedup_parent = entry.get('speedup_vs_parent', 1.0)
             speedup_base = entry.get('speedup_vs_baseline', 1.0)
 

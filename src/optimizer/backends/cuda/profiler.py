@@ -325,6 +325,7 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
             torch.mps.empty_cache()
 
     stats = {
+        'median_time_ms': float(np.median(timings)),
         'mean_time_ms': float(np.mean(timings)),
         'std_time_ms':  float(np.std(timings)),
         'min_time_ms':  float(np.min(timings)),
@@ -333,8 +334,11 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
 
     # Compare with baseline if provided
     if previous_stats:
-        speedup = previous_stats['min_time_ms'] / stats['min_time_ms']
-        print(f"Speedup: {speedup:.2f}x")
+        prev_val = (previous_stats.get('median_time_ms') or previous_stats.get('mean_time_ms')) if isinstance(previous_stats, dict) else None
+        curr_val = stats.get('median_time_ms')
+        if prev_val and curr_val:
+            speedup = prev_val / curr_val
+            print(f"Speedup: {speedup:.2f}x")
 
     return stats, prof
 

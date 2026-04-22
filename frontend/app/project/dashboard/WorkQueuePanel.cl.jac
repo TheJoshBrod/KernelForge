@@ -238,40 +238,112 @@ def:pub WorkQueuePanel(props: any) -> Any {
         q_idx = q_idx + 1;
     }
 
-    # ---- Completed section: group by op, show best of each batch ----
+    def task_updated_at(task: any) -> Any {
+        return to_num(task["updated_at"] if task and "updated_at" in task else None);
+    }
+
+    def task_iteration_order(task: any) -> int {
+        iter_num = to_num(task["iter_current"] if task and "iter_current" in task else None);
+        if iter_num == None {
+            return -1;
+        }
+        parsed = parseInt(f"{iter_num}");
+        if parsed != parsed {
+            return -1;
+        }
+        return parsed;
+    }
+
+    def task_kernel_order(task: any) -> int {
+        kernel_text = derive_task_kernel(task);
+        if not kernel_text {
+            return -1;
+        }
+        parsed = parseInt(f"{kernel_text}");
+        if parsed != parsed {
+            return -1;
+        }
+        return parsed;
+    }
+
+    def task_tag_order(task: any) -> int {
+        return 2 if derive_task_tag(task) == "[OPT]" else 1;
+    }
+
+    def is_newer_terminal_task(candidate: any, current: any, candidate_idx: int, current_idx: int) -> bool {
+        if not current {
+            return True;
+        }
+
+        cand_updated = task_updated_at(candidate);
+        curr_updated = task_updated_at(current);
+        if cand_updated != None and curr_updated != None and cand_updated != curr_updated {
+            return cand_updated > curr_updated;
+        }
+        if cand_updated != None and curr_updated == None {
+            return True;
+        }
+        if cand_updated == None and curr_updated != None {
+            return False;
+        }
+
+        cand_iter = task_iteration_order(candidate);
+        curr_iter = task_iteration_order(current);
+        if cand_iter != curr_iter {
+            return cand_iter > curr_iter;
+        }
+
+        cand_tag = task_tag_order(candidate);
+        curr_tag = task_tag_order(current);
+        if cand_tag != curr_tag {
+            return cand_tag > curr_tag;
+        }
+
+        cand_kernel = task_kernel_order(candidate);
+        curr_kernel = task_kernel_order(current);
+        if cand_kernel != curr_kernel {
+            return cand_kernel > curr_kernel;
+        }
+
+        return candidate_idx > current_idx;
+    }
+
+    # ---- Completed section: group by op, show latest terminal task of each batch ----
     op_group_keys = [];
     op_groups = {};
+    completed_idx = 0;
     for task in completed {
         op = derive_task_op(task);
         if not op {
+            completed_idx += 1;
             continue;
         }
-        task_tag = derive_task_tag(task);
         if not (op in op_groups) {
             op_group_keys.push(op);
-            op_groups[op] = {"best_task": None, "best_ms": None, "any_done": False, "tag": task_tag};
-        } elif task_tag == "[OPT]" and op_groups[op]["tag"] != "[OPT]" {
-            op_groups[op]["tag"] = task_tag;
+            op_groups[op] = {"latest_task": task, "latest_idx": completed_idx};
+        } elif is_newer_terminal_task(
+            task,
+            op_groups[op]["latest_task"] if "latest_task" in op_groups[op] else None,
+            completed_idx,
+            op_groups[op]["latest_idx"] if "latest_idx" in op_groups[op] else -1
+        ) {
+            op_groups[op]["latest_task"] = task;
+            op_groups[op]["latest_idx"] = completed_idx;
         }
-        if task["current_step"] == "Done" {
-            op_groups[op]["any_done"] = True;
-            v = to_num(task["value_ms"] if "value_ms" in task else None);
-            if v != None {
-                if op_groups[op]["best_ms"] == None or v < op_groups[op]["best_ms"] {
-                    op_groups[op]["best_ms"] = v;
-                    op_groups[op]["best_task"] = task;
-                }
-            }
-        }
+        completed_idx += 1;
     }
 
     completed_summary_rows = [];
     for op_key in op_group_keys {
         grp = op_groups[op_key];
-        best_task = grp["best_task"];
-        best_ms = grp["best_ms"];
-        any_done = grp["any_done"];
-        tag = grp["tag"];
+        latest_task = grp["latest_task"] if grp and "latest_task" in grp else None;
+        latest_step = (
+            str(latest_task["current_step"])
+            if latest_task and "current_step" in latest_task and latest_task["current_step"]
+            else ""
+        );
+        latest_ms = to_num(latest_task["value_ms"] if latest_task and "value_ms" in latest_task else None);
+        tag = derive_task_tag(latest_task);
 
         # Get pytorch_ms for this op
         pytorch_ms = None;
@@ -282,8 +354,8 @@ def:pub WorkQueuePanel(props: any) -> Any {
         }
 
         color = "red";
-        if any_done {
-            if best_ms != None and pytorch_ms != None and best_ms > 0 and pytorch_ms > 0 and best_ms < pytorch_ms {
+        if latest_step == "Done" {
+            if latest_ms != None and pytorch_ms != None and latest_ms > 0 and pytorch_ms > 0 and latest_ms < pytorch_ms {
                 color = "green";
             } else {
                 color = "yellow";
@@ -295,13 +367,14 @@ def:pub WorkQueuePanel(props: any) -> Any {
         border_cls = "border-l-2 border-red-500/40" if color == "red" else ("border-l-2 border-emerald-500/40" if color == "green" else "border-l-2 border-yellow-400/40");
         tag_cls = "text-emerald-400" if tag == "[GEN]" else "text-blue-400";
 
-        perf_label = "all failed";
-        if any_done {
+        perf_label = "failed";
+        if latest_task and latest_step == "Done" and latest_ms != None {
+            display_kid = derive_task_kernel(latest_task);
+            perf_label = f"Kernel {display_kid} · {Number(latest_ms).toFixed(4)} ms";
+        } elif latest_task and latest_step == "Done" {
             perf_label = "done";
-        }
-        if best_task != None and best_ms != None {
-            display_kid = derive_task_kernel(best_task);
-            perf_label = f"Kernel {display_kid} · {Number(best_ms).toFixed(4)} ms";
+        } elif latest_task and "result" in latest_task and latest_task["result"] {
+            perf_label = str(latest_task["result"]);
         }
 
         completed_summary_rows.push(
@@ -440,11 +513,11 @@ def:pub WorkQueuePanel(props: any) -> Any {
                             <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-600">Queued Jobs</span>
                             <span className="text-[10px] text-zinc-700 font-mono">{queued_job_nodes.length} queued</span>
                         </div>
-                        {queued_job_nodes}
-                    </div> if queued_job_nodes.length > 0 else <span/>}
-                    {<div>
+                    {queued_job_nodes}
+                </div> if queued_job_nodes.length > 0 else <span/>}
+                {<div>
                         <div className="px-4 py-1.5 bg-zinc-900/50 border-t border-[var(--border)] flex items-center justify-between">
-                            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-600">Completed</span>
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-600">Latest Completed</span>
                             <span className="text-[10px] text-zinc-700 font-mono">{completed.length} kernel{("s" if completed.length != 1 else "")}</span>
                         </div>
                         {completed_summary_rows}
