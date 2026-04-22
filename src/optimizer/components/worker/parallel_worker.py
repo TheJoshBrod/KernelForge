@@ -215,7 +215,8 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                     "runtime_ms": runtime_ms,
                     "kernel_id": kernel_id,
                     "code_path": str(Path(paths["proj_dir"].name) / "kernels" / kernel_filename),
-                    "feedback": feedback
+                    "feedback": feedback,
+                    "attempts_to_correct": attempt + 1,
                 },
                 "success"
             ))

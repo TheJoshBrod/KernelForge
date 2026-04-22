@@ -677,6 +677,8 @@ def run_optimize(args: argparse.Namespace) -> int:
         ]
         if args.iterations and args.iterations > 0:
             opt_cmd += ["--max-iterations", str(args.iterations)]
+        if getattr(args, "n_kernels", 0) and args.n_kernels > 0:
+            opt_cmd += ["--n-kernels", str(args.n_kernels)]
         if args.workers and args.workers > 1:
             opt_cmd += ["--parallel", "--workers", str(args.workers)]
         if args.remote:
@@ -768,6 +770,13 @@ def main() -> int:
     optimize.add_argument("--llm-provider", default="")
     optimize.add_argument("--llm-model", default="")
     optimize.add_argument("--workers", type=int, default=4)
+    optimize.add_argument(
+        "--n-kernels",
+        type=int,
+        default=0,
+        help="Stop after N kernel candidates have been sampled/profiled "
+             "and return the best one found.",
+    )
 
     args = parser.parse_args()
 

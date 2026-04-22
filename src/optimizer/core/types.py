@@ -56,7 +56,9 @@ class KernelNode(BaseModel):
     improvement_description: Optional[str] = None
     timestamp: float = 0.0
     speedup_vs_parent: Optional[float] = None
-    
+    attempts_to_correct: Optional[int] = None
+    phase: Optional[str] = None  # "GENERATION" or "OPTIMIZATION"
+
     class Config:
         populate_by_name = True
 

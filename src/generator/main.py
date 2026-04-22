@@ -275,9 +275,11 @@ def validate_with_retries(
     ssh_config=None,
     _proj_base_dir: Path | None = None,
     _task_key: str | None = None,
-) -> tuple[bool, str, str]:
+) -> tuple[bool, str, str, int]:
     """
     Attempt to validate and fix kernel code up to MAX_ATTEMPTS times.
+
+    Returns (success, last_feedback, last_stage, attempts_used).
 
     Args:
         output_dir: Directory to save kernel outputs
@@ -376,11 +378,13 @@ def validate_with_retries(
                     return True, "", "success"
         return False, err or feedback, "codex_repair"
 
+    attempts_used = 0
     for attempt in range(attempts_total):
+        attempts_used = attempt + 1
         if not wait_if_paused():
-            return False, "Generation paused/cancelled.", "control"
+            return False, "Generation paused/cancelled.", "control", attempts_used
         if check_cancelled():
-            return False, "Generation cancelled.", "control"
+            return False, "Generation cancelled.", "control", attempts_used
 
         if _proj_base_dir and _task_key:
             update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
@@ -465,7 +469,7 @@ def validate_with_retries(
                 print(f"Failed on attempt {attempt}\n{e}")
                 last_feedback = f"LLM generation failed: {e}"
                 last_stage = "llm_api"
-                return False, last_feedback, last_stage
+                return False, last_feedback, last_stage, attempts_used
 
         tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
 
@@ -479,7 +483,7 @@ def validate_with_retries(
         os.makedirs(log_file_loc.parent, exist_ok=True)
 
         if not entry_files:
-             return False, "No entry files", "setup"
+             return False, "No entry files", "setup", attempts_used
 
         update_job_progress(attempt, max_attempts, f"Validating {op_key} (attempt {attempt + 1}/{max_attempts}){' — remote' if ssh_config else ''}")
 
@@ -514,7 +518,7 @@ def validate_with_retries(
                         feedback, attempt
                     )
                     if repaired_ok:
-                        return True, "", "success"
+                        return True, "", "success", attempts_used
                     last_feedback = repair_feedback
                     last_stage = repair_stage
                 except NameError:
@@ -546,7 +550,7 @@ def validate_with_retries(
                     "op_name": op_key,
                     "tag": "[GEN]",
                 }}})
-            return True, "", "success"
+            return True, "", "success", attempts_used
 
     if _proj_base_dir and _task_key:
         result_msg = f"{last_stage}: {last_feedback[:120]}" if last_feedback else last_stage
@@ -558,7 +562,7 @@ def validate_with_retries(
             "op_name": op_key,
             "tag": "[GEN]",
         }}})
-    return False, last_feedback, last_stage
+    return False, last_feedback, last_stage, attempts_used
 
 
 def process_function(
@@ -641,7 +645,7 @@ def process_function(
     proj_base_dir = project_dir if project_dir else None
 
     # Validate loop - pass entry files directly
-    success, failure_msg, failure_stage = validate_with_retries(
+    success, failure_msg, failure_stage, attempts_used = validate_with_retries(
         op_dir,
         entry_files,
         gen_model,
@@ -667,6 +671,27 @@ def process_function(
             failure_msg or "Kernel validation failed.",
             {"function": function_name},
         )
+
+    # Record Phase-1 attempt count for later reporting (consumed by
+    # optimizer root-init so it can be persisted to the tree).
+    try:
+        attempts_dir = op_dir / "attempts"
+        attempts_dir.mkdir(parents=True, exist_ok=True)
+        summary_path = attempts_dir / "summary.json"
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "phase": "GENERATION",
+                    "function": function_name,
+                    "attempts_to_correct": attempts_used,
+                    "success": success,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
 
     return success
 

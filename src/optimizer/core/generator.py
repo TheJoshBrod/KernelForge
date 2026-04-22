@@ -243,9 +243,10 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
     paths["attempt"] = 0
     if status_callback:
         status_callback("Generating", 1)
+    attempts_used = 1
     feedback, is_valid, error = create_and_validate(backend, llm, msg, model, paths, ssh_config, status_callback)
     if is_valid:
-        return feedback, True, ""
+        return feedback, True, "", attempts_used
     print("\t\tInitial gen failed...")
     last_error = str(error) if error else ""
     # On failure attempt fix before giving up
@@ -254,12 +255,13 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
         paths["attempt"] = i + 1
         if status_callback:
             status_callback("Generating", i + 2)
+        attempts_used = i + 2
         retry_feedback, is_valid, error = create_and_validate(backend, llm, error, model, paths, ssh_config, status_callback)
         if is_valid:
-            return retry_feedback, True, ""
+            return retry_feedback, True, "", attempts_used
         if error:
             last_error = str(error)
 
     if not last_error:
         last_error = "No valid kernel produced after retries."
-    return "", False, last_error
+    return "", False, last_error, attempts_used
