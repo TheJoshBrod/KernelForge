@@ -5,6 +5,21 @@ import from .....components.ui.Icons { ShieldCheckIcon }
 def:pub WorkbenchNodeDetails(props: any) -> Any {
     selectedNodeId = props.selectedNodeId;
     selectedNodeData = props.selectedNodeData;
+    timing_metric = (
+        str(selectedNodeData["timing_metric"])
+        if selectedNodeData and "timing_metric" in selectedNodeData and selectedNodeData["timing_metric"]
+        else "mean_time_ms"
+    );
+    value_label = (
+        "Average Runtime (ms)"
+        if timing_metric == "mean_time_ms"
+        else "Stored Runtime (legacy)"
+    );
+    subtree_label = (
+        "Best Subtree Runtime (ms)"
+        if timing_metric == "mean_time_ms"
+        else "Best Subtree Value"
+    );
 
     return
         <div className="flex-1 flex flex-col min-h-0">
@@ -33,7 +48,7 @@ def:pub WorkbenchNodeDetails(props: any) -> Any {
                 </div>
                 <div className="flex justify-between items-center bg-[var(--surface-0)]/50 p-2.5 rounded border border-[var(--border)]">
                     <span className="text-[var(--text-muted)] text-xs uppercase font-medium">
-                        Reward
+                        {value_label}
                     </span>
                     <span className="font-mono text-sm font-medium text-[var(--text-light)]">
                         {Number(selectedNodeData["value"] or 0).toFixed(6)}
@@ -41,7 +56,7 @@ def:pub WorkbenchNodeDetails(props: any) -> Any {
                 </div>
                 <div className="flex justify-between items-center bg-[var(--surface-0)]/50 p-2.5 rounded border border-[var(--border)]">
                     <span className="text-[var(--text-muted)] text-xs uppercase font-medium">
-                        Best Subtree
+                        {subtree_label}
                     </span>
                     <span className="font-mono text-sm font-medium text-[var(--text-light)]">
                         {Number(selectedNodeData["best_subtree_value"] or 0).toFixed(

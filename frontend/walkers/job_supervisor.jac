@@ -801,15 +801,52 @@ def _load_tree_best_by_op(project_name: str) -> dict {
         try {
             conn = sqlite3.connect(db_path);
             cursor = conn.cursor();
-            cursor.execute("SELECT MIN(value) FROM nodes WHERE value IS NOT NULL AND value > 0");
-            row = cursor.fetchone();
-            conn.close();
-            if row and row[0] is not None {
-                try {
-                    best_by_op[op_name] = float(row[0]);
-                } except Exception {
-                    continue;
+            has_mean_time_ms = False;
+            try {
+                cursor.execute("PRAGMA table_info(nodes)");
+                schema_rows = cursor.fetchall();
+                for schema_row in schema_rows {
+                    if schema_row and len(schema_row) > 1 and schema_row[1] == "mean_time_ms" {
+                        has_mean_time_ms = True;
+                    }
                 }
+            } except Exception {
+                has_mean_time_ms = False;
+            }
+            if has_mean_time_ms {
+                cursor.execute(
+                    """
+                    SELECT id, mean_time_ms
+                    FROM nodes
+                    WHERE mean_time_ms IS NOT NULL AND mean_time_ms > 0
+                    ORDER BY mean_time_ms ASC
+                    LIMIT 1
+                    """
+                );
+                row = cursor.fetchone();
+                if row and row[1] is not None {
+                    try {
+                        best_by_op[op_name] = {
+                            "value_ms": float(row[1]),
+                            "timing_metric": "mean_time_ms",
+                            "best_node_id": int(row[0]) if row[0] is not None else None
+                        };
+                        conn.close();
+                        continue;
+                    } except Exception {
+                        _ = 0;
+                    }
+                }
+            }
+            cursor.execute("SELECT 1 FROM nodes WHERE value IS NOT NULL AND value > 0 LIMIT 1");
+            legacy_row = cursor.fetchone();
+            conn.close();
+            if legacy_row {
+                best_by_op[op_name] = {
+                    "value_ms": None,
+                    "timing_metric": "legacy_value",
+                    "best_node_id": None
+                };
             }
         } except Exception as e {
             print(f"Error loading tree best value for {op_name}: {e}");
@@ -1954,13 +1991,28 @@ def _compute_project_metrics(project_name: str) -> dict {
     }
 
     tree_best_by_op = {};
+    tree_legacy_by_op = {};
     tree_raw = _load_tree_best_by_op(project_name);
     for op_name in tree_raw {
         norm_name = _normalize_metric_op_name(op_name);
         if not norm_name {
             continue;
         }
-        ms_val = _to_positive_float(tree_raw[op_name]);
+        tree_entry = tree_raw[op_name];
+        metric_name = (
+            str(tree_entry["timing_metric"])
+            if tree_entry and "timing_metric" in tree_entry and tree_entry["timing_metric"]
+            else "mean_time_ms"
+        );
+        if metric_name != "mean_time_ms" {
+            tree_legacy_by_op[norm_name] = True;
+            continue;
+        }
+        ms_val = _to_positive_float(
+            tree_entry["value_ms"]
+            if tree_entry and "value_ms" in tree_entry
+            else None
+        );
         if ms_val is None {
             continue;
         }
@@ -2088,6 +2140,9 @@ def _compute_project_metrics(project_name: str) -> dict {
         }
         if forged_ms is not None {
             row["forged_ms"] = forged_ms;
+            row["forged_timing_metric"] = "mean_time_ms";
+        } elif op_name in tree_legacy_by_op {
+            row["forged_timing_metric"] = "legacy_value";
         }
         rows.append(row);
         rows_by_op[op_name] = row;

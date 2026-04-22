@@ -9,54 +9,71 @@ from src.optimizer.core.types import KernelNode
 from src.optimizer.config.settings import settings
 
 _NODE_CACHE: Dict[int, KernelNode] = {}
+_NODE_SELECT_COLUMNS = (
+    "id, visits, value, mean_time_ms, best_subtree_value, code, "
+    "improvement_description, timestamp"
+)
+_NODE_SELECT_COLUMNS_QUALIFIED = (
+    "n.id, n.visits, n.value, n.mean_time_ms, n.best_subtree_value, "
+    "n.code, n.improvement_description, n.timestamp"
+)
 
 def get_db_path(paths: dict) -> Path:
     return paths["proj_dir"] / "nodes.db"
 
+def _ensure_tree_schema(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS nodes (
+            id INTEGER PRIMARY KEY,
+            visits INTEGER,
+            value REAL,
+            mean_time_ms REAL,
+            best_subtree_value REAL,
+            code TEXT,
+            improvement_description TEXT,
+            timestamp REAL
+        )
+    """)
+    node_columns = {row[1] for row in conn.execute("PRAGMA table_info(nodes)")}
+    if "mean_time_ms" not in node_columns:
+        conn.execute("ALTER TABLE nodes ADD COLUMN mean_time_ms REAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS edges (
+            parent_id INTEGER,
+            child_id INTEGER,
+            PRIMARY KEY (parent_id, child_id),
+            FOREIGN KEY(parent_id) REFERENCES nodes(id),
+            FOREIGN KEY(child_id) REFERENCES nodes(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_parent ON edges(parent_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_child ON edges(child_id)")
+
 def init_db(paths: dict):
     """Initialize the SQLite database schema."""
     db_path = get_db_path(paths)
-    if db_path.exists():
-        return
-        
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
     with sqlite3.connect(db_path) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS nodes (
-                id INTEGER PRIMARY KEY,
-                visits INTEGER,
-                value REAL,
-                best_subtree_value REAL,
-                code TEXT,
-                improvement_description TEXT,
-                timestamp REAL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS edges (
-                parent_id INTEGER,
-                child_id INTEGER,
-                PRIMARY KEY (parent_id, child_id),
-                FOREIGN KEY(parent_id) REFERENCES nodes(id),
-                FOREIGN KEY(child_id) REFERENCES nodes(id)
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_parent ON edges(parent_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_child ON edges(child_id)")
+        _ensure_tree_schema(conn)
+        conn.commit()
 
 
 def _node_from_row(row: Any, parent_id: Optional[int] = None, children_ids: List[int] = None) -> KernelNode:
     """Convert a DB row to a KernelNode."""
-    # row keys: id, visits, value, best_subtree, code, imp_desc, timestamp
-    
+    # row keys: id, visits, value, mean_time_ms, best_subtree, code, imp_desc, timestamp
+
     # Handle tuple from fetchone/fetchall
-    (nid, vis, val, best_val, code, imp_desc, ts) = row
-    
+    (nid, vis, val, mean_time_ms, best_val, code, imp_desc, ts) = row
+    canonical_value = mean_time_ms if mean_time_ms is not None else val
+
     return KernelNode(
         id=nid,
         parent=parent_id,
         children=children_ids if children_ids is not None else [],
         visits=vis,
-        value=val,
+        value=canonical_value,
+        mean_time_ms=mean_time_ms,
         best_subtree_value=best_val,
         code=code,
         improvement_description=imp_desc,
@@ -76,7 +93,7 @@ def load_tree_once(paths: dict):
         with sqlite3.connect(db_path) as conn:
             # 1. Load all nodes without relationships
             nodes_map = {}
-            cursor = conn.execute("SELECT * FROM nodes")
+            cursor = conn.execute(f"SELECT {_NODE_SELECT_COLUMNS} FROM nodes")
             for row in cursor:
                 # We don't have relationships yet
                 node = _node_from_row(row, parent_id=None, children_ids=[])
@@ -101,12 +118,12 @@ def load_tree_once(paths: dict):
                         nodes_map[cid].parent_id = pid
                         
                         # Recompute speedup on load?
-                        parent_val = nodes_map[pid].value
-                        child_val = nodes_map[cid].value
+                        parent_val = nodes_map[pid].mean_time_ms
+                        child_val = nodes_map[cid].mean_time_ms
                         if parent_val is not None and child_val is not None and child_val > 0:
                              nodes_map[cid].speedup_vs_parent = parent_val / child_val
                         else:
-                             nodes_map[cid].speedup_vs_parent = 1.0
+                             nodes_map[cid].speedup_vs_parent = None
 
             except sqlite3.OperationalError:
                 pass # Table might not exist yet if empty
@@ -140,16 +157,19 @@ def update_tree(paths: dict, new_node: KernelNode):
             # If timestamp is missing or 0.0 on a node update, give it a real timestamp
             if current.timestamp == 0.0:
                 current.timestamp = time.time()
+            if current.best_subtree_value is None and current.value is not None:
+                current.best_subtree_value = current.value
 
             # Upsert current node properties
             conn.execute("""
                 INSERT OR REPLACE INTO nodes 
-                (id, visits, value, best_subtree_value, code, improvement_description, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, visits, value, mean_time_ms, best_subtree_value, code, improvement_description, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 current.id,
                 current.visits,
                 current.value,
+                current.mean_time_ms,
                 current.best_subtree_value,
                 current.code,
                 current.improvement_description,
@@ -169,7 +189,10 @@ def update_tree(paths: dict, new_node: KernelNode):
             if parent_id in _NODE_CACHE:
                 parent = _NODE_CACHE[parent_id]
             else:
-                cursor = conn.execute("SELECT * FROM nodes WHERE id = ?", (parent_id,))
+                cursor = conn.execute(
+                    f"SELECT {_NODE_SELECT_COLUMNS} FROM nodes WHERE id = ?",
+                    (parent_id,),
+                )
                 row = cursor.fetchone()
                 if not row:
                     break
@@ -190,6 +213,12 @@ def update_tree(paths: dict, new_node: KernelNode):
             # --- Update Logic ---
             
             # 1. Link Child
+            existing_canonical_child = any(
+                child_id != current.id
+                and child_id in _NODE_CACHE
+                and _NODE_CACHE[child_id].mean_time_ms is not None
+                for child_id in parent.children_ids
+            )
             if current.id not in parent.children_ids:
                 parent.children_ids.append(current.id)
 
@@ -197,7 +226,13 @@ def update_tree(paths: dict, new_node: KernelNode):
             parent.visits += 1
 
             # 3. Propagate Best Score (Minimization)
-            parent_best = parent.best_subtree_value if parent.best_subtree_value is not None else parent.value
+            parent_best = (
+                parent.best_subtree_value
+                if parent.best_subtree_value is not None
+                else parent.value
+            )
+            if parent.mean_time_ms is None and not existing_canonical_child:
+                parent_best = None
             if parent_best is None: parent_best = float('inf')
             
             # 4. Update parent's best score if current is better
@@ -412,8 +447,11 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
             "iteration": current.id,
             "attempted": current.improvement_description or "Baseline",
             "results": {
-                "min_time_ms": runtime
+                "mean_time_ms": runtime
             },
+            "timing_metric": (
+                "mean_time_ms" if current.mean_time_ms is not None else "legacy_value"
+            ),
             "speedup_vs_parent": getattr(current, "speedup_vs_parent", 1.0) or 1.0
         }
         history.append(entry)
@@ -444,7 +482,10 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
         else:
             db_path = get_db_path(paths)
             with sqlite3.connect(db_path) as conn:
-                cursor = conn.execute("SELECT * FROM nodes WHERE id = ?", (current.parent_id,))
+                cursor = conn.execute(
+                    f"SELECT {_NODE_SELECT_COLUMNS} FROM nodes WHERE id = ?",
+                    (current.parent_id,),
+                )
                 row = cursor.fetchone()
                 if row:
                     try:
@@ -462,10 +503,12 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
     # 3. Calculate "Speedup vs Baseline"
     if history:
         baseline_time = history[0]["results"]["mean_time_ms"]
-        
+
         for h in history:
             current_time = h["results"]["mean_time_ms"]
-            if (baseline_time > 0 and baseline_time != float('inf')
+            if (history[0]["timing_metric"] == "mean_time_ms"
+                    and h["timing_metric"] == "mean_time_ms"
+                    and baseline_time > 0 and baseline_time != float('inf')
                     and current_time > 0 and current_time != float('inf')):
                 h["speedup_vs_baseline"] = baseline_time / current_time
             else:
@@ -533,7 +576,7 @@ def get_existing_roots(paths: dict) -> list[dict]:
         with sqlite3.connect(db_path) as conn:
             # Root nodes are those with no incoming edge in the edges table
             cursor = conn.execute("""
-                SELECT n.* FROM nodes n
+                SELECT """ + _NODE_SELECT_COLUMNS_QUALIFIED + """ FROM nodes n
                 LEFT JOIN edges e ON n.id = e.child_id
                 WHERE e.child_id IS NULL
             """)
@@ -561,10 +604,12 @@ def get_existing_roots(paths: dict) -> list[dict]:
                         code_preview = code_path.read_text()[:4000]  # First 4KB
                     else:
                         code_preview = f"// Code file not found: {code_path}"
-                    
+                    if node.mean_time_ms is None:
+                        continue
+
                     roots.append({
                         "id": node.id,
-                        "runtime_ms": node.value if node.value is not None else 0.0,
+                        "runtime_ms": node.mean_time_ms,
                         "code_preview": code_preview
                     })
                 except Exception as e:

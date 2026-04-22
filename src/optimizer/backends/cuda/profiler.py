@@ -333,8 +333,11 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
 
     # Compare with baseline if provided
     if previous_stats:
-        speedup = previous_stats['min_time_ms'] / stats['min_time_ms']
-        print(f"Speedup: {speedup:.2f}x")
+        prev_mean = previous_stats.get('mean_time_ms') if isinstance(previous_stats, dict) else None
+        curr_mean = stats.get('mean_time_ms')
+        if prev_mean and curr_mean:
+            speedup = prev_mean / curr_mean
+            print(f"Speedup: {speedup:.2f}x")
 
     return stats, prof
 

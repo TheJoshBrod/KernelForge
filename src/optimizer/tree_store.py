@@ -16,6 +16,7 @@ def _ensure_tree_schema(db_path: Path) -> None:
                 id INTEGER PRIMARY KEY,
                 visits INTEGER,
                 value REAL,
+                mean_time_ms REAL,
                 best_subtree_value REAL,
                 code TEXT,
                 improvement_description TEXT,
@@ -23,6 +24,9 @@ def _ensure_tree_schema(db_path: Path) -> None:
             )
             """
         )
+        node_columns = {row[1] for row in conn.execute("PRAGMA table_info(nodes)")}
+        if "mean_time_ms" not in node_columns:
+            conn.execute("ALTER TABLE nodes ADD COLUMN mean_time_ms REAL")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS edges (
@@ -35,6 +39,24 @@ def _ensure_tree_schema(db_path: Path) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_parent ON edges(parent_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_child ON edges(child_id)")
         conn.commit()
+
+
+def _best_canonical_subtree_ms(
+    conn: sqlite3.Connection, fallback_ms: float | None
+) -> float | None:
+    row = conn.execute(
+        """
+        SELECT MIN(mean_time_ms)
+        FROM nodes
+        WHERE mean_time_ms IS NOT NULL AND mean_time_ms > 0
+        """
+    ).fetchone()
+    if row and row[0] is not None:
+        try:
+            return float(row[0])
+        except Exception:
+            return fallback_ms
+    return fallback_ms
 
 
 def _find_generated_kernel_source(op_generated_dir: Path) -> Path | None:
@@ -105,19 +127,20 @@ def publish_generated_root(
         _ensure_tree_schema(db_path)
         with sqlite3.connect(db_path) as conn:
             row = conn.execute(
-                "SELECT visits, value, best_subtree_value, code FROM nodes WHERE id = 0"
+                "SELECT visits, value, mean_time_ms, best_subtree_value, code FROM nodes WHERE id = 0"
             ).fetchone()
 
             if row is None:
                 conn.execute(
                     """
                     INSERT INTO nodes
-                    (id, visits, value, best_subtree_value, code, improvement_description, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (id, visits, value, mean_time_ms, best_subtree_value, code, improvement_description, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         0,
                         1,
+                        normalized_ms,
                         normalized_ms,
                         normalized_ms,
                         code_rel,
@@ -126,24 +149,22 @@ def publish_generated_root(
                     ),
                 )
             else:
-                existing_visits, existing_value, existing_best, existing_code = row
+                existing_visits, existing_value, existing_mean, _, existing_code = row
                 visits = max(int(existing_visits or 0), 1)
                 value = normalized_ms if normalized_ms is not None else existing_value
-                if value is None:
-                    best = existing_best
-                elif existing_best is None:
-                    best = value
-                else:
-                    best = min(float(existing_best), float(value))
+                mean_time_ms = (
+                    normalized_ms if normalized_ms is not None else existing_mean
+                )
+                best = _best_canonical_subtree_ms(conn, mean_time_ms)
                 code = code_rel if not existing_code else str(existing_code)
                 conn.execute(
                     """
                     UPDATE nodes
-                    SET visits = ?, value = ?, best_subtree_value = ?, code = ?,
+                    SET visits = ?, value = ?, mean_time_ms = ?, best_subtree_value = ?, code = ?,
                         improvement_description = ?, timestamp = ?
                     WHERE id = 0
                     """,
-                    (visits, value, best, code, description, now_ts),
+                    (visits, value, mean_time_ms, best, code, description, now_ts),
                 )
             conn.commit()
 
@@ -186,18 +207,19 @@ def update_root_value(
 
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
-            "SELECT visits, value, best_subtree_value, code FROM nodes WHERE id = 0"
+            "SELECT visits, value, mean_time_ms, best_subtree_value, code FROM nodes WHERE id = 0"
         ).fetchone()
         if row is None:
             conn.execute(
                 """
                 INSERT INTO nodes
-                (id, visits, value, best_subtree_value, code, improvement_description, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, visits, value, mean_time_ms, best_subtree_value, code, improvement_description, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     0,
                     1,
+                    normalized_ms,
                     normalized_ms,
                     normalized_ms,
                     _default_root_code_rel(project_dir, op_name),
@@ -206,21 +228,18 @@ def update_root_value(
                 ),
             )
         else:
-            existing_visits, _, existing_best, existing_code = row
+            existing_visits, _, _, _, existing_code = row
             visits = max(int(existing_visits or 0), 1)
-            if existing_best is None:
-                best = normalized_ms
-            else:
-                best = min(float(existing_best), normalized_ms)
+            best = _best_canonical_subtree_ms(conn, normalized_ms)
             code_rel = str(existing_code) if existing_code else _default_root_code_rel(project_dir, op_name)
             conn.execute(
                 """
                 UPDATE nodes
-                SET visits = ?, value = ?, best_subtree_value = ?, code = ?,
+                SET visits = ?, value = ?, mean_time_ms = ?, best_subtree_value = ?, code = ?,
                     improvement_description = ?, timestamp = ?
                 WHERE id = 0
                 """,
-                (visits, normalized_ms, best, code_rel, description, now_ts),
+                (visits, normalized_ms, normalized_ms, best, code_rel, description, now_ts),
             )
         conn.commit()
 

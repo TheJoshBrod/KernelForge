@@ -37,6 +37,35 @@ import from .job_supervisor {
     _collect_project_metrics
 }
 
+def _nodes_table_has_mean_time_ms(conn) -> bool {
+    try {
+        cursor = conn.cursor();
+        cursor.execute("PRAGMA table_info(nodes)");
+        rows = cursor.fetchall();
+        for row in rows {
+            if row and len(row) > 1 and row[1] == "mean_time_ms" {
+                return True;
+            }
+        }
+    } except Exception {
+        _ = 0;
+    }
+    return False;
+}
+
+def _tree_node_select_sql(has_mean_time_ms: bool) -> str {
+    if has_mean_time_ms {
+        return (
+            "SELECT id, visits, value, mean_time_ms, best_subtree_value, "
+            + "improvement_description, timestamp, code FROM nodes"
+        );
+    }
+    return (
+        "SELECT id, visits, value, NULL as mean_time_ms, best_subtree_value, "
+        + "improvement_description, timestamp, code FROM nodes"
+    );
+}
+
 walker:pub GetDashboardCharts {
     has projectName: str;
 
@@ -95,23 +124,54 @@ walker:pub GetMctsTree {
             conn = sqlite3.connect(db_path);
             # Set row factory to dict-like if needed, but manual extraction is safer in Jac logic
             cursor = conn.cursor();
+            has_mean_time_ms = _nodes_table_has_mean_time_ms(conn);
 
             # Fetch nodes
-            cursor.execute(
-                "SELECT id, visits, value, best_subtree_value, improvement_description, timestamp, code FROM nodes"
-            );
+            cursor.execute(_tree_node_select_sql(has_mean_time_ms));
             rows = cursor.fetchall();
+            best_node_id = None;
+            best_value_ms = None;
+            has_legacy_timing = False;
             for row in rows {
-                node_val = None;
+                stored_value = None;
                 try {
-                    node_val = float(row[2]) if row[2] is not None else None;
+                    stored_value = float(row[2]) if row[2] is not None else None;
                 } except Exception {
-                    node_val = None;
+                    stored_value = None;
+                }
+                mean_time_ms = None;
+                try {
+                    mean_time_ms = float(row[3]) if row[3] is not None else None;
+                } except Exception {
+                    mean_time_ms = None;
+                }
+                best_subtree_value = None;
+                try {
+                    best_subtree_value = (
+                        float(row[4]) if row[4] is not None else None
+                    );
+                } except Exception {
+                    best_subtree_value = None;
+                }
+                node_val = mean_time_ms;
+                timing_metric = "mean_time_ms";
+                if node_val is None or node_val <= 0.0 {
+                    node_val = stored_value;
+                    timing_metric = "legacy_value";
                 }
                 if node_val is None or node_val <= 0.0 {
                     continue;
                 }
-                node_code = row[6];
+                if best_subtree_value is None and node_val is not None {
+                    best_subtree_value = node_val;
+                }
+                if timing_metric == "legacy_value" {
+                    has_legacy_timing = True;
+                } elif best_value_ms is None or node_val < best_value_ms {
+                    best_value_ms = node_val;
+                    best_node_id = row[0];
+                }
+                node_code = row[7];
                 code_text = str(node_code).strip() if node_code is not None else "";
                 if code_text and "\n" not in code_text and (
                     code_text.endswith(".cu")
@@ -268,9 +328,12 @@ walker:pub GetMctsTree {
                         "id": row[0],
                         "visits": row[1],
                         "value": node_val,
-                        "best_subtree_value": row[3],
-                        "improvement_description": row[4],
-                        "timestamp": row[5],
+                        "mean_time_ms": mean_time_ms,
+                        "stored_value": stored_value,
+                        "best_subtree_value": best_subtree_value,
+                        "improvement_description": row[5],
+                        "timestamp": row[6],
+                        "timing_metric": timing_metric,
                         "code": node_code
                     }
                 );
@@ -354,7 +417,10 @@ walker:pub GetMctsTree {
                 "success": True,
                 "nodes": mcts_nodes,
                 "edges": edges,
-                "pytorch_ms": pytorch_ms
+                "pytorch_ms": pytorch_ms,
+                "best_node_id": best_node_id,
+                "best_value_ms": best_value_ms,
+                "has_legacy_timing": has_legacy_timing
             };
         } except Exception as e {
             report {"success": False, "error": str(e)};
@@ -379,14 +445,33 @@ walker:pub GetProjectMctsSummary {
                     try {
                         conn = sqlite3.connect(db_path);
                         cursor = conn.cursor();
+                        has_mean_time_ms = _nodes_table_has_mean_time_ms(conn);
 
                         cursor.execute("SELECT COUNT(*) FROM nodes WHERE value IS NOT NULL AND value > 0");
                         node_count = cursor.fetchone()[0];
 
-                        cursor.execute("SELECT id, value FROM nodes WHERE value IS NOT NULL AND value > 0 ORDER BY value ASC LIMIT 1");
+                        if has_mean_time_ms {
+                            cursor.execute(
+                                """
+                                SELECT id, mean_time_ms
+                                FROM nodes
+                                WHERE mean_time_ms IS NOT NULL AND mean_time_ms > 0
+                                ORDER BY mean_time_ms ASC
+                                LIMIT 1
+                                """
+                            );
+                        } else {
+                            cursor.execute(
+                                "SELECT NULL, NULL"
+                            );
+                        }
                         best_row = cursor.fetchone();
-                        best_val = float(best_row[1]) if best_row else 0.0;
-                        best_node_id = int(best_row[0]) if best_row else None;
+                        best_val = float(best_row[1]) if best_row and best_row[1] is not None else None;
+                        best_node_id = (
+                            int(best_row[0])
+                            if best_row and best_row[0] is not None
+                            else None
+                        );
 
                         total_nodes += node_count;
                         op_summaries.append(
@@ -394,7 +479,10 @@ walker:pub GetProjectMctsSummary {
                                 "op": op_name,
                                 "nodes": node_count,
                                 "best_value": best_val,
-                                "best_node_id": best_node_id
+                                "best_node_id": best_node_id,
+                                "timing_metric": (
+                                    "mean_time_ms" if best_val is not None else "legacy_value"
+                                )
                             }
                         );
                         conn.close();

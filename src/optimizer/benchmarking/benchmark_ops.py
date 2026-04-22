@@ -302,16 +302,24 @@ def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
         except Exception:
             pass
 
-    # Fallback: nodes.db (active path — stores mean_time_ms as value)
+    # Fallback: nodes.db. Only explicit mean_time_ms rows count as authoritative.
     db_file = op_dir / "nodes.db"
     if db_file.exists():
         try:
             import sqlite3 as _sqlite3
             conn = _sqlite3.connect(str(db_file))
-            row = conn.execute(
-                "SELECT MIN(value) FROM nodes WHERE value IS NOT NULL AND value > 0"
-            ).fetchone()
-            conn.close()
+            columns = {
+                info[1] for info in conn.execute("PRAGMA table_info(nodes)").fetchall()
+            }
+            row = None
+            if "mean_time_ms" in columns:
+                row = conn.execute(
+                    """
+                    SELECT MIN(mean_time_ms)
+                    FROM nodes
+                    WHERE mean_time_ms IS NOT NULL AND mean_time_ms > 0
+                    """
+                ).fetchone()
             if row and row[0] is not None:
                 ms_val = float(row[0])
                 # Read backend from generated_root.json if present
@@ -322,7 +330,14 @@ def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
                         backend = json.loads(meta.read_text(encoding="utf-8")).get("backend", "")
                     except Exception:
                         pass
+                conn.close()
                 return ms_val, "ok", str(backend)
+            legacy_row = conn.execute(
+                "SELECT 1 FROM nodes WHERE value IS NOT NULL AND value > 0 LIMIT 1"
+            ).fetchone()
+            conn.close()
+            if legacy_row:
+                return None, "legacy_tree_value", ""
         except Exception:
             pass
 
@@ -616,6 +631,7 @@ def main() -> int:
             kernel_status = "missing"
             backend = ""
             kernel_estimated = False
+            generated_kernel_profiled = False
             kernel_entry_latencies = []
             kernel_benchmarked_entry_files = []
             if optimized_root:
@@ -633,6 +649,7 @@ def main() -> int:
                     else None,
                 )
                 if generated_stats is not None:
+                    generated_kernel_profiled = True
                     kernel_ms_raw = (
                         generated_stats.get("mean_time_ms")
                         if isinstance(generated_stats, dict)
@@ -711,7 +728,7 @@ def main() -> int:
             if pytorch_ms and kernel_ms:
                 row["speedup"] = float(pytorch_ms / kernel_ms) if kernel_ms > 0 else None
             results_by_op[op_name] = row
-            if kernel_status == "ok" and kernel_ms is not None:
+            if generated_kernel_profiled and kernel_status == "ok" and kernel_ms is not None:
                 try:
                     update_root_value(
                         project_dir,

@@ -222,16 +222,15 @@ def:pub OperatorWorkbenchView(props: any) -> Any {
             setEdges(layout["edges"]);
 
             r_map = {};
-            best_node_id = None;
-            best_val = None;
+            best_node_id = (
+                f"{tree_data['best_node_id']}"
+                if tree_data and "best_node_id" in tree_data
+                and tree_data["best_node_id"] is not None
+                else None
+            );
 
             for n in m_nodes {
                 r_map[f"{n['id']}"] = n;
-                val = Number(n["value"]) if n and "value" in n else 0;
-                if best_val is None or val < best_val {
-                    best_val = val;
-                    best_node_id = f"{n['id']}";
-                }
             }
             setRawNodes(r_map);
 

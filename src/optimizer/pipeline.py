@@ -27,6 +27,12 @@ from src.optimizer.backends.triton import TritonBackend
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
+def _canonical_mean_time_ms(stats: dict) -> float:
+    mean_time_ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
+    if mean_time_ms is None:
+        raise ValueError("Profiler stats missing mean_time_ms")
+    return float(mean_time_ms)
+
 def _default_queue_state() -> dict:
     return {
         "active_tasks": {},
@@ -147,19 +153,22 @@ def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, impro
             update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {"current_step": "Failed", "result": "profiler error", "status": "Failed"}}})
         return None, f"[Profiler Error] {prof_err}"
     print("\tFinished Profiler.")
+    current_mean_ms = _canonical_mean_time_ms(current_stats)
+    parent_mean_ms = parent_info.mean_time_ms
     log_entry = {
         "iteration": next_id,
         "attempted": improvement_description,
         "results": current_stats,
-        "speedup_vs_parent": (parent_info.value / current_stats['min_time_ms']
-                              if parent_info.value is not None and current_stats['min_time_ms'] > 0
+        "speedup_vs_parent": (parent_mean_ms / current_mean_ms
+                              if parent_mean_ms is not None and current_mean_ms > 0
                               else 1.0),
     }
 
     # Save node to DB
     node_val = {
         "id": next_id,
-        "value": current_stats['min_time_ms'],
+        "value": current_mean_ms,
+        "mean_time_ms": current_mean_ms,
         "speedup_vs_parent": log_entry['speedup_vs_parent'],
         "improvement_description": improvement_description,
         "parent": parent_info.id,
@@ -397,12 +406,14 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         # Profile the kernel
         print("\t\tProfiling new root kernel...")
         current_stats = backend.profile_kernel(paths)
+        current_mean_ms = _canonical_mean_time_ms(current_stats)
         
         # Create root node (parent = -1)
         node_data = {
             "id": next_id,
             "parent": -1,  # Root marker
-            "value": current_stats['mean_time_ms'],
+            "value": current_mean_ms,
+            "mean_time_ms": current_mean_ms,
             "speedup_vs_parent": 1.0,
             "improvement_description": "Initial",
             "code": f"{paths['proj_dir'].name}/kernels/kernel_{next_id}{backend.kernel_extension}",
@@ -417,7 +428,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         # Save kernel code
         (paths["proj_dir"] / "kernels" / f"kernel_{next_id}{backend.kernel_extension}").write_text(code)
 
-        print(f"\t\tCreated new root: Node {next_id} ({current_stats['mean_time_ms']:.4f} ms)")
+        print(f"\t\tCreated new root: Node {next_id} ({current_mean_ms:.4f} ms)")
         return node
 
 
@@ -492,11 +503,13 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
 
             # Profile kernel
             current_stats = op_backend.profile_kernel(paths, baseline=True, ssh_config=ssh_config)
+            current_mean_ms = _canonical_mean_time_ms(current_stats)
 
             # Log kernel
             node_data = {
                 "id": 0,
-                "value": current_stats['mean_time_ms'],
+                "value": current_mean_ms,
+                "mean_time_ms": current_mean_ms,
                 "speedup_vs_parent": 1.0,
                 "improvement_description": "Initial",
                 "parent": -1,
@@ -664,8 +677,8 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                 parent_node = mcts._NODE_CACHE.get(node_id)
                 speedup = 1.0
                 if parent_node:
-                    speedup = (parent_node.value / runtime_ms
-                               if parent_node.value is not None and runtime_ms > 0
+                    speedup = (parent_node.mean_time_ms / runtime_ms
+                               if parent_node.mean_time_ms is not None and runtime_ms > 0
                                else 1.0)
                     new_node = KernelNode(
                         id=kernel_id,
@@ -673,6 +686,7 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                         children_ids=[],
                         visits=1,
                         value=runtime_ms,
+                        mean_time_ms=runtime_ms,
                         best_subtree_value=runtime_ms,
                         speedup_vs_parent=speedup,
                         improvement_description=result_data.get("feedback", "Parallel optimization"),
