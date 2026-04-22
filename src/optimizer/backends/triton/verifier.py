@@ -143,6 +143,22 @@ def validate_kernel(generated_py_code: str, paths: dict[str, Path]) -> tuple[boo
     tmpdir = paths["tmp_dir"]
     io_dir = paths["io_dir"]
 
+    # Register LiteLLM success callback so the byllm-decorated summarizer's
+    # calls get logged to the project usage DB with step_type='verifier_summary'.
+    op_proj_dir = paths.get("proj_dir") if isinstance(paths, dict) else None
+    if op_proj_dir is not None:
+        try:
+            from src.llm.litellm_callback import register_worker_usage_callback
+            register_worker_usage_callback(
+                op_proj_dir.parent,
+                os.environ.get("KFORGE_JOB_KEY"),
+                op_proj_dir.name,
+                paths.get("iteration"),
+                paths.get("attempt"),
+            )
+        except Exception:
+            pass
+
     # Write kernel code to file
     kernel_path = Path(tmpdir) / "kernel.py"
     kernel_path.write_text(generated_py_code, encoding="utf-8")

@@ -39,6 +39,7 @@ import from walkers.optimization_results {
     GetOpDetails,
     GetProjectMetrics,
     GetOperatorMetrics,
+    GetLlmUsage,
     ImportKernel,
     DownloadCast,
     GetCastChunk
@@ -76,19 +77,14 @@ cl {
 
     def:pub app {
         useEffect(
-            lambda -> None {
-                window.Exception = Error;
-                document.title = "Kernel Forge";
-                
-                # Dynamic Favicon
-                link = document.querySelector("link[rel~='icon']");
-                if not link {
-                    link = document.createElement("link");
-                    link.rel = "icon";
-                    document.head.appendChild(link);
-                }
-                link.href = "/KernelForge.svg";
-            }, []
+            lambda -> None { window.Exception = Error;document.title = "Kernel Forge";
+            # Dynamic Favicon
+            link = document.querySelector("link[rel~='icon']");if not link {
+                link = document.createElement("link");
+                link.rel = "icon";
+                document.head.appendChild(link);
+            }link.href = "/KernelForge.svg";},
+            []
         );
         return
             <Router>

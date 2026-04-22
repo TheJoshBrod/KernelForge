@@ -31,6 +31,7 @@ from src.optimizer.backends.cuda import CUDABackend
 from src.optimizer.backends.triton import TritonBackend
 from src.optimizer.pipeline import update_queue_state
 from src.progress import update_job_progress, wait_if_paused, check_cancelled
+from src.llm.usage_db import log_llm_call
 try:
     from src import codex_utils
 except ImportError:
@@ -464,6 +465,15 @@ def validate_with_retries(
                     msg = last_repair_prompt
                 
                 cu_code = generator.generate(gen_model, msg, llm_model)
+                if project_dir and getattr(gen_model, "last_usage", None):
+                    log_llm_call(
+                        project_dir,
+                        gen_model.last_usage,
+                        step_type="generate",
+                        job_key=os.environ.get("KFORGE_JOB_KEY"),
+                        operator=op_key,
+                        attempt=attempt,
+                    )
 
             except Exception as e:
                 print(f"Failed on attempt {attempt}\n{e}")
