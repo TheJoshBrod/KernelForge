@@ -733,6 +733,73 @@ def run_optimize(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_fuse(args: argparse.Namespace) -> int:
+    """Execute kernel fusion for accepted fusion groups."""
+    from src.progress import update_job_progress
+
+    project_dir = _project_dir(args.project)
+    target_device = _normalize_device(getattr(args, "target_device", "cuda") or "cuda")
+
+    # Preflight check for CUDA
+    if target_device == "cuda" and not getattr(args, "remote", ""):
+        ok, reason = _preflight_cuda_target()
+        if not ok:
+            print(f"[workflow] {reason}")
+            return 2
+        if reason:
+            print(f"[workflow] {reason}")
+
+    # Initialize backend
+    if target_device == "cuda":
+        from src.optimizer.backends.cuda import CUDABackend
+        backend = CUDABackend()
+    elif target_device == "triton":
+        from src.optimizer.backends.triton import TritonBackend
+        backend = TritonBackend()
+    else:
+        print(f"[workflow] Unsupported target device for fusion: {target_device}")
+        return 1
+
+    # Initialize fusion engine
+    from src.optimizer.core.fusion import FusionEngine
+    engine = FusionEngine(
+        backend=backend,
+        project_dir=project_dir,
+        model=args.llm_model if hasattr(args, "llm_model") and args.llm_model else None,
+        ssh_config=None,  # TODO: Add remote support
+    )
+
+    def status_callback(msg: str) -> None:
+        print(f"[workflow-fuse] {msg}")
+
+    if args.group_id:
+        # Fuse specific group
+        from src.optimizer.core.fusion.store import get_group_by_id
+        group = get_group_by_id(project_dir, args.group_id)
+        if not group:
+            print(f"[workflow] Fusion group not found: {args.group_id}")
+            return 1
+        update_job_progress(0, 1, f"Fusing group {args.group_id}")
+        result = engine.fuse_group(group, status_callback=status_callback)
+        update_job_progress(1, 1, f"Fusion {'completed' if result.status.value == 'completed' else 'failed'}")
+        return 0 if result.status.value == "completed" else 1
+    else:
+        # Fuse all accepted groups
+        groups = engine.load_accepted_groups()
+        if not groups:
+            print("[workflow] No accepted fusion groups to process")
+            return 0
+        update_job_progress(0, len(groups), "Starting kernel fusion")
+        results = []
+        for i, group in enumerate(groups):
+            update_job_progress(i, len(groups), f"Fusing {group.pattern_name} ({i+1}/{len(groups)})")
+            result = engine.fuse_group(group, status_callback=status_callback)
+            results.append(result)
+        completed = sum(1 for r in results if r.status.value == "completed")
+        update_job_progress(len(groups), len(groups), f"Fusion completed: {completed}/{len(groups)} succeeded")
+        return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Kernel Forge workflow runner")
     sub = parser.add_subparsers(dest="action", required=True)
@@ -769,6 +836,13 @@ def main() -> int:
     optimize.add_argument("--llm-model", default="")
     optimize.add_argument("--workers", type=int, default=4)
 
+    fuse = sub.add_parser("fuse")
+    fuse.add_argument("--project", required=True)
+    fuse.add_argument("--group-id", default="", help="Specific fusion group ID to fuse (empty = all accepted)")
+    fuse.add_argument("--target-device", default="cuda", help="Target backend: cuda, triton")
+    fuse.add_argument("--llm-model", default="", help="LLM model to use for fusion generation")
+    fuse.add_argument("--llm-provider", default="", help="LLM provider: anthropic, openai, google")
+
     args = parser.parse_args()
 
     if args.action == "profile":
@@ -779,6 +853,8 @@ def main() -> int:
         return run_generate(args)
     if args.action == "optimize":
         return run_optimize(args)
+    if args.action == "fuse":
+        return run_fuse(args)
     return 1
 
 

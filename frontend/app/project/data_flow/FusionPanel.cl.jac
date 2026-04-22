@@ -17,6 +17,8 @@ def:pub FusionPanel(props: any) -> Any {
     onAccept = props.onAccept if props and props.onAccept else None;
     onReject = props.onReject if props and props.onReject else None;
     onPropose = props.onPropose if props and props.onPropose else None;
+    onGenerate = props.onGenerate if props and props.onGenerate else None;
+    fuseJobStatus = props.fuseJobStatus if props and props.fuseJobStatus else None;
     onClose = props.onClose if props and props.onClose else None;
 
     # Build node map for member op lookup in FusionGroupCard
@@ -45,7 +47,9 @@ def:pub FusionPanel(props: any) -> Any {
                 "score": g["score"] if "score" in g else 0.5,
                 "estimated_speedup": g["estimated_speedup"] if "estimated_speedup" in g else None,
                 "rationale": g["rationale"] if "rationale" in g else "",
-                "status": g_status
+                "status": g_status,
+                "gen_status": g["gen_status"] if "gen_status" in g else None,
+                "actual_speedup": g["actual_speedup"] if "actual_speedup" in g else None
             };
             patterns_order.push(pname);
         }
@@ -53,6 +57,13 @@ def:pub FusionPanel(props: any) -> Any {
         patterns_map[pname]["instances"].push(g);
         if g_status == "accepted" {
             patterns_map[pname]["status"] = "accepted";
+        }
+        # Update gen_status from any group instance
+        if "gen_status" in g and g["gen_status"] {
+            patterns_map[pname]["gen_status"] = g["gen_status"];
+        }
+        if "actual_speedup" in g and g["actual_speedup"] {
+            patterns_map[pname]["actual_speedup"] = g["actual_speedup"];
         }
     }
 
@@ -96,11 +107,43 @@ def:pub FusionPanel(props: any) -> Any {
                 estimatedSpeedup={pat["estimated_speedup"]}
                 rationale={pat["rationale"]}
                 status={pat["status"]}
+                genStatus={pat["gen_status"]}
+                actualSpeedup={pat["actual_speedup"]}
                 onSelect={onSelectPattern}
                 onAccept={onAccept}
                 onReject={onReject}
             />
         );
+    }
+
+    # Generate fused kernels button (shown when accepted_count > 0)
+    generate_section = <span></span>;
+    if accepted_count > 0 {
+        is_generating = fuseJobStatus == "running";
+        gen_btn_label = "Generating..." if is_generating else "Generate Fused Kernels";
+        generate_section =
+            <div style={{"padding": "10px 14px", "borderTop": "1px solid var(--border)"}}>
+                <button
+                    onClick={onGenerate}
+                    disabled={is_generating}
+                    style={{
+                        "width": "100%",
+                        "padding": "8px",
+                        "background": "var(--surface-0)" if is_generating else "var(--accent-orange)",
+                        "border": "1px solid " + ("var(--border)" if is_generating else "var(--accent-orange)"),
+                        "borderRadius": "4px",
+                        "color": "var(--text-muted)" if is_generating else "var(--bg-charcoal)",
+                        "fontSize": "11px",
+                        "fontFamily": "monospace",
+                        "textTransform": "uppercase",
+                        "letterSpacing": "0.08em",
+                        "cursor": "not-allowed" if is_generating else "pointer",
+                        "fontWeight": "600"
+                    }}
+                >
+                    {gen_btn_label}
+                </button>
+            </div>;
     }
 
     propose_section = <span></span>;
@@ -221,6 +264,7 @@ def:pub FusionPanel(props: any) -> Any {
                     {cards}
                 </div>
             </div>
+            {generate_section}
             {propose_section}
         </div>;
 }

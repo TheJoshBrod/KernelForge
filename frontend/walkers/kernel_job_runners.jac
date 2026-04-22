@@ -353,6 +353,64 @@ walker:pub StartBenchmark {
     }
 }
 
+walker:pub StartFusion {
+    """Start kernel fusion generation for accepted fusion groups."""
+    has projectName: str,
+        groupId: str = "",
+        targetDevice: str = "cuda",
+        llmModel: str = "",
+        llmProvider: str = "";
+
+    can run with entry {
+        _append_queue_debug(
+            self.projectName, "StartFusion", "walker entry",
+            {"groupId": self.groupId, "targetDevice": self.targetDevice}
+        );
+
+        target_device = str(self.targetDevice).lower() if self.targetDevice else "cuda";
+        if target_device not in ["cuda", "triton"] {
+            report {
+                "success": False,
+                "error": f"Unsupported target device for fusion: {target_device}"
+            };
+            disengage;
+        }
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "src.optimizer.workflow",
+            "fuse",
+            "--project",
+            self.projectName,
+            "--target-device",
+            target_device
+        ];
+
+        if self.groupId {
+            cmd.append("--group-id");
+            cmd.append(self.groupId);
+        }
+        if self.llmModel {
+            cmd.append("--llm-model");
+            cmd.append(self.llmModel);
+        }
+        if self.llmProvider {
+            cmd.append("--llm-provider");
+            cmd.append(self.llmProvider);
+        }
+
+        result = _start_job(self.projectName, "fuse", cmd, "fuse.log", False);
+        _append_queue_debug(
+            self.projectName,
+            "StartFusion",
+            "walker report",
+            result if result else {}
+        );
+        report result;
+    }
+}
+
 walker:pub SetJobControl {
     has projectName: str,
         jobKey: str,

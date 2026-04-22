@@ -20,6 +20,8 @@ def:pub FusionGroupCard(props: any) -> Any {
     onSelect = props.onSelect if props and props.onSelect else None;
     onAccept = props.onAccept if props and props.onAccept else None;
     onReject = props.onReject if props and props.onReject else None;
+    genStatus = props.genStatus if props and "genStatus" in props else None;
+    actualSpeedup = props.actualSpeedup if props and "actualSpeedup" in props else None;
 
     # Stable handlers — use the card's own props, not outer loop variables
     def handleSelect -> None {
@@ -47,8 +49,10 @@ def:pub FusionGroupCard(props: any) -> Any {
     }
 
     speedup_label = "";
-    if estimatedSpeedup is not None {
-        speedup_label = "~" + estimatedSpeedup.toFixed(1) + "x";
+    if actualSpeedup is not None {
+        speedup_label = actualSpeedup.toFixed(1) + "x";
+    } elif estimatedSpeedup is not None {
+        speedup_label = "~" + estimatedSpeedup.toFixed(1) + "x est";
     }
 
     status_color = "var(--text-muted)";
@@ -59,6 +63,39 @@ def:pub FusionGroupCard(props: any) -> Any {
     } elif status == "rejected" {
         status_color = "#d63031";
         status_label = "rejected";
+    }
+
+    # Gen status badge for fusion generation state
+    gen_badge = <span></span>;
+    if genStatus {
+        gen_color = "var(--text-muted)";
+        gen_label = genStatus;
+        if genStatus == "completed" {
+            gen_color = "#27ae60";
+            gen_label = "fused";
+        } elif genStatus == "generating" {
+            gen_color = "var(--accent-orange)";
+            gen_label = "generating";
+        } elif genStatus == "failed" {
+            gen_color = "#d63031";
+            gen_label = "failed";
+        }
+        gen_badge =
+            <span
+                style={{
+                    "fontSize": "8px",
+                    "fontFamily": "monospace",
+                    "color": gen_color,
+                    "textTransform": "uppercase",
+                    "letterSpacing": "0.05em",
+                    "marginLeft": "6px",
+                    "padding": "1px 4px",
+                    "border": "1px solid " + gen_color,
+                    "borderRadius": "2px"
+                }}
+            >
+                {gen_label}
+            </span>;
     }
 
     card_border = "1px solid " + colorBorder if isSelected else "1px solid var(--border)";
@@ -227,19 +264,21 @@ def:pub FusionGroupCard(props: any) -> Any {
                         {instance_summary}
                     </div>
                 </div>
-                <span
-                    style={{
-                        "fontSize": "9px",
-                        "fontFamily": "monospace",
-                        "color": status_color,
-                        "textTransform": "uppercase",
-                        "letterSpacing": "0.05em",
-                        "marginLeft": "8px",
-                        "flexShrink": "0"
-                    }}
-                >
-                    {status_label}
-                </span>
+                <div style={{"display": "flex", "alignItems": "center", "flexShrink": "0"}}>
+                    <span
+                        style={{
+                            "fontSize": "9px",
+                            "fontFamily": "monospace",
+                            "color": status_color,
+                            "textTransform": "uppercase",
+                            "letterSpacing": "0.05em",
+                            "marginLeft": "8px"
+                        }}
+                    >
+                        {status_label}
+                    </span>
+                    {gen_badge}
+                </div>
             </div>
             <div
                 style={{

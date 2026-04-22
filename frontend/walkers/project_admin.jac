@@ -1092,6 +1092,44 @@ walker:pub GetEnrichedDAG {
                 fusion_groups = [];
             }
 
+            # Read fusion.db for gen_status (optional)
+            fusion_db_path = path.join(proj_dir, "fusion.db");
+            gen_status_map = {};
+            if path.exists(fusion_db_path) {
+                try {
+                    conn = sqlite3.connect(fusion_db_path);
+                    cursor = conn.cursor();
+                    cursor.execute(
+                        "SELECT id, gen_status, fused_ms, actual_speedup, best_kernel_path FROM fusion_groups"
+                    );
+                    for row in cursor.fetchall() {
+                        if row and row[0] {
+                            gen_status_map[row[0]] = {
+                                "gen_status": row[1] if row[1] else None,
+                                "fused_ms": row[2] if row[2] else None,
+                                "actual_speedup": row[3] if row[3] else None,
+                                "best_kernel_path": row[4] if row[4] else None
+                            };
+                        }
+                    }
+                    conn.close();
+                } except Exception as e {
+                    print(f"GetEnrichedDAG: fusion.db: {e}");
+                }
+            }
+
+            # Merge gen_status into fusion_groups
+            for fg in fusion_groups {
+                fg_id = fg["id"] if "id" in fg else "";
+                if fg_id and fg_id in gen_status_map {
+                    db_info = gen_status_map[fg_id];
+                    fg["gen_status"] = db_info["gen_status"];
+                    fg["fused_ms"] = db_info["fused_ms"];
+                    fg["actual_speedup"] = db_info["actual_speedup"];
+                    fg["best_kernel_path"] = db_info["best_kernel_path"];
+                }
+            }
+
             # Build enriched nodes
             total_pytorch_ms = 0.0;
             enriched_nodes = [];

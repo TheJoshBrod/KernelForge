@@ -65,6 +65,10 @@ def:pub DataFlowView -> Any {
     patternColorMap = pattern_color_map_state[0];
     setPatternColorMap = pattern_color_map_state[1];
 
+    fuse_status_state = useState("idle");
+    fuseStatus = fuse_status_state[0];
+    setFuseStatus = fuse_status_state[1];
+
     # Stable nodeTypes reference — prevents ReactFlow re-mount on each render
     nodeTypes_memo = useMemo(
         lambda -> any { return {"opNode": OpNode, "fusionGroup": FusionGroupNode}; },
@@ -387,10 +391,10 @@ def:pub DataFlowView -> Any {
             refreshDAG().finally(
                 lambda -> None { window["__kf_data_flow_busy"] = False;}
             );
-        } interval_ms = 3000 if profileStatus == "running" else 15000;bgPollId = setInterval(
+        } is_active = profileStatus == "running" or fuseStatus == "running";interval_ms = 3000 if is_active else 15000;bgPollId = setInterval(
             tick, interval_ms
         );return lambda -> None { clearInterval(bgPollId);}; },
-        [projectName, profileStatus]
+        [projectName, profileStatus, fuseStatus]
     );
 
     async def startProfile -> None {
@@ -482,6 +486,23 @@ def:pub DataFlowView -> Any {
         await refreshDAG();
     }
 
+    async def handleFusionGenerate -> None {
+        try {
+            setFuseStatus("running");
+            await __jacSpawn(
+                "StartFusion", "", {
+                    "projectName": projectName,
+                    "targetDevice": "cuda"
+                }
+            );
+            # Poll faster while generating, auto-reset after 5 min timeout
+            setTimeout(lambda -> None { setFuseStatus("idle");}, 300000);
+        } except Exception as e {
+            console.error("Failed to start fusion generation:", e);
+            setFuseStatus("idle");
+        }
+    }
+
     profileBtnLabel = "Profiling..." if profileStatus == "running" else "Re-Profile";
     profileBtnDisabled = profileStatus == "running";
 
@@ -518,6 +539,8 @@ def:pub DataFlowView -> Any {
             onAccept={lambda gid: any -> None { handleGroupAction(gid, "accept");}}
             onReject={lambda gid: any -> None { handleGroupAction(gid, "reject");}}
             onPropose={lambda -> None { setProposalModalOpen(True);}}
+            onGenerate={handleFusionGenerate}
+            fuseJobStatus={fuseStatus}
             onClose={lambda -> None { setPanelOpen(False);}}
         />;
     }
