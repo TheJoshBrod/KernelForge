@@ -32,7 +32,7 @@ def test_benchmark_entry_calls_collects_entry_latencies_on_cpu():
     assert summary["entry_files"] == ["entry_000001.pt", "entry_000002.pt"]
     assert len(summary["entry_latencies_ms"]) == 2
     assert all(latency >= 0.0 for latency in summary["entry_latencies_ms"])
-    assert summary["mean_time_ms"] is not None
+    assert summary["median_time_ms"] is not None
     assert summary["min_time_ms"] is not None
     assert summary["warmup_runs"] == 1
     assert summary["timed_runs"] == 3

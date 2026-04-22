@@ -10,11 +10,11 @@ from src.optimizer.config.settings import settings
 
 _NODE_CACHE: Dict[int, KernelNode] = {}
 _NODE_SELECT_COLUMNS = (
-    "id, visits, value, mean_time_ms, best_subtree_value, code, "
+    "id, visits, value, median_time_ms, best_subtree_value, code, "
     "improvement_description, timestamp"
 )
 _NODE_SELECT_COLUMNS_QUALIFIED = (
-    "n.id, n.visits, n.value, n.mean_time_ms, n.best_subtree_value, "
+    "n.id, n.visits, n.value, n.median_time_ms, n.best_subtree_value, "
     "n.code, n.improvement_description, n.timestamp"
 )
 
@@ -27,7 +27,7 @@ def _ensure_tree_schema(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY,
             visits INTEGER,
             value REAL,
-            mean_time_ms REAL,
+            median_time_ms REAL,
             best_subtree_value REAL,
             code TEXT,
             improvement_description TEXT,
@@ -35,8 +35,14 @@ def _ensure_tree_schema(conn: sqlite3.Connection) -> None:
         )
     """)
     node_columns = {row[1] for row in conn.execute("PRAGMA table_info(nodes)")}
-    if "mean_time_ms" not in node_columns:
-        conn.execute("ALTER TABLE nodes ADD COLUMN mean_time_ms REAL")
+    if "median_time_ms" not in node_columns:
+        conn.execute("ALTER TABLE nodes ADD COLUMN median_time_ms REAL")
+    # Backfill median_time_ms from legacy mean_time_ms column when present
+    if "mean_time_ms" in node_columns:
+        conn.execute(
+            "UPDATE nodes SET median_time_ms = mean_time_ms "
+            "WHERE median_time_ms IS NULL AND mean_time_ms IS NOT NULL"
+        )
     conn.execute("""
         CREATE TABLE IF NOT EXISTS edges (
             parent_id INTEGER,
@@ -61,11 +67,11 @@ def init_db(paths: dict):
 
 def _node_from_row(row: Any, parent_id: Optional[int] = None, children_ids: List[int] = None) -> KernelNode:
     """Convert a DB row to a KernelNode."""
-    # row keys: id, visits, value, mean_time_ms, best_subtree, code, imp_desc, timestamp
+    # row keys: id, visits, value, median_time_ms, best_subtree, code, imp_desc, timestamp
 
     # Handle tuple from fetchone/fetchall
-    (nid, vis, val, mean_time_ms, best_val, code, imp_desc, ts) = row
-    canonical_value = mean_time_ms if mean_time_ms is not None else val
+    (nid, vis, val, median_time_ms, best_val, code, imp_desc, ts) = row
+    canonical_value = median_time_ms if median_time_ms is not None else val
 
     return KernelNode(
         id=nid,
@@ -73,7 +79,7 @@ def _node_from_row(row: Any, parent_id: Optional[int] = None, children_ids: List
         children=children_ids if children_ids is not None else [],
         visits=vis,
         value=canonical_value,
-        mean_time_ms=mean_time_ms,
+        median_time_ms=median_time_ms,
         best_subtree_value=best_val,
         code=code,
         improvement_description=imp_desc,
@@ -118,8 +124,8 @@ def load_tree_once(paths: dict):
                         nodes_map[cid].parent_id = pid
                         
                         # Recompute speedup on load?
-                        parent_val = nodes_map[pid].mean_time_ms
-                        child_val = nodes_map[cid].mean_time_ms
+                        parent_val = nodes_map[pid].median_time_ms
+                        child_val = nodes_map[cid].median_time_ms
                         if parent_val is not None and child_val is not None and child_val > 0:
                              nodes_map[cid].speedup_vs_parent = parent_val / child_val
                         else:
@@ -163,13 +169,13 @@ def update_tree(paths: dict, new_node: KernelNode):
             # Upsert current node properties
             conn.execute("""
                 INSERT OR REPLACE INTO nodes 
-                (id, visits, value, mean_time_ms, best_subtree_value, code, improvement_description, timestamp)
+                (id, visits, value, median_time_ms, best_subtree_value, code, improvement_description, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 current.id,
                 current.visits,
                 current.value,
-                current.mean_time_ms,
+                current.median_time_ms,
                 current.best_subtree_value,
                 current.code,
                 current.improvement_description,
@@ -216,7 +222,7 @@ def update_tree(paths: dict, new_node: KernelNode):
             existing_canonical_child = any(
                 child_id != current.id
                 and child_id in _NODE_CACHE
-                and _NODE_CACHE[child_id].mean_time_ms is not None
+                and _NODE_CACHE[child_id].median_time_ms is not None
                 for child_id in parent.children_ids
             )
             if current.id not in parent.children_ids:
@@ -231,7 +237,7 @@ def update_tree(paths: dict, new_node: KernelNode):
                 if parent.best_subtree_value is not None
                 else parent.value
             )
-            if parent.mean_time_ms is None and not existing_canonical_child:
+            if parent.median_time_ms is None and not existing_canonical_child:
                 parent_best = None
             if parent_best is None: parent_best = float('inf')
             
@@ -447,10 +453,10 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
             "iteration": current.id,
             "attempted": current.improvement_description or "Baseline",
             "results": {
-                "mean_time_ms": runtime
+                "median_time_ms": runtime
             },
             "timing_metric": (
-                "mean_time_ms" if current.mean_time_ms is not None else "legacy_value"
+                "median_time_ms" if current.median_time_ms is not None else "legacy_value"
             ),
             "speedup_vs_parent": getattr(current, "speedup_vs_parent", 1.0) or 1.0
         }
@@ -502,12 +508,12 @@ def collect_ancestry(paths: dict, start_node: KernelNode, code_depth: int = 1) -
 
     # 3. Calculate "Speedup vs Baseline"
     if history:
-        baseline_time = history[0]["results"]["mean_time_ms"]
+        baseline_time = history[0]["results"]["median_time_ms"]
 
         for h in history:
-            current_time = h["results"]["mean_time_ms"]
-            if (history[0]["timing_metric"] == "mean_time_ms"
-                    and h["timing_metric"] == "mean_time_ms"
+            current_time = h["results"]["median_time_ms"]
+            if (history[0]["timing_metric"] == "median_time_ms"
+                    and h["timing_metric"] == "median_time_ms"
                     and baseline_time > 0 and baseline_time != float('inf')
                     and current_time > 0 and current_time != float('inf')):
                 h["speedup_vs_baseline"] = baseline_time / current_time
@@ -604,12 +610,12 @@ def get_existing_roots(paths: dict) -> list[dict]:
                         code_preview = code_path.read_text()[:4000]  # First 4KB
                     else:
                         code_preview = f"// Code file not found: {code_path}"
-                    if node.mean_time_ms is None:
+                    if node.median_time_ms is None:
                         continue
 
                     roots.append({
                         "id": node.id,
-                        "runtime_ms": node.mean_time_ms,
+                        "runtime_ms": node.median_time_ms,
                         "code_preview": code_preview
                     })
                 except Exception as e:

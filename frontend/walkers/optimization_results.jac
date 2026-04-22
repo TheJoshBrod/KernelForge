@@ -37,32 +37,37 @@ import from .job_supervisor {
     _collect_project_metrics
 }
 
-def _nodes_table_has_mean_time_ms(conn) -> bool {
+def _get_node_metric_flags(conn) -> dict {
+    flags = {"has_median": False, "has_mean": False};
     try {
         cursor = conn.cursor();
         cursor.execute("PRAGMA table_info(nodes)");
         rows = cursor.fetchall();
         for row in rows {
-            if row and len(row) > 1 and row[1] == "mean_time_ms" {
-                return True;
+            if row and len(row) > 1 {
+                if row[1] == "median_time_ms" {
+                    flags["has_median"] = True;
+                } elif row[1] == "mean_time_ms" {
+                    flags["has_mean"] = True;
+                }
             }
         }
     } except Exception {
         _ = 0;
     }
-    return False;
+    return flags;
 }
 
-def _tree_node_select_sql(has_mean_time_ms: bool) -> str {
-    if has_mean_time_ms {
-        return (
-            "SELECT id, visits, value, mean_time_ms, best_subtree_value, "
-            + "improvement_description, timestamp, code FROM nodes"
-        );
+def _tree_node_select_sql(flags: dict) -> str {
+    metric_col = "NULL as median_time_ms";
+    if flags["has_median"] {
+        metric_col = "median_time_ms";
+    } elif flags["has_mean"] {
+        metric_col = "mean_time_ms as median_time_ms";
     }
+
     return (
-        "SELECT id, visits, value, NULL as mean_time_ms, best_subtree_value, "
-        + "improvement_description, timestamp, code FROM nodes"
+        "SELECT id, visits, value, " + metric_col + ", best_subtree_value, " + "improvement_description, timestamp, code FROM nodes"
     );
 }
 
@@ -73,25 +78,31 @@ walker:pub GetDashboardCharts {
         payload = _collect_project_metrics(self.projectName);
         report {
             "operator_usage": (
-                payload["operator_usage"] if payload and "operator_usage" in payload else []
+                payload["operator_usage"]
+                    if payload and "operator_usage" in payload
+                    else []
             ),
             "speed_comparison": (
                 payload["speed_comparison"]
-                if payload and "speed_comparison" in payload
-                else []
+                    if payload and "speed_comparison" in payload
+                    else []
             ),
             "status": payload["status"] if payload and "status" in payload else "empty",
             "profile_status": (
-                payload["profile_status"] if payload and "profile_status" in payload else ""
+                payload["profile_status"]
+                    if payload and "profile_status" in payload
+                    else ""
             ),
             "profile_message": (
                 payload["profile_message"]
-                if payload and "profile_message" in payload
-                else ""
+                    if payload and "profile_message" in payload
+                    else ""
             ),
             "errors": payload["errors"] if payload and "errors" in payload else [],
             "metrics_version": (
-                payload["metrics_version"] if payload and "metrics_version" in payload else 0
+                payload["metrics_version"]
+                    if payload and "metrics_version" in payload
+                    else 0
             )
         };
     }
@@ -124,10 +135,10 @@ walker:pub GetMctsTree {
             conn = sqlite3.connect(db_path);
             # Set row factory to dict-like if needed, but manual extraction is safer in Jac logic
             cursor = conn.cursor();
-            has_mean_time_ms = _nodes_table_has_mean_time_ms(conn);
+            metric_flags = _get_node_metric_flags(conn);
 
             # Fetch nodes
-            cursor.execute(_tree_node_select_sql(has_mean_time_ms));
+            cursor.execute(_tree_node_select_sql(metric_flags));
             rows = cursor.fetchall();
             best_node_id = None;
             best_value_ms = None;
@@ -139,22 +150,22 @@ walker:pub GetMctsTree {
                 } except Exception {
                     stored_value = None;
                 }
-                mean_time_ms = None;
+                median_time_ms = None;
                 try {
-                    mean_time_ms = float(row[3]) if row[3] is not None else None;
+                    median_time_ms = float(row[3]) if row[3] is not None else None;
                 } except Exception {
-                    mean_time_ms = None;
+                    median_time_ms = None;
                 }
                 best_subtree_value = None;
                 try {
-                    best_subtree_value = (
-                        float(row[4]) if row[4] is not None else None
-                    );
+                    best_subtree_value = float(row[4]) if row[4] is not None else None;
                 } except Exception {
                     best_subtree_value = None;
                 }
-                node_val = mean_time_ms;
-                timing_metric = "mean_time_ms";
+                node_val = median_time_ms;
+                timing_metric = "median_time_ms"
+                    if metric_flags["has_median"]
+                    else "mean_time_ms";
                 if node_val is None or node_val <= 0.0 {
                     node_val = stored_value;
                     timing_metric = "legacy_value";
@@ -173,7 +184,9 @@ walker:pub GetMctsTree {
                 }
                 node_code = row[7];
                 code_text = str(node_code).strip() if node_code is not None else "";
-                if code_text and "\n" not in code_text and (
+                if code_text
+                and "\n" not in code_text
+                and (
                     code_text.endswith(".cu")
                     or code_text.endswith(".py")
                     or code_text.endswith(".metal")
@@ -184,12 +197,18 @@ walker:pub GetMctsTree {
                     if path.isabs(code_text) {
                         path_candidates.append(code_text);
                     } else {
-                        path_candidates.append(path.join(project_dir, "trees", code_text));
+                        path_candidates.append(
+                            path.join(project_dir, "trees", code_text)
+                        );
                         path_candidates.append(path.join(project_dir, code_text));
                         path_candidates.append(path.join(repo_root, code_text));
                         path_candidates.append(
                             path.join(
-                                repo_root, "kernels", "projects", self.projectName, code_text
+                                repo_root,
+                                "kernels",
+                                "projects",
+                                self.projectName,
+                                code_text
                             )
                         );
                         path_candidates.append(
@@ -204,7 +223,11 @@ walker:pub GetMctsTree {
                         );
                         path_candidates.append(
                             path.join(
-                                project_dir, "kernels", "generated", "individual_op_kernels", code_text
+                                project_dir,
+                                "kernels",
+                                "generated",
+                                "individual_op_kernels",
+                                code_text
                             )
                         );
                         path_candidates.append(
@@ -308,7 +331,10 @@ walker:pub GetMctsTree {
                             }
                             try {
                                 with open(
-                                    candidate_path, "r", encoding="utf-8", errors="ignore"
+                                    candidate_path,
+                                    "r",
+                                    encoding="utf-8",
+                                    errors="ignore"
                                 ) as f {
                                     node_code = f.read();
                                 }
@@ -328,7 +354,7 @@ walker:pub GetMctsTree {
                         "id": row[0],
                         "visits": row[1],
                         "value": node_val,
-                        "mean_time_ms": mean_time_ms,
+                        "median_time_ms": median_time_ms,
                         "stored_value": stored_value,
                         "best_subtree_value": best_subtree_value,
                         "improvement_description": row[5],
@@ -355,23 +381,21 @@ walker:pub GetMctsTree {
                 op_key = _normalize_metric_op_name(self.opName);
                 rows_by_op = (
                     metric_payload["rows_by_op"]
-                    if metric_payload
-                    and "rows_by_op" in metric_payload
-                    and metric_payload["rows_by_op"]
-                    else {}
+                        if metric_payload
+                        and "rows_by_op" in metric_payload
+                        and metric_payload["rows_by_op"]
+                        else {}
                 );
                 metric_row = (
-                    rows_by_op[op_key]
-                    if rows_by_op and op_key in rows_by_op
-                    else None
+                    rows_by_op[op_key] if rows_by_op and op_key in rows_by_op else None
                 );
                 if not metric_row {
                     metric_rows = (
                         metric_payload["rows"]
-                        if metric_payload
-                        and "rows" in metric_payload
-                        and metric_payload["rows"]
-                        else []
+                            if metric_payload
+                            and "rows" in metric_payload
+                            and metric_payload["rows"]
+                            else []
                     );
                     for mrow in metric_rows {
                         if not mrow {
@@ -379,12 +403,10 @@ walker:pub GetMctsTree {
                         }
                         row_name = (
                             mrow["name"]
-                            if "name" in mrow and mrow["name"]
-                            else (
-                                mrow["op"]
-                                if "op" in mrow and mrow["op"]
-                                else ""
-                            )
+                                if "name" in mrow and mrow["name"]
+                                else (
+                                    mrow["op"] if "op" in mrow and mrow["op"] else ""
+                                )
                         );
                         if _normalize_metric_op_name(row_name) == op_key {
                             metric_row = mrow;
@@ -395,14 +417,14 @@ walker:pub GetMctsTree {
                 if metric_row {
                     raw_pytorch = (
                         metric_row["pytorch_ms"]
-                        if "pytorch_ms" in metric_row
-                        and metric_row["pytorch_ms"] is not None
-                        else (
-                            metric_row["pytorch"]
-                            if "pytorch" in metric_row
-                            and metric_row["pytorch"] is not None
-                            else None
-                        )
+                            if "pytorch_ms" in metric_row
+                            and metric_row["pytorch_ms"] is not None
+                            else (
+                                metric_row["pytorch"]
+                                    if "pytorch" in metric_row
+                                    and metric_row["pytorch"] is not None
+                                    else None
+                            )
                     );
                     if raw_pytorch is not None {
                         pytorch_ms = float(raw_pytorch);
@@ -445,12 +467,36 @@ walker:pub GetProjectMctsSummary {
                     try {
                         conn = sqlite3.connect(db_path);
                         cursor = conn.cursor();
-                        has_mean_time_ms = _nodes_table_has_mean_time_ms(conn);
+                        metric_flags = _get_node_metric_flags(conn);
 
-                        cursor.execute("SELECT COUNT(*) FROM nodes WHERE value IS NOT NULL AND value > 0");
+                        cursor.execute(
+                            "SELECT COUNT(*) FROM nodes WHERE value IS NOT NULL AND value > 0"
+                        );
                         node_count = cursor.fetchone()[0];
 
-                        if has_mean_time_ms {
+                        best_val = None;
+                        best_node_id = None;
+                        timing_metric = "legacy_value";
+
+                        if metric_flags["has_median"] {
+                            cursor.execute(
+                                """
+                                SELECT id, median_time_ms
+                                FROM nodes
+                                WHERE median_time_ms IS NOT NULL AND median_time_ms > 0
+                                ORDER BY median_time_ms ASC
+                                LIMIT 1
+                                """
+                            );
+                            row = cursor.fetchone();
+                            if row {
+                                best_node_id = int(row[0]);
+                                best_val = float(row[1]);
+                                timing_metric = "median_time_ms";
+                            }
+                        }
+
+                        if best_val is None and metric_flags["has_mean"] {
                             cursor.execute(
                                 """
                                 SELECT id, mean_time_ms
@@ -460,18 +506,13 @@ walker:pub GetProjectMctsSummary {
                                 LIMIT 1
                                 """
                             );
-                        } else {
-                            cursor.execute(
-                                "SELECT NULL, NULL"
-                            );
+                            row = cursor.fetchone();
+                            if row {
+                                best_node_id = int(row[0]);
+                                best_val = float(row[1]);
+                                timing_metric = "mean_time_ms";
+                            }
                         }
-                        best_row = cursor.fetchone();
-                        best_val = float(best_row[1]) if best_row and best_row[1] is not None else None;
-                        best_node_id = (
-                            int(best_row[0])
-                            if best_row and best_row[0] is not None
-                            else None
-                        );
 
                         total_nodes += node_count;
                         op_summaries.append(
@@ -480,9 +521,7 @@ walker:pub GetProjectMctsSummary {
                                 "nodes": node_count,
                                 "best_value": best_val,
                                 "best_node_id": best_node_id,
-                                "timing_metric": (
-                                    "mean_time_ms" if best_val is not None else "legacy_value"
-                                )
+                                "timing_metric": timing_metric
                             }
                         );
                         conn.close();
@@ -535,8 +574,8 @@ walker:pub GetOpDetails {
         opt_kernel_dir = path.join(opt_dir, "kernels") if opt_dir else "";
         opt_kernels = (
             _list_files(opt_kernel_dir, [".cu", ".py", ".metal", ".so"])
-            if opt_kernel_dir and path.exists(opt_kernel_dir)
-            else _list_files(opt_dir, [".cu", ".py", ".metal", ".so"])
+                if opt_kernel_dir and path.exists(opt_kernel_dir)
+                else _list_files(opt_dir, [".cu", ".py", ".metal", ".so"])
         );
         opt_logs = _list_files(opt_dir, [".txt", ".log", ".json"]);
 
@@ -546,21 +585,21 @@ walker:pub GetOpDetails {
                 "count": entry_count,
                 "entries": entry_files,
                 "dir": path.relpath(profile_dir, repo_root)
-                if path.exists(profile_dir)
-                else ""
+                    if path.exists(profile_dir)
+                    else ""
             },
             "generated": {
                 "dir": path.relpath(generated_dir, repo_root)
-                if path.exists(generated_dir)
-                else "",
+                    if path.exists(generated_dir)
+                    else "",
                 "kernels": gen_kernels,
                 "logs": gen_logs,
                 "best": gen_best
             },
             "optimized": {
                 "dir": path.relpath(opt_dir, repo_root)
-                if opt_dir and path.exists(opt_dir)
-                else "",
+                    if opt_dir and path.exists(opt_dir)
+                    else "",
                 "kernels": opt_kernels,
                 "logs": opt_logs
             }
@@ -584,7 +623,9 @@ walker:pub GetOperatorMetrics {
     can run with entry {
         payload = _collect_project_metrics(self.projectName);
         op_key = _normalize_metric_op_name(self.opName);
-        rows_by_op = payload["rows_by_op"] if payload and "rows_by_op" in payload else {};
+        rows_by_op = payload["rows_by_op"]
+            if payload and "rows_by_op" in payload
+            else {};
         metric = rows_by_op[op_key] if op_key in rows_by_op else None;
         report {
             "success": bool(metric),
@@ -592,16 +633,20 @@ walker:pub GetOperatorMetrics {
             "metric": metric,
             "status": payload["status"] if payload and "status" in payload else "empty",
             "profile_status": (
-                payload["profile_status"] if payload and "profile_status" in payload else ""
+                payload["profile_status"]
+                    if payload and "profile_status" in payload
+                    else ""
             ),
             "profile_message": (
                 payload["profile_message"]
-                if payload and "profile_message" in payload
-                else ""
+                    if payload and "profile_message" in payload
+                    else ""
             ),
             "errors": payload["errors"] if payload and "errors" in payload else [],
             "metrics_version": (
-                payload["metrics_version"] if payload and "metrics_version" in payload else 0
+                payload["metrics_version"]
+                    if payload and "metrics_version" in payload
+                    else 0
             )
         };
     }
@@ -636,9 +681,7 @@ walker:pub ImportKernel {
         kernel_file = "kernel.cu";
         success_marker = "success.cuda";
 
-        if backend_raw == "cuda"
-        or backend_raw == "gpu"
-        or backend_raw == "nvidia" {
+        if backend_raw == "cuda" or backend_raw == "gpu" or backend_raw == "nvidia" {
             backend_name = "cuda";
             kernel_file = "kernel.cu";
             success_marker = "success.cuda";
@@ -671,21 +714,12 @@ walker:pub ImportKernel {
         op_name = _normalize_metric_op_name(op_name_raw);
         project_dir = _project_dir(str(project_name));
         generated_dir = path.join(
-            project_dir,
-            "kernels",
-            "generated",
-            "individual_op_kernels",
-            op_name
+            project_dir, "kernels", "generated", "individual_op_kernels", op_name
         );
         _ensure_dir(generated_dir);
 
         kernel_path = path.join(generated_dir, kernel_file);
-        stale_markers = [
-            "success.cuda",
-            "success.triton",
-            "success.mps",
-            "success.cpu"
-        ];
+        stale_markers = ["success.cuda", "success.triton", "success.mps", "success.cpu"];
         for marker_name in stale_markers {
             marker_path = path.join(generated_dir, marker_name);
             if path.exists(marker_path) {
@@ -842,10 +876,7 @@ print(
         } except Exception as e {
             report {
                 "success": False,
-                "error": (
-                    "Benchmark execution failed for uploaded kernel. "
-                    + str(e)
-                )
+                "error": ("Benchmark execution failed for uploaded kernel. " + str(e))
             };
             disengage;
         }
@@ -861,11 +892,7 @@ print(
             and benchmark_result["error"] {
                 err_msg = str(benchmark_result["error"]);
             }
-            report {
-                "success": False,
-                "error": err_msg,
-                "details": benchmark_result
-            };
+            report {"success": False, "error": err_msg, "details": benchmark_result};
             disengage;
         }
 
@@ -881,13 +908,13 @@ print(
             "op": op_name,
             "kernel_ms": (
                 benchmark_result["kernel_ms"]
-                if "kernel_ms" in benchmark_result
-                else None
+                    if "kernel_ms" in benchmark_result
+                    else None
             ),
             "pytorch_ms": (
                 benchmark_result["pytorch_ms"]
-                if "pytorch_ms" in benchmark_result
-                else None
+                    if "pytorch_ms" in benchmark_result
+                    else None
             ),
             "backend": backend_name
         };
@@ -902,7 +929,10 @@ walker:pub DownloadCast {
     can run with entry {
         project_dir = _project_dir(self.projectName);
         if not path.exists(project_dir) {
-            report {"success": False, "error": f"Project '{self.projectName}' not found."};
+            report {
+                "success": False,
+                "error": f"Project '{self.projectName}' not found."
+            };
             disengage;
         }
 
@@ -965,10 +995,11 @@ walker:pub DownloadCast {
                 }
                 arts = (
                     cfg["artifacts"]["weights"]
-                    if cfg and "artifacts" in cfg
+                        if cfg
+                        and "artifacts" in cfg
                         and cfg["artifacts"]
                         and "weights" in cfg["artifacts"]
-                    else []
+                        else []
                 );
                 for art in arts {
                     rel = art["relpath"] if art and "relpath" in art else "";
@@ -1067,14 +1098,17 @@ walker:pub DownloadCast {
                     if wdata {
                         import io as _io;
                         import torch as _tw;
-                        _sd = _tw.load(_io.BytesIO(wdata), map_location="cpu", weights_only=True);
+                        _sd = _tw.load(
+                            _io.BytesIO(wdata), map_location="cpu", weights_only=True
+                        );
                         # Common head weight key patterns, checked in priority order.
                         _HEAD_KEYS = [
-                            "classifier.1.weight",   # HF ResNet
-                            "classifier.weight",      # HF ViT, BERT, etc.
-                            "fc.weight",              # torchvision ResNet
-                            "head.weight",            # DeiT
-                            "heads.head.weight",      # ViT-B
+                            "classifier.1.weight",  # HF ResNet
+                            "classifier.weight",  # HF ViT, BERT, etc.
+                            "fc.weight",  # torchvision ResNet
+                            "head.weight",  # DeiT
+                            "heads.head.weight",  # ViT-B
+
                         ];
                         for _hk in _HEAD_KEYS {
                             if _hk in _sd and len(_sd[_hk].shape) == 2 {
@@ -1084,7 +1118,11 @@ walker:pub DownloadCast {
                         }
                     }
 
-                    file_map["model_config.json"] = _json.dumps(_cfg_dict, indent=2).encode("utf-8");
+                    file_map["model_config.json"] = _json.dumps(
+                        _cfg_dict, indent=2
+                    ).encode(
+                        "utf-8"
+                    );
                 }
                 _sys.modules.pop("_kf_export_model", None);
                 _os.unlink(_tf.name);
@@ -1141,7 +1179,9 @@ walker:pub DownloadCast {
             );
         }
 
-        all_precompiled_sms = list({sm for op in ops_manifest for sm in op["precompiled"].keys()});
+        all_precompiled_sms = list(
+            {sm for op in ops_manifest for sm in op["precompiled"].keys()}
+        );
 
         loader_stub = b"# Cast vendored runtime loader\n# pip install cast for the full runtime\n";
         file_map["loader.py"] = loader_stub;
@@ -1255,7 +1295,6 @@ walker:pub GetCastChunk {
 }
 
 # --- Private helpers used by GetOpDetails ---
-
 def _file_kind(fname: str) -> str {
     if fname.endswith(".cu")
     or fname.endswith(".txt")

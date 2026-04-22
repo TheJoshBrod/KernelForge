@@ -187,16 +187,16 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
             if gpu_lock:
                  with gpu_lock:
                       stats = backend.profile_kernel(paths)
-                      runtime_ms = stats.get('mean_time_ms', float('inf'))
+                      _rt = stats.get('median_time_ms')
+                      runtime_ms = _rt if _rt is not None else stats.get('mean_time_ms', float('inf'))
             else:
                  stats = backend.profile_kernel(paths)
-                 runtime_ms = stats.get('mean_time_ms', float('inf'))
+                 _rt = stats.get('median_time_ms')
+                 runtime_ms = _rt if _rt is not None else stats.get('mean_time_ms', float('inf'))
 
             if runtime_ms == float('inf'):
                  result_queue.put((node_id, dispatch_key, None, f"profiling_failed"))
                  continue
-
-            # 6. Save Kernel
             # We already have kernel_id reserved
             
             attempts_dir = paths["proj_dir"] / "kernels"

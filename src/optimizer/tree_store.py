@@ -16,7 +16,7 @@ def _ensure_tree_schema(db_path: Path) -> None:
                 id INTEGER PRIMARY KEY,
                 visits INTEGER,
                 value REAL,
-                mean_time_ms REAL,
+                median_time_ms REAL,
                 best_subtree_value REAL,
                 code TEXT,
                 improvement_description TEXT,
@@ -25,8 +25,14 @@ def _ensure_tree_schema(db_path: Path) -> None:
             """
         )
         node_columns = {row[1] for row in conn.execute("PRAGMA table_info(nodes)")}
-        if "mean_time_ms" not in node_columns:
-            conn.execute("ALTER TABLE nodes ADD COLUMN mean_time_ms REAL")
+        if "median_time_ms" not in node_columns:
+            conn.execute("ALTER TABLE nodes ADD COLUMN median_time_ms REAL")
+        # Backfill median_time_ms from legacy mean_time_ms column when present
+        if "mean_time_ms" in node_columns:
+            conn.execute(
+                "UPDATE nodes SET median_time_ms = mean_time_ms "
+                "WHERE median_time_ms IS NULL AND mean_time_ms IS NOT NULL"
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS edges (
@@ -46,9 +52,9 @@ def _best_canonical_subtree_ms(
 ) -> float | None:
     row = conn.execute(
         """
-        SELECT MIN(mean_time_ms)
+        SELECT MIN(median_time_ms)
         FROM nodes
-        WHERE mean_time_ms IS NOT NULL AND mean_time_ms > 0
+        WHERE median_time_ms IS NOT NULL AND median_time_ms > 0
         """
     ).fetchone()
     if row and row[0] is not None:
@@ -127,14 +133,14 @@ def publish_generated_root(
         _ensure_tree_schema(db_path)
         with sqlite3.connect(db_path) as conn:
             row = conn.execute(
-                "SELECT visits, value, mean_time_ms, best_subtree_value, code FROM nodes WHERE id = 0"
+                "SELECT visits, value, median_time_ms, best_subtree_value, code FROM nodes WHERE id = 0"
             ).fetchone()
 
             if row is None:
                 conn.execute(
                     """
                     INSERT INTO nodes
-                    (id, visits, value, mean_time_ms, best_subtree_value, code, improvement_description, timestamp)
+                    (id, visits, value, median_time_ms, best_subtree_value, code, improvement_description, timestamp)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
@@ -149,22 +155,22 @@ def publish_generated_root(
                     ),
                 )
             else:
-                existing_visits, existing_value, existing_mean, _, existing_code = row
+                existing_visits, existing_value, existing_median, _, existing_code = row
                 visits = max(int(existing_visits or 0), 1)
                 value = normalized_ms if normalized_ms is not None else existing_value
-                mean_time_ms = (
-                    normalized_ms if normalized_ms is not None else existing_mean
+                median_time_ms = (
+                    normalized_ms if normalized_ms is not None else existing_median
                 )
-                best = _best_canonical_subtree_ms(conn, mean_time_ms)
+                best = _best_canonical_subtree_ms(conn, median_time_ms)
                 code = code_rel if not existing_code else str(existing_code)
                 conn.execute(
                     """
                     UPDATE nodes
-                    SET visits = ?, value = ?, mean_time_ms = ?, best_subtree_value = ?, code = ?,
+                    SET visits = ?, value = ?, median_time_ms = ?, best_subtree_value = ?, code = ?,
                         improvement_description = ?, timestamp = ?
                     WHERE id = 0
                     """,
-                    (visits, value, mean_time_ms, best, code, description, now_ts),
+                    (visits, value, median_time_ms, best, code, description, now_ts),
                 )
             conn.commit()
 
@@ -207,13 +213,13 @@ def update_root_value(
 
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
-            "SELECT visits, value, mean_time_ms, best_subtree_value, code FROM nodes WHERE id = 0"
+            "SELECT visits, value, median_time_ms, best_subtree_value, code FROM nodes WHERE id = 0"
         ).fetchone()
         if row is None:
             conn.execute(
                 """
                 INSERT INTO nodes
-                (id, visits, value, mean_time_ms, best_subtree_value, code, improvement_description, timestamp)
+                (id, visits, value, median_time_ms, best_subtree_value, code, improvement_description, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -235,7 +241,7 @@ def update_root_value(
             conn.execute(
                 """
                 UPDATE nodes
-                SET visits = ?, value = ?, mean_time_ms = ?, best_subtree_value = ?, code = ?,
+                SET visits = ?, value = ?, median_time_ms = ?, best_subtree_value = ?, code = ?,
                     improvement_description = ?, timestamp = ?
                 WHERE id = 0
                 """,

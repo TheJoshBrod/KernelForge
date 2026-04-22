@@ -28,11 +28,15 @@ from src.optimizer.backends.triton import TritonBackend
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
-def _canonical_mean_time_ms(stats: dict) -> float:
-    mean_time_ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
-    if mean_time_ms is None:
-        raise ValueError("Profiler stats missing mean_time_ms")
-    return float(mean_time_ms)
+def _canonical_median_time_ms(stats: dict) -> float:
+    if not isinstance(stats, dict):
+        raise ValueError("Profiler stats missing median_time_ms or mean_time_ms")
+    ms = stats.get("median_time_ms")
+    if ms is None:
+        ms = stats.get("mean_time_ms")
+    if ms is None:
+        raise ValueError("Profiler stats missing median_time_ms or mean_time_ms")
+    return float(ms)
 
 def _default_queue_state() -> dict:
     return {
@@ -157,22 +161,22 @@ def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, impro
             update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {"current_step": "Failed", "result": "profiler error", "status": "Failed"}}})
         return None, f"[Profiler Error] {prof_err}"
     print("\tFinished Profiler.")
-    current_mean_ms = _canonical_mean_time_ms(current_stats)
-    parent_mean_ms = parent_info.mean_time_ms
+    current_median_ms = _canonical_median_time_ms(current_stats)
+    parent_median_ms = parent_info.median_time_ms
     log_entry = {
         "iteration": next_id,
         "attempted": improvement_description,
         "results": current_stats,
-        "speedup_vs_parent": (parent_mean_ms / current_mean_ms
-                              if parent_mean_ms is not None and current_mean_ms > 0
+        "speedup_vs_parent": (parent_median_ms / current_median_ms
+                              if parent_median_ms is not None and current_median_ms > 0
                               else 1.0),
     }
 
     # Save node to DB
     node_val = {
         "id": next_id,
-        "value": current_mean_ms,
-        "mean_time_ms": current_mean_ms,
+        "value": current_median_ms,
+        "median_time_ms": current_median_ms,
         "speedup_vs_parent": log_entry['speedup_vs_parent'],
         "improvement_description": improvement_description,
         "parent": parent_info.id,
@@ -410,14 +414,14 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         # Profile the kernel
         print("\t\tProfiling new root kernel...")
         current_stats = backend.profile_kernel(paths)
-        current_mean_ms = _canonical_mean_time_ms(current_stats)
+        current_median_ms = _canonical_median_time_ms(current_stats)
         
         # Create root node (parent = -1)
         node_data = {
             "id": next_id,
             "parent": -1,  # Root marker
-            "value": current_mean_ms,
-            "mean_time_ms": current_mean_ms,
+            "value": current_median_ms,
+            "median_time_ms": current_median_ms,
             "speedup_vs_parent": 1.0,
             "improvement_description": "Initial",
             "code": f"{paths['proj_dir'].name}/kernels/kernel_{next_id}{backend.kernel_extension}",
@@ -426,13 +430,12 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         node = KernelNode.model_validate(node_data)
 
         # Save node
-        # Save node
         mcts.save_node(paths, node)
 
         # Save kernel code
         (paths["proj_dir"] / "kernels" / f"kernel_{next_id}{backend.kernel_extension}").write_text(code)
 
-        print(f"\t\tCreated new root: Node {next_id} ({current_mean_ms:.4f} ms)")
+        print(f"\t\tCreated new root: Node {next_id} ({current_median_ms:.4f} ms)")
         return node
 
 
@@ -507,13 +510,13 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
 
             # Profile kernel
             current_stats = op_backend.profile_kernel(paths, baseline=True, ssh_config=ssh_config)
-            current_mean_ms = _canonical_mean_time_ms(current_stats)
+            current_median_ms = _canonical_median_time_ms(current_stats)
 
             # Log kernel
             node_data = {
                 "id": 0,
-                "value": current_mean_ms,
-                "mean_time_ms": current_mean_ms,
+                "value": current_median_ms,
+                "median_time_ms": current_median_ms,
                 "speedup_vs_parent": 1.0,
                 "improvement_description": "Initial",
                 "parent": -1,
@@ -681,8 +684,9 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                 parent_node = mcts._NODE_CACHE.get(node_id)
                 speedup = 1.0
                 if parent_node:
-                    speedup = (parent_node.mean_time_ms / runtime_ms
-                               if parent_node.mean_time_ms is not None and runtime_ms > 0
+                    parent_val = parent_node.median_time_ms
+                    speedup = (parent_val / runtime_ms
+                               if parent_val is not None and runtime_ms > 0
                                else 1.0)
                     new_node = KernelNode(
                         id=kernel_id,
@@ -690,7 +694,7 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                         children_ids=[],
                         visits=1,
                         value=runtime_ms,
-                        mean_time_ms=runtime_ms,
+                        median_time_ms=runtime_ms,
                         best_subtree_value=runtime_ms,
                         speedup_vs_parent=speedup,
                         improvement_description=result_data.get("feedback", "Parallel optimization"),

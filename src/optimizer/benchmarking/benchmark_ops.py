@@ -208,7 +208,7 @@ def _measure_pytorch(
 def _coerce_cached_measurement(value: Any) -> dict[str, Any] | None:
     if isinstance(value, (int, float)):
         return {
-            "mean_time_ms": float(value),
+            "median_time_ms": float(value),
             "entry_files": [],
             "entry_latencies_ms": [],
             "entry_results": [],
@@ -235,13 +235,17 @@ def _coerce_cached_measurement(value: Any) -> dict[str, Any] | None:
             except Exception:
                 continue
 
-    mean_time_ms = value.get("mean_time_ms")
-    if mean_time_ms is None and entry_latencies:
-        mean_time_ms = sum(entry_latencies) / len(entry_latencies)
+    median_time_ms = value.get("median_time_ms")
+    if median_time_ms is None:
+        # Fallback to mean_time_ms if it exists in old cache
+        median_time_ms = value.get("mean_time_ms")
+    if median_time_ms is None and entry_latencies:
+        import statistics
+        median_time_ms = statistics.median(entry_latencies)
     try:
-        parsed_mean = float(mean_time_ms) if mean_time_ms is not None else 0.0
+        parsed_median = float(median_time_ms) if median_time_ms is not None else 0.0
     except Exception:
-        parsed_mean = 0.0
+        parsed_median = 0.0
 
     entry_count_raw = value.get("entry_count")
     try:
@@ -260,7 +264,7 @@ def _coerce_cached_measurement(value: Any) -> dict[str, Any] | None:
         ]
 
     return {
-        "mean_time_ms": parsed_mean,
+        "median_time_ms": parsed_median,
         "entry_files": entry_files,
         "entry_latencies_ms": entry_latencies,
         "entry_results": entry_results,
@@ -284,7 +288,7 @@ def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
                     results = entry.get("results") if isinstance(entry, dict) else None
                     if not isinstance(results, dict):
                         continue
-                    ms = results.get("mean_time_ms")
+                    ms = results.get("median_time_ms") or results.get("mean_time_ms")
                     if ms is None:
                         continue
                     try:
@@ -312,7 +316,15 @@ def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
                 info[1] for info in conn.execute("PRAGMA table_info(nodes)").fetchall()
             }
             row = None
-            if "mean_time_ms" in columns:
+            if "median_time_ms" in columns:
+                row = conn.execute(
+                    """
+                    SELECT MIN(median_time_ms)
+                    FROM nodes
+                    WHERE median_time_ms IS NOT NULL AND median_time_ms > 0
+                    """
+                ).fetchone()
+            elif "mean_time_ms" in columns:
                 row = conn.execute(
                     """
                     SELECT MIN(mean_time_ms)
@@ -376,7 +388,9 @@ def _profile_generated_kernel_ms(
                 },
                 baseline=True,
             )
-            ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
+            ms = stats.get("median_time_ms") if isinstance(stats, dict) else None
+            if ms is None:
+                ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
             if ms is None:
                 return None, "generated_profile_missing", "cuda"
             return stats, "ok", "cuda"
@@ -402,7 +416,9 @@ def _profile_generated_kernel_ms(
                 },
                 baseline=True,
             )
-            ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
+            ms = stats.get("median_time_ms") if isinstance(stats, dict) else None
+            if ms is None:
+                ms = stats.get("mean_time_ms") if isinstance(stats, dict) else None
             if ms is None:
                 return None, "generated_profile_missing", "triton"
             return stats, "ok", "triton"
@@ -592,7 +608,7 @@ def main() -> int:
             baseline_source = "cache" if pytorch_measurement is not None else ""
             if pytorch_measurement is None:
                 pytorch_measurement = {
-                    "mean_time_ms": 0.0,
+                    "median_time_ms": 0.0,
                     "entry_files": [entry_file for entry_file, _, _ in entries],
                     "entry_latencies_ms": [],
                     "entry_results": [],
@@ -612,7 +628,7 @@ def main() -> int:
                     baseline_source = "unavailable"
                 cache[cache_key] = pytorch_measurement
 
-            pytorch_ms = float(pytorch_measurement.get("mean_time_ms") or 0.0)
+            pytorch_ms = float(pytorch_measurement.get("median_time_ms") or pytorch_measurement.get("mean_time_ms") or 0.0)
             benchmarked_entry_files = pytorch_measurement.get("entry_files") or [
                 entry_file for entry_file, _, _ in entries
             ]
@@ -651,7 +667,7 @@ def main() -> int:
                 if generated_stats is not None:
                     generated_kernel_profiled = True
                     kernel_ms_raw = (
-                        generated_stats.get("mean_time_ms")
+                        generated_stats.get("median_time_ms") or generated_stats.get("mean_time_ms")
                         if isinstance(generated_stats, dict)
                         else None
                     )

@@ -255,6 +255,7 @@ def handle_profile(data):
                  return {"error": "Profiling failed (no valid timings)"}
             
             return {
+                "median_time_ms": float(np.median(timings)),
                 "mean_time_ms": float(np.mean(timings)),
                 "std_time_ms": float(np.std(timings)),
                 "min_time_ms": float(np.min(timings)),
