@@ -12,6 +12,8 @@ import from ....components.ui.Icons {
 import from ....context.ConfigContext { useConfig }
 
 def:pub CastExportModal(props: any) -> Any {
+    pytorchSelectionPath = "__PYTORCH__";
+
     isOpen = props.isOpen;
     onClose = props.onClose;
     params = useParams();
@@ -81,6 +83,116 @@ def:pub CastExportModal(props: any) -> Any {
         }
     }
 
+    def has_value(value: Any) -> bool {
+        try {
+            return value or value == 0;
+        } except Exception {
+            return False;
+        }
+    }
+
+    def numeric_value(value: Any) -> float {
+        if not has_value(value) {
+            return None;
+        }
+        try {
+            parsed = value * 1;
+            if parsed == parsed {
+                return parsed;
+            }
+        } except Exception {
+        # no-op
+        }
+        return None;
+    }
+
+    def runtime_ms_for(item: dict) -> float {
+        if not item or not ("runtime_ms" in item) {
+            return None;
+        }
+        parsed = numeric_value(item["runtime_ms"]);
+        if parsed and parsed > 0 {
+            return parsed;
+        }
+        return None;
+    }
+
+    def format_runtime_ms(item: dict) -> str {
+        runtime_ms = runtime_ms_for(item);
+        if not runtime_ms {
+            return "";
+        }
+
+        try {
+            rounded_runtime = Math.round((runtime_ms * 1) * 1000000) / 1000000;
+            return " · " + String(rounded_runtime) + " ms";
+        } except Exception {
+            return "";
+        }
+    }
+
+    def compare_kernel_items(a: dict, b: dict) -> int {
+        if not a and not b { return 0; }
+        if not a { return 1; }
+        if not b { return -1; }
+
+        ms_a = runtime_ms_for(a);
+        ms_b = runtime_ms_for(b);
+        if ms_a and ms_b {
+            if ms_a < ms_b { return -1; }
+            if ms_a > ms_b { return 1; }
+        } elif ms_a {
+            return -1;
+        } elif ms_b {
+            return 1;
+        }
+
+        label_a = str(a["label"]) if "label" in a and a["label"] else "";
+        label_b = str(b["label"]) if "label" in b and b["label"] else "";
+        if label_a < label_b { return -1; }
+        if label_a > label_b { return 1; }
+
+        name_a = (
+            str(a["name"])
+            if "name" in a and a["name"]
+            else (str(a["path"]) if "path" in a and a["path"] else "")
+        );
+        name_b = (
+            str(b["name"])
+            if "name" in b and b["name"]
+            else (str(b["path"]) if "path" in b and b["path"] else "")
+        );
+        if name_a < name_b { return -1; }
+        if name_a > name_b { return 1; }
+        return 0;
+    }
+
+    def sort_kernel_list(items: list) -> list {
+        sorted_items = [];
+        for item in to_list(items) {
+            if not item {
+                continue;
+            }
+
+            insert_at = sorted_items.length;
+            idx = 0;
+            while idx < sorted_items.length {
+                if compare_kernel_items(item, sorted_items[idx]) < 0 {
+                    insert_at = idx;
+                    break;
+                }
+                idx = idx + 1;
+            }
+
+            if insert_at == sorted_items.length {
+                sorted_items.push(item);
+            } else {
+                sorted_items.splice(insert_at, 0, item);
+            }
+        }
+        return sorted_items;
+    }
+
     useEffect(
         lambda -> None { if isOpen {
             setOpDetails({});
@@ -112,19 +224,94 @@ def:pub CastExportModal(props: any) -> Any {
                             else []
                         );
 
+                        resp_summary = await __jacSpawn(
+                            "GetProjectMctsSummary", "", {"projectName": projectName}
+                        );
+                        data_summary = resp_summary.reports[0]
+                            if resp_summary and resp_summary.reports
+                            else {};
+                        summary_ops = to_list(
+                            data_summary["ops"]
+                            if data_summary and "ops" in data_summary
+                            else []
+                        );
+
                         bench_map = {};
-                        init_selection = {};
+                        summary_by_op = {};
                         for r in bench_results {
                             if r and "op" in r and r["op"] {
                                 bench_map[r["op"]] = r;
-                                if "winner" in r and r["winner"] {
-                                    w = str(r["winner"]);
-                                    w_name = w.split("/").pop();
-                                    init_selection[r["op"]] = {
-                                        "path": w,
-                                        "name": w_name
-                                    };
-                                }
+                            }
+                        }
+                        for item in summary_ops {
+                            if item and "op" in item and item["op"] {
+                                summary_by_op[item["op"]] = item;
+                            }
+                        }
+
+                        init_selection = {};
+                        for item in op_list {
+                            op_name = (
+                                item["name"]
+                                if item and "name" in item and item["name"]
+                                else ""
+                            );
+                            if not op_name {
+                                continue;
+                            }
+
+                            bench_entry = bench_map[op_name] if op_name in bench_map else {};
+                            pytorch_ms = numeric_value(
+                                bench_entry["pytorch_ms"]
+                                if bench_entry and "pytorch_ms" in bench_entry
+                                else None
+                            );
+                            summary_entry = (
+                                summary_by_op[op_name]
+                                if op_name in summary_by_op
+                                else {}
+                            );
+                            best_node_id = numeric_value(
+                                summary_entry["best_node_id"]
+                                if summary_entry and "best_node_id" in summary_entry
+                                else None
+                            );
+                            best_value = numeric_value(
+                                summary_entry["best_value"]
+                                if summary_entry and "best_value" in summary_entry
+                                else None
+                            );
+
+                            select_pytorch = (
+                                pytorch_ms
+                                and pytorch_ms > 0
+                                and (
+                                    not has_value(best_value)
+                                    or best_value <= 0
+                                    or pytorch_ms <= best_value
+                                )
+                            );
+
+                            if select_pytorch {
+                                init_selection[op_name] = {
+                                    "path": pytorchSelectionPath,
+                                    "name": "PyTorch Baseline",
+                                    "runtime_ms": pytorch_ms
+                                };
+                            } elif has_value(best_node_id) {
+                                kernel_name = "kernel_" + str(best_node_id) + ".cu";
+                                init_selection[op_name] = {
+                                    "path": (
+                                        "kernels/projects/"
+                                        + projectName
+                                        + "/trees/"
+                                        + op_name
+                                        + "/kernels/"
+                                        + kernel_name
+                                    ),
+                                    "name": kernel_name,
+                                    "runtime_ms": best_value
+                                };
                             }
                         }
                         setBenchmarks(bench_map);
@@ -156,6 +343,22 @@ def:pub CastExportModal(props: any) -> Any {
             );
             data = resp.reports[0] if resp and resp.reports else {};
             all_kernels = [];
+            bench_entry = benchmarks[op_name] if op_name in benchmarks else {};
+            pytorch_ms = numeric_value(
+                bench_entry["pytorch_ms"]
+                if bench_entry and "pytorch_ms" in bench_entry
+                else None
+            );
+            if pytorch_ms and pytorch_ms > 0 {
+                all_kernels.push(
+                    {
+                        "path": pytorchSelectionPath,
+                        "name": "PyTorch Baseline",
+                        "label": "PyTorch",
+                        "runtime_ms": pytorch_ms
+                    }
+                );
+            }
             gen_best = (
                 data["generated"]["best"]
                 if data
@@ -193,10 +396,25 @@ def:pub CastExportModal(props: any) -> Any {
                     all_kernels.push({**k, "label": "Generated"});
                 }
             }
+            all_kernels = sort_kernel_list(all_kernels);
             new_details = {**opDetails};
             new_details[op_name] = all_kernels;
             setOpDetails(new_details);
-            if not (op_name in selectedKernels) and all_kernels.length > 0 {
+            selected_entry = selectedKernels[op_name] if op_name in selectedKernels else {};
+            selected_path = (
+                selected_entry["path"]
+                if selected_entry and "path" in selected_entry and selected_entry["path"]
+                else ""
+            );
+            has_valid_selection = False;
+            if selected_path {
+                for item in all_kernels {
+                    if item and "path" in item and item["path"] == selected_path {
+                        has_valid_selection = True;
+                    }
+                }
+            }
+            if not has_valid_selection and all_kernels.length > 0 {
                 new_sel = {**selectedKernels};
                 new_sel[op_name] = {
                     "path": all_kernels[0]["path"],
@@ -320,7 +538,7 @@ def:pub CastExportModal(props: any) -> Any {
         }
         speedup = None;
         if pytorch_ms and forged_ms and forged_ms > 0 {
-            speedup = (pytorch_ms / forged_ms).toFixed(2);
+            speedup = String(Math.round(((pytorch_ms / forged_ms) * 100)) / 100);
         }
         has_kernel = bench and "winner" in bench and bench["winner"];
         sel = selectedKernels[op_name] if op_name in selectedKernels else {};
@@ -370,6 +588,7 @@ def:pub CastExportModal(props: any) -> Any {
                 and selectedKernels[op_name]["path"] == k_path
             );
             size_str = " · " + str(k_size) + " B" if k_size else "";
+            runtime_str = format_runtime_ms(k);
 
             radio_fill_nodes = [];
             if is_sel {
@@ -411,7 +630,7 @@ def:pub CastExportModal(props: any) -> Any {
                             {k_name_k}
                         </p>
                         <p className="text-[10px] text-zinc-600 mt-0.5">
-                            {k_label + size_str}
+                            {k_label + runtime_str + size_str}
                         </p>
                     </div>
                     {check_icon_nodes}
