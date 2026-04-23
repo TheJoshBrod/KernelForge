@@ -822,8 +822,8 @@ def _load_tree_best_by_op(project_name: str) -> dict {
                         }
                     }
                 }
-            } except Exception {
-                pass;
+            } except Exception as e {
+                _ = str(e);
             }
 
             best_val = None;

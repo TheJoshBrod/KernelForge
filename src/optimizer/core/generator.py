@@ -191,6 +191,12 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
                 print(f"\t\t- Saved failed kernel to: {dump_path}")
             except Exception as e:
                 print(f"\t\t- Failed to save garbage kernel: {e}")
+
+            err_path = dump_dir / f"kernel_iter{iteration}_attempt{attempt}.err.txt"
+            try:
+                err_path.write_text(str(error or ""), encoding="utf-8")
+            except Exception as e:
+                print(f"\t\t- Failed to save garbage error log: {e}")
     else:
         _log_attempt_result(paths, "success", "")
     return feedback, is_valid, error
