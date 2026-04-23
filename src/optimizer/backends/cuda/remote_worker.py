@@ -78,6 +78,10 @@ configure_remote_env()
 # Assuming loader.py is uploaded to the same directory
 import loader
 import torch
+try:
+    from profile_entries import load_profile_entry
+except Exception:
+    load_profile_entry = None
 
 # --- Helper Functions ---
 
@@ -144,7 +148,10 @@ def handle_verify(data):
 
             for entry_file in entry_files:
                 try:
-                    entry = torch.load(entry_file, map_location='cpu')
+                    entry = (
+                        load_profile_entry(entry_file, map_location='cpu', device='cuda', recompute_output=True)
+                        if load_profile_entry else torch.load(entry_file, map_location='cpu')
+                    )
                     args = entry.get("args", [])
                     kwargs = entry.get("kwargs", {})
                     signature_info = entry.get("signature", {"params": [], "defaults": {}})
@@ -218,7 +225,10 @@ def handle_profile(data):
                 # Load batch
                 for f in batch_files:
                     try:
-                         entry = torch.load(f, map_location='cpu')
+                         entry = (
+                             load_profile_entry(f, map_location='cpu', device='cuda', recompute_output=False)
+                             if load_profile_entry else torch.load(f, map_location='cpu')
+                         )
                          args = entry.get('args', [])
                          kwargs = entry.get('kwargs', {})
                          sig = entry.get('signature', {})

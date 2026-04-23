@@ -27,6 +27,7 @@ from src.optimizer.benchmarking.harness import (
     benchmark_entry_calls,
     summarize_entry_results,
 )
+from src.optimizer.benchmarking.profile_entries import load_profile_entry
 
 
 # ******************
@@ -202,7 +203,12 @@ def load_batch(pt_files: list) -> list[tuple[str, list, dict]]:
     inputs = []
     for pt_file in pt_files:
         try:
-            entry = torch.load(pt_file, map_location='cpu')
+            entry = load_profile_entry(
+                pt_file,
+                map_location='cpu',
+                device='cuda',
+                recompute_output=False,
+            )
 
             args = [
                 arg.cuda() if isinstance(arg, torch.Tensor) else arg
@@ -460,7 +466,13 @@ def profile_remote_kernel(ssh_config: dict, paths: dict[str, Path], baseline: bo
     from src.optimizer.core.ssh_client import RemoteWorkerClient, upload_files
 
     try:
-        worker = RemoteWorkerClient(ssh_config)
+        worker_path = Path(__file__).parent / "remote_worker.py"
+        profile_entries_path = Path(__file__).resolve().parents[2] / "benchmarking" / "profile_entries.py"
+        worker = RemoteWorkerClient(
+            ssh_config,
+            worker_path,
+            {str(profile_entries_path): "profile_entries.py"},
+        )
 
         # 1. Prepare Code
         kernel_path = paths["tmp_dir"] / "kernel.py"

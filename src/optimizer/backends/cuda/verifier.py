@@ -19,6 +19,7 @@ from byllm.lib import by, Model
 from torch.utils.cpp_extension import load_inline
 from src.optimizer.config.settings import settings
 from src.optimizer.backends.error_utils import format_verifier_output
+from src.optimizer.benchmarking.profile_entries import load_profile_entry
 import src.optimizer.backends.cuda.loader as loader
 
 llm = Model(model_name=settings.llm_model_name)
@@ -214,7 +215,12 @@ def _validate_worker_loop(q_in, q_out):
                 entries = []
                 canonical_signature = None
                 for f in entry_files:
-                    e = torch.load(f)
+                    e = load_profile_entry(
+                        f,
+                        map_location="cpu",
+                        device=loader.target_device(),
+                        recompute_output=True,
+                    )
                     entries.append(e)
                     if canonical_signature is None:
                         sig = e.get("signature", {})
@@ -463,8 +469,16 @@ def validate_remote_kernel(ssh_config: dict, generated_cu_code: str, paths: dict
     try:
         worker_path = Path(__file__).parent / "remote_worker.py"
         loader_path = Path(__file__).parent / "loader.py"
+        profile_entries_path = Path(__file__).resolve().parents[2] / "benchmarking" / "profile_entries.py"
         
-        worker = RemoteWorkerClient(ssh_config, worker_path, {str(loader_path): "loader.py"})
+        worker = RemoteWorkerClient(
+            ssh_config,
+            worker_path,
+            {
+                str(loader_path): "loader.py",
+                str(profile_entries_path): "profile_entries.py",
+            },
+        )
         
         # Upload IO files to shared cache
         io_dir = paths["io_dir"]
