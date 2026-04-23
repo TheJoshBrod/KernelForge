@@ -25,9 +25,6 @@ class GenModel:
         self.sys_prompt = sys_prompt
         self.history: List[Dict[str, Any]] = []
         self.tools: Dict[str, callable] = {}
-        # Populated by provider-specific methods after each successful call.
-        # Callers read this to log token usage + cost.
-        self.last_usage: Dict[str, Any] | None = None
         self.usage_logger = None
         self.usage_context: Dict[str, Any] = {
             "step_type": None, "iteration": None, "attempt": None,
