@@ -304,6 +304,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         The newly created root KernelNode, or None if generation failed
     """
     from src.llm_tools import GenModel
+    from src.optimizer.usage_logger import LLMUsageLogger
     import src.generator.prompts.prompts as gen_prompts
 
     # Select backend-specific prompts
@@ -369,8 +370,13 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         
         # Generate kernel using LLM with retry logic
         llm = GenModel(sys_prompt)
-        
+        try:
+            llm.set_usage_logger(LLMUsageLogger(Path(paths["proj_dir"])))
+        except Exception:
+            pass
+
         # Initial attempt
+        llm.set_usage_context(step_type="new_root", iteration=next_id, attempt=1)
         feedback, code = generator.extract_feedback_and_code(
             llm.chat(prompt, model or settings.llm_model_name)
         )
@@ -397,6 +403,9 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
             (dump_dir / f"new_root_{next_id}_attempt{attempt}{backend.kernel_extension}").write_text(code)
             
             # Send error back to LLM for correction
+            llm.set_usage_context(
+                step_type="new_root_correction", iteration=next_id, attempt=attempt + 1,
+            )
             feedback, code = generator.extract_feedback_and_code(
                 llm.chat(error, model or settings.llm_model_name)
             )
