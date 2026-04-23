@@ -1,0 +1,2 @@
+operator,kernels_sampled,n_kernels_cap,baseline_kernel_id,baseline_time_ms,best_kernel_id,best_time_ms,best_speedup_vs_baseline,best_improvement_description,source
+torch_nn_functional_adaptive_avg_pool2d,1,,0,0.6235196685791016,0,0.6235196685791016,1.0,Generated baseline kernel (benchmarked),nodes.db

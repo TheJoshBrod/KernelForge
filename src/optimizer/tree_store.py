@@ -27,6 +27,10 @@ def _ensure_tree_schema(db_path: Path) -> None:
         node_columns = {row[1] for row in conn.execute("PRAGMA table_info(nodes)")}
         if "median_time_ms" not in node_columns:
             conn.execute("ALTER TABLE nodes ADD COLUMN median_time_ms REAL")
+        if "attempts_to_correct" not in node_columns:
+            conn.execute("ALTER TABLE nodes ADD COLUMN attempts_to_correct INTEGER")
+        if "phase" not in node_columns:
+            conn.execute("ALTER TABLE nodes ADD COLUMN phase TEXT")
         # Backfill median_time_ms from legacy mean_time_ms column when present
         if "mean_time_ms" in node_columns:
             conn.execute(

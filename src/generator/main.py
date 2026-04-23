@@ -23,6 +23,7 @@ import torch
 from tqdm import tqdm
 
 from src.llm_tools import GenModel
+from src.optimizer.usage_logger import LLMUsageLogger
 import src.generator.generator as generator
 import src.generator.monitor as monitor
 import src.generator.prompts.prompts as prompts
@@ -463,7 +464,12 @@ def validate_with_retries(
                     # We need to make sure we use it here.
                     # See `repair` variable below.
                     msg = last_repair_prompt
-                
+
+                gen_model.set_usage_context(
+                    step_type="generation" if attempt == 0 else "correction",
+                    iteration=0,
+                    attempt=attempt + 1,
+                )
                 cu_code = generator.generate(gen_model, msg, llm_model)
                 if project_dir and getattr(gen_model, "last_usage", None):
                     log_llm_call(
@@ -618,6 +624,10 @@ def process_function(
     # Set up GenModel
     sys_prompt = prompts.get_system_prompt()
     gen_model = GenModel(sys_prompt)
+    try:
+        gen_model.set_usage_logger(LLMUsageLogger(op_dir))
+    except Exception:
+        pass
 
     # Profile operation
     try:
