@@ -512,6 +512,12 @@ def load_model(module, weights_path: Path, device: str):
     return model
 
 
+def maybe_move_model_to_device(model, device: str):
+    if getattr(model, "hf_device_map", None):
+        return model
+    return model.to(device)
+
+
 def normalize_inputs(sample):
     if isinstance(sample, dict):
         return (), sample
@@ -670,7 +676,7 @@ def main() -> int:
 
     module = import_model_module(model_path)
     model = load_model(module, weights_path, device)
-    model.to(device)
+    maybe_move_model_to_device(model, device)
     model.eval()
 
     validation_raw = config.get("validation_dir") or config.get("validation_set") or ""
