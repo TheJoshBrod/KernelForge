@@ -50,12 +50,15 @@ class KernelNode(BaseModel):
     children_ids: List[int] = Field(default_factory=list, alias="children")
     visits: int = 1
     value: Optional[float] = None
+    median_time_ms: Optional[float] = None
     best_subtree_value: Optional[float] = None
     code: Optional[str] = None
     improvement_description: Optional[str] = None
     timestamp: float = 0.0
     speedup_vs_parent: Optional[float] = None
-    
+    attempts_to_correct: Optional[int] = None
+    phase: Optional[str] = None  # "GENERATION" or "OPTIMIZATION"
+
     class Config:
         populate_by_name = True
 

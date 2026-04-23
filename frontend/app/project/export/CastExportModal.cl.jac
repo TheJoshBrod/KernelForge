@@ -230,10 +230,28 @@ def:pub CastExportModal(props: any) -> Any {
                             else []
                         );
 
+                        resp_summary = await __jacSpawn(
+                            "GetProjectMctsSummary", "", {"projectName": projectName}
+                        );
+                        data_summary = resp_summary.reports[0]
+                            if resp_summary and resp_summary.reports
+                            else {};
+                        summary_ops = to_list(
+                            data_summary["ops"]
+                            if data_summary and "ops" in data_summary
+                            else []
+                        );
+
                         bench_map = {};
+                        summary_by_op = {};
                         for r in bench_results {
                             if r and "op" in r and r["op"] {
                                 bench_map[r["op"]] = r;
+                            }
+                        }
+                        for item in summary_ops {
+                            if item and "op" in item and item["op"] {
+                                summary_by_op[item["op"]] = item;
                             }
                         }
 
@@ -292,6 +310,60 @@ def:pub CastExportModal(props: any) -> Any {
                                         else ""
                                     )
                                 };
+                            } else {
+                                bench_entry = bench_map[op_name] if op_name in bench_map else {};
+                                pytorch_ms = numeric_value(
+                                    bench_entry["pytorch_ms"]
+                                    if bench_entry and "pytorch_ms" in bench_entry
+                                    else None
+                                );
+                                summary_entry = (
+                                    summary_by_op[op_name]
+                                    if op_name in summary_by_op
+                                    else {}
+                                );
+                                best_node_id = numeric_value(
+                                    summary_entry["best_node_id"]
+                                    if summary_entry and "best_node_id" in summary_entry
+                                    else None
+                                );
+                                best_value = numeric_value(
+                                    summary_entry["best_value"]
+                                    if summary_entry and "best_value" in summary_entry
+                                    else None
+                                );
+
+                                select_pytorch = (
+                                    pytorch_ms
+                                    and pytorch_ms > 0
+                                    and (
+                                        not has_value(best_value)
+                                        or best_value <= 0
+                                        or pytorch_ms <= best_value
+                                    )
+                                );
+
+                                if select_pytorch {
+                                    init_selection[op_name] = {
+                                        "path": pytorchSelectionPath,
+                                        "name": "PyTorch Baseline",
+                                        "runtime_ms": pytorch_ms
+                                    };
+                                } elif has_value(best_node_id) {
+                                    kernel_name = "kernel_" + str(best_node_id) + ".cu";
+                                    init_selection[op_name] = {
+                                        "path": (
+                                            "kernels/projects/"
+                                            + projectName
+                                            + "/trees/"
+                                            + op_name
+                                            + "/kernels/"
+                                            + kernel_name
+                                        ),
+                                        "name": kernel_name,
+                                        "runtime_ms": best_value
+                                    };
+                                }
                             }
                         }
                         setBenchmarks(bench_map);
@@ -394,6 +466,14 @@ def:pub CastExportModal(props: any) -> Any {
                         has_valid_selection = True;
                     }
                 }
+            }
+            if not has_valid_selection and all_kernels.length > 0 {
+                new_sel = {**selectedKernels};
+                new_sel[op_name] = {
+                    "path": all_kernels[0]["path"],
+                    "name": all_kernels[0]["name"]
+                };
+                setSelectedKernels(new_sel);
             }
         } except Exception as e {
             console.error("Error loading op kernel details:", e);

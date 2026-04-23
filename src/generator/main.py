@@ -23,6 +23,7 @@ import torch
 from tqdm import tqdm
 
 from src.llm_tools import GenModel
+from src.optimizer.usage_logger import LLMUsageLogger
 import src.generator.generator as generator
 import src.generator.monitor as monitor
 import src.generator.prompts.prompts as prompts
@@ -31,6 +32,7 @@ from src.optimizer.backends.cuda import CUDABackend
 from src.optimizer.backends.triton import TritonBackend
 from src.optimizer.pipeline import update_queue_state
 from src.progress import update_job_progress, wait_if_paused, check_cancelled
+from src.llm.usage_db import log_llm_call
 try:
     from src import codex_utils
 except ImportError:
@@ -275,9 +277,11 @@ def validate_with_retries(
     ssh_config=None,
     _proj_base_dir: Path | None = None,
     _task_key: str | None = None,
-) -> tuple[bool, str, str]:
+) -> tuple[bool, str, str, int]:
     """
     Attempt to validate and fix kernel code up to MAX_ATTEMPTS times.
+
+    Returns (success, last_feedback, last_stage, attempts_used).
 
     Args:
         output_dir: Directory to save kernel outputs
@@ -376,11 +380,13 @@ def validate_with_retries(
                     return True, "", "success"
         return False, err or feedback, "codex_repair"
 
+    attempts_used = 0
     for attempt in range(attempts_total):
+        attempts_used = attempt + 1
         if not wait_if_paused():
-            return False, "Generation paused/cancelled.", "control"
+            return False, "Generation paused/cancelled.", "control", attempts_used
         if check_cancelled():
-            return False, "Generation cancelled.", "control"
+            return False, "Generation cancelled.", "control", attempts_used
 
         if _proj_base_dir and _task_key:
             update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {
@@ -458,14 +464,28 @@ def validate_with_retries(
                     # We need to make sure we use it here.
                     # See `repair` variable below.
                     msg = last_repair_prompt
-                
+
+                gen_model.set_usage_context(
+                    step_type="generation" if attempt == 0 else "correction",
+                    iteration=0,
+                    attempt=attempt + 1,
+                )
                 cu_code = generator.generate(gen_model, msg, llm_model)
+                if project_dir and getattr(gen_model, "last_usage", None):
+                    log_llm_call(
+                        project_dir,
+                        gen_model.last_usage,
+                        step_type="generate",
+                        job_key=os.environ.get("KFORGE_JOB_KEY"),
+                        operator=op_key,
+                        attempt=attempt,
+                    )
 
             except Exception as e:
                 print(f"Failed on attempt {attempt}\n{e}")
                 last_feedback = f"LLM generation failed: {e}"
                 last_stage = "llm_api"
-                return False, last_feedback, last_stage
+                return False, last_feedback, last_stage, attempts_used
 
         tmpdir = tempfile.mkdtemp(prefix="gins_verifier_")
 
@@ -479,7 +499,7 @@ def validate_with_retries(
         os.makedirs(log_file_loc.parent, exist_ok=True)
 
         if not entry_files:
-             return False, "No entry files", "setup"
+             return False, "No entry files", "setup", attempts_used
 
         update_job_progress(attempt, max_attempts, f"Validating {op_key} (attempt {attempt + 1}/{max_attempts}){' — remote' if ssh_config else ''}")
 
@@ -514,7 +534,7 @@ def validate_with_retries(
                         feedback, attempt
                     )
                     if repaired_ok:
-                        return True, "", "success"
+                        return True, "", "success", attempts_used
                     last_feedback = repair_feedback
                     last_stage = repair_stage
                 except NameError:
@@ -546,7 +566,7 @@ def validate_with_retries(
                     "op_name": op_key,
                     "tag": "[GEN]",
                 }}})
-            return True, "", "success"
+            return True, "", "success", attempts_used
 
     if _proj_base_dir and _task_key:
         result_msg = f"{last_stage}: {last_feedback[:120]}" if last_feedback else last_stage
@@ -558,7 +578,7 @@ def validate_with_retries(
             "op_name": op_key,
             "tag": "[GEN]",
         }}})
-    return False, last_feedback, last_stage
+    return False, last_feedback, last_stage, attempts_used
 
 
 def process_function(
@@ -604,6 +624,10 @@ def process_function(
     # Set up GenModel
     sys_prompt = prompts.get_system_prompt()
     gen_model = GenModel(sys_prompt)
+    try:
+        gen_model.set_usage_logger(LLMUsageLogger(op_dir))
+    except Exception:
+        pass
 
     # Profile operation
     try:
@@ -641,7 +665,7 @@ def process_function(
     proj_base_dir = project_dir if project_dir else None
 
     # Validate loop - pass entry files directly
-    success, failure_msg, failure_stage = validate_with_retries(
+    success, failure_msg, failure_stage, attempts_used = validate_with_retries(
         op_dir,
         entry_files,
         gen_model,
@@ -667,6 +691,27 @@ def process_function(
             failure_msg or "Kernel validation failed.",
             {"function": function_name},
         )
+
+    # Record Phase-1 attempt count for later reporting (consumed by
+    # optimizer root-init so it can be persisted to the tree).
+    try:
+        attempts_dir = op_dir / "attempts"
+        attempts_dir.mkdir(parents=True, exist_ok=True)
+        summary_path = attempts_dir / "summary.json"
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "phase": "GENERATION",
+                    "function": function_name,
+                    "attempts_to_correct": attempts_used,
+                    "success": success,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
 
     return success
 

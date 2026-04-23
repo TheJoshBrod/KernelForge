@@ -1,0 +1,6 @@
+operator,phase,calls,input_tokens,output_tokens,reasoning_tokens,total_tokens,input_cost_usd,output_cost_usd,total_cost_usd
+torch_nn_functional_adaptive_avg_pool2d,generator,2,7355,1927,0,9282,0.0,0.0,0.0
+TOTAL_GENERATOR,generator,2,7355,1927,0,9282,0.0,0.0,0.0
+torch_nn_functional_adaptive_avg_pool2d,optimizer,0,0,0,0,0,0.0,0.0,0.0
+TOTAL_OPTIMIZER,optimizer,0,0,0,0,0,0.0,0.0,0.0
+TOTAL,all,2,7355,1927,0,9282,0.0,0.0,0.0

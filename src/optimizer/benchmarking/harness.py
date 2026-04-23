@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from statistics import fmean, pstdev
+from statistics import fmean, median, pstdev
 from typing import Any, Callable, Sequence
 
 import torch
@@ -36,12 +36,14 @@ def summarize_entry_results(
         "entry_latencies_ms": latencies,
         "entry_results": list(entry_results),
         "errors": list(errors or []),
+        "median_time_ms": None,
         "mean_time_ms": None,
         "std_time_ms": None,
         "min_time_ms": None,
         "max_time_ms": None,
     }
     if latencies:
+        summary["median_time_ms"] = float(median(latencies))
         summary["mean_time_ms"] = float(fmean(latencies))
         summary["std_time_ms"] = float(pstdev(latencies)) if len(latencies) > 1 else 0.0
         summary["min_time_ms"] = float(min(latencies))

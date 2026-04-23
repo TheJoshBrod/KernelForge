@@ -25,11 +25,16 @@ class GenModel:
         self.sys_prompt = sys_prompt
         self.history: List[Dict[str, Any]] = []
         self.tools: Dict[str, callable] = {}
+        self.usage_logger = None
+        self.usage_context: Dict[str, Any] = {
+            "step_type": None, "iteration": None, "attempt": None,
+        }
 
     def chat(self, user_msg: str, model: str) -> str:
         if not user_msg or not model:
             return ""
         self.__user(user_msg)
+        self.last_usage = None
 
         response = ""
 
@@ -51,6 +56,47 @@ class GenModel:
 
     def set_tools(self, tools: Dict[str, callable]):
         self.tools = tools
+
+    def set_usage_logger(self, logger) -> None:
+        """Attach an LLMUsageLogger. Pass None to disable."""
+        self.usage_logger = logger
+
+    def set_usage_context(self, *, step_type=None, iteration=None, attempt=None) -> None:
+        self.usage_context = {
+            "step_type": step_type,
+            "iteration": iteration,
+            "attempt": attempt,
+        }
+
+    def _record_gemini_usage(self, model: str, response) -> None:
+        try:
+            u = getattr(response, "usage_metadata", None)
+            if u is None:
+                return
+            self._record_usage("google", model, {
+                "input_tokens": getattr(u, "prompt_token_count", 0) or 0,
+                "output_tokens": getattr(u, "candidates_token_count", 0) or 0,
+                "reasoning_tokens": getattr(u, "thoughts_token_count", 0) or 0,
+            })
+        except Exception:
+            pass
+
+    def _record_usage(self, provider: str, model: str, usage: Dict[str, int]) -> None:
+        if self.usage_logger is None:
+            return
+        try:
+            self.usage_logger.log(
+                step_type=self.usage_context.get("step_type"),
+                iteration=self.usage_context.get("iteration"),
+                attempt=self.usage_context.get("attempt"),
+                provider=provider,
+                model=model,
+                input_tokens=usage.get("input_tokens", 0),
+                output_tokens=usage.get("output_tokens", 0),
+                reasoning_tokens=usage.get("reasoning_tokens", 0),
+            )
+        except Exception:
+            pass
 
     def to_json(self, **kwargs) -> str:
         return json.dumps(self.history, **kwargs)
@@ -88,6 +134,17 @@ class GenModel:
                 if hasattr(block, 'text'):
                     response_text += block.text
 
+            try:
+                u = getattr(message, "usage", None)
+                if u is not None:
+                    self._record_usage("anthropic", model, {
+                        "input_tokens": getattr(u, "input_tokens", 0) or 0,
+                        "output_tokens": getattr(u, "output_tokens", 0) or 0,
+                        "reasoning_tokens": 0,
+                    })
+            except Exception:
+                pass
+
             return response_text
 
         except Exception as e:
@@ -115,6 +172,7 @@ class GenModel:
                         "system_instruction": self.sys_prompt
                     }
                 )
+                self._record_gemini_usage(model, response)
                 return response.text
 
             # For multi-turn conversations, use chat API
@@ -140,6 +198,7 @@ class GenModel:
             latest_user_msg = self.history[-1]["content"]
             response = chat.send_message(latest_user_msg)
 
+            self._record_gemini_usage(model, response)
             return response.text
 
         except Exception as e:
@@ -165,6 +224,32 @@ class GenModel:
                 messages=messages,
                 max_completion_tokens=4096
             )
+
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                details = getattr(usage, "completion_tokens_details", None)
+                reasoning = getattr(details, "reasoning_tokens", 0) if details else 0
+                self.last_usage = {
+                    "provider": "openai",
+                    "model": model,
+                    "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                    "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+                    "reasoning_tokens": int(reasoning or 0),
+                }
+            try:
+                u = getattr(response, "usage", None)
+                if u is not None:
+                    reasoning = 0
+                    details = getattr(u, "completion_tokens_details", None)
+                    if details is not None:
+                        reasoning = getattr(details, "reasoning_tokens", 0) or 0
+                    self._record_usage("openai", model, {
+                        "input_tokens": getattr(u, "prompt_tokens", 0) or 0,
+                        "output_tokens": getattr(u, "completion_tokens", 0) or 0,
+                        "reasoning_tokens": reasoning,
+                    })
+            except Exception:
+                pass
 
             return response.choices[0].message.content
 

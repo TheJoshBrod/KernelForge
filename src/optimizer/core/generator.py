@@ -7,11 +7,15 @@ from pathlib import Path
 from typing import Optional
 from typing import Tuple
 
+import os
+
 from src.llm_tools import GenModel
+from src.optimizer.usage_logger import LLMUsageLogger
 from src.config import ensure_llm_config
 from src.optimizer.core.types import GPUSpecs
 from src.optimizer.config.settings import settings
 from src.optimizer.core.backend import Backend
+from src.llm.usage_db import log_llm_call
 import src.optimizer.core.mcts as mcts
 
 
@@ -149,7 +153,24 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
     Returns:
         Tuple[str, bool, str]: _description_
     """
+    _attempt = paths.get("attempt", 0)
+    llm.set_usage_context(
+        step_type="generation" if _attempt == 0 else "correction",
+        iteration=paths.get("iteration"),
+        attempt=int(_attempt) + 1,
+    )
     response = llm.chat(msg, model)
+    op_proj_dir = paths.get("proj_dir") if isinstance(paths, dict) else None
+    if op_proj_dir is not None and getattr(llm, "last_usage", None):
+        log_llm_call(
+            op_proj_dir.parent,
+            llm.last_usage,
+            step_type="optimize",
+            job_key=os.environ.get("KFORGE_JOB_KEY"),
+            operator=op_proj_dir.name,
+            iteration=paths.get("iteration"),
+            attempt=paths.get("attempt"),
+        )
     feedback, cu_code = extract_feedback_and_code(response)
 
     if status_callback:
@@ -191,6 +212,12 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
                 print(f"\t\t- Saved failed kernel to: {dump_path}")
             except Exception as e:
                 print(f"\t\t- Failed to save garbage kernel: {e}")
+
+            err_path = dump_dir / f"kernel_iter{iteration}_attempt{attempt}.err.txt"
+            try:
+                err_path.write_text(str(error or ""), encoding="utf-8")
+            except Exception as e:
+                print(f"\t\t- Failed to save garbage error log: {e}")
     else:
         _log_attempt_result(paths, "success", "")
     return feedback, is_valid, error
@@ -217,6 +244,10 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
     # Attempt initial CUDA code generation
     sys_prompt = backend.get_sys_prompt()
     llm: GenModel = GenModel(sys_prompt)
+    try:
+        llm.set_usage_logger(LLMUsageLogger(paths["proj_dir"]))
+    except Exception:
+        pass
     msg = backend.generate_optimization_prompt(
         gpu_specs, best_kernel_code, improvement_log, ancestor_codes, failed_siblings)
 
@@ -241,11 +272,13 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
     print(f"\t\tSaved prompt to: {prompt_dump_path}")
 
     paths["attempt"] = 0
+    paths["iteration"] = next_node_id
     if status_callback:
         status_callback("Generating", 1)
+    attempts_used = 1
     feedback, is_valid, error = create_and_validate(backend, llm, msg, model, paths, ssh_config, status_callback)
     if is_valid:
-        return feedback, True, ""
+        return feedback, True, "", attempts_used
     print("\t\tInitial gen failed...")
     last_error = str(error) if error else ""
     # On failure attempt fix before giving up
@@ -254,12 +287,13 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
         paths["attempt"] = i + 1
         if status_callback:
             status_callback("Generating", i + 2)
+        attempts_used = i + 2
         retry_feedback, is_valid, error = create_and_validate(backend, llm, error, model, paths, ssh_config, status_callback)
         if is_valid:
-            return retry_feedback, True, ""
+            return retry_feedback, True, "", attempts_used
         if error:
             last_error = str(error)
 
     if not last_error:
         last_error = "No valid kernel produced after retries."
-    return "", False, last_error
+    return "", False, last_error, attempts_used

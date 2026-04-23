@@ -12,6 +12,17 @@ def:pub OperatorResultsTable(props: any) -> Any {
     loading = props.loading if props.loading else False;
     profiling = props.profiling if props and "profiling" in props else False;
     gpuMismatch = props.gpuMismatch if props and "gpuMismatch" in props else False;
+    llmUsage = props.llmUsage if props and "llmUsage" in props else None;
+
+    llmUsageByOp = {};
+    if llmUsage and "per_operator" in llmUsage {
+        per_op_list = to_list(llmUsage["per_operator"]);
+        for entry in per_op_list {
+            if entry and "operator" in entry {
+                llmUsageByOp[entry["operator"]] = entry;
+            }
+        }
+    }
 
     [sortColumn, setSortColumn] = useState("display_order");
     [sortDirection, setSortDirection] = useState("asc");
@@ -91,20 +102,22 @@ def:pub OperatorResultsTable(props: any) -> Any {
     });
 
     skeleton_widths = [
-        ["w-32", "w-40", "w-28"], 
-        ["w-16", "w-16", "w-16"], 
-        ["w-12", "w-12", "w-12"], 
-        ["w-8", "w-8", "w-8"], 
-        ["w-16", "w-16", "w-16"], 
-        ["w-12", "w-12", "w-12"], 
+        ["w-32", "w-40", "w-28"],
+        ["w-16", "w-16", "w-16"],
+        ["w-12", "w-12", "w-12"],
+        ["w-8", "w-8", "w-8"],
+        ["w-16", "w-16", "w-16"],
+        ["w-12", "w-12", "w-12"],
         ["w-20", "w-20", "w-20"],
+        ["w-16", "w-16", "w-16"],
+        ["w-12", "w-12", "w-12"],
         ["w-12", "w-12", "w-12"]
     ];
     skeletonNodes = [];
     for i in range(3) {
         cells = [];
-        for j in range(8) {
-            bc = " border-l border-[var(--border)] pl-4" if j == 1 or j == 4 else "";
+        for j in range(10) {
+            bc = " border-l border-[var(--border)] pl-4" if j == 1 or j == 4 or j == 8 else "";
             cells.push(<td key={j} className={"py-3 px-4" + bc}><div className={"skeleton skeleton-line " + skeleton_widths[j][i]}></div></td>);
         }
         skeletonNodes.push(<tr key={i} className="border-b border-[var(--border)]">{cells}</tr>);
@@ -146,6 +159,17 @@ def:pub OperatorResultsTable(props: any) -> Any {
         r_runtime_pct = r["runtime_pct"] if "runtime_pct" in r else "--";
         r_call_count = r["call_count"] if "call_count" in r else "--";
 
+        llm_cell_tokens = "--";
+        llm_cell_cost = "--";
+        llm_entry = llmUsageByOp[r_name] if r_name in llmUsageByOp else None;
+        if llm_entry {
+            total_toks = (llm_entry["input_tokens"] if "input_tokens" in llm_entry else 0)
+                + (llm_entry["output_tokens"] if "output_tokens" in llm_entry else 0);
+            llm_cell_tokens = total_toks.toLocaleString();
+            cost_val = llm_entry["total_cost_usd"] if "total_cost_usd" in llm_entry else 0.0;
+            llm_cell_cost = "$" + cost_val.toFixed(4);
+        }
+
         operatorRowsNodes.push(
             <tr
                 key={r_name}
@@ -163,6 +187,8 @@ def:pub OperatorResultsTable(props: any) -> Any {
                 <td className="py-2.5 px-4 font-mono text-xs">
                     <span className={row_status_color}>{status_label}</span>
                 </td>
+                <td className="py-2.5 px-4 font-mono text-xs text-zinc-400 border-l border-[var(--border)] pl-4" title="Total tokens consumed for this operator">{llm_cell_tokens}</td>
+                <td className="py-2.5 px-4 font-mono text-xs text-emerald-300/80 pr-4" title="Total USD cost for this operator">{llm_cell_cost}</td>
                 <td className="py-2 px-4 font-mono text-xs pr-4" onClick={lambda e: any -> None { e.stopPropagation(); }}>
                     <button
                         data-opname={r_name}
@@ -226,6 +252,12 @@ def:pub OperatorResultsTable(props: any) -> Any {
                             </th>
                             <th className="py-2.5 px-4 font-normal cursor-pointer hover:bg-zinc-800/50 transition-colors group" title="Current progress of operator generation" onClick={lambda -> None { handleSort("status"); }}>
                                 <div className="flex items-center">Status {getSortIcon("status")}</div>
+                            </th>
+                            <th className="py-2.5 px-4 font-normal border-l border-[var(--border)] pl-4" title="Total LLM tokens used for this operator">
+                                <div className="flex items-center">Tokens</div>
+                            </th>
+                            <th className="py-2.5 px-4 font-normal pr-4" title="Total USD cost of LLM calls for this operator">
+                                <div className="flex items-center">Cost</div>
                             </th>
                             <th className="py-2.5 px-4 font-normal text-right pr-4" title="Actions you can take on this operator">
                                 <div className="flex items-center">Action</div>

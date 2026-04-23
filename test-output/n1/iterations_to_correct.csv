@@ -1,0 +1,2 @@
+operator,phase,node_id,attempts_to_correct,success
+torch_nn_functional_adaptive_avg_pool2d,generator,,2,True

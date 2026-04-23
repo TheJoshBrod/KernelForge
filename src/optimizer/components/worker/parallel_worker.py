@@ -18,6 +18,7 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
     """
     from src.optimizer.config.settings import settings
     from src.llm_tools import GenModel
+    from src.optimizer.usage_logger import LLMUsageLogger
     import src.optimizer.core.generator as generator
     import time
     
@@ -122,7 +123,11 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
             # 2. Call LLM
             sys_prompt = backend.get_sys_prompt()
             llm = GenModel(sys_prompt)
-            
+            try:
+                llm.set_usage_logger(LLMUsageLogger(Path(paths["proj_dir"])))
+            except Exception:
+                pass
+
             result_queue.put((node_id, dispatch_key, {"step": "Generating", "attempt": 1}, "status_update"))
             
             # Retry loop variables
@@ -140,6 +145,11 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                 # For retries, current_prompt is the error message (GenModel keeps history)
                 
                 try:
+                    llm.set_usage_context(
+                        step_type="generation" if attempt == 0 else "correction",
+                        iteration=kernel_id,
+                        attempt=attempt + 1,
+                    )
                     response = llm.chat(current_prompt, model or settings.llm_model_name)
                 except Exception as e:
                     result_queue.put((node_id, dispatch_key, None, f"llm_error: {e}"))
@@ -187,16 +197,16 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
             if gpu_lock:
                  with gpu_lock:
                       stats = backend.profile_kernel(paths)
-                      runtime_ms = stats.get('min_time_ms', float('inf'))
+                      _rt = stats.get('median_time_ms')
+                      runtime_ms = _rt if _rt is not None else stats.get('mean_time_ms', float('inf'))
             else:
                  stats = backend.profile_kernel(paths)
-                 runtime_ms = stats.get('min_time_ms', float('inf'))
+                 _rt = stats.get('median_time_ms')
+                 runtime_ms = _rt if _rt is not None else stats.get('mean_time_ms', float('inf'))
 
             if runtime_ms == float('inf'):
                  result_queue.put((node_id, dispatch_key, None, f"profiling_failed"))
                  continue
-
-            # 6. Save Kernel
             # We already have kernel_id reserved
             
             attempts_dir = paths["proj_dir"] / "kernels"
@@ -215,7 +225,8 @@ def worker_routine(task_queue, result_queue, gpu_lock, node_counter, paths_templ
                     "runtime_ms": runtime_ms,
                     "kernel_id": kernel_id,
                     "code_path": str(Path(paths["proj_dir"].name) / "kernels" / kernel_filename),
-                    "feedback": feedback
+                    "feedback": feedback,
+                    "attempts_to_correct": attempt + 1,
                 },
                 "success"
             ))

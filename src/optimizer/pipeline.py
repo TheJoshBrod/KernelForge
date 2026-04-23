@@ -7,6 +7,7 @@ import argparse
 import tempfile
 import queue
 import os
+import time
 from pathlib import Path
 
 import torch
@@ -26,6 +27,16 @@ from src.optimizer.backends.triton import TritonBackend
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+def _canonical_median_time_ms(stats: dict) -> float:
+    if not isinstance(stats, dict):
+        raise ValueError("Profiler stats missing median_time_ms or mean_time_ms")
+    ms = stats.get("median_time_ms")
+    if ms is None:
+        ms = stats.get("mean_time_ms")
+    if ms is None:
+        raise ValueError("Profiler stats missing median_time_ms or mean_time_ms")
+    return float(ms)
 
 def _default_queue_state() -> dict:
     return {
@@ -52,10 +63,13 @@ def update_queue_state(proj_base_dir: Path, updates: dict):
                 pass
         
         if "active_tasks" in updates:
+            now_ts = time.time()
             for k, v in updates["active_tasks"].items():
                 if k not in state["active_tasks"]:
                     state["active_tasks"][k] = {}
-                state["active_tasks"][k].update(v)
+                task_update = dict(v) if isinstance(v, dict) else {}
+                task_update["updated_at"] = now_ts
+                state["active_tasks"][k].update(task_update)
         if "remove_tasks" in updates:
             for k in updates["remove_tasks"]:
                 state["active_tasks"].pop(str(k), None)
@@ -122,7 +136,7 @@ def get_project_dir(gpu_name: str, optional_name: str = None, backend_name: str 
     return proj_dir
 
 
-def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, improvement_description: str, best_kernel_code: str, ssh_config: dict = None, _proj_base_dir: Path = None, _task_key: str = None):
+def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, improvement_description: str, best_kernel_code: str, ssh_config: dict = None, _proj_base_dir: Path = None, _task_key: str = None, attempts_to_correct: int | None = None):
     """Profiles iteration and records performance results
     """
     next_id = mcts.get_next_node_id(paths)
@@ -147,24 +161,29 @@ def save_iteration(backend: Backend, paths: dict, parent_info: KernelNode, impro
             update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {"current_step": "Failed", "result": "profiler error", "status": "Failed"}}})
         return None, f"[Profiler Error] {prof_err}"
     print("\tFinished Profiler.")
+    current_median_ms = _canonical_median_time_ms(current_stats)
+    parent_median_ms = parent_info.median_time_ms
     log_entry = {
         "iteration": next_id,
         "attempted": improvement_description,
         "results": current_stats,
-        "speedup_vs_parent": (parent_info.value / current_stats['min_time_ms']
-                              if parent_info.value is not None and current_stats['min_time_ms'] > 0
+        "speedup_vs_parent": (parent_median_ms / current_median_ms
+                              if parent_median_ms is not None and current_median_ms > 0
                               else 1.0),
     }
 
     # Save node to DB
     node_val = {
         "id": next_id,
-        "value": current_stats['min_time_ms'],
+        "value": current_median_ms,
+        "median_time_ms": current_median_ms,
         "speedup_vs_parent": log_entry['speedup_vs_parent'],
         "improvement_description": improvement_description,
         "parent": parent_info.id,
         "code": str(Path(paths["proj_dir"].name) / "kernels" / f"kernel_{next_id}{ext}"),
-        "visits": 1
+        "visits": 1,
+        "attempts_to_correct": attempts_to_correct,
+        "phase": "OPTIMIZATION",
     }
     # Validate and dump with Pydantic
     node_obj = KernelNode.model_validate(node_val)
@@ -228,7 +247,7 @@ def optimize(
                     }}
                 })
 
-        improvement_description, is_valid, failure_reason = generator.generate(
+        improvement_description, is_valid, failure_reason, attempts_used = generator.generate(
             backend, kernel_code, gpu_specs, improvement_log, paths, model=model, ancestor_codes=ancestor_codes, failed_siblings=failed_siblings, ssh_config=ssh_config, status_callback=_status_cb)
         print("\tFinished generation.")
         print(f"\t\t- Status: {is_valid}")
@@ -239,7 +258,8 @@ def optimize(
                 update_queue_state(_proj_base_dir, {"active_tasks": {_task_key: {"current_step": "Validating"}}})
             log_entry, new_node = save_iteration(
                 backend, paths, parent_node, improvement_description, str(paths["proj_dir"] / "kernels" / f"kernel_{parent_node.id}{backend.kernel_extension}"), ssh_config=ssh_config,
-                _proj_base_dir=_proj_base_dir, _task_key=_task_key)
+                _proj_base_dir=_proj_base_dir, _task_key=_task_key,
+                attempts_to_correct=attempts_used)
             return new_node, ""
 
         # Failed/invalid kernel — still save to tree so MCTS can track it.
@@ -262,6 +282,8 @@ def optimize(
             "parent": parent_node.id,
             "code": code_path,
             "visits": 1,
+            "attempts_to_correct": attempts_used,
+            "phase": "OPTIMIZATION",
         }
         node_obj = KernelNode.model_validate(node_val)
         mcts.save_node(paths, node_obj)
@@ -282,6 +304,7 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         The newly created root KernelNode, or None if generation failed
     """
     from src.llm_tools import GenModel
+    from src.optimizer.usage_logger import LLMUsageLogger
     import src.generator.prompts.prompts as gen_prompts
 
     # Select backend-specific prompts
@@ -347,8 +370,13 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         
         # Generate kernel using LLM with retry logic
         llm = GenModel(sys_prompt)
-        
+        try:
+            llm.set_usage_logger(LLMUsageLogger(Path(paths["proj_dir"])))
+        except Exception:
+            pass
+
         # Initial attempt
+        llm.set_usage_context(step_type="new_root", iteration=next_id, attempt=1)
         feedback, code = generator.extract_feedback_and_code(
             llm.chat(prompt, model or settings.llm_model_name)
         )
@@ -375,6 +403,9 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
             (dump_dir / f"new_root_{next_id}_attempt{attempt}{backend.kernel_extension}").write_text(code)
             
             # Send error back to LLM for correction
+            llm.set_usage_context(
+                step_type="new_root_correction", iteration=next_id, attempt=attempt + 1,
+            )
             feedback, code = generator.extract_feedback_and_code(
                 llm.chat(error, model or settings.llm_model_name)
             )
@@ -397,27 +428,30 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         # Profile the kernel
         print("\t\tProfiling new root kernel...")
         current_stats = backend.profile_kernel(paths)
+        current_median_ms = _canonical_median_time_ms(current_stats)
         
         # Create root node (parent = -1)
         node_data = {
             "id": next_id,
             "parent": -1,  # Root marker
-            "value": current_stats['mean_time_ms'],
+            "value": current_median_ms,
+            "median_time_ms": current_median_ms,
             "speedup_vs_parent": 1.0,
             "improvement_description": "Initial",
             "code": f"{paths['proj_dir'].name}/kernels/kernel_{next_id}{backend.kernel_extension}",
-            "visits": 1
+            "visits": 1,
+            "attempts_to_correct": attempt + 1,
+            "phase": "GENERATION",
         }
         node = KernelNode.model_validate(node_data)
 
-        # Save node
         # Save node
         mcts.save_node(paths, node)
 
         # Save kernel code
         (paths["proj_dir"] / "kernels" / f"kernel_{next_id}{backend.kernel_extension}").write_text(code)
 
-        print(f"\t\tCreated new root: Node {next_id} ({current_stats['mean_time_ms']:.4f} ms)")
+        print(f"\t\tCreated new root: Node {next_id} ({current_median_ms:.4f} ms)")
         return node
 
 
@@ -492,16 +526,30 @@ def create_project(backend: Backend, gpu_specs: GPUSpecs, io_parent_dir: Path, o
 
             # Profile kernel
             current_stats = op_backend.profile_kernel(paths, baseline=True, ssh_config=ssh_config)
+            current_median_ms = _canonical_median_time_ms(current_stats)
+
+            # Pull Phase-1 generation attempt count from the generator's summary.json (if present)
+            gen_attempts = None
+            try:
+                gen_summary_path = op_dir / "attempts" / "summary.json"
+                if gen_summary_path.exists():
+                    gs = json.loads(gen_summary_path.read_text(encoding="utf-8"))
+                    gen_attempts = gs.get("attempts_to_correct")
+            except Exception:
+                gen_attempts = None
 
             # Log kernel
             node_data = {
                 "id": 0,
-                "value": current_stats['mean_time_ms'],
+                "value": current_median_ms,
+                "median_time_ms": current_median_ms,
                 "speedup_vs_parent": 1.0,
                 "improvement_description": "Initial",
                 "parent": -1,
                 "code": str(Path(proj_op_dir.name) / "kernels" / f"kernel_0{op_backend.kernel_extension}"),
-                "visits": 1
+                "visits": 1,
+                "attempts_to_correct": gen_attempts,
+                "phase": "GENERATION",
             }
             node = KernelNode.model_validate(node_data)
             
@@ -664,8 +712,9 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                 parent_node = mcts._NODE_CACHE.get(node_id)
                 speedup = 1.0
                 if parent_node:
-                    speedup = (parent_node.value / runtime_ms
-                               if parent_node.value is not None and runtime_ms > 0
+                    parent_val = parent_node.median_time_ms
+                    speedup = (parent_val / runtime_ms
+                               if parent_val is not None and runtime_ms > 0
                                else 1.0)
                     new_node = KernelNode(
                         id=kernel_id,
@@ -673,10 +722,13 @@ def run_parallel_optimization(backend: Backend, gpu_specs: GPUSpecs, paths: dict
                         children_ids=[],
                         visits=1,
                         value=runtime_ms,
+                        median_time_ms=runtime_ms,
                         best_subtree_value=runtime_ms,
                         speedup_vs_parent=speedup,
                         improvement_description=result_data.get("feedback", "Parallel optimization"),
-                        code=result_data["code_path"]
+                        code=result_data["code_path"],
+                        attempts_to_correct=result_data.get("attempts_to_correct"),
+                        phase="OPTIMIZATION",
                     )
                     mcts.update_tree(paths, new_node)
                     print(f"[SUCCESS] Node {node_id} -> {kernel_id} | {runtime_ms:.4f}ms | {speedup:.2f}x | Done: {nodes_completed}")
@@ -850,12 +902,23 @@ Examples:
     )
 
     parser.add_argument(
+        "--n-kernels",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Stop after N kernel candidates have been sampled/profiled and "
+             "return the best one found in that window. Overrides --max-iterations."
+    )
+
+    parser.add_argument(
         "--op",
         type=str,
         metavar="OP_NAME",
         help="Optimize only a specific operator"
     )
     args = parser.parse_args()
+    if args.n_kernels and args.n_kernels > 0:
+        args.max_iterations = args.n_kernels
     io_parent_dir = args.io_dir
     optional_proj_name = args.project_name
 
@@ -1041,6 +1104,16 @@ Examples:
             op_last_reason = ""
             task_key = f"seq_opt_{op_name}"
             retry_limit = getattr(settings, 'retry_limit', 3)
+
+            # Load tree so we can resolve the Phase-1 baseline (root) runtime
+            mcts.load_tree_once(paths)
+            baseline_node = mcts._NODE_CACHE.get(0)
+            baseline_time = baseline_node.median_time_ms if baseline_node else None
+            best_time = baseline_time if baseline_time is not None else float("inf")
+            best_kernel_node = baseline_node
+            n_kernels_cap = args.n_kernels if args.n_kernels and args.n_kernels > 0 else None
+            kernels_sampled = 0
+
             for i in range(args.max_iterations):
                 if check_cancelled():
                     break
@@ -1094,12 +1167,110 @@ Examples:
                         "status": "Failed",
                     }}})
 
+                if new_node is not None:
+                    kernels_sampled += 1
+                    if new_node.value is not None and new_node.value < best_time:
+                        best_time = new_node.value
+                        best_kernel_node = new_node
+                    if baseline_time is not None and best_time > 0 and best_time != float("inf"):
+                        best_speedup = baseline_time / best_time
+                    else:
+                        best_speedup = 1.0
+                    best_id = best_kernel_node.id if best_kernel_node is not None else -1
+                    print(
+                        f"[n-kernels] op={op_name} i={kernels_sampled}"
+                        f"{f'/{n_kernels_cap}' if n_kernels_cap else ''} "
+                        f"best_speedup={best_speedup:.2f}x best_kernel_id={best_id} "
+                        f"best_time_ms={best_time:.4f}"
+                    )
+                    if n_kernels_cap is not None and kernels_sampled >= n_kernels_cap:
+                        print(
+                            f"[n-kernels] cap reached ({kernels_sampled}/{n_kernels_cap}); "
+                            f"stopping search for {op_name}."
+                        )
+                        break
+
                 if (i + 1) % 10 == 0:
                     print(f"  Progress: {i+1}/{args.max_iterations} iterations")
             update_queue_state(proj_base_dir, {
                 "current_operator": "",
                 "pending_operators": remaining_ops,
             })
+            if n_kernels_cap is not None and best_kernel_node is not None:
+                best_id = best_kernel_node.id
+                best_code_rel = best_kernel_node.code or ""
+                best_code_path = Path(best_code_rel)
+                if not best_code_path.is_absolute():
+                    best_code_path = paths["proj_dir"].parent / best_code_rel
+                final_speedup = (baseline_time / best_time
+                                 if baseline_time is not None and best_time > 0
+                                    and best_time != float("inf")
+                                 else 1.0)
+                print(
+                    f"[n-kernels-result] op={op_name} sampled={kernels_sampled} "
+                    f"best_kernel_id={best_id} best_time_ms={best_time:.4f} "
+                    f"baseline_time_ms={baseline_time if baseline_time is not None else 'n/a'} "
+                    f"best_speedup={final_speedup:.2f}x "
+                    f"best_code_path={best_code_path}"
+                )
+                best_source = ""
+                try:
+                    if best_code_path.exists():
+                        best_source = best_code_path.read_text()
+                        print(f"--- BEST KERNEL SOURCE ({best_code_path.name}) ---")
+                        print(best_source)
+                        print("--- END BEST KERNEL SOURCE ---")
+                except Exception as e:
+                    print(f"[n-kernels-result] failed to read best kernel source: {e}")
+
+                best_record = {
+                    "op_name": op_name,
+                    "n_kernels_cap": n_kernels_cap,
+                    "kernels_sampled": kernels_sampled,
+                    "baseline_kernel_id": baseline_node.id if baseline_node else None,
+                    "baseline_time_ms": baseline_time,
+                    "best_kernel_id": best_id,
+                    "best_time_ms": best_time if best_time != float("inf") else None,
+                    "best_speedup_vs_baseline": final_speedup,
+                    "best_improvement_description": getattr(best_kernel_node, "improvement_description", None),
+                    "best_code_path": str(best_code_path),
+                    "best_code_source": best_source,
+                    "timestamp": time.time(),
+                }
+                best_json_path = paths["proj_dir"] / "best.json"
+                try:
+                    best_json_path.write_text(json.dumps(best_record, indent=2))
+                    print(f"[n-kernels-result] wrote {best_json_path}")
+                except Exception as e:
+                    print(f"[n-kernels-result] failed to write best.json: {e}")
+
+            # --- Attempt-count summary (Phase 1 + Phase 2) ---
+            try:
+                mcts.load_tree_once(paths)
+                gen_attempts = None
+                opt_attempts = []
+                for n in mcts._NODE_CACHE.values():
+                    a = getattr(n, "attempts_to_correct", None)
+                    if a is None:
+                        continue
+                    if getattr(n, "phase", None) == "GENERATION" or n.parent_id == -1:
+                        gen_attempts = a
+                    else:
+                        opt_attempts.append(a)
+                gen_str = str(gen_attempts) if gen_attempts is not None else "n/a"
+                if opt_attempts:
+                    avg = sum(opt_attempts) / len(opt_attempts)
+                    opt_str = f"{avg:.2f} (over {len(opt_attempts)} node(s))"
+                else:
+                    opt_str = "n/a"
+                print(
+                    f"[attempts-summary] op={op_name} "
+                    f"Correctness reached in {gen_str} iterations. "
+                    f"Optimization required an average of {opt_str} attempts per node."
+                )
+            except Exception as _summary_err:
+                print(f"[attempts-summary] op={op_name} error: {_summary_err}")
+
             if op_new_nodes > 0:
                 print(
                     f"[optimize-result] op={op_name} status=improved "

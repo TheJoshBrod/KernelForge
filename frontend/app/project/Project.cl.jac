@@ -1349,10 +1349,10 @@ def:pub Project -> Any {
                                             Op
                                         </th>
                                         <th className="table-cell">
-                                            PyTorch (ms)
+                                            Avg PyTorch (ms)
                                         </th>
                                         <th className="table-cell">
-                                            Kernel (ms)
+                                            Avg Kernel (ms)
                                         </th>
                                         <th className="table-cell">
                                             Speedup
