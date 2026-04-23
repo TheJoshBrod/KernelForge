@@ -385,18 +385,22 @@ def _dump_key(name: str) -> Optional[str]:
 def _export_token_usage(
     project_dir: Path,
     optimizer_ops: list[Path],
+    generator_ops: list[Path],
     out_summary: Path,
     out_calls: Path,
 ) -> None:
     summary_fields = [
-        "operator", "calls", "input_tokens", "output_tokens", "reasoning_tokens",
-        "total_tokens", "input_cost_usd", "output_cost_usd", "total_cost_usd",
+        "operator", "phase", "calls", "input_tokens", "output_tokens",
+        "reasoning_tokens", "total_tokens", "input_cost_usd",
+        "output_cost_usd", "total_cost_usd",
     ]
     call_fields = [
-        "operator", "ts", "step_type", "iteration", "attempt",
+        "operator", "phase", "ts", "step_type", "iteration", "attempt",
         "provider", "model", "input_tokens", "output_tokens",
         "reasoning_tokens", "total_cost_usd",
     ]
+
+    phase_groups = [("generator", generator_ops), ("optimizer", optimizer_ops)]
 
     with out_summary.open("w", newline="") as sf, out_calls.open("w", newline="") as cf:
         sw = csv.DictWriter(sf, fieldnames=summary_fields)
@@ -404,49 +408,71 @@ def _export_token_usage(
         sw.writeheader()
         cw.writeheader()
 
-        total = {
+        grand = {
             "calls": 0, "input_tokens": 0, "output_tokens": 0,
-            "reasoning_tokens": 0, "total_cost_usd": 0.0,
+            "reasoning_tokens": 0, "input_cost_usd": 0.0,
+            "output_cost_usd": 0.0, "total_cost_usd": 0.0,
         }
 
-        total_in_cost = 0.0
-        total_out_cost = 0.0
+        for phase, op_dirs in phase_groups:
+            phase_total = {
+                "calls": 0, "input_tokens": 0, "output_tokens": 0,
+                "reasoning_tokens": 0, "input_cost_usd": 0.0,
+                "output_cost_usd": 0.0, "total_cost_usd": 0.0,
+            }
+            for op_dir in op_dirs:
+                agg = _aggregate_usage(op_dir)
+                total_tokens = (
+                    agg["input_tokens"] + agg["output_tokens"] + agg["reasoning_tokens"]
+                )
+                sw.writerow({
+                    "operator": op_dir.name,
+                    "phase": phase,
+                    "calls": agg["calls"],
+                    "input_tokens": agg["input_tokens"],
+                    "output_tokens": agg["output_tokens"],
+                    "reasoning_tokens": agg["reasoning_tokens"],
+                    "total_tokens": total_tokens,
+                    "input_cost_usd": agg["input_cost_usd"],
+                    "output_cost_usd": agg["output_cost_usd"],
+                    "total_cost_usd": agg["total_cost_usd"],
+                })
+                for key in phase_total:
+                    phase_total[key] += agg[key]
+                for call in _iter_usage_calls(op_dir):
+                    cw.writerow({"operator": op_dir.name, "phase": phase, **call})
 
-        for op_dir in optimizer_ops:
-            agg = _aggregate_usage(op_dir)
-            total_tokens = agg["input_tokens"] + agg["output_tokens"] + agg["reasoning_tokens"]
             sw.writerow({
-                "operator": op_dir.name,
-                "calls": agg["calls"],
-                "input_tokens": agg["input_tokens"],
-                "output_tokens": agg["output_tokens"],
-                "reasoning_tokens": agg["reasoning_tokens"],
-                "total_tokens": total_tokens,
-                "input_cost_usd": agg["input_cost_usd"],
-                "output_cost_usd": agg["output_cost_usd"],
-                "total_cost_usd": agg["total_cost_usd"],
+                "operator": f"TOTAL_{phase.upper()}",
+                "phase": phase,
+                "calls": phase_total["calls"],
+                "input_tokens": phase_total["input_tokens"],
+                "output_tokens": phase_total["output_tokens"],
+                "reasoning_tokens": phase_total["reasoning_tokens"],
+                "total_tokens": (
+                    phase_total["input_tokens"] + phase_total["output_tokens"]
+                    + phase_total["reasoning_tokens"]
+                ),
+                "input_cost_usd": phase_total["input_cost_usd"],
+                "output_cost_usd": phase_total["output_cost_usd"],
+                "total_cost_usd": phase_total["total_cost_usd"],
             })
-            total["calls"] += agg["calls"]
-            total["input_tokens"] += agg["input_tokens"]
-            total["output_tokens"] += agg["output_tokens"]
-            total["reasoning_tokens"] += agg["reasoning_tokens"]
-            total["total_cost_usd"] += agg["total_cost_usd"]
-            total_in_cost += agg["input_cost_usd"]
-            total_out_cost += agg["output_cost_usd"]
-
-            for call in _iter_usage_calls(op_dir):
-                cw.writerow({"operator": op_dir.name, **call})
+            for key in grand:
+                grand[key] += phase_total[key]
 
         sw.writerow({
             "operator": "TOTAL",
-            "calls": total["calls"],
-            "input_tokens": total["input_tokens"],
-            "output_tokens": total["output_tokens"],
-            "reasoning_tokens": total["reasoning_tokens"],
-            "total_tokens": total["input_tokens"] + total["output_tokens"] + total["reasoning_tokens"],
-            "input_cost_usd": total_in_cost,
-            "output_cost_usd": total_out_cost,
-            "total_cost_usd": total["total_cost_usd"],
+            "phase": "all",
+            "calls": grand["calls"],
+            "input_tokens": grand["input_tokens"],
+            "output_tokens": grand["output_tokens"],
+            "reasoning_tokens": grand["reasoning_tokens"],
+            "total_tokens": (
+                grand["input_tokens"] + grand["output_tokens"] + grand["reasoning_tokens"]
+            ),
+            "input_cost_usd": grand["input_cost_usd"],
+            "output_cost_usd": grand["output_cost_usd"],
+            "total_cost_usd": grand["total_cost_usd"],
         })
 
 
@@ -544,7 +570,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         project_dir, optimizer_ops, generator_ops, out_dir / "failure_modes.csv"
     )
     _export_token_usage(
-        project_dir, optimizer_ops,
+        project_dir, optimizer_ops, generator_ops,
         out_dir / "token_usage.csv",
         out_dir / "token_usage_calls.csv",
     )
