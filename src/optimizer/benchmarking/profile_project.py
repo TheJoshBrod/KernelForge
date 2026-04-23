@@ -534,18 +534,21 @@ def move_to_device(obj, device: str):
 
 
 def get_samples(module, max_batches: int, validation_path: str | None):
-    if hasattr(module, "sample_inputs"):
+    data = None
+    if validation_path and hasattr(module, "get_validation_dataloader"):
+        data = _call_with_optional_path(module.get_validation_dataloader, validation_path)
+    elif validation_path and hasattr(module, "get_dataloader"):
+        data = _call_with_optional_path(module.get_dataloader, validation_path)
+    elif hasattr(module, "sample_inputs"):
         data = module.sample_inputs()
     elif hasattr(module, "get_sample_inputs"):
         data = module.get_sample_inputs()
     elif hasattr(module, "make_example_input"):
         data = module.make_example_input()
-    elif hasattr(module, "get_dataloader"):
-        data = _call_with_optional_path(module.get_dataloader, validation_path)
     elif hasattr(module, "get_validation_dataloader"):
         data = _call_with_optional_path(module.get_validation_dataloader, validation_path)
-    else:
-        data = None
+    elif hasattr(module, "get_dataloader"):
+        data = _call_with_optional_path(module.get_dataloader, validation_path)
 
     if isinstance(data, torch.utils.data.DataLoader):
         samples = []
@@ -555,9 +558,9 @@ def get_samples(module, max_batches: int, validation_path: str | None):
             samples.append(batch)
         return samples
     if isinstance(data, (list, tuple)):
-        return list(data)
+        return list(data)[:max_batches]
     if data is not None:
-        return [data]
+        return [data] if max_batches > 0 else []
     return []
 
 

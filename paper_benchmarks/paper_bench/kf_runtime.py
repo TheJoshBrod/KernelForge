@@ -106,6 +106,11 @@ def inspect_cast_package(cast_path: str | Path) -> dict[str, Any]:
             if isinstance(manifest.get("selected_kernel_metadata"), dict)
             else {}
         )
+        selected_kernel_by_op = (
+            manifest.get("selected_kernel_by_op", {})
+            if isinstance(manifest.get("selected_kernel_by_op"), dict)
+            else {}
+        )
 
         kernel_source_hashes: dict[str, str] = {}
         selected_source_hashes: dict[str, str] = {}
@@ -207,6 +212,7 @@ def inspect_cast_package(cast_path: str | Path) -> dict[str, Any]:
         "selection_manifest": selection_manifest if isinstance(selection_manifest, dict) else {},
         "selected_ops": list(selected_ops),
         "selected_kernel_metadata": selected_kernel_metadata,
+        "selected_kernel_by_op": selected_kernel_by_op,
         "selected_source_hashes": dict(sorted(selected_source_hashes.items())),
         "selected_op_reports": dict(sorted(selected_op_reports.items())),
         "kernel_source_hashes": dict(sorted(kernel_source_hashes.items())),

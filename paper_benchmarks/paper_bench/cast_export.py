@@ -4,6 +4,7 @@ import ast
 import hashlib
 import importlib.util
 import json
+import re
 import shutil
 import zipfile
 from datetime import datetime, timezone
@@ -38,6 +39,42 @@ def _relative_or_none(path: Path | None, root: Path) -> str | None:
         return path.relative_to(root).as_posix()
     except ValueError:
         return str(path)
+
+
+def _selected_kernel_identity(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {
+            "selected_kernel_id": None,
+            "selected_kernel_node_id": None,
+            "selected_kernel_file": None,
+            "selected_kernel_source_kind": "missing",
+        }
+
+    candidates = [path.stem, path.parent.name]
+    kernel_id = None
+    kernel_node_id = None
+    for candidate in candidates:
+        match = re.fullmatch(r"kernel_(\d+)", str(candidate))
+        if match:
+            kernel_id = str(candidate)
+            kernel_node_id = int(match.group(1))
+            break
+
+    parts = set(path.parts)
+    source_kind = "unknown"
+    if "runtime_kernels" in parts:
+        source_kind = "deployment_runtime"
+    elif "trees" in parts and "kernels" in parts:
+        source_kind = "search_tree"
+    elif "generated" in parts and "individual_op_kernels" in parts:
+        source_kind = "generated_root"
+
+    return {
+        "selected_kernel_id": kernel_id or path.name,
+        "selected_kernel_node_id": kernel_node_id,
+        "selected_kernel_file": path.name,
+        "selected_kernel_source_kind": source_kind,
+    }
 
 
 def _resolve_kernel_path(raw_path: str, *, repo_root: Path, project_root: Path) -> Path:
@@ -108,6 +145,7 @@ def _normalize_selected_entry(
             else entry.get("benchmark_row_ref")
         ),
         "manual_override": bool(manual_override),
+        **_selected_kernel_identity(kernel_path),
     }
     return normalized
 
@@ -273,6 +311,10 @@ def build_cast_manifest_metadata(export_plan: dict[str, Any]) -> dict[str, Any]:
             continue
         selected_kernel_metadata[op_name] = {
             "candidate_id": entry.get("candidate_id"),
+            "selected_kernel_id": entry.get("selected_kernel_id"),
+            "selected_kernel_node_id": entry.get("selected_kernel_node_id"),
+            "selected_kernel_file": entry.get("selected_kernel_file"),
+            "selected_kernel_source_kind": entry.get("selected_kernel_source_kind"),
             "kernel_source_path": entry.get("kernel_source_path"),
             "kernel_source_repo_relpath": entry.get("kernel_source_repo_relpath"),
             "selected_source_hash": entry.get("selected_source_hash"),
@@ -292,6 +334,19 @@ def build_cast_manifest_metadata(export_plan: dict[str, Any]) -> dict[str, Any]:
         "selected_ops": list(export_plan.get("selected_op_list", []) or []),
         "selected_op_count": int(export_plan.get("selected_op_count", len(selected_kernel_metadata))),
         "selected_kernel_metadata": selected_kernel_metadata,
+        "selected_kernel_by_op": {
+            op_name: {
+                "selected_kernel_id": meta.get("selected_kernel_id"),
+                "selected_kernel_node_id": meta.get("selected_kernel_node_id"),
+                "selected_kernel_file": meta.get("selected_kernel_file"),
+                "selected_kernel_source_kind": meta.get("selected_kernel_source_kind"),
+                "kernel_source_repo_relpath": meta.get("kernel_source_repo_relpath"),
+                "selected_source_hash": meta.get("selected_source_hash"),
+                "evidence_tier": meta.get("evidence_tier"),
+                "candidate_id": meta.get("candidate_id"),
+            }
+            for op_name, meta in selected_kernel_metadata.items()
+        },
         "selected_kernel_map": dict(export_plan.get("selected_kernel_map", {}) or {}),
         "rejected_candidate_summary": dict(export_plan.get("rejected_candidate_summary", {}) or {}),
         "skipped_ops": dict(export_plan.get("skipped_ops", {}) or {}),
@@ -540,6 +595,7 @@ def export_cast_package(
 
         selection_entry = plan.get("selected_ops", {}).get(op_name, {})
         selected_manifest_ops[op_name] = selection_entry if isinstance(selection_entry, dict) else {}
+        op_kernel_identity = _selected_kernel_identity(kernel_path)
         ops_manifest.append(
             {
                 "name": op_name,
@@ -547,6 +603,8 @@ def export_cast_package(
                 "cuda_source": cu_path,
                 "wrapper": wrapper_path,
                 "precompiled": op_precompiled,
+                "selected_kernel_id": op_kernel_identity.get("selected_kernel_id"),
+                "selected_kernel_node_id": op_kernel_identity.get("selected_kernel_node_id"),
                 "selection_evidence": selected_manifest_ops[op_name],
             }
         )
@@ -573,6 +631,7 @@ def export_cast_package(
         "selected_op_count": manifest_selection_meta.get("selected_op_count", len(kernel_map)),
         "selected_kernel_map": manifest_selection_meta.get("selected_kernel_map", dict(kernel_map)),
         "selected_kernel_metadata": manifest_selection_meta.get("selected_kernel_metadata", selected_manifest_ops),
+        "selected_kernel_by_op": manifest_selection_meta.get("selected_kernel_by_op", {}),
         "export_paper_eligible": bool(plan.get("export_paper_eligible")),
         "rejected_candidate_summary": plan.get("rejected_candidate_summary", {}),
         "skipped_ops": plan.get("skipped_ops", {}),

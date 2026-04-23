@@ -3,8 +3,8 @@
 - Project ref: `project/test_qwen%20-%20NVIDIA%20GB10/`
 - Resolved project root: `/home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/test_qwen - NVIDIA GB10`
 - Selection policy: `auto_best_fastest_valid`
-- Exported CAST: `/home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/artifacts/qwen35a3b/qwen35a3b_auto_best_fastest_valid_d43a716_2026-04-21.cast`
-- CAST SHA256: `31b5f4dc79c160f8ac290b84e09487067c1f3b62ee0e83c02e208e9a42f3ea95`
+- Exported CAST: `/home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/artifacts/qwen35a3b/qwen35a3b_auto_best_fastest_valid_991ec49_2026-04-21.cast`
+- CAST SHA256: `9f93e01fda86a2efdc93378fa95811e97e372af9a6f576d7e5c916ae0590ba61`
 - Deployment-paper eligible: `False`
 - All selected kernels deployment-paper eligible: `True`
 - Used operator/micro-only evidence: `False`
@@ -28,7 +28,7 @@
 
 ## Preflight
 - Checksum verified: `True`
-- Loadability blockers: `weight_file missing from manifest; model_class missing from manifest; model_config.json missing and model_init_args empty`
+- Loadability blockers: `none recorded`
 
 ## Manifest Summary
 ```json

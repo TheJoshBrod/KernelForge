@@ -53,7 +53,7 @@ def _write_export_project(
     operator_kernel.parent.mkdir(parents=True, exist_ok=True)
     operator_kernel.write_text("// operator kernel\n", encoding="utf-8")
 
-    deployment_kernel = project_root / "benchmarks" / "runtime_kernels" / op_name / "kernel" / "kernel.cu"
+    deployment_kernel = project_root / "benchmarks" / "runtime_kernels" / op_name / "kernel_4" / "kernel.cu"
     deployment_kernel.parent.mkdir(parents=True, exist_ok=True)
     deployment_kernel.write_text("// deployment kernel\n", encoding="utf-8")
 
@@ -175,6 +175,9 @@ def test_manifest_records_selection_policy_and_evidence_tier(tmp_path: Path):
     assert manifest_meta["selection_policy"] == POLICY_AUTO_BEST_FASTEST_VALID
     assert manifest_meta["project_root"] == str(layout["project_root"].resolve())
     assert manifest_meta["selected_kernel_metadata"]["torch_nn_functional_linear"]["evidence_tier"] == "deployment"
+    assert manifest_meta["selected_kernel_metadata"]["torch_nn_functional_linear"]["selected_kernel_id"] == "kernel_4"
+    assert manifest_meta["selected_kernel_metadata"]["torch_nn_functional_linear"]["selected_kernel_node_id"] == 4
+    assert manifest_meta["selected_kernel_by_op"]["torch_nn_functional_linear"]["selected_kernel_id"] == "kernel_4"
     assert manifest_meta["selected_kernel_metadata"]["torch_nn_functional_linear"]["selected_source_hash"] == safe_sha256_path(
         layout["deployment_kernel"]
     )
@@ -227,6 +230,7 @@ def test_export_cast_package_and_inspect_round_trip(tmp_path: Path):
     assert inspected["checksum_verified"] is True
     assert inspected["selected_ops"] == ["torch_nn_functional_linear"]
     assert inspected["selected_kernel_metadata"]["torch_nn_functional_linear"]["evidence_tier"] == "deployment"
+    assert inspected["selected_kernel_by_op"]["torch_nn_functional_linear"]["selected_kernel_id"] == "kernel_4"
 
 
 def test_copy_cast_artifact_preserves_export(tmp_path: Path):

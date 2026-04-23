@@ -3,6 +3,16 @@
 import from react { useState }
 import from ..shared.MetricsAdapter { to_list, list_len, op_matches, to_num }
 
+def _index_list(count: int) -> list {
+    out = [];
+    idx = 0;
+    while idx < count {
+        out.push(idx);
+        idx = idx + 1;
+    }
+    return out;
+}
+
 def:pub WorkQueuePanel(props: any) -> Any {
     name = props.name;
     activeTasks = props.activeTasks;
@@ -83,7 +93,7 @@ def:pub WorkQueuePanel(props: any) -> Any {
     # ---- Starting placeholders: one per worker ----
     starting_placeholder_nodes = [];
     num_placeholders = startingWorkers if startingWorkers and startingWorkers > 0 else 1;
-    for wi in range(num_placeholders) {
+    for wi in _index_list(num_placeholders) {
         starting_placeholder_nodes.push(
             <div key={"starting-" + str(wi)} className="p-4 flex items-center gap-3 font-mono text-xs text-zinc-400">
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-orange)] animate-pulse flex-shrink-0"></span>
@@ -116,15 +126,16 @@ def:pub WorkQueuePanel(props: any) -> Any {
 
         track_nodes = [];
         steps = ["Generating", "Validating", "Benchmarking"] if tag == "[GEN]" else ["Generating", "Validating", "Profiling"];
+        step_indices = _index_list(list_len(steps));
 
         c_idx = -1;
-        for i in range(list_len(steps)) {
+        for i in step_indices {
             if steps[i] == c_step {
                 c_idx = i;
             }
         }
 
-        for i in range(list_len(steps)) {
+        for i in step_indices {
             s = steps[i];
             is_active = (i == c_idx);
             is_done = (c_step == "Done" or c_step == "Failed" or (c_idx > -1 and i < c_idx));

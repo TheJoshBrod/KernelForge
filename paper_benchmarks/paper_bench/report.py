@@ -176,6 +176,10 @@ def _artifact_export_selection_policy(artifact: BenchmarkArtifact) -> str | None
 def _artifact_selected_kernel_metadata(artifact: BenchmarkArtifact) -> dict[str, dict[str, Any]]:
     manifest = _artifact_cast_manifest(artifact)
     metadata = manifest.get("selected_kernel_metadata")
+    if isinstance(metadata, dict):
+        return dict(metadata)
+    details = artifact.details or {}
+    metadata = details.get("selected_kernel_metadata")
     return dict(metadata) if isinstance(metadata, dict) else {}
 
 

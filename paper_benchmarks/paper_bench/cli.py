@@ -11,7 +11,12 @@ from .cast_export import copy_cast_artifact, export_cast_package, inspect_cast_p
 from .kf_project import describe_project, find_project
 from .kf_runtime import load_cast_model
 from .llm_runner import load_prompt_records, run_llm_benchmark
-from .op_runner import load_operator_entries, resolve_operator_callable, run_operator_benchmark
+from .op_runner import (
+    load_operator_entries,
+    resolve_operator_callable,
+    resolve_project_operator_entries_dir,
+    run_operator_benchmark,
+)
 from .provenance import build_environment_artifact_fields, collect_common_fields, safe_sha256_path, utc_now_iso
 from .registry import (
     SyntheticWorkloadError,
@@ -86,6 +91,7 @@ def _parse_args() -> argparse.Namespace:
     run_ops.add_argument("--warmup-runs", type=int, default=1)
     run_ops.add_argument("--timed-runs", type=int, default=3)
     run_ops.add_argument("--device", default="cuda")
+    run_ops.add_argument("--project-ref")
     run_ops.add_argument("--compile-backend", default="inductor")
     run_ops.add_argument("--compile-mode")
     run_ops.add_argument("--compile-fullgraph", action="store_true")
@@ -291,6 +297,19 @@ def _prepare_ops_run_context(args: argparse.Namespace):
     requested_variants = _requested_op_variants(args)
     if Variant.kf_cast in requested_variants and not args.kernel_source_or_cast:
         raise ValueError("kf_cast operator benchmarking requires --kernel-source-or-cast")
+    project_details = _resolve_project_details(getattr(args, "project_ref", None))
+    if project_details:
+        canonical_entries_dir = resolve_project_operator_entries_dir(project_details["project_root"], args.op)
+        if canonical_entries_dir is None:
+            raise ValueError(
+                f"No captured operator entries for {args.op!r} were found under project {args.project_ref!r}"
+            )
+        requested_entries_dir = Path(args.entries_dir).expanduser().resolve()
+        if requested_entries_dir != canonical_entries_dir:
+            raise ValueError(
+                f"--entries-dir {requested_entries_dir} did not match canonical project entries "
+                f"{canonical_entries_dir} for {args.op!r} under {args.project_ref!r}"
+            )
 
     timestamp_utc = utc_now_iso()
     suite_id = f"operator_{args.op.replace('.', '_').replace('/', '_')}"
@@ -355,6 +374,15 @@ def _prepare_ops_run_context(args: argparse.Namespace):
         "fail_on_fallback": bool(args.kf_fail_on_fallback),
         "record_runtime_stats": bool(args.kf_record_runtime_stats),
     }
+    if project_details:
+        common["kf_settings"]["project_ref"] = str(args.project_ref)
+        common["kf_settings"]["project_root"] = project_details["project_root"]
+        common["kf_settings"]["project_export_candidate_paths"] = list(project_details["export_candidate_paths"])
+        common["kf_settings"]["project_op_benchmarks_path"] = project_details["benchmark_artifacts"]["op_benchmarks_path"]
+        common["kf_settings"]["project_qwen_tps_compare_path"] = project_details["benchmark_artifacts"]["qwen_tps_compare_path"]
+        common["kf_settings"]["project_cast_selection_policy"] = project_details["auto_best_fastest_valid"]["policy_name"]
+        common["kf_settings"]["project_selected_kernel_map"] = project_details["auto_best_fastest_valid"]["selected_kernel_map"]
+        common["kf_settings"]["project_export_paper_eligible"] = project_details["auto_best_fastest_valid"]["export_paper_eligible"]
     common["config_hashes"]["operator_suite"] = safe_sha256_path(suite_spec_path) or ""
     common["config_hashes"]["entry_set"] = entry_summary["entry_set_hash"]
 

@@ -272,6 +272,74 @@ def load_operator_entries(workload_path: str | Path, *, requested_op_name: str |
     return entries, summary
 
 
+def resolve_project_operator_entries_dir(project_root: str | Path, op_name: str) -> Path | None:
+    root = Path(project_root).expanduser().resolve()
+    entries_root = root / "io" / "individual_ops"
+    if not entries_root.exists():
+        return None
+    aliases = {_normalize_op_name(alias) for alias in kf_operator_aliases(op_name)}
+    matches = [
+        child.resolve()
+        for child in sorted(entries_root.iterdir())
+        if child.is_dir() and _normalize_op_name(child.name) in aliases
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        match_text = ", ".join(str(match) for match in matches)
+        raise ValueError(f"Ambiguous captured operator entry directories for {op_name!r}: {match_text}")
+    return matches[0]
+
+
+def resolve_project_operator_export_evidence(
+    project_ref: str,
+    op_name: str,
+    *,
+    search_roots: list[Path] | None = None,
+) -> dict[str, Any]:
+    from .kf_project import find_project, load_project_export_candidates
+
+    root = find_project(project_ref, search_roots=search_roots)
+    selection = load_project_export_candidates(root).get("auto_best_fastest_valid", {})
+    aliases = {_normalize_op_name(alias) for alias in kf_operator_aliases(op_name)}
+
+    def _match_key(mapping: dict[str, Any]) -> str | None:
+        matches = [key for key in sorted(mapping) if _normalize_op_name(key) in aliases]
+        if not matches:
+            return None
+        if len(matches) > 1:
+            joined = ", ".join(matches)
+            raise ValueError(f"Ambiguous auto_best_fastest_valid operator match for {op_name!r}: {joined}")
+        return matches[0]
+
+    selected_ops = selection.get("selected_ops") if isinstance(selection.get("selected_ops"), dict) else {}
+    rejected_candidates = (
+        selection.get("rejected_candidates")
+        if isinstance(selection.get("rejected_candidates"), dict)
+        else {}
+    )
+    skipped_ops = selection.get("skipped_ops") if isinstance(selection.get("skipped_ops"), dict) else {}
+
+    selected_key = _match_key(selected_ops)
+    rejected_key = _match_key(rejected_candidates)
+    skipped_key = _match_key(skipped_ops)
+    selected_candidate = (
+        dict(selected_ops[selected_key])
+        if selected_key and isinstance(selected_ops.get(selected_key), dict)
+        else None
+    )
+    return {
+        "project_ref": str(project_ref),
+        "project_root": str(root),
+        "selection_policy": str(selection.get("policy_name") or ""),
+        "export_paper_eligible": bool(selection.get("export_paper_eligible")),
+        "selected_op_name": selected_key,
+        "selected_candidate": selected_candidate,
+        "rejected_candidates": list(rejected_candidates.get(rejected_key, [])) if rejected_key else [],
+        "skipped_op": dict(skipped_ops.get(skipped_key, {})) if skipped_key and isinstance(skipped_ops.get(skipped_key), dict) else None,
+    }
+
+
 def _move_to_device(value: Any, device: str) -> Any:
     if torch.is_tensor(value):
         return value.to(device)
@@ -329,6 +397,70 @@ def hash_output(value: Any) -> str:
     if isinstance(value, dict):
         return _hash_json_payload(["dict", {str(key): hash_output(value[key]) for key in sorted(value.keys(), key=str)}])
     return _hash_json_payload(["scalar", value])
+
+
+def _tensor_error_summary(reference: Any, candidate: Any, *, prefix: str = "output") -> dict[str, Any] | None:
+    if torch.is_tensor(reference) and torch.is_tensor(candidate):
+        summary: dict[str, Any] = {
+            "path": prefix,
+            "kind": "tensor",
+            "reference_shape": list(reference.shape),
+            "candidate_shape": list(candidate.shape),
+            "reference_dtype": str(reference.dtype),
+            "candidate_dtype": str(candidate.dtype),
+        }
+        if reference.shape != candidate.shape:
+            summary["reason"] = "shape_mismatch"
+            return summary
+        if reference.dtype != candidate.dtype:
+            summary["reason"] = "dtype_mismatch"
+            return summary
+        diff = (reference - candidate).detach()
+        summary["reason"] = "tensor_mismatch"
+        summary["max_abs_diff"] = float(diff.abs().max().item())
+        summary["mean_abs_diff"] = float(diff.abs().mean().item())
+        summary["reference_hash"] = _hash_tensor(reference)
+        summary["candidate_hash"] = _hash_tensor(candidate)
+        return summary
+    if isinstance(reference, (list, tuple)) and isinstance(candidate, type(reference)):
+        if len(reference) != len(candidate):
+            return {
+                "path": prefix,
+                "kind": type(reference).__name__,
+                "reason": "length_mismatch",
+                "reference_length": len(reference),
+                "candidate_length": len(candidate),
+            }
+        for index, (ref_item, cand_item) in enumerate(zip(reference, candidate, strict=True)):
+            nested = _tensor_error_summary(ref_item, cand_item, prefix=f"{prefix}[{index}]")
+            if nested is not None:
+                return nested
+        return None
+    if isinstance(reference, dict) and isinstance(candidate, dict):
+        ref_keys = sorted(reference.keys(), key=str)
+        cand_keys = sorted(candidate.keys(), key=str)
+        if ref_keys != cand_keys:
+            return {
+                "path": prefix,
+                "kind": "dict",
+                "reason": "key_mismatch",
+                "reference_keys": [str(item) for item in ref_keys],
+                "candidate_keys": [str(item) for item in cand_keys],
+            }
+        for key in ref_keys:
+            nested = _tensor_error_summary(reference[key], candidate[key], prefix=f"{prefix}.{key}")
+            if nested is not None:
+                return nested
+        return None
+    if reference != candidate:
+        return {
+            "path": prefix,
+            "kind": "scalar",
+            "reason": "scalar_mismatch",
+            "reference": repr(reference),
+            "candidate": repr(candidate),
+        }
+    return None
 
 
 def _compare_outputs(reference: Any, candidate: Any, *, prefix: str = "output") -> tuple[CorrectnessStatus, str | None]:
@@ -490,6 +622,18 @@ def _default_kf_loader(
         kernel_path = cache_dir / kernel_rel
         if not kernel_path.exists():
             raise FileNotFoundError(kernel_path)
+        manifest_selection_meta = (
+            manifest.get("selected_kernel_metadata", {})
+            if isinstance(manifest.get("selected_kernel_metadata"), dict)
+            else {}
+        )
+        op_selection_meta = (
+            manifest_selection_meta.get(str(selected_op["name"]))
+            if isinstance(manifest_selection_meta.get(str(selected_op["name"])), dict)
+            else {}
+        )
+        source_hash = sha256_file(kernel_path)
+        selected_source_hash = str(op_selection_meta.get("selected_source_hash") or source_hash)
 
         gpu_sm = "sm_{0}{1}".format(*torch.cuda.get_device_capability())
         load_mode = "jit"
@@ -530,16 +674,38 @@ def _default_kf_loader(
             "claim_scope": "deployment_operator",
             "operator_runtime_label": "deployment/operator",
             "runtime_patch_enabled": False,
+            "project_ref": (
+                str(manifest.get("project_ref"))
+                if str(manifest.get("project_ref") or "").strip()
+                else str(kf_settings.get("project_ref") or "")
+            ) or None,
+            "selection_policy": str(manifest.get("selection_policy") or "") or None,
+            "cast_manifest": manifest,
             "selected_ops": [str(selected_op["name"])],
+            "selected_kernel_metadata": {
+                str(selected_op["name"]): (
+                    dict(op_selection_meta)
+                    if op_selection_meta
+                    else {
+                        "candidate_id": f"{selected_op['name']}:deployment",
+                        "kernel_source_path": str(kernel_path),
+                        "selected_source_hash": selected_source_hash,
+                        "evidence_tier": "deployment",
+                        "selection_reason": "cast manifest selected operator",
+                        "benchmark_reference": {},
+                    }
+                )
+            },
             "loaded_kernels": [
                 {
                     "op_name": str(selected_op["name"]),
                     "load_mode": load_mode,
                     "kernel_source_path": str(kernel_path),
-                    "kernel_source_hash": sha256_file(kernel_path),
+                    "kernel_source_hash": source_hash,
                 }
             ],
-            "kernel_source_hashes": {str(kernel_rel): sha256_file(kernel_path)},
+            "kernel_source_hashes": {str(kernel_rel): source_hash},
+            "selected_source_hashes": {str(selected_op["name"]): selected_source_hash},
             "precompiled_vs_jit_path": {str(selected_op["name"]): load_mode},
             "kernel_launches_attempted": 0,
             "kernel_launches_succeeded": 0,
@@ -553,6 +719,7 @@ def _default_kf_loader(
 
     resolved_artifact, resolved_kind = _resolve_direct_source_file(target_path)
     artifact_hash = sha256_path(target_path)
+    resolved_source_hash = sha256_path(resolved_artifact)
     load_started = time.perf_counter()
     if resolved_kind == "precompiled":
         ext = _load_extension_from_shared_object(f"kf_direct_{target_path.stem}_{artifact_hash[:8]}", resolved_artifact)
@@ -565,6 +732,38 @@ def _default_kf_loader(
         jit_compile_time_ms = (time.perf_counter() - load_started) * 1000.0
         precompiled_load_time_ms = 0.0
     runner = _make_ext_launch_callable(ext, kernel_path=resolved_artifact if resolved_kind == "source" else None, reference_callable=reference_callable)
+    alias_name = kf_operator_aliases(op_name)[-1]
+    project_ref = str(kf_settings.get("project_ref") or "").strip() or None
+    project_selected_kernel_metadata: dict[str, Any] = {}
+    export_selection_match = False
+    selection_policy = None
+    if project_ref:
+        project_evidence = resolve_project_operator_export_evidence(project_ref, op_name)
+        selection_policy = project_evidence.get("selection_policy") or None
+        selected_candidate = project_evidence.get("selected_candidate")
+        selected_op_name = project_evidence.get("selected_op_name")
+        if selected_candidate and selected_op_name:
+            project_selected_kernel_metadata = {str(selected_op_name): dict(selected_candidate)}
+            selected_path = str(selected_candidate.get("kernel_source_path") or "").strip()
+            selected_hash = str(selected_candidate.get("selected_source_hash") or "").strip()
+            if selected_path:
+                export_selection_match = Path(selected_path).resolve(strict=False) == Path(resolved_artifact).resolve(strict=False)
+            if not export_selection_match and selected_hash:
+                export_selection_match = selected_hash == resolved_source_hash
+    selected_kernel_metadata = (
+        project_selected_kernel_metadata
+        if export_selection_match and project_selected_kernel_metadata
+        else {
+            alias_name: {
+                "candidate_id": f"{alias_name}:direct_source",
+                "kernel_source_path": str(resolved_artifact),
+                "selected_source_hash": resolved_source_hash,
+                "evidence_tier": "micro_only",
+                "selection_reason": "direct source operator replay",
+                "benchmark_reference": {},
+            }
+        }
+    )
     meta = {
         "load_time_ms": float(max(jit_compile_time_ms, precompiled_load_time_ms)),
         "runtime_load_time_ms": float(max(jit_compile_time_ms, precompiled_load_time_ms)),
@@ -580,17 +779,25 @@ def _default_kf_loader(
         "claim_scope": "micro_operator",
         "operator_runtime_label": "micro/operator",
         "runtime_patch_enabled": False,
-        "selected_ops": [kf_operator_aliases(op_name)[-1]],
+        "project_ref": project_ref,
+        "selection_policy": selection_policy,
+        "selected_ops": [alias_name],
+        "selected_kernel_metadata": selected_kernel_metadata,
+        "project_selected_kernel_metadata": project_selected_kernel_metadata,
+        "export_selection_match": export_selection_match,
         "loaded_kernels": [
             {
-                "op_name": kf_operator_aliases(op_name)[-1],
+                "op_name": alias_name,
                 "load_mode": load_mode,
                 "kernel_source_path": resolved_artifact,
-                "kernel_source_hash": sha256_path(resolved_artifact),
+                "kernel_source_hash": resolved_source_hash,
             }
         ],
-        "kernel_source_hashes": hash_visible_paths([resolved_artifact]) if resolved_kind == "source" else {},
-        "precompiled_vs_jit_path": {kf_operator_aliases(op_name)[-1]: load_mode},
+        "kernel_source_hashes": (
+            hash_visible_paths([resolved_artifact]) if resolved_kind == "source" else {str(resolved_artifact): resolved_source_hash}
+        ),
+        "selected_source_hashes": {alias_name: resolved_source_hash},
+        "precompiled_vs_jit_path": {alias_name: load_mode},
         "kernel_launches_attempted": 0,
         "kernel_launches_succeeded": 0,
         "kernel_launches_failed": 0,
@@ -668,11 +875,16 @@ def _build_stage_common_details(
         details.update(
             {
                 "selected_ops": kf_meta.get("selected_ops", []),
+                "selected_kernel_metadata": kf_meta.get("selected_kernel_metadata", {}),
                 "loaded_kernels": kf_meta.get("loaded_kernels", []),
                 "precompiled_vs_jit_path": kf_meta.get("precompiled_vs_jit_path", {}),
                 "kernel_source_hashes": kf_meta.get("kernel_source_hashes", {}),
                 "selected_source_hashes": kf_meta.get("selected_source_hashes", {}),
                 "project_ref": kf_meta.get("project_ref"),
+                "project_selected_kernel_metadata": kf_meta.get("project_selected_kernel_metadata", {}),
+                "export_selection_match": kf_meta.get("export_selection_match"),
+                "export_selection_policy": kf_meta.get("selection_policy"),
+                "cast_manifest": kf_meta.get("cast_manifest"),
             }
         )
     return details
@@ -959,47 +1171,10 @@ def run_operator_benchmark(
             ],
         )
 
-    warmup_samples: list[float] = []
-    warmup_records: list[dict[str, Any]] = []
-    for entry in entries:
-        d_args = _move_to_device(entry.args, device)
-        d_kwargs = _move_to_device(entry.kwargs, device)
-        entry_warmups: list[float] = []
-        for _ in range(int(suite.warmup_count)):
-            elapsed_ms, _, _ = _timed_invoke(device, lambda bound_args=d_args, bound_kwargs=d_kwargs: _invoke(candidate_func, bound_args, bound_kwargs))
-            entry_warmups.append(float(elapsed_ms))
-            warmup_samples.append(float(elapsed_ms))
-        if entry_warmups:
-            warmup_records.append(
-                {
-                    "entry_name": entry.entry_name,
-                    "entry_hash": entry.entry_hash,
-                    "latency_samples_ms": entry_warmups,
-                    "metadata": entry.metadata,
-                }
-            )
-
-    if warmup_samples:
-        _write_stage_artifact(
-            layout,
-            common,
-            variant=variant,
-            stage=Stage.warmup,
-            samples_ms=warmup_samples,
-            warmup_count=int(suite.warmup_count),
-            timed_run_count=len(warmup_samples),
-            correctness_status=CorrectnessStatus.not_applicable if variant != Variant.eager else stage_correctness_status,
-            correctness_message=None if variant != Variant.eager else stage_correctness_message,
-            compile_time_ms=compile_time_ms,
-            steady_state_time_ms=sum(warmup_samples) / len(warmup_samples),
-            fallback_count=fallback_count,
-            kernel_hit_count=kernel_hit_count,
-            details=_build_stage_common_details(suite, entry_summary, variant=variant, kf_meta=kf_meta),
-            sample_records=warmup_records,
-        )
-
     raw_rows: list[dict[str, Any]] = []
     operator_samples: list[float] = []
+    warmup_samples: list[float] = []
+    warmup_records: list[dict[str, Any]] = []
     per_entry_records: list[dict[str, Any]] = []
     failure_messages: list[str] = []
     error_count = 0
@@ -1012,12 +1187,63 @@ def run_operator_benchmark(
         with torch.inference_mode():
             reference_output = _invoke(eager_func, d_args, d_kwargs)
         reference_output_hash = hash_output(reference_output)
+        precheck_status = CorrectnessStatus.reference if variant == Variant.eager else CorrectnessStatus.passed
+        precheck_message: str | None = None
+        precheck_output_hash = reference_output_hash if variant == Variant.eager else None
+        precheck_error_summary: dict[str, Any] | None = None
+        if variant != Variant.eager:
+            _, precheck_output, precheck_error = _timed_invoke(
+                device,
+                lambda bound_args=d_args, bound_kwargs=d_kwargs: _invoke(candidate_func, bound_args, bound_kwargs),
+            )
+            if precheck_error is not None:
+                precheck_status = CorrectnessStatus.failed
+                precheck_message = (
+                    f"pre-timing correctness failed for {entry.entry_name}: "
+                    f"{type(precheck_error).__name__}: {precheck_error}"
+                )
+                precheck_error_summary = {
+                    "path": "output",
+                    "kind": "exception",
+                    "reason": "exception",
+                    "error_type": type(precheck_error).__name__,
+                    "error_message": str(precheck_error),
+                }
+            else:
+                precheck_output_hash = hash_output(precheck_output)
+                precheck_status, precheck_message = _compare_outputs(reference_output, precheck_output)
+                if precheck_status != CorrectnessStatus.passed:
+                    precheck_error_summary = _tensor_error_summary(reference_output, precheck_output)
 
         entry_samples: list[float] = []
         output_hashes: list[str | None] = []
         entry_failures: list[str] = []
         timed_results: list[dict[str, Any]] = []
+        entry_warmups: list[float] = []
         per_entry_correct = True
+        if precheck_status == CorrectnessStatus.failed:
+            per_entry_correct = False
+            error_count += 1
+            failure_messages.append(precheck_message or f"pre-timing correctness failed for {entry.entry_name}")
+            entry_failures.append(precheck_message or f"pre-timing correctness failed for {entry.entry_name}")
+        for _ in range(int(suite.warmup_count)):
+            elapsed_ms, _, _ = _timed_invoke(
+                device,
+                lambda bound_args=d_args, bound_kwargs=d_kwargs: _invoke(candidate_func, bound_args, bound_kwargs),
+            )
+            entry_warmups.append(float(elapsed_ms))
+            warmup_samples.append(float(elapsed_ms))
+        if entry_warmups:
+            warmup_records.append(
+                {
+                    "entry_name": entry.entry_name,
+                    "entry_hash": entry.entry_hash,
+                    "latency_samples_ms": entry_warmups,
+                    "metadata": entry.metadata,
+                    "precheck_status": precheck_status.value,
+                }
+            )
+
         for run_index in range(int(suite.timed_run_count)):
             elapsed_ms, candidate_output, error = _timed_invoke(
                 device,
@@ -1045,12 +1271,20 @@ def run_operator_benchmark(
                         "output_hash": None,
                         "correctness_status": CorrectnessStatus.failed.value,
                         "correctness_message": message,
+                        "tensor_error_summary": {
+                            "path": "output",
+                            "kind": "exception",
+                            "reason": "exception",
+                            "error_type": type(error).__name__,
+                            "error_message": str(error),
+                        },
                     }
                 )
                 continue
 
             candidate_hash = hash_output(candidate_output)
             output_hashes.append(candidate_hash)
+            tensor_error_summary = None
             if variant == Variant.eager:
                 status, message = reference_correctness()
                 correctness_pass_count += 1
@@ -1063,6 +1297,7 @@ def run_operator_benchmark(
                 else:
                     per_entry_correct = False
                     error_count += 1
+                    tensor_error_summary = _tensor_error_summary(reference_output, candidate_output)
                     failure_messages.append(
                         f"timed run {run_index} correctness mismatch for {entry.entry_name}: {message}"
                     )
@@ -1082,6 +1317,7 @@ def run_operator_benchmark(
                     "output_hash": candidate_hash,
                     "correctness_status": status.value,
                     "correctness_message": message,
+                    "tensor_error_summary": tensor_error_summary,
                 }
             )
 
@@ -1091,6 +1327,11 @@ def run_operator_benchmark(
             "entry_hash": entry.entry_hash,
             "recorded_op_name": entry.recorded_op_name,
             "metadata": entry.metadata,
+            "precheck_status": precheck_status.value,
+            "precheck_message": precheck_message,
+            "precheck_output_hash": precheck_output_hash,
+            "precheck_tensor_error_summary": precheck_error_summary,
+            "warmup_latency_samples_ms": entry_warmups,
             "latency_samples_ms": entry_samples,
             "latency_summary": build_latency_summary(entry_samples).model_dump(mode="json"),
             "correctness_status": (
@@ -1105,6 +1346,25 @@ def run_operator_benchmark(
         }
         per_entry_records.append(per_entry_record)
         raw_rows.append(per_entry_record)
+
+    if warmup_samples:
+        _write_stage_artifact(
+            layout,
+            common,
+            variant=variant,
+            stage=Stage.warmup,
+            samples_ms=warmup_samples,
+            warmup_count=int(suite.warmup_count),
+            timed_run_count=len(warmup_samples),
+            correctness_status=CorrectnessStatus.not_applicable if variant != Variant.eager else stage_correctness_status,
+            correctness_message=None if variant != Variant.eager else stage_correctness_message,
+            compile_time_ms=compile_time_ms,
+            steady_state_time_ms=sum(warmup_samples) / len(warmup_samples),
+            fallback_count=fallback_count,
+            kernel_hit_count=kernel_hit_count,
+            details=_build_stage_common_details(suite, entry_summary, variant=variant, kf_meta=kf_meta),
+            sample_records=warmup_records,
+        )
 
     raw_name = f"{variant.value}_operator_measurements.json"
     (layout.raw_dir / raw_name).write_text(json.dumps(raw_rows, indent=2), encoding="utf-8")
@@ -1128,6 +1388,10 @@ def run_operator_benchmark(
         {
             "error_count": error_count,
             "correctness_pass_count": correctness_pass_count,
+            "precheck_required": variant != Variant.eager,
+            "precheck_failures": sum(
+                1 for record in per_entry_records if record.get("precheck_status") == CorrectnessStatus.failed.value
+            ),
             "timed_run_count_per_entry": int(suite.timed_run_count),
             "warmup_count_per_entry": int(suite.warmup_count),
             "speedup_claim_safe": correctness_status in {CorrectnessStatus.reference, CorrectnessStatus.passed},
