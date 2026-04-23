@@ -3,6 +3,7 @@ src/llm_tools.py
 Generalized LLM tooling for handling model agnostic conversations and tooling.
 """
 import json
+import os
 from typing import Any
 from typing import Dict
 from typing import List
@@ -217,13 +218,21 @@ class GenModel:
         try:
             self._openai_client = OpenAI()
             messages = self.__to_openai_messages()
+            reasoning_effort = (
+                os.environ.get("OPENAI_REASONING_EFFORT")
+                or os.environ.get("KFORGE_OPENAI_REASONING_EFFORT")
+                or "medium"
+            ).strip()
+            create_kwargs = {
+                "model": model,
+                "messages": messages,
+                "max_completion_tokens": 4096,
+            }
+            if reasoning_effort:
+                create_kwargs["reasoning_effort"] = reasoning_effort
 
             # Make the API call
-            response = self._openai_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_completion_tokens=4096
-            )
+            response = self._openai_client.chat.completions.create(**create_kwargs)
 
             usage = getattr(response, "usage", None)
             if usage is not None:
