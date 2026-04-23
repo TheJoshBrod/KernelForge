@@ -31,10 +31,14 @@ def _now_iso() -> str:
 
 def _resolve_device() -> str:
     target = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
-    if target == "mps" and hasattr(torch, "backends") and torch.backends.mps.is_available():
-        return "mps"
-    if target in {"gpu", "cuda"} and torch.cuda.is_available():
-        return "cuda"
+    if target == "mps":
+        if hasattr(torch, "backends") and torch.backends.mps.is_available():
+            return "mps"
+        raise RuntimeError("KFORGE_TARGET_DEVICE=mps but torch.backends.mps.is_available() returned False")
+    if target in {"gpu", "cuda"}:
+        if torch.cuda.is_available():
+            return "cuda"
+        raise RuntimeError("KFORGE_TARGET_DEVICE=cuda but torch.cuda.is_available() returned False")
     if target == "cpu":
         return "cpu"
     if hasattr(torch, "backends") and torch.backends.mps.is_available():
