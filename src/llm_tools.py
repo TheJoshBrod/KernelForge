@@ -216,7 +216,15 @@ class GenModel:
         """
 
         try:
-            self._openai_client = OpenAI()
+            try:
+                timeout = float(os.environ.get("OPENAI_TIMEOUT", "600") or "600")
+            except ValueError:
+                timeout = 600.0
+            try:
+                max_retries = int(os.environ.get("OPENAI_MAX_RETRIES", "5") or "5")
+            except ValueError:
+                max_retries = 5
+            self._openai_client = OpenAI(timeout=timeout, max_retries=max_retries)
             messages = self.__to_openai_messages()
             reasoning_effort = (
                 os.environ.get("OPENAI_REASONING_EFFORT")

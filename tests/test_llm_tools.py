@@ -33,7 +33,7 @@ def test_openai_generation_defaults_to_medium_reasoning_effort(monkeypatch) -> N
     completions = _FakeChatCompletions()
     monkeypatch.delenv("OPENAI_REASONING_EFFORT", raising=False)
     monkeypatch.delenv("KFORGE_OPENAI_REASONING_EFFORT", raising=False)
-    monkeypatch.setattr(llm_tools, "OpenAI", lambda: _FakeOpenAI(completions))
+    monkeypatch.setattr(llm_tools, "OpenAI", lambda **_: _FakeOpenAI(completions))
 
     response = GenModel("system").chat("build a kernel", "gpt-5")
 
@@ -44,7 +44,7 @@ def test_openai_generation_defaults_to_medium_reasoning_effort(monkeypatch) -> N
 def test_openai_generation_allows_reasoning_effort_override(monkeypatch) -> None:
     completions = _FakeChatCompletions()
     monkeypatch.setenv("OPENAI_REASONING_EFFORT", "low")
-    monkeypatch.setattr(llm_tools, "OpenAI", lambda: _FakeOpenAI(completions))
+    monkeypatch.setattr(llm_tools, "OpenAI", lambda **_: _FakeOpenAI(completions))
 
     GenModel("system").chat("build a kernel", "gpt-5")
 
