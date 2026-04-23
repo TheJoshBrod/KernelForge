@@ -2,6 +2,12 @@
 import os
 import torch
 
+from src.optimizer.benchmarking.profile_entries import (
+    descriptor_meta,
+    is_recompute_output,
+    is_tensor_descriptor,
+)
+
 
 def get_system_prompt() -> str:
     """Returns system prompt for generator
@@ -114,9 +120,27 @@ def _tensor_stats(value: torch.Tensor) -> dict:
     }
 
 
-def _summarize_value(value):
+def _tensor_like_stats(value) -> dict | None:
     if torch.is_tensor(value):
         return _tensor_stats(value)
+    if is_tensor_descriptor(value) or is_recompute_output(value):
+        meta = dict(descriptor_meta(value))
+        if not meta:
+            return None
+        target = _target_device()
+        if target:
+            meta["device"] = target
+        meta.setdefault("contiguous", False)
+        meta.setdefault("requires_grad", False)
+        meta["representation"] = "recompute_output" if is_recompute_output(value) else value.get("kind", "tensor_descriptor")
+        return meta
+    return None
+
+
+def _summarize_value(value):
+    tensor_stats = _tensor_like_stats(value)
+    if tensor_stats is not None:
+        return tensor_stats
     if isinstance(value, (list, tuple)):
         return {
             "type": type(value).__name__,
@@ -187,20 +211,23 @@ def generate_function_spec_from_calls(call_list, function_name):
                     "scalar_values": [],
                 }
 
-            # Record Type
-            param_stats[name]["types"].add(type(value))
+            tensor_stats = _tensor_like_stats(value)
 
-            # Record Shape (for Tensors)
-            if isinstance(value, torch.Tensor):
+            # Record Type
+            param_stats[name]["types"].add(torch.Tensor if tensor_stats is not None else type(value))
+
+            # Record Shape (for Tensors and v2 tensor descriptors)
+            if tensor_stats is not None:
                 target = _target_device()
-                device = target or str(value.device)
-                param_stats[name]["shapes"].append(list(value.shape))
-                param_stats[name]["strides"].append(list(value.stride()))
-                param_stats[name]["dtypes"].add(str(value.dtype))
+                device = target or str(tensor_stats.get("device", "unknown"))
+                param_stats[name]["shapes"].append(list(tensor_stats.get("shape", [])))
+                param_stats[name]["strides"].append(list(tensor_stats.get("stride", [])))
+                param_stats[name]["dtypes"].add(str(tensor_stats.get("dtype", "unknown")))
                 param_stats[name]["devices"].add(device)
-                param_stats[name]["contiguous"].add(bool(value.is_contiguous()))
-                param_stats[name]["requires_grad"].add(bool(value.requires_grad))
-                param_stats[name]["numel"].add(int(value.numel()))
+                param_stats[name]["contiguous"].add(bool(tensor_stats.get("contiguous", False)))
+                param_stats[name]["requires_grad"].add(bool(tensor_stats.get("requires_grad", False)))
+                if tensor_stats.get("numel") is not None:
+                    param_stats[name]["numel"].add(int(tensor_stats.get("numel", 0)))
 
             # Record Length (for Lists/Tuples)
             elif isinstance(value, (list, tuple)):

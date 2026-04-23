@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import inspect
 import json
@@ -16,6 +17,12 @@ import torch
 import torch.nn.functional as F
 
 from .paths import project_dir_for_name
+from .profile_entries import (
+    SCHEMA_VERSION,
+    contains_tensor_descriptor,
+    recompute_output_descriptor,
+    tensor_descriptor,
+)
 from .state import write_json_file
 
 SKIP_FUNCTIONS = {
@@ -92,11 +99,21 @@ DEFAULT_SKIP_PREFIXES = {"rand", "randn", "randint"}
 PROFILE_ALLOW_OPS: set[str] = set()
 PROFILE_SKIP_OPS: set[str] = set(DEFAULT_SKIP_OPS)
 PROFILE_SKIP_PREFIXES: set[str] = set(DEFAULT_SKIP_PREFIXES)
+PROFILE_MAX_TENSOR_VALUE_ELEMENTS = 50_000_000
+PROFILE_MAX_SIGNATURES_PER_OP = 0
+PROFILE_MAX_EXAMPLES_PER_SIGNATURE = 1
 
 calls: dict[str, list[dict[str, Any]]] = {}
 _wrapped: set[Any] = set()
 ENABLE_WRAPPING = True
 skipped_counts: dict[str, int] = {}
+capture_representation_counts: dict[str, int] = {}
+captured_signature_counts: dict[str, int] = {}
+_signature_examples: dict[tuple[str, str], int] = {}
+_op_signatures: dict[str, set[str]] = {}
+_param_by_id: dict[int, str] = {}
+_buffer_by_id: dict[int, str] = {}
+_tensor_name_by_storage: dict[tuple[Any, ...], tuple[str, str]] = {}
 
 
 def _serialize(v):
@@ -107,6 +124,169 @@ def _serialize(v):
     if isinstance(v, dict):
         return {k: _serialize(x) for k, x in v.items()}
     return v  # torch.dtype, torch.device, int, float, bool, None, etc.
+
+
+def _record_capture(kind: str) -> None:
+    capture_representation_counts[kind] = capture_representation_counts.get(kind, 0) + 1
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
+def _tensor_storage_key(tensor: torch.Tensor) -> tuple[Any, ...] | None:
+    try:
+        storage = tensor.untyped_storage()
+        return (
+            str(tensor.device),
+            int(storage.data_ptr()),
+            int(storage.nbytes()),
+        )
+    except Exception:
+        return None
+
+
+def _register_model_tensors(model: torch.nn.Module) -> None:
+    _param_by_id.clear()
+    _buffer_by_id.clear()
+    _tensor_name_by_storage.clear()
+
+    for name, tensor in model.named_parameters(recurse=True):
+        _param_by_id[id(tensor)] = name
+        storage_key = _tensor_storage_key(tensor)
+        if storage_key is not None:
+            _tensor_name_by_storage[storage_key] = ("param_ref", name)
+
+    for name, tensor in model.named_buffers(recurse=True):
+        _buffer_by_id[id(tensor)] = name
+        storage_key = _tensor_storage_key(tensor)
+        if storage_key is not None:
+            _tensor_name_by_storage[storage_key] = ("buffer_ref", name)
+
+
+def _lookup_tensor_ref(tensor: torch.Tensor) -> tuple[str, str] | None:
+    if id(tensor) in _param_by_id:
+        return "param_ref", _param_by_id[id(tensor)]
+    if id(tensor) in _buffer_by_id:
+        return "buffer_ref", _buffer_by_id[id(tensor)]
+    storage_key = _tensor_storage_key(tensor)
+    if storage_key is not None:
+        return _tensor_name_by_storage.get(storage_key)
+    return None
+
+
+def _seed_for_tensor(kind: str, name: str, key: str, tensor: torch.Tensor) -> int:
+    meta = {
+        "shape": list(tensor.shape),
+        "stride": list(tensor.stride()),
+        "dtype": str(tensor.dtype),
+        "device": str(tensor.device),
+    }
+    raw = json.dumps([kind, name, key, meta], sort_keys=True)
+    return int(hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16], 16) % (2**63 - 1)
+
+
+def _capture_value(value: Any, *, key: str, role: str) -> Any:
+    if torch.is_tensor(value):
+        tensor_ref = _lookup_tensor_ref(value)
+        if tensor_ref and int(value.numel()) > PROFILE_MAX_TENSOR_VALUE_ELEMENTS:
+            kind, name = tensor_ref
+            _record_capture(kind)
+            return tensor_descriptor(
+                kind,
+                value,
+                name=name,
+                role=role,
+                key=key,
+                seed=_seed_for_tensor(kind, name, key, value),
+            )
+
+        if int(value.numel()) > PROFILE_MAX_TENSOR_VALUE_ELEMENTS:
+            _record_capture("tensor_spec")
+            return tensor_descriptor(
+                "tensor_spec",
+                value,
+                name=role,
+                role=role,
+                key=key,
+                seed=_seed_for_tensor("tensor_spec", role, key, value),
+            )
+
+        _record_capture("tensor_value")
+        return value.detach().cpu()
+
+    if isinstance(value, (list, tuple)):
+        return type(value)(
+            _capture_value(item, key=key, role=f"{role}[{idx}]")
+            for idx, item in enumerate(value)
+        )
+    if isinstance(value, dict):
+        return {
+            item_key: _capture_value(item, key=key, role=f"{role}.{item_key}")
+            for item_key, item in value.items()
+        }
+    return value
+
+
+def _shape_signature_value(value: Any) -> Any:
+    if torch.is_tensor(value):
+        return {
+            "tensor": True,
+            "shape": list(value.shape),
+            "stride": list(value.stride()),
+            "dtype": str(value.dtype),
+            "device": str(value.device),
+        }
+    if isinstance(value, (list, tuple)):
+        return [_shape_signature_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(k): _shape_signature_value(v) for k, v in sorted(value.items(), key=lambda item: str(item[0]))}
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return type(value).__name__
+
+
+def _shape_signature(key: str, args: tuple[Any, ...], kwargs: dict[str, Any], output: Any) -> str:
+    payload = {
+        "function": key,
+        "args": _shape_signature_value(args),
+        "kwargs": _shape_signature_value(kwargs),
+        "output": _shape_signature_value(output),
+    }
+    return json.dumps(payload, sort_keys=True, default=str)
+
+
+def _should_capture_signature(key: str, signature_key: str) -> bool:
+    examples_key = (key, signature_key)
+    current_examples = _signature_examples.get(examples_key, 0)
+    if PROFILE_MAX_EXAMPLES_PER_SIGNATURE > 0 and current_examples >= PROFILE_MAX_EXAMPLES_PER_SIGNATURE:
+        return False
+
+    op_signatures = _op_signatures.setdefault(key, set())
+    if signature_key not in op_signatures:
+        if PROFILE_MAX_SIGNATURES_PER_OP > 0 and len(op_signatures) >= PROFILE_MAX_SIGNATURES_PER_OP:
+            return False
+        op_signatures.add(signature_key)
+        captured_signature_counts[key] = len(op_signatures)
+
+    _signature_examples[examples_key] = current_examples + 1
+    return True
+
+
+def _value_tensor_too_large(value: Any) -> bool:
+    if torch.is_tensor(value):
+        return int(value.numel()) > PROFILE_MAX_TENSOR_VALUE_ELEMENTS
+    if isinstance(value, (list, tuple)):
+        return any(_value_tensor_too_large(item) for item in value)
+    if isinstance(value, dict):
+        return any(_value_tensor_too_large(item) for item in value.values())
+    return False
 
 
 # Known signatures for C-extension ops that lack Python-inspectable signatures.
@@ -151,6 +331,20 @@ _KNOWN_SIGS: dict[str, dict] = {  # noqa: E501  (line-length; values kept readab
     "torch.nn.functional.adaptive_max_pool2d": {
         "params": ["input", "output_size", "return_indices"],
         "defaults": {"return_indices": False},
+    },
+    "torch.nn.functional.embedding": {
+        "params": ["input", "weight", "padding_idx", "max_norm", "norm_type", "scale_grad_by_freq", "sparse"],
+        "defaults": {
+            "padding_idx": None,
+            "max_norm": None,
+            "norm_type": 2.0,
+            "scale_grad_by_freq": False,
+            "sparse": False,
+        },
+    },
+    "torch.nn.functional.grouped_mm": {
+        "params": ["mat_a", "mat_b", "offs", "bias", "out_dtype"],
+        "defaults": {"offs": None, "bias": None, "out_dtype": None},
     },
 }
 
@@ -220,9 +414,22 @@ def _normalize_op_name(full_key: str) -> str:
 
 def _load_profile_filters(config: dict[str, Any]) -> None:
     global PROFILE_ALLOW_OPS, PROFILE_SKIP_OPS, PROFILE_SKIP_PREFIXES
+    global PROFILE_MAX_TENSOR_VALUE_ELEMENTS, PROFILE_MAX_SIGNATURES_PER_OP, PROFILE_MAX_EXAMPLES_PER_SIGNATURE
     PROFILE_ALLOW_OPS = set()
     PROFILE_SKIP_OPS = set(DEFAULT_SKIP_OPS)
     PROFILE_SKIP_PREFIXES = set(DEFAULT_SKIP_PREFIXES)
+    PROFILE_MAX_TENSOR_VALUE_ELEMENTS = _env_int(
+        "KFORGE_PROFILE_MAX_TENSOR_VALUE_ELEMENTS",
+        50_000_000,
+    )
+    PROFILE_MAX_SIGNATURES_PER_OP = _env_int(
+        "KFORGE_PROFILE_MAX_SIGNATURES_PER_OP",
+        0,
+    )
+    PROFILE_MAX_EXAMPLES_PER_SIGNATURE = _env_int(
+        "KFORGE_PROFILE_MAX_EXAMPLES_PER_SIGNATURE",
+        1,
+    )
 
     profile_cfg = config.get("profile") if isinstance(config, dict) else None
     if isinstance(profile_cfg, dict):
@@ -232,6 +439,25 @@ def _load_profile_filters(config: dict[str, Any]) -> None:
         PROFILE_ALLOW_OPS = {str(op).lower() for op in allow_ops if op}
         PROFILE_SKIP_OPS.update({str(op).lower() for op in skip_ops if op})
         PROFILE_SKIP_PREFIXES.update({str(op).lower() for op in skip_prefixes if op})
+
+        def _profile_cfg_int(name: str, default: int) -> int:
+            try:
+                return int(profile_cfg.get(name, default))
+            except Exception:
+                return default
+
+        PROFILE_MAX_TENSOR_VALUE_ELEMENTS = _profile_cfg_int(
+            "max_tensor_value_elements",
+            PROFILE_MAX_TENSOR_VALUE_ELEMENTS,
+        )
+        PROFILE_MAX_SIGNATURES_PER_OP = _profile_cfg_int(
+            "max_signatures_per_op",
+            PROFILE_MAX_SIGNATURES_PER_OP,
+        )
+        PROFILE_MAX_EXAMPLES_PER_SIGNATURE = _profile_cfg_int(
+            "max_examples_per_signature",
+            PROFILE_MAX_EXAMPLES_PER_SIGNATURE,
+        )
 
 
 def _should_skip(full_key: str) -> bool:
@@ -296,7 +522,11 @@ def wrap_function(module, func_name: str) -> None:
             skipped_counts[key] = skipped_counts.get(key, 0) + 1
             return output
 
-        ser_output = _serialize(output)
+        signature_key = _shape_signature(key, args, kwargs, output)
+        if not _should_capture_signature(key, signature_key):
+            skipped_counts[f"{key}:signature_cap"] = skipped_counts.get(f"{key}:signature_cap", 0) + 1
+            return output
+
         calls.setdefault(key, [])
 
         # Try to resolve full parameter set including defaults.
@@ -306,24 +536,57 @@ def wrap_function(module, func_name: str) -> None:
             try:
                 bound = _func_sig.bind(*args, **kwargs)
                 bound.apply_defaults()
-                resolved_kwargs = {k: _serialize(v) for k, v in bound.arguments.items()}
+                resolved_kwargs = {
+                    k: _capture_value(v, key=key, role=k)
+                    for k, v in bound.arguments.items()
+                }
+                output_needs_recompute = contains_tensor_descriptor(resolved_kwargs) or _value_tensor_too_large(output)
+                captured_output = (
+                    recompute_output_descriptor(key, output)
+                    if output_needs_recompute
+                    else _capture_value(output, key=key, role="output")
+                )
                 calls[key].append({
+                    "schema_version": SCHEMA_VERSION,
                     "function_name": key,
                     "args": [],
                     "kwargs": resolved_kwargs,
-                    "output": ser_output,
+                    "output": captured_output,
                     "signature": {"params": _sig_params, "defaults": _sig_defaults},
+                    "shape_signature": signature_key,
+                    "capture_policy": "default_tensor_policy_v2",
                 })
                 return output
             except TypeError:
                 pass  # bind failed — fall through to original
 
         # Original recording path (fallback)
+        captured_args = [
+            _capture_value(arg, key=key, role=f"arg{idx}")
+            for idx, arg in enumerate(args)
+        ]
+        captured_kwargs = {
+            k: _capture_value(v, key=key, role=k)
+            for k, v in kwargs.items()
+        }
+        output_needs_recompute = (
+            contains_tensor_descriptor(captured_args)
+            or contains_tensor_descriptor(captured_kwargs)
+            or _value_tensor_too_large(output)
+        )
+        captured_output = (
+            recompute_output_descriptor(key, output)
+            if output_needs_recompute
+            else _capture_value(output, key=key, role="output")
+        )
         calls[key].append({
+            "schema_version": SCHEMA_VERSION,
             "function_name": key,
-            "args": [_serialize(a) for a in args],
-            "kwargs": {k: _serialize(v) for k, v in kwargs.items()},
-            "output": ser_output,
+            "args": captured_args,
+            "kwargs": captured_kwargs,
+            "output": captured_output,
+            "shape_signature": signature_key,
+            "capture_policy": "default_tensor_policy_v2",
         })
         return output
 
@@ -534,7 +797,11 @@ def move_to_device(obj, device: str):
 
 
 def get_samples(module, max_batches: int, validation_path: str | None):
-    if hasattr(module, "sample_inputs"):
+    if validation_path and hasattr(module, "get_dataloader"):
+        data = _call_with_optional_path(module.get_dataloader, validation_path)
+    elif validation_path and hasattr(module, "get_validation_dataloader"):
+        data = _call_with_optional_path(module.get_validation_dataloader, validation_path)
+    elif hasattr(module, "sample_inputs"):
         data = module.sample_inputs()
     elif hasattr(module, "get_sample_inputs"):
         data = module.get_sample_inputs()
@@ -563,10 +830,20 @@ def get_samples(module, max_batches: int, validation_path: str | None):
 
 def _resolve_device() -> str:
     target = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
-    if target == "mps" and hasattr(torch, "backends") and torch.backends.mps.is_available():
-        return "mps"
-    if target in {"gpu", "cuda"} and torch.cuda.is_available():
-        return "cuda"
+    if target == "cpu":
+        return "cpu"
+    if target == "mps":
+        if hasattr(torch, "backends") and torch.backends.mps.is_available():
+            return "mps"
+        raise RuntimeError("KFORGE_TARGET_DEVICE=mps was requested, but MPS is not available")
+    if target in {"gpu", "cuda"}:
+        if torch.cuda.is_available():
+            return "cuda"
+        raise RuntimeError("KFORGE_TARGET_DEVICE=cuda was requested, but CUDA is not available")
+    if target == "triton":
+        if torch.cuda.is_available():
+            return "cuda"
+        raise RuntimeError("KFORGE_TARGET_DEVICE=triton was requested, but CUDA is not available")
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -669,6 +946,7 @@ def main() -> int:
     model = load_model(module, weights_path, device)
     model.to(device)
     model.eval()
+    _register_model_tensors(model)
 
     validation_raw = config.get("validation_dir") or config.get("validation_set") or ""
     validation_path = None
@@ -722,10 +1000,18 @@ def main() -> int:
     summary_path = out_dir.parent / "summary.json"
     summary = {
         "project": project_dir.name,
+        "schema_version": SCHEMA_VERSION,
         "device": device,
         "op_counts": op_totals,
         "op_profile_ms": op_profile_ms,
         "skipped_counts": skipped_counts,
+        "capture_representation_counts": capture_representation_counts,
+        "captured_signature_counts": captured_signature_counts,
+        "profile_limits": {
+            "max_tensor_value_elements": PROFILE_MAX_TENSOR_VALUE_ELEMENTS,
+            "max_signatures_per_op": PROFILE_MAX_SIGNATURES_PER_OP,
+            "max_examples_per_signature": PROFILE_MAX_EXAMPLES_PER_SIGNATURE,
+        },
         "skip_filters": {
             "allow_ops": sorted(PROFILE_ALLOW_OPS),
             "skip_ops": sorted(PROFILE_SKIP_OPS),

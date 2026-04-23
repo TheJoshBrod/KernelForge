@@ -21,6 +21,7 @@ from .harness import (
     sync_device as benchmark_sync_device,
 )
 from .paths import find_latest_optimized_dir, project_dir_for_name
+from .profile_entries import load_profile_entry
 from .state import read_json_file, write_json_file
 
 
@@ -132,9 +133,12 @@ def _load_entries(io_dir: Path, max_entries: int) -> list[tuple[str, Any, dict[s
     files = sorted(io_dir.glob("entry_*.pt"))[:max_entries]
     for pt in files:
         try:
-            payload = torch.load(pt, map_location="cpu", weights_only=False)
-        except TypeError:
-            payload = torch.load(pt, map_location="cpu")
+            payload = load_profile_entry(
+                pt,
+                map_location="cpu",
+                device="cpu",
+                recompute_output=False,
+            )
         except Exception:
             continue
         if not isinstance(payload, dict):

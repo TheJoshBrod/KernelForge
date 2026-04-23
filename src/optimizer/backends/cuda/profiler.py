@@ -36,6 +36,7 @@ from torch.utils.cpp_extension import load_inline
 from src.optimizer.config.settings import settings
 from src.optimizer.core.types import GPUSpecs
 from src.optimizer.profiling import get_device_specs as get_profiled_device_specs
+from src.optimizer.benchmarking.profile_entries import load_profile_entry
 
 # ******************
 #  HELPER FUNCTIONS
@@ -215,7 +216,12 @@ def load_batch(pt_files: list) -> list[tuple[list[any], dict[str, any]]]:
     device = _target_device()
     for pt_file in pt_files:
         try:
-            entry = torch.load(pt_file, map_location='cpu')
+            entry = load_profile_entry(
+                pt_file,
+                map_location='cpu',
+                device=device,
+                recompute_output=False,
+            )
 
             # Move to target device
             args = [
@@ -385,8 +391,16 @@ def profile_remote_kernel(ssh_config: dict, paths: dict[str, Path], baseline: bo
     try:
         worker_path = Path(__file__).parent / "remote_worker.py"
         loader_path = Path(__file__).parent / "loader.py"
+        profile_entries_path = Path(__file__).resolve().parents[2] / "benchmarking" / "profile_entries.py"
         
-        worker = RemoteWorkerClient(ssh_config, worker_path, {str(loader_path): "loader.py"})
+        worker = RemoteWorkerClient(
+            ssh_config,
+            worker_path,
+            {
+                str(loader_path): "loader.py",
+                str(profile_entries_path): "profile_entries.py",
+            },
+        )
         
         # 1. Prepare Code
         kernel_path = paths["tmp_dir"] / "kernel.cu"

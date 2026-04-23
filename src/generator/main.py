@@ -30,6 +30,7 @@ import src.generator.prompts.prompts as prompts
 import src.generator.templates as templates
 from src.optimizer.backends.cuda import CUDABackend
 from src.optimizer.backends.triton import TritonBackend
+from src.optimizer.benchmarking.profile_entries import load_profile_entry
 from src.optimizer.pipeline import update_queue_state
 from src.progress import update_job_progress, wait_if_paused, check_cancelled
 from src.llm.usage_db import log_llm_call
@@ -55,6 +56,17 @@ def _success_filename() -> str:
     """Backend-specific success marker, e.g. 'success.cuda', 'success.triton'."""
     device = os.environ.get("KFORGE_TARGET_DEVICE", "cuda").strip().lower()
     return f"success.{device}"
+
+
+def _profile_entry_device() -> str:
+    target = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
+    if target in {"gpu", "cuda", "triton"}:
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if target == "mps":
+        return "mps" if hasattr(torch, "backends") and torch.backends.mps.is_available() else "cpu"
+    if target == "cpu":
+        return "cpu"
+    return "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def _validate_kernel(cu_code, entry_file, log_file_loc, tmpdir, ssh_config=None):
@@ -601,8 +613,12 @@ def process_function(
     """
 
     # Load first call to set up context for profiling
-    first_call = torch.load(
-        entry_files[0], map_location='cpu', weights_only=False)
+    first_call = load_profile_entry(
+        entry_files[0],
+        map_location='cpu',
+        device=_profile_entry_device(),
+        recompute_output=False,
+    )
     first_args = first_call.get("args", [])
     first_kwargs = first_call.get("kwargs", {})
 
@@ -640,8 +656,11 @@ def process_function(
     call_list = []
     for entry_file in entry_files:
         try:
-            entry = torch.load(
-                entry_file, map_location='cpu', weights_only=False)
+            entry = load_profile_entry(
+                entry_file,
+                map_location='cpu',
+                materialize=False,
+            )
             call_list.append(entry)
         except Exception as e:
             print(f"Error loading {entry_file}: {e}")

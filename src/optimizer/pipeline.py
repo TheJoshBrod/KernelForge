@@ -23,6 +23,7 @@ from src.optimizer.core.backend import Backend
 from src.optimizer.backends.cuda import CUDABackend
 from src.optimizer.backends.metal import MetalBackend
 from src.optimizer.backends.triton import TritonBackend
+from src.optimizer.benchmarking.profile_entries import load_profile_entry
 
 
 def _repo_root() -> Path:
@@ -330,7 +331,11 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         call_list = []
         for entry_file in entry_files:
             try:
-                entry = torch.load(entry_file, map_location='cpu', weights_only=False)
+                entry = load_profile_entry(
+                    entry_file,
+                    map_location='cpu',
+                    materialize=False,
+                )
                 call_list.append(entry)
             except Exception as e:
                 print(f"\t\tWarning: Error loading {entry_file}: {e}")
