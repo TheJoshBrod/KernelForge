@@ -8,6 +8,7 @@ from typing import Optional
 from typing import Tuple
 
 from src.llm_tools import GenModel
+from src.optimizer.usage_logger import LLMUsageLogger
 from src.config import ensure_llm_config
 from src.optimizer.core.types import GPUSpecs
 from src.optimizer.config.settings import settings
@@ -149,6 +150,12 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
     Returns:
         Tuple[str, bool, str]: _description_
     """
+    _attempt = paths.get("attempt", 0)
+    llm.set_usage_context(
+        step_type="generation" if _attempt == 0 else "correction",
+        iteration=paths.get("iteration"),
+        attempt=int(_attempt) + 1,
+    )
     response = llm.chat(msg, model)
     feedback, cu_code = extract_feedback_and_code(response)
 
@@ -223,6 +230,10 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
     # Attempt initial CUDA code generation
     sys_prompt = backend.get_sys_prompt()
     llm: GenModel = GenModel(sys_prompt)
+    try:
+        llm.set_usage_logger(LLMUsageLogger(paths["proj_dir"]))
+    except Exception:
+        pass
     msg = backend.generate_optimization_prompt(
         gpu_specs, best_kernel_code, improvement_log, ancestor_codes, failed_siblings)
 
@@ -247,6 +258,7 @@ def generate(backend: Backend, best_kernel_code: str, gpu_specs: GPUSpecs, impro
     print(f"\t\tSaved prompt to: {prompt_dump_path}")
 
     paths["attempt"] = 0
+    paths["iteration"] = next_node_id
     if status_callback:
         status_callback("Generating", 1)
     attempts_used = 1
