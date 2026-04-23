@@ -355,23 +355,34 @@ def save_entries(func_name: str, entries: list[dict[str, Any]], base_dir: str, m
             if n.startswith("entry_") and n.endswith(".pt")
         ]
     )
-    if existing_count > max_per_op:
+    if existing_count >= max_per_op:
         return
 
     for idx, entry in enumerate(entries):
-        if existing_count + idx > max_per_op:
+        if existing_count + idx >= max_per_op:
             return
         file_path = os.path.join(func_dir, f"entry_{existing_count + idx:06d}.pt")
         torch.save(entry, file_path)
 
 
-def flush_calls(base_dir: str) -> dict[str, int]:
+def flush_calls(base_dir: str, max_per_op: int = 200) -> dict[str, int]:
     op_counts: dict[str, int] = {}
     for func_name, entries in calls.items():
-        save_entries(func_name, entries, base_dir)
+        save_entries(func_name, entries, base_dir, max_per_op=max_per_op)
         op_counts[func_name] = op_counts.get(func_name, 0) + len(entries)
     calls.clear()
     return op_counts
+
+
+def _profile_max_per_op() -> int:
+    raw = os.environ.get("KFORGE_PROFILE_MAX_PER_OP", "").strip()
+    if not raw:
+        return 200
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return 200
+    return max(parsed, 1)
 
 
 def import_model_module(model_path: Path):
@@ -701,6 +712,7 @@ def main() -> int:
         samples = [_default_sample_from_model(model)]
     op_totals: dict[str, int] = {}
     op_profile_ms: dict[str, float] = {}
+    max_per_op = _profile_max_per_op()
 
     with torch.no_grad():
         for sample in samples:
@@ -712,7 +724,7 @@ def main() -> int:
             except TypeError:
                 model(*args_tuple)
 
-            batch_counts = flush_calls(str(out_dir))
+            batch_counts = flush_calls(str(out_dir), max_per_op=max_per_op)
             for k, v in batch_counts.items():
                 op_totals[k] = op_totals.get(k, 0) + v
 
