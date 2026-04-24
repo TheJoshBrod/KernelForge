@@ -221,8 +221,14 @@ Use this layout for collection artifacts:
 
 ```text
 paper_benchmarks/data_collection/
+├── collect_zero_shot.py
 ├── docs/
 │   └── README.md
+├── artifacts/
+│   └── <model_slug>/<run_id>/
+│       ├── <model_slug>__zero_shot__full_forge.cast
+│       ├── <model_slug>__zero_shot__mixed_forge.cast
+│       └── collection_manifest.json
 ├── models/
 │   ├── gemma4-e2b-gb10.jsonl
 │   └── qwen35a3b-gb10.jsonl
@@ -265,6 +271,39 @@ paper_benchmarks/runs/<run_id>/
 
 The collection process reads from both locations and appends normalized records
 to the single model JSONL file.
+
+## Zero-Shot Collection Helper
+
+After zero-shot generation is finished, use:
+
+```bash
+python -m paper_benchmarks.data_collection.collect_zero_shot \
+  --project <project_name> \
+  --model-slug <model_slug>
+```
+
+The helper refuses to run while `state.json` marks generation as active unless
+`--allow-running` is passed. It does not start generation or optimization.
+
+For the zero-shot arm it exports and records:
+- `full_forge`: every available successful zero-shot Forge kernel is forced
+  into the cast; profiled ops without a generated kernel are recorded as
+  missing full coverage
+- `mixed_forge`: the normal `auto_best_fastest_valid` policy is used, so ops
+  that should remain native/Torch fallback are explicitly recorded as fallback
+
+The helper appends these record types to the model JSONL file:
+- `model_project_snapshot`
+- `profile_snapshot`
+- `forge_operator_benchmark`
+- `generation_attempt`
+- `llm_usage`
+- `cast_export` for full Forge
+- `cast_export` for mixed Forge
+- `arm_summary`
+
+Every cast record includes `dispatch_by_profiled_op` so it is explicit which
+profiled ops used a Forge kernel and which used Torch fallback.
 
 ## Collection Checks
 
