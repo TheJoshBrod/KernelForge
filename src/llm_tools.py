@@ -138,11 +138,19 @@ class GenModel:
             try:
                 u = getattr(message, "usage", None)
                 if u is not None:
-                    self._record_usage("anthropic", model, {
+                    usage = {
                         "input_tokens": getattr(u, "input_tokens", 0) or 0,
                         "output_tokens": getattr(u, "output_tokens", 0) or 0,
                         "reasoning_tokens": 0,
-                    })
+                    }
+                    self.last_usage = {
+                        "provider": "anthropic",
+                        "model": model,
+                        "input_tokens": int(usage["input_tokens"] or 0),
+                        "output_tokens": int(usage["output_tokens"] or 0),
+                        "reasoning_tokens": int(usage["reasoning_tokens"] or 0),
+                    }
+                    self._record_usage("anthropic", model, usage)
             except Exception:
                 pass
 

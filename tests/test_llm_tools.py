@@ -29,6 +29,26 @@ class _FakeOpenAI:
         )
 
 
+class _FakeAnthropicMessages:
+    def create(self, **kwargs):
+        usage = types.SimpleNamespace(input_tokens=13, output_tokens=8)
+        content = [types.SimpleNamespace(text="// claude kernel")]
+        return types.SimpleNamespace(content=content, usage=usage)
+
+
+class _FakeAnthropic:
+    def __init__(self) -> None:
+        self.messages = _FakeAnthropicMessages()
+
+
+class _FakeUsageLogger:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def log(self, **kwargs) -> None:
+        self.calls.append(kwargs)
+
+
 def test_openai_generation_defaults_to_medium_reasoning_effort(monkeypatch) -> None:
     completions = _FakeChatCompletions()
     monkeypatch.delenv("OPENAI_REASONING_EFFORT", raising=False)
@@ -49,3 +69,38 @@ def test_openai_generation_allows_reasoning_effort_override(monkeypatch) -> None
     GenModel("system").chat("build a kernel", "gpt-5")
 
     assert completions.kwargs["reasoning_effort"] == "low"
+
+
+def test_anthropic_generation_sets_last_usage_and_logs_tokens(monkeypatch) -> None:
+    monkeypatch.setattr(
+        llm_tools.anthropic,
+        "Anthropic",
+        lambda **_: _FakeAnthropic(),
+    )
+    logger = _FakeUsageLogger()
+    model = GenModel("system")
+    model.set_usage_logger(logger)
+    model.set_usage_context(step_type="generation", iteration=0, attempt=1)
+
+    response = model.chat("build a kernel", "claude-opus-4-7")
+
+    assert response == "// claude kernel"
+    assert model.last_usage == {
+        "provider": "anthropic",
+        "model": "claude-opus-4-7",
+        "input_tokens": 13,
+        "output_tokens": 8,
+        "reasoning_tokens": 0,
+    }
+    assert logger.calls == [
+        {
+            "step_type": "generation",
+            "iteration": 0,
+            "attempt": 1,
+            "provider": "anthropic",
+            "model": "claude-opus-4-7",
+            "input_tokens": 13,
+            "output_tokens": 8,
+            "reasoning_tokens": 0,
+        }
+    ]
