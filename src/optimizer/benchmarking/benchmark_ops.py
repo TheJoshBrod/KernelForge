@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,7 @@ from .harness import (
     DEFAULT_TIMED_RUNS,
     DEFAULT_WARMUP_RUNS,
     benchmark_entry_calls,
+    summarize_entry_results,
     sync_device as benchmark_sync_device,
 )
 from .paths import find_latest_optimized_dir, project_dir_for_name
@@ -28,12 +31,34 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _ensure_process_bin_on_path() -> None:
+    path_parts = os.environ.get("PATH", "").split(os.pathsep)
+    candidates = [Path(sys.executable).parent, Path(sys.executable).resolve().parent]
+    try:
+        import ninja
+
+        ninja_bin = getattr(ninja, "BIN_DIR", None)
+        if ninja_bin:
+            candidates.append(Path(str(ninja_bin)))
+    except Exception:
+        pass
+    for bin_dir in candidates:
+        bin_text = str(bin_dir) if bin_dir else ""
+        if bin_text and bin_text not in path_parts:
+            os.environ["PATH"] = bin_text + os.pathsep + os.environ.get("PATH", "")
+            path_parts.insert(0, bin_text)
+
+
 def _resolve_device() -> str:
     target = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
-    if target == "mps" and hasattr(torch, "backends") and torch.backends.mps.is_available():
-        return "mps"
-    if target in {"gpu", "cuda"} and torch.cuda.is_available():
-        return "cuda"
+    if target == "mps":
+        if hasattr(torch, "backends") and torch.backends.mps.is_available():
+            return "mps"
+        raise RuntimeError("KFORGE_TARGET_DEVICE=mps but torch.backends.mps.is_available() returned False")
+    if target in {"gpu", "cuda"}:
+        if torch.cuda.is_available():
+            return "cuda"
+        raise RuntimeError("KFORGE_TARGET_DEVICE=cuda but torch.cuda.is_available() returned False")
     if target == "cpu":
         return "cpu"
     if hasattr(torch, "backends") and torch.backends.mps.is_available():
@@ -92,6 +117,17 @@ def _entry_signature(entries: list[tuple[str, Any, dict[str, Any]]]) -> str:
     return json.dumps(payload, sort_keys=True)
 
 
+def _entry_signature_from_files(entry_files: list[Path]) -> str:
+    if not entry_files:
+        return "empty"
+    entries: list[tuple[str, Any, dict[str, Any]]] = []
+    for pt in entry_files[:3]:
+        loaded = _load_entry_file(pt)
+        if loaded is not None:
+            entries.append(loaded)
+    return _entry_signature(entries)
+
+
 def _runtime_fingerprint(device: str) -> str:
     payload = {
         "device": device,
@@ -127,24 +163,53 @@ def _ops_from_csv(raw: str) -> list[str]:
     return out
 
 
+def _normalize_profile_call_args(payload: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
+    args = list(payload.get("args") or [])
+    kwargs = dict(payload.get("kwargs") or {})
+    sig = payload.get("signature") or {}
+    params = sig.get("params") if isinstance(sig, dict) else []
+    defaults = sig.get("defaults") if isinstance(sig, dict) else {}
+    if not params or not kwargs:
+        return args, kwargs
+
+    remaining = dict(kwargs)
+    normalized = list(args)
+    for name in params[len(normalized):]:
+        if name in remaining:
+            normalized.append(remaining.pop(name))
+        elif isinstance(defaults, dict) and name in defaults:
+            normalized.append(defaults[name])
+    return normalized, remaining
+
+
 def _load_entries(io_dir: Path, max_entries: int) -> list[tuple[str, Any, dict[str, Any]]]:
     entries: list[tuple[str, Any, dict[str, Any]]] = []
-    files = sorted(io_dir.glob("entry_*.pt"))[:max_entries]
-    for pt in files:
-        try:
-            payload = torch.load(pt, map_location="cpu", weights_only=False)
-        except TypeError:
-            payload = torch.load(pt, map_location="cpu")
-        except Exception:
-            continue
-        if not isinstance(payload, dict):
-            continue
-        args = payload.get("args", [])
-        kwargs = payload.get("kwargs", {})
-        if kwargs is None:
-            kwargs = {}
-        entries.append((pt.name, args, kwargs))
+    for pt in _selected_entry_files(io_dir, max_entries):
+        loaded = _load_entry_file(pt)
+        if loaded is not None:
+            entries.append(loaded)
     return entries
+
+
+def _selected_entry_files(io_dir: Path | None, max_entries: int) -> list[Path]:
+    if io_dir is None:
+        return []
+    return sorted(io_dir.glob("entry_*.pt"))[:max_entries]
+
+
+def _load_entry_file(pt: Path) -> tuple[str, Any, dict[str, Any]] | None:
+    try:
+        payload = torch.load(pt, map_location="cpu", weights_only=False)
+    except TypeError:
+        payload = torch.load(pt, map_location="cpu")
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    args, kwargs = _normalize_profile_call_args(payload)
+    if kwargs is None:
+        kwargs = {}
+    return pt.name, args, kwargs
 
 
 def _get_pytorch_func(op_name: str):
@@ -193,13 +258,62 @@ def _measure_pytorch(
         d_kwargs = _move_to_device(kwargs, device)
 
         def invoke(bound_args=d_args, bound_kwargs=d_kwargs):
-            return _run_call(func, bound_args, bound_kwargs)
+            with torch.no_grad():
+                return _run_call(func, bound_args, bound_kwargs)
 
         entry_calls.append((entry_file, invoke))
 
     return benchmark_entry_calls(
         entry_calls,
         device=device,
+        warmup_runs=DEFAULT_WARMUP_RUNS,
+        timed_runs=DEFAULT_TIMED_RUNS,
+    )
+
+
+def _measure_pytorch_files(
+    func,
+    entry_files: list[Path],
+    device: str,
+) -> dict[str, Any]:
+    if not entry_files:
+        return benchmark_entry_calls([], device=device)
+
+    entry_results: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    target = (device or "cpu").strip().lower()
+
+    for pt in entry_files:
+        loaded = _load_entry_file(pt)
+        if loaded is None:
+            errors.append({"entry_file": pt.name, "error": "failed to load replay entry"})
+            continue
+        entry_file, args, kwargs = loaded
+        d_args = _move_to_device(args, device)
+        d_kwargs = _move_to_device(kwargs, device)
+
+        def invoke(bound_args=d_args, bound_kwargs=d_kwargs):
+            with torch.no_grad():
+                return _run_call(func, bound_args, bound_kwargs)
+
+        stats = benchmark_entry_calls(
+            [(entry_file, invoke)],
+            device=device,
+            warmup_runs=DEFAULT_WARMUP_RUNS,
+            timed_runs=DEFAULT_TIMED_RUNS,
+        )
+        entry_results.extend(stats.get("entry_results") or [])
+        errors.extend(stats.get("errors") or [])
+
+        del args, kwargs, d_args, d_kwargs, loaded
+        benchmark_sync_device(target)
+        if target == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    return summarize_entry_results(
+        entry_results,
+        errors=errors,
+        device=target,
         warmup_runs=DEFAULT_WARMUP_RUNS,
         timed_runs=DEFAULT_TIMED_RUNS,
     )
@@ -273,6 +387,70 @@ def _coerce_cached_measurement(value: Any) -> dict[str, Any] | None:
         "warmup_runs": int(value.get("warmup_runs", DEFAULT_WARMUP_RUNS)),
         "timed_runs": int(value.get("timed_runs", DEFAULT_TIMED_RUNS)),
     }
+
+
+def _looks_like_failed_zero_measurement(measurement: dict[str, Any], entry_count: int) -> bool:
+    if entry_count <= 0:
+        return False
+    try:
+        ms = float(measurement.get("median_time_ms") or measurement.get("mean_time_ms") or 0.0)
+    except Exception:
+        ms = 0.0
+    if ms > 0.0:
+        return False
+    if measurement.get("entry_latencies_ms") or measurement.get("entry_results"):
+        return False
+    try:
+        measured_entries = int(measurement.get("entry_count") or 0)
+    except Exception:
+        measured_entries = 0
+    return measured_entries > 0
+
+
+def _sha256_file(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _resolve_best_kernel_source(op_dir: Path) -> tuple[Path | None, float | None]:
+    db_file = op_dir / "nodes.db"
+    if not db_file.exists():
+        return None, None
+    try:
+        import sqlite3 as _sqlite3
+
+        conn = _sqlite3.connect(str(db_file))
+        row = conn.execute(
+            """
+            SELECT id, code, timestamp
+            FROM nodes
+            WHERE value IS NOT NULL AND value > 0
+            ORDER BY value ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        conn.close()
+        if not row:
+            return None, None
+        node_id = int(row[0])
+        code_rel = str(row[1] or "").strip()
+        timestamp = float(row[2]) if row[2] is not None else None
+        if code_rel:
+            candidate = (op_dir.parent / code_rel).resolve()
+            if candidate.exists():
+                return candidate, timestamp
+        for suffix in (".cu", ".py", ".metal", ".so"):
+            candidate = op_dir / "kernels" / f"kernel_{node_id}{suffix}"
+            if candidate.exists():
+                return candidate.resolve(), timestamp
+    except Exception:
+        return None, None
+    return None, None
 
 
 def _read_best_kernel_ms(op_dir: Path) -> tuple[float | None, str, str]:
@@ -461,6 +639,7 @@ def main() -> int:
     parser.add_argument("--max-entries", type=int, default=50)
     parser.add_argument("--ops", default="")
     args = parser.parse_args()
+    _ensure_process_bin_on_path()
 
     project_dir = project_dir_for_name(args.project)
     bench_dir = project_dir / "benchmarks"
@@ -596,62 +775,78 @@ def main() -> int:
                 f"Benchmarking {op_name} ({idx + 1}/{total_ops})",
             )
             op_dir = op_dirs.get(op_name)
-            entries = _load_entries(op_dir, args.max_entries) if op_dir else []
+            entry_files = _selected_entry_files(op_dir, args.max_entries) if op_dir else []
             func = _get_pytorch_func(op_name)
 
-            entry_sig = _entry_signature(entries) if entries else "summary_only"
+            entry_sig = _entry_signature_from_files(entry_files) if entry_files else "summary_only"
             cache_key = (
                 f"{runtime_fingerprint}:{op_name}:{entry_sig}:"
                 f"warmup={DEFAULT_WARMUP_RUNS},runs={DEFAULT_TIMED_RUNS}"
             )
             pytorch_measurement = cache.get(cache_key)
             baseline_source = "cache" if pytorch_measurement is not None else ""
+            if (
+                pytorch_measurement is not None
+                and _looks_like_failed_zero_measurement(pytorch_measurement, len(entry_files))
+            ):
+                pytorch_measurement = None
+                baseline_source = ""
             if pytorch_measurement is None:
                 pytorch_measurement = {
                     "median_time_ms": 0.0,
-                    "entry_files": [entry_file for entry_file, _, _ in entries],
+                    "entry_files": [pt.name for pt in entry_files],
                     "entry_latencies_ms": [],
                     "entry_results": [],
-                    "entry_count": len(entries),
+                    "entry_count": len(entry_files),
                     "errors": [],
                     "warmup_runs": DEFAULT_WARMUP_RUNS,
                     "timed_runs": DEFAULT_TIMED_RUNS,
                 }
-                if func and entries:
+                if func and entry_files:
                     try:
-                        pytorch_measurement = _measure_pytorch(func, entries, device)
+                        pytorch_measurement = _measure_pytorch_files(func, entry_files, device)
                         baseline_source = "measured"
                     except Exception as e:
                         errors.append(f"{op_name}: pytorch benchmark failed: {e}")
                         baseline_source = "error"
                 else:
                     baseline_source = "unavailable"
-                cache[cache_key] = pytorch_measurement
+                if baseline_source == "error":
+                    cache.pop(cache_key, None)
+                else:
+                    cache[cache_key] = pytorch_measurement
 
             pytorch_ms = float(pytorch_measurement.get("median_time_ms") or pytorch_measurement.get("mean_time_ms") or 0.0)
             benchmarked_entry_files = pytorch_measurement.get("entry_files") or [
-                entry_file for entry_file, _, _ in entries
+                pt.name for pt in entry_files
             ]
             benchmarked_entry_count = int(
                 pytorch_measurement.get("entry_count") or len(benchmarked_entry_files)
             )
             pytorch_entry_latencies = pytorch_measurement.get("entry_latencies_ms") or []
 
-            count = op_counts.get(op_name, len(entries))
+            count = op_counts.get(op_name, len(entry_files))
             try:
                 count = int(count)
             except Exception:
-                count = len(entries)
+                count = len(entry_files)
 
             kernel_ms = None
             kernel_status = "missing"
             backend = ""
             kernel_estimated = False
+            kernel_source_path: Path | None = None
+            kernel_source_hash: str | None = None
+            kernel_source_origin = ""
             generated_kernel_profiled = False
             kernel_entry_latencies = []
             kernel_benchmarked_entry_files = []
             if optimized_root:
                 kernel_ms, kernel_status, backend = _read_best_kernel_ms(optimized_root / op_name)
+                kernel_source_path, _ = _resolve_best_kernel_source(optimized_root / op_name)
+                if kernel_source_path is not None:
+                    kernel_source_hash = _sha256_file(kernel_source_path)
+                    kernel_source_origin = "optimized_tree"
             else:
                 kernel_status = "missing_optimized_dir"
 
@@ -685,12 +880,26 @@ def main() -> int:
                     ) or []
                     if generated_backend:
                         backend = generated_backend
+                    generated_kernel_path = project_dir / "kernels" / "generated" / "individual_op_kernels" / op_name / (
+                        "kernel.py" if generated_backend == "triton" else "kernel.cu"
+                    )
+                    if generated_kernel_path.exists():
+                        kernel_source_path = generated_kernel_path.resolve()
+                        kernel_source_hash = _sha256_file(kernel_source_path)
+                        kernel_source_origin = "generated_root"
                 elif generated_status == "generated_profile_error_ninja" and pytorch_ms > 0.0:
                     kernel_ms = float(pytorch_ms)
                     kernel_status = "ok"
                     kernel_estimated = True
                     if generated_backend and not backend:
                         backend = generated_backend
+                    generated_kernel_path = project_dir / "kernels" / "generated" / "individual_op_kernels" / op_name / (
+                        "kernel.py" if generated_backend == "triton" else "kernel.cu"
+                    )
+                    if generated_kernel_path.exists():
+                        kernel_source_path = generated_kernel_path.resolve()
+                        kernel_source_hash = _sha256_file(kernel_source_path)
+                        kernel_source_origin = "generated_root_estimated"
                     errors.append(
                         f"{op_name}: generated kernel profiling unavailable (install ninja for direct kernel benchmarking)"
                     )
@@ -741,6 +950,10 @@ def main() -> int:
                 row["backend"] = backend
             if kernel_estimated:
                 row["kernel_estimated"] = True
+            if kernel_source_path is not None:
+                row["kernel_source_path"] = str(kernel_source_path)
+                row["kernel_source_hash"] = kernel_source_hash
+                row["kernel_source_origin"] = kernel_source_origin
             if pytorch_ms and kernel_ms:
                 row["speedup"] = float(pytorch_ms / kernel_ms) if kernel_ms > 0 else None
             results_by_op[op_name] = row

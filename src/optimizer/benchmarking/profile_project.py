@@ -355,23 +355,34 @@ def save_entries(func_name: str, entries: list[dict[str, Any]], base_dir: str, m
             if n.startswith("entry_") and n.endswith(".pt")
         ]
     )
-    if existing_count > max_per_op:
+    if existing_count >= max_per_op:
         return
 
     for idx, entry in enumerate(entries):
-        if existing_count + idx > max_per_op:
+        if existing_count + idx >= max_per_op:
             return
         file_path = os.path.join(func_dir, f"entry_{existing_count + idx:06d}.pt")
         torch.save(entry, file_path)
 
 
-def flush_calls(base_dir: str) -> dict[str, int]:
+def flush_calls(base_dir: str, max_per_op: int = 200) -> dict[str, int]:
     op_counts: dict[str, int] = {}
     for func_name, entries in calls.items():
-        save_entries(func_name, entries, base_dir)
+        save_entries(func_name, entries, base_dir, max_per_op=max_per_op)
         op_counts[func_name] = op_counts.get(func_name, 0) + len(entries)
     calls.clear()
     return op_counts
+
+
+def _profile_max_per_op() -> int:
+    raw = os.environ.get("KFORGE_PROFILE_MAX_PER_OP", "").strip()
+    if not raw:
+        return 200
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return 200
+    return max(parsed, 1)
 
 
 def import_model_module(model_path: Path):
@@ -512,6 +523,12 @@ def load_model(module, weights_path: Path, device: str):
     return model
 
 
+def maybe_move_model_to_device(model, device: str):
+    if getattr(model, "hf_device_map", None):
+        return model
+    return model.to(device)
+
+
 def normalize_inputs(sample):
     if isinstance(sample, dict):
         return (), sample
@@ -534,18 +551,21 @@ def move_to_device(obj, device: str):
 
 
 def get_samples(module, max_batches: int, validation_path: str | None):
-    if hasattr(module, "sample_inputs"):
+    data = None
+    if validation_path and hasattr(module, "get_validation_dataloader"):
+        data = _call_with_optional_path(module.get_validation_dataloader, validation_path)
+    elif validation_path and hasattr(module, "get_dataloader"):
+        data = _call_with_optional_path(module.get_dataloader, validation_path)
+    elif hasattr(module, "sample_inputs"):
         data = module.sample_inputs()
     elif hasattr(module, "get_sample_inputs"):
         data = module.get_sample_inputs()
     elif hasattr(module, "make_example_input"):
         data = module.make_example_input()
-    elif hasattr(module, "get_dataloader"):
-        data = _call_with_optional_path(module.get_dataloader, validation_path)
     elif hasattr(module, "get_validation_dataloader"):
         data = _call_with_optional_path(module.get_validation_dataloader, validation_path)
-    else:
-        data = None
+    elif hasattr(module, "get_dataloader"):
+        data = _call_with_optional_path(module.get_dataloader, validation_path)
 
     if isinstance(data, torch.utils.data.DataLoader):
         samples = []
@@ -555,18 +575,24 @@ def get_samples(module, max_batches: int, validation_path: str | None):
             samples.append(batch)
         return samples
     if isinstance(data, (list, tuple)):
-        return list(data)
+        return list(data)[:max_batches]
     if data is not None:
-        return [data]
+        return [data] if max_batches > 0 else []
     return []
 
 
 def _resolve_device() -> str:
     target = os.environ.get("KFORGE_TARGET_DEVICE", "").strip().lower()
-    if target == "mps" and hasattr(torch, "backends") and torch.backends.mps.is_available():
-        return "mps"
-    if target in {"gpu", "cuda"} and torch.cuda.is_available():
-        return "cuda"
+    if target == "mps":
+        if hasattr(torch, "backends") and torch.backends.mps.is_available():
+            return "mps"
+        raise RuntimeError("KFORGE_TARGET_DEVICE=mps but torch.backends.mps.is_available() returned False")
+    if target in {"gpu", "cuda"}:
+        if torch.cuda.is_available():
+            return "cuda"
+        raise RuntimeError("KFORGE_TARGET_DEVICE=cuda but torch.cuda.is_available() returned False")
+    if target == "cpu":
+        return "cpu"
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -667,7 +693,7 @@ def main() -> int:
 
     module = import_model_module(model_path)
     model = load_model(module, weights_path, device)
-    model.to(device)
+    maybe_move_model_to_device(model, device)
     model.eval()
 
     validation_raw = config.get("validation_dir") or config.get("validation_set") or ""
@@ -686,6 +712,7 @@ def main() -> int:
         samples = [_default_sample_from_model(model)]
     op_totals: dict[str, int] = {}
     op_profile_ms: dict[str, float] = {}
+    max_per_op = _profile_max_per_op()
 
     with torch.no_grad():
         for sample in samples:
@@ -697,7 +724,7 @@ def main() -> int:
             except TypeError:
                 model(*args_tuple)
 
-            batch_counts = flush_calls(str(out_dir))
+            batch_counts = flush_calls(str(out_dir), max_per_op=max_per_op)
             for k, v in batch_counts.items():
                 op_totals[k] = op_totals.get(k, 0) + v
 
