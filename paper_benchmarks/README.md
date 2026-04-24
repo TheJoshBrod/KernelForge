@@ -56,6 +56,17 @@ Run outputs are written under:
 paper_benchmarks/runs/<timestamp>_<model_id>_<suite_id>/
 ```
 
+Canonical model-level data collection is documented in:
+
+```text
+paper_benchmarks/data_collection/docs/README.md
+```
+
+That contract keeps one append-only JSONL file per model, with all arms
+(`zero_shot`, `optimize_5`, `optimize_10`, `optimize_20`, `optimize_50`) in the
+same file and linked to the exact cast export, selected kernels, token usage,
+internal Forge benchmarks, and later external benchmark results.
+
 The scaffold supports real workload execution where possible and explicit synthetic demo runs only when `--allow-synthetic-demo` is passed.
 
 Examples:
