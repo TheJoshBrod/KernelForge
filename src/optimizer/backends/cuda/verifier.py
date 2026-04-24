@@ -413,7 +413,13 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
 
     # Derive usage-tracking context from paths (project root, operator, etc.)
     op_proj_dir = paths.get("proj_dir") if isinstance(paths, dict) else None
-    proj_root = op_proj_dir.parent if op_proj_dir is not None else None
+    proj_root = None
+    if op_proj_dir is not None:
+        try:
+            from src.llm.usage_db import project_usage_dir_from_op_dir
+            proj_root = project_usage_dir_from_op_dir(op_proj_dir)
+        except Exception:
+            proj_root = op_proj_dir.parent
     operator = op_proj_dir.name if op_proj_dir is not None else None
     iteration = paths.get("iteration") if isinstance(paths, dict) else None
     attempt = paths.get("attempt") if isinstance(paths, dict) else None

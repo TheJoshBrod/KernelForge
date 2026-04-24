@@ -148,9 +148,10 @@ def validate_kernel(generated_py_code: str, paths: dict[str, Path]) -> tuple[boo
     op_proj_dir = paths.get("proj_dir") if isinstance(paths, dict) else None
     if op_proj_dir is not None:
         try:
+            from src.llm.usage_db import project_usage_dir_from_op_dir
             from src.llm.litellm_callback import register_worker_usage_callback
             register_worker_usage_callback(
-                op_proj_dir.parent,
+                project_usage_dir_from_op_dir(op_proj_dir),
                 os.environ.get("KFORGE_JOB_KEY"),
                 op_proj_dir.name,
                 paths.get("iteration"),

@@ -17,6 +17,7 @@ from src.llm.usage_db import (
     get_project_totals,
     get_operator_totals,
     get_recent_calls,
+    project_usage_dir_from_op_dir,
 )
 from src.llm.litellm_callback import _extract_usage, register_worker_usage_callback
 
@@ -131,6 +132,20 @@ def test_unknown_model_logs_tokens_zero_cost(tmp_path: Path):
     assert totals["input_tokens"] == 10
     assert totals["output_tokens"] == 20
     assert totals["total_cost_usd"] == 0.0
+
+
+def test_project_usage_dir_from_optimization_operator_dir(tmp_path: Path):
+    project = tmp_path / "project"
+    op_dir = project / "trees" / "torch_nn_functional_softmax"
+
+    assert project_usage_dir_from_op_dir(op_dir) == project
+
+
+def test_project_usage_dir_from_legacy_operator_dir(tmp_path: Path):
+    project = tmp_path / "project"
+    op_dir = project / "torch_nn_functional_softmax"
+
+    assert project_usage_dir_from_op_dir(op_dir) == project
 
 
 # ---------- litellm callback extraction ----------
