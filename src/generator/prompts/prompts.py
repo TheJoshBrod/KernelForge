@@ -100,10 +100,38 @@ def _summarize_scalar(values: list):
     return summary
 
 
+def _type_name(obj_type: type) -> str:
+    module = getattr(obj_type, "__module__", "")
+    qualname = getattr(obj_type, "__qualname__", getattr(obj_type, "__name__", str(obj_type)))
+    return f"{module}.{qualname}" if module and module != "builtins" else qualname
+
+
+def _is_tensor_type(obj_type: type) -> bool:
+    try:
+        return issubclass(obj_type, torch.Tensor)
+    except TypeError:
+        return False
+
+
+def _is_quantized_tensor_type(obj_type: type) -> bool:
+    name = _type_name(obj_type).lower()
+    markers = (
+        "quanto",
+        "quant",
+        "qbit",
+        "qbits",
+        "tinygemm",
+        "packed",
+        "int4",
+        "int8",
+    )
+    return any(marker in name for marker in markers)
+
+
 def _tensor_stats(value: torch.Tensor) -> dict:
     target = _target_device()
     device = target or str(value.device)
-    return {
+    stats = {
         "dtype": str(value.dtype),
         "shape": list(value.shape),
         "stride": list(value.stride()),
@@ -112,6 +140,12 @@ def _tensor_stats(value: torch.Tensor) -> dict:
         "requires_grad": bool(value.requires_grad),
         "numel": int(value.numel()),
     }
+    value_type = type(value)
+    if value_type is not torch.Tensor:
+        stats["tensor_type"] = _type_name(value_type)
+        if _is_quantized_tensor_type(value_type):
+            stats["quantized_tensor"] = True
+    return stats
 
 
 def _summarize_value(value):
@@ -183,6 +217,8 @@ def generate_function_spec_from_calls(call_list, function_name):
                     "contiguous": set(),
                     "requires_grad": set(),
                     "numel": set(),
+                    "tensor_types": set(),
+                    "quantized_tensor_types": set(),
                     "list_lens": set(),
                     "scalar_values": [],
                 }
@@ -201,6 +237,12 @@ def generate_function_spec_from_calls(call_list, function_name):
                 param_stats[name]["contiguous"].add(bool(value.is_contiguous()))
                 param_stats[name]["requires_grad"].add(bool(value.requires_grad))
                 param_stats[name]["numel"].add(int(value.numel()))
+                value_type = type(value)
+                param_stats[name]["tensor_types"].add(_type_name(value_type))
+                if _is_quantized_tensor_type(value_type):
+                    param_stats[name]["quantized_tensor_types"].add(
+                        _type_name(value_type)
+                    )
 
             # Record Length (for Lists/Tuples)
             elif isinstance(value, (list, tuple)):
@@ -227,6 +269,8 @@ def generate_function_spec_from_calls(call_list, function_name):
         contiguous = stats["contiguous"]
         requires_grad = stats["requires_grad"]
         numel = stats["numel"]
+        tensor_types = stats["tensor_types"]
+        quantized_tensor_types = stats["quantized_tensor_types"]
 
         spec = {
             "name": name,
@@ -234,7 +278,7 @@ def generate_function_spec_from_calls(call_list, function_name):
         }
 
         # --- Logic for Tensors ---
-        if torch.Tensor in types:
+        if any(_is_tensor_type(t) for t in types):
             if _target_device() == "triton":
                 spec["type"] = "torch.Tensor"
             else:
@@ -273,6 +317,18 @@ def generate_function_spec_from_calls(call_list, function_name):
             spec["contiguous"] = list(contiguous) if contiguous else []
             spec["requires_grad"] = list(requires_grad) if requires_grad else []
             spec["numel"] = list(numel) if numel else []
+            spec["tensor_type"] = sorted(tensor_types) if tensor_types else []
+            if any(t != "torch.Tensor" for t in tensor_types):
+                spec["description"] += (
+                    "Tensor subclass observed; do not assume plain dense storage. "
+                )
+            if quantized_tensor_types:
+                spec["quantized_tensor"] = True
+                spec["quantized_tensor_types"] = sorted(quantized_tensor_types)
+                spec["description"] += (
+                    "Quantized or packed tensor subclass observed; logical dtype may "
+                    "not describe storage layout. "
+                )
 
         # --- Logic for Lists/Tuples ---
         elif list in types or tuple in types:
@@ -346,12 +402,21 @@ Defaults: {function_spec['signature']['defaults']}
         prompt += f"\nTarget device: {target}\n"
 
     # List all parameters
+    quantized_params = []
     for i, param in enumerate(function_spec['parameters'], 1):
         prompt += f"\n{i}. `{param['name']}` ({param['type']})"
         if 'shape' in param:
             prompt += f"\n   - Shape: {param['shape']}"
             prompt += f"\n   - Stride: {param.get('stride', 'unknown')}"
             prompt += f"\n   - Dtype(s): {param.get('dtype', 'unknown')}"
+            if param.get("tensor_type"):
+                prompt += f"\n   - Tensor type(s): {param.get('tensor_type')}"
+            if param.get("quantized_tensor"):
+                prompt += (
+                    "\n   - Quantized/packed tensor: true"
+                    f"\n   - Quantized tensor type(s): {param.get('quantized_tensor_types', [])}"
+                )
+                quantized_params.append(param["name"])
             prompt += f"\n   - Device(s): {param.get('device', 'unknown')}"
             prompt += f"\n   - Contiguous: {param.get('contiguous', [])}"
             prompt += f"\n   - Requires grad: {param.get('requires_grad', [])}"
@@ -361,6 +426,21 @@ Defaults: {function_spec['signature']['defaults']}
         elif 'stats' in param:
             prompt += f"\n   - Stats: {param['stats']}"
         prompt += f"\n   - {param['description']}"
+
+    if quantized_params:
+        prompt += f"""
+
+### Quantized Tensor Warning
+
+The following parameters are quantized or packed tensor subclasses: {quantized_params}
+
+- Do NOT infer a dense BF16/FP16 implementation from the logical dtype alone.
+- Do NOT allocate or materialize a full dense dequantized copy of a quantized weight tensor.
+- Only access packed storage if the prompt gives an explicit layout, scale/zero-point
+  metadata, and a correct indexing rule.
+- If this is `torch.nn.functional.linear`, the quantized `weight` parameter is not a
+  normal dense matrix. A dense BF16 matmul kernel is incorrect for this replay.
+"""
 
     prompt += """
 

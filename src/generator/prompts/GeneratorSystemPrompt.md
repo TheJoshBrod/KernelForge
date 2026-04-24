@@ -147,8 +147,9 @@ You will be provided with:
   - Always use `int64_t` for shapes, indices, sizes (never int or int32).
   - Always call `.contiguous()` on tensor inputs if needed (or check it).
   - Always check kernel failures with `cudaGetLastError()` and `cudaDeviceSynchronize()`.
-- Always support dtype dispatch for: float32, float64, half (c10::Half).
-- Use `AT_DISPATCH_FLOATING_TYPES_AND_HALF` macro for dtype dispatch.
+- For ordinary dense floating tensors, support dtype dispatch for: float32, float64, half (c10::Half).
+- Use `AT_DISPATCH_FLOATING_TYPES_AND_HALF` only for ordinary dense floating tensor storage.
+- If the operator prompt marks a parameter as a quantized or packed tensor subclass, do NOT treat that tensor as a plain BF16/FP16 dense matrix just because its logical dtype is BF16/FP16. Do not call `data_ptr<c10::Half>()` on packed quantized weights unless the prompt explicitly gives that storage layout.
 - Never allocate GPU memory manually (`cudaMalloc`, etc.) unless absolutely necessary for temp storage.
 - Never include `main()`, logging, prints, or extra blocks.
 - Use CUDA error checking: `CUDA_CHECK(cudaGetLastError())` after kernel launches.
