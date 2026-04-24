@@ -231,10 +231,17 @@ class GenModel:
                 or os.environ.get("KFORGE_OPENAI_REASONING_EFFORT")
                 or "medium"
             ).strip()
+            try:
+                max_completion_tokens = int(
+                    os.environ.get("OPENAI_MAX_COMPLETION_TOKENS", "8192")
+                    or "8192"
+                )
+            except ValueError:
+                max_completion_tokens = 8192
             create_kwargs = {
                 "model": model,
                 "messages": messages,
-                "max_completion_tokens": 4096,
+                "max_completion_tokens": max(max_completion_tokens, 1),
             }
             if reasoning_effort:
                 create_kwargs["reasoning_effort"] = reasoning_effort
