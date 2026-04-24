@@ -39,6 +39,36 @@ def test_compute_cost_litellm_prefix():
     assert abs(total - 0.90) < 1e-9
 
 
+def test_compute_cost_anthropic_opus_47():
+    in_cost, out_cost, total = compute_cost("claude-opus-4-7", 1_000_000, 1_000_000)
+    assert abs(in_cost - 5.0) < 1e-9
+    assert abs(out_cost - 25.0) < 1e-9
+    assert abs(total - 30.0) < 1e-9
+
+
+def test_compute_cost_anthropic_provider_prefix_and_suffix():
+    in_cost, out_cost, total = compute_cost(
+        "anthropic/claude-sonnet-4-6-20260424",
+        2_000_000,
+        1_000_000,
+    )
+    assert abs(in_cost - 6.0) < 1e-9
+    assert abs(out_cost - 15.0) < 1e-9
+    assert abs(total - 21.0) < 1e-9
+
+
+def test_compute_cost_anthropic_legacy_api_id_forms():
+    in_cost, out_cost, total = compute_cost("claude-3-haiku-latest", 1_000_000, 1_000_000)
+    assert abs(in_cost - 0.25) < 1e-9
+    assert abs(out_cost - 1.25) < 1e-9
+    assert abs(total - 1.50) < 1e-9
+
+    in_cost, out_cost, total = compute_cost("claude-3-7-sonnet-20250219", 1_000_000, 1_000_000)
+    assert abs(in_cost - 3.0) < 1e-9
+    assert abs(out_cost - 15.0) < 1e-9
+    assert abs(total - 18.0) < 1e-9
+
+
 def test_compute_cost_unknown_model_zero():
     assert compute_cost("totally-made-up-model", 1000, 1000) == (0.0, 0.0, 0.0)
 
