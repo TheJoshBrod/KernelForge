@@ -631,6 +631,40 @@ walker:pub GetOpDetails {
     }
 }
 
+walker:pub GetCastExportPlan {
+    has projectName: str,
+        allowOperatorOnly: bool = True,
+        unsafeOverride: bool = False;
+
+    can run with entry {
+        project_dir = _project_dir(self.projectName);
+        if not path.exists(project_dir) {
+            report {
+                "success": False,
+                "error": f"Project '{self.projectName}' not found."
+            };
+            disengage;
+        }
+
+        try {
+            from paper_benchmarks.paper_bench.cast_export import resolve_cast_export_plan;
+
+            selection_report = resolve_cast_export_plan(
+                project_dir,
+                repo_root=repo_root,
+                allow_operator_only=bool(self.allowOperatorOnly),
+                unsafe_override=bool(self.unsafeOverride),
+            );
+            report {"success": True, **selection_report};
+        } except Exception as e {
+            report {
+                "success": False,
+                "error": f"Failed to build cast export selection plan: {e}"
+            };
+        }
+    }
+}
+
 walker:pub GetProjectMetrics {
     has projectName: str;
 
@@ -1058,7 +1092,11 @@ print(
 walker:pub DownloadCast {
     has projectName: str,
         backend: str = "CUDA",
-        selectedKernels: dict = {};
+        selectedKernels: dict = {},
+        selectionPolicy: str = "auto_best_fastest_valid",
+        allowOperatorOnly: bool = True,
+        unsafeOverride: bool = False,
+        allowNativePackage: bool = False;
 
     can run with entry {
         project_dir = _project_dir(self.projectName);
@@ -1074,13 +1112,61 @@ walker:pub DownloadCast {
         kernel_map = {};
         selected_ops = {};
         skipped_ops = {};
+        selection_plan = {};
+        auto_selected = {};
 
-        if self.selectedKernels {
+        if str(self.selectionPolicy) == "auto_best_fastest_valid" {
+            try {
+                from paper_benchmarks.paper_bench.cast_export import resolve_cast_export_plan;
+                from paper_benchmarks.paper_bench.cast_export import build_cast_manifest_metadata;
+
+                selection_plan = resolve_cast_export_plan(
+                    project_dir,
+                    repo_root=repo_root,
+                    selected_kernels=self.selectedKernels if self.selectedKernels else {},
+                    allow_operator_only=bool(self.allowOperatorOnly),
+                    unsafe_override=bool(self.unsafeOverride),
+                    allow_native_package=bool(self.allowNativePackage),
+                );
+                auto_selected = (
+                    selection_plan["selected_ops"]
+                    if selection_plan and "selected_ops" in selection_plan
+                    else {}
+                );
+                kernel_map = (
+                    selection_plan["selected_kernel_map"]
+                    if selection_plan and "selected_kernel_map" in selection_plan
+                    else {}
+                );
+                manifest_selection_meta = (
+                    build_cast_manifest_metadata(selection_plan)
+                    if selection_plan
+                    else {}
+                );
+            } except Exception as e {
+                selection_plan = {
+                    "selection_policy": "auto_best_fastest_valid",
+                    "selected_ops": {},
+                    "selected_kernel_map": {},
+                    "exportable": False,
+                    "export_paper_eligible": False,
+                    "selection_error": str(e),
+                };
+                manifest_selection_meta = {};
+            }
+        } else {
+            manifest_selection_meta = {};
+        }
+
+        if self.selectedKernels and str(self.selectionPolicy) != "auto_best_fastest_valid" {
             for op_name in self.selectedKernels {
                 selected_ops[op_name] = True;
                 rel = str(self.selectedKernels[op_name]);
                 if rel == "__PYTORCH__" {
                     skipped_ops[op_name] = True;
+                    if op_name in kernel_map {
+                        del kernel_map[op_name];
+                    }
                     continue;
                 }
                 full = path.join(repo_root, rel);
@@ -1091,7 +1177,7 @@ walker:pub DownloadCast {
         }
 
         opt_base = _find_optimized_dir(self.projectName);
-        if opt_base and path.exists(opt_base) {
+        if str(self.selectionPolicy) != "auto_best_fastest_valid" and opt_base and path.exists(opt_base) {
             for op_name in listdir(opt_base) {
                 op_dir = path.join(opt_base, op_name);
                 if (
@@ -1109,11 +1195,49 @@ walker:pub DownloadCast {
             }
         }
 
-        if not kernel_map {
+        if not kernel_map and not bool(self.allowNativePackage) {
+            selection_error = (
+                selection_plan["selection_error"]
+                if selection_plan and "selection_error" in selection_plan
+                else ""
+            );
+            rejected_summary = (
+                selection_plan["rejected_candidates"]
+                if selection_plan and "rejected_candidates" in selection_plan
+                else {}
+            );
             report {
                 "success": False,
-                "error": "No optimized kernels found. Run Generate or Optimize first."
+                "error": (
+                    selection_error
+                    if selection_error
+                    else "No kernels satisfied auto_best_fastest_valid. Review rejected candidates."
+                ),
+                "selection_report": selection_plan,
+                "rejected_candidates": rejected_summary
             };
+            disengage;
+        }
+
+        if str(self.selectionPolicy) == "auto_best_fastest_valid" {
+            try {
+                from paper_benchmarks.paper_bench.cast_export import export_cast_package;
+
+                export_result = export_cast_package(
+                    project_dir,
+                    export_plan=selection_plan if selection_plan else None,
+                    selection_policy=str(self.selectionPolicy),
+                    selected_kernels=self.selectedKernels if self.selectedKernels else {},
+                    allow_operator_only=bool(self.allowOperatorOnly),
+                    unsafe_override=bool(self.unsafeOverride),
+                    allow_native_package=bool(self.allowNativePackage),
+                    repo_root=repo_root,
+                );
+                report export_result;
+            } except Exception as e {
+                print(f"DownloadCast error: {e}");
+                report {"success": False, "error": f"Failed to build cast file: {e}"};
+            }
             disengage;
         }
 
@@ -1175,6 +1299,7 @@ walker:pub DownloadCast {
 
         # ── Build file map {archive_path -> bytes} ────────────────────
         file_map = {};
+        exported_at = datetime.utcnow().isoformat() + "Z";
 
         model_py = path.join(project_dir, "model.py");
         model_class_name = "";
@@ -1271,6 +1396,7 @@ walker:pub DownloadCast {
         }
 
         ops_manifest = [];
+        selected_manifest_ops = {};
         # Detect the current GPU's SM version for tagging precompiled binaries.
         import torch as _torch;
         sm_version = "";
@@ -1302,13 +1428,37 @@ walker:pub DownloadCast {
                 }
             }
 
+            selection_entry = {};
+            if auto_selected and op_name in auto_selected {
+                selection_entry = auto_selected[op_name];
+            }
+            manual_override = (
+                str(self.selectionPolicy) != "auto_best_fastest_valid"
+                and
+                self.selectedKernels
+                and op_name in self.selectedKernels
+                and str(self.selectedKernels[op_name]) != "__PYTORCH__"
+            );
+            if manual_override {
+                selection_entry = {
+                    "op": op_name,
+                    "candidate_id": f"{op_name}:manual_override",
+                    "kernel_source_path": kf,
+                    "evidence_tier": "manual_override",
+                    "selection_reason": "manual override from export UI",
+                    "paper_eligible": False,
+                };
+            }
+            selected_manifest_ops[op_name] = selection_entry;
+
             ops_manifest.append(
                 {
                     "name": op_name,
                     "kernel_dir": f"kernels/{op_name}/",
                     "cuda_source": cu_path,
                     "wrapper": wrapper_path,
-                    "precompiled": op_precompiled
+                    "precompiled": op_precompiled,
+                    "selection_evidence": selection_entry,
                 }
             );
         }
@@ -1322,13 +1472,94 @@ walker:pub DownloadCast {
 
         manifest_obj = {
             "project_name": self.projectName,
-            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "project_id": (
+                selection_plan["project_id"]
+                if selection_plan and "project_id" in selection_plan
+                else self.projectName
+            ),
+            "project_root": (
+                selection_plan["project_root"]
+                if selection_plan and "project_root" in selection_plan
+                else project_dir
+            ),
+            "project_ref": (
+                selection_plan["project_ref"]
+                if selection_plan and "project_ref" in selection_plan
+                else ""
+            ),
+            "exported_at": exported_at,
+            "timestamp": exported_at,
+            "git_commit": (
+                selection_plan["git_commit"]
+                if selection_plan and "git_commit" in selection_plan
+                else None
+            ),
             "model_class": model_class_name,
             "model_init_args": {},
             "weight_file": weight_archive_path,
-            "ops": ops_manifest
+            "ops": ops_manifest,
+            "selection_policy": (
+                selection_plan["selection_policy"]
+                if selection_plan and "selection_policy" in selection_plan
+                else str(self.selectionPolicy)
+            ),
+            "selection_policy_details": (
+                manifest_selection_meta["selection_policy_details"]
+                if manifest_selection_meta and "selection_policy_details" in manifest_selection_meta
+                else {
+                    "policy_name": str(self.selectionPolicy),
+                    "allow_operator_only": bool(self.allowOperatorOnly),
+                    "unsafe_override": bool(self.unsafeOverride),
+                    "allow_native_package": bool(self.allowNativePackage),
+                }
+            ),
+            "selected_ops": (
+                manifest_selection_meta["selected_ops"]
+                if manifest_selection_meta and "selected_ops" in manifest_selection_meta
+                else list(kernel_map.keys())
+            ),
+            "selected_op_count": (
+                manifest_selection_meta["selected_op_count"]
+                if manifest_selection_meta and "selected_op_count" in manifest_selection_meta
+                else len(kernel_map)
+            ),
+            "selected_kernel_map": (
+                manifest_selection_meta["selected_kernel_map"]
+                if manifest_selection_meta and "selected_kernel_map" in manifest_selection_meta
+                else {op_name: kernel_map[op_name] for op_name in kernel_map}
+            ),
+            "selected_kernel_metadata": (
+                manifest_selection_meta["selected_kernel_metadata"]
+                if manifest_selection_meta and "selected_kernel_metadata" in manifest_selection_meta
+                else selected_manifest_ops
+            ),
+            "export_paper_eligible": (
+                selection_plan["export_paper_eligible"]
+                if selection_plan and "export_paper_eligible" in selection_plan
+                else False
+            ),
+            "rejected_candidate_summary": (
+                selection_plan["rejected_candidate_summary"]
+                if selection_plan and "rejected_candidate_summary" in selection_plan
+                else {}
+            ),
+            "skipped_ops": (
+                selection_plan["skipped_ops"] if selection_plan and "skipped_ops" in selection_plan else {}
+            ),
         };
         file_map["manifest.json"] = dumps(manifest_obj, indent=2).encode("utf-8");
+        selection_manifest_obj = (
+            selection_plan
+            if selection_plan
+            else {
+                "selection_policy": str(self.selectionPolicy),
+                "selected_ops": selected_manifest_ops,
+                "selected_kernel_map": {op_name: kernel_map[op_name] for op_name in kernel_map},
+                "export_paper_eligible": False,
+                "timestamp": exported_at,
+            }
+        );
+        file_map["selection_manifest.json"] = dumps(selection_manifest_obj, indent=2).encode("utf-8");
 
         # ── Checksums ─────────────────────────────────────────────────
         checksum_lines = [];
@@ -1345,8 +1576,18 @@ walker:pub DownloadCast {
             "format_version": "1.0",
             "file_type": "kernelforge_inference",
             "project_name": self.projectName,
-            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "project_ref": (
+                selection_plan["project_ref"]
+                if selection_plan and "project_ref" in selection_plan
+                else ""
+            ),
+            "exported_at": exported_at,
             "kernelforge_version": "0.1.0",
+            "git_commit": (
+                selection_plan["git_commit"]
+                if selection_plan and "git_commit" in selection_plan
+                else None
+            ),
             "runtime": {
                 "min_cast_version": "0.1",
                 "min_torch_version": "2.1.0",

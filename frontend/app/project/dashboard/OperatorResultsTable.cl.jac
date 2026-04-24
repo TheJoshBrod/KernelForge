@@ -3,6 +3,16 @@
 import from react { useState }
 import from ..shared.MetricsAdapter { list_len, to_list }
 
+def _index_list(count: int) -> list {
+    out = [];
+    idx = 0;
+    while idx < count {
+        out.push(idx);
+        idx = idx + 1;
+    }
+    return out;
+}
+
 def:pub OperatorResultsTable(props: any) -> Any {
     operatorRows = props.operatorRows;
     name = props.name;
@@ -114,9 +124,11 @@ def:pub OperatorResultsTable(props: any) -> Any {
         ["w-12", "w-12", "w-12"]
     ];
     skeletonNodes = [];
-    for i in range(3) {
+    row_indices = _index_list(3);
+    col_indices = _index_list(10);
+    for i in row_indices {
         cells = [];
-        for j in range(10) {
+        for j in col_indices {
             bc = " border-l border-[var(--border)] pl-4" if j == 1 or j == 4 or j == 8 else "";
             cells.push(<td key={j} className={"py-3 px-4" + bc}><div className={"skeleton skeleton-line " + skeleton_widths[j][i]}></div></td>);
         }

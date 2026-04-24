@@ -13,6 +13,8 @@ import from ....context.ConfigContext { useConfig }
 
 def:pub CastExportModal(props: any) -> Any {
     pytorchSelectionPath = "__PYTORCH__";
+    autoSelectionPolicy = "auto_best_fastest_valid";
+    autoSelectionLabel = "Auto: fastest valid kernels";
 
     isOpen = props.isOpen;
     onClose = props.onClose;
@@ -35,6 +37,10 @@ def:pub CastExportModal(props: any) -> Any {
     benchmarks_state = useState({});
     benchmarks = benchmarks_state[0];
     setBenchmarks = benchmarks_state[1];
+
+    export_plan_state = useState({});
+    exportPlan = export_plan_state[0];
+    setExportPlan = export_plan_state[1];
 
     selected_kernels_state = useState({});
     selectedKernels = selected_kernels_state[0];
@@ -249,6 +255,23 @@ def:pub CastExportModal(props: any) -> Any {
                             }
                         }
 
+                        resp_plan = await __jacSpawn(
+                            "GetCastExportPlan", "", {"projectName": projectName}
+                        );
+                        data_plan = resp_plan.reports[0]
+                            if resp_plan and resp_plan.reports
+                            else {};
+                        setExportPlan(data_plan if data_plan else {});
+                        selected_by_policy = (
+                            data_plan["selected_ops"]
+                            if data_plan
+                                and "success" in data_plan
+                                and data_plan["success"]
+                                and "selected_ops" in data_plan
+                                and data_plan["selected_ops"]
+                            else {}
+                        );
+
                         init_selection = {};
                         for item in op_list {
                             op_name = (
@@ -260,64 +283,94 @@ def:pub CastExportModal(props: any) -> Any {
                                 continue;
                             }
 
-                            bench_entry = bench_map[op_name] if op_name in bench_map else {};
-                            pytorch_ms = numeric_value(
-                                bench_entry["pytorch_ms"]
-                                if bench_entry and "pytorch_ms" in bench_entry
-                                else None
-                            );
-                            summary_entry = (
-                                summary_by_op[op_name]
-                                if op_name in summary_by_op
+                            selection_entry = (
+                                selected_by_policy[op_name]
+                                if selected_by_policy and op_name in selected_by_policy
                                 else {}
                             );
-                            best_node_id = numeric_value(
-                                summary_entry["best_node_id"]
-                                if summary_entry and "best_node_id" in summary_entry
-                                else None
-                            );
-                            best_value = numeric_value(
-                                summary_entry["best_value"]
-                                if summary_entry and "best_value" in summary_entry
-                                else None
-                            );
-
-                            select_pytorch = (
-                                pytorch_ms
-                                and pytorch_ms > 0
-                                and (
-                                    not has_value(best_value)
-                                    or best_value <= 0
-                                    or pytorch_ms <= best_value
-                                )
-                            );
-
-                            if select_pytorch {
+                            if selection_entry and "kernel_source_repo_relpath" in selection_entry and selection_entry["kernel_source_repo_relpath"] {
+                                kernel_relpath = str(selection_entry["kernel_source_repo_relpath"]);
+                                kernel_name = kernel_relpath.split("/").slice(-1)[0];
                                 init_selection[op_name] = {
-                                    "path": pytorchSelectionPath,
-                                    "name": "PyTorch Baseline",
-                                    "runtime_ms": pytorch_ms
-                                };
-                            } elif has_value(best_node_id) {
-                                kernel_name = "kernel_" + str(best_node_id) + ".cu";
-                                init_selection[op_name] = {
-                                    "path": (
-                                        "kernels/projects/"
-                                        + projectName
-                                        + "/trees/"
-                                        + op_name
-                                        + "/kernels/"
-                                        + kernel_name
-                                    ),
+                                    "path": kernel_relpath,
                                     "name": kernel_name,
-                                    "runtime_ms": best_value
+                                    "runtime_ms": numeric_value(
+                                        selection_entry["median_latency_ms"]
+                                        if "median_latency_ms" in selection_entry
+                                        else None
+                                    ),
+                                    "evidence_tier": (
+                                        str(selection_entry["evidence_tier"])
+                                        if "evidence_tier" in selection_entry and selection_entry["evidence_tier"]
+                                        else ""
+                                    ),
+                                    "selection_reason": (
+                                        str(selection_entry["selection_reason"])
+                                        if "selection_reason" in selection_entry and selection_entry["selection_reason"]
+                                        else ""
+                                    )
                                 };
+                            } else {
+                                bench_entry = bench_map[op_name] if op_name in bench_map else {};
+                                pytorch_ms = numeric_value(
+                                    bench_entry["pytorch_ms"]
+                                    if bench_entry and "pytorch_ms" in bench_entry
+                                    else None
+                                );
+                                summary_entry = (
+                                    summary_by_op[op_name]
+                                    if op_name in summary_by_op
+                                    else {}
+                                );
+                                best_node_id = numeric_value(
+                                    summary_entry["best_node_id"]
+                                    if summary_entry and "best_node_id" in summary_entry
+                                    else None
+                                );
+                                best_value = numeric_value(
+                                    summary_entry["best_value"]
+                                    if summary_entry and "best_value" in summary_entry
+                                    else None
+                                );
+
+                                select_pytorch = (
+                                    pytorch_ms
+                                    and pytorch_ms > 0
+                                    and (
+                                        not has_value(best_value)
+                                        or best_value <= 0
+                                        or pytorch_ms <= best_value
+                                    )
+                                );
+
+                                if select_pytorch {
+                                    init_selection[op_name] = {
+                                        "path": pytorchSelectionPath,
+                                        "name": "PyTorch Baseline",
+                                        "runtime_ms": pytorch_ms
+                                    };
+                                } elif has_value(best_node_id) {
+                                    kernel_name = "kernel_" + str(best_node_id) + ".cu";
+                                    init_selection[op_name] = {
+                                        "path": (
+                                            "kernels/projects/"
+                                            + projectName
+                                            + "/trees/"
+                                            + op_name
+                                            + "/kernels/"
+                                            + kernel_name
+                                        ),
+                                        "name": kernel_name,
+                                        "runtime_ms": best_value
+                                    };
+                                }
                             }
                         }
                         setBenchmarks(bench_map);
                         setSelectedKernels(init_selection);
                     } except Exception as e {
                         console.error("Error loading cast config data:", e);
+                        setExportPlan({});
                     } finally {
                         setLoading(False);
                     }
@@ -452,7 +505,9 @@ def:pub CastExportModal(props: any) -> Any {
                 {
                     "projectName": projectName,
                     "backend": backend,
-                    "selectedKernels": kernel_sel
+                    "selectedKernels": kernel_sel,
+                    "selectionPolicy": autoSelectionPolicy,
+                    "allowOperatorOnly": True
                 }
             );
             data = resp.reports[0] if resp and resp.reports else {};
@@ -514,6 +569,40 @@ def:pub CastExportModal(props: any) -> Any {
         }
     }
     gpu_label = gpu_names.join(", ") if gpu_names.length > 0 else "Unknown GPU";
+    selected_plan_ops = (
+        exportPlan["selected_ops"]
+        if exportPlan and "selected_ops" in exportPlan and exportPlan["selected_ops"]
+        else {}
+    );
+    selected_tiers = {};
+    for op_key in Object.keys(selected_plan_ops) {
+        op_entry = selected_plan_ops[op_key];
+        tier = (
+            str(op_entry["evidence_tier"])
+            if op_entry and "evidence_tier" in op_entry and op_entry["evidence_tier"]
+            else ""
+        );
+        if tier {
+            selected_tiers[tier] = True;
+        }
+    }
+    evidence_note = "";
+    if "micro_only" in selected_tiers {
+        evidence_note = (
+            "Some auto-selected kernels only have micro-only evidence. "
+            + "They are not deployment-paper evidence."
+        );
+    } elif "operator" in selected_tiers {
+        evidence_note = (
+            "Some auto-selected kernels only have operator-tier evidence. "
+            + "They are not deployment-paper evidence."
+        );
+    }
+    selected_count = (
+        exportPlan["selected_op_count"]
+        if exportPlan and "selected_op_count" in exportPlan and exportPlan["selected_op_count"] >= 0
+        else 0
+    );
 
     op_rows = [];
     for op in to_list(ops) {
@@ -545,7 +634,7 @@ def:pub CastExportModal(props: any) -> Any {
         sel_name = (
             sel["name"]
             if sel and "name" in sel and sel["name"]
-            else "default best"
+            else autoSelectionLabel
         );
         is_expanded = expandedOp == op_name;
         kernels_for_op_list = to_list(
@@ -756,6 +845,24 @@ def:pub CastExportModal(props: any) -> Any {
                     </p>
                 </div>
                 <div className="space-y-2">
+                    <div className="rounded-lg border border-zinc-800 bg-zinc-950 px-4 py-3">
+                        <p className="text-[10px] uppercase tracking-wide text-zinc-500">
+                            Default Selection
+                        </p>
+                        <p className="text-sm font-medium text-zinc-200 mt-1">
+                            {autoSelectionLabel}
+                        </p>
+                        <p className="text-xs text-zinc-500 mt-1">
+                            Backend export re-validates correctness, captured inputs, real timings,
+                            and source-hash provenance before packaging.
+                        </p>
+                        <p className="text-[11px] text-zinc-400 mt-2">
+                            {String(selected_count)} ops currently qualify for automatic export.
+                        </p>
+                        {<p className="text-[11px] text-amber-400 mt-2">
+                            {evidence_note}
+                        </p> if evidence_note else null}
+                    </div>
                     <label className="text-sm font-medium text-zinc-300">
                         Operator Kernels
                     </label>
