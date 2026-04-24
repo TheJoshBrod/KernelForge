@@ -42,6 +42,34 @@ def load_project_config(project_dir: Path | None) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _provider_from_env() -> str:
+    provider = (
+        os.environ.get("LLM_PROVIDER")
+        or os.environ.get("KFORGE_LLM_PROVIDER")
+        or ""
+    )
+    provider = provider.strip().lower()
+    if provider == "gemini":
+        return "google"
+    return provider
+
+
+def _model_from_env(provider: str) -> str:
+    kforge_model = os.environ.get("KFORGE_LLM_MODEL", "").strip()
+    if kforge_model:
+        return kforge_model
+    if provider == "openai":
+        return os.environ.get("OPENAI_MODEL", "").strip()
+    if provider == "anthropic":
+        return os.environ.get("ANTHROPIC_MODEL", "").strip()
+    if provider == "google":
+        return (
+            os.environ.get("GEMINI_MODEL", "").strip()
+            or os.environ.get("GOOGLE_MODEL", "").strip()
+        )
+    return ""
+
+
 def apply_llm_config() -> bool:
     config_path = _find_config_path()
     global_cfg: dict = {}
@@ -65,15 +93,20 @@ def apply_llm_config() -> bool:
         except Exception:
             project_cfg = {}
 
+    override_provider = _provider_from_env()
+    override_model = _model_from_env(override_provider)
     env_map = resolve_runtime_env(
         global_config=global_cfg,
         project_config=project_cfg,
+        override_provider=override_provider,
+        override_model=override_model,
     )
     if not env_map:
         return False
 
+    force_selected_env = bool(override_provider or override_model)
     for key, value in env_map.items():
-        if value is not None and str(key) not in os.environ:
+        if value is not None and (force_selected_env or str(key) not in os.environ):
             os.environ[str(key)] = str(value)
     return True
 
