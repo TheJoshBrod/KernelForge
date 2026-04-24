@@ -198,7 +198,12 @@ def _round_usage(bucket: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def llm_usage_summary(path: Path, *, operator_hint: str | None = None) -> dict[str, Any]:
+def llm_usage_summary(
+    path: Path,
+    *,
+    operator_hint: str | None = None,
+    row_filter: Any | None = None,
+) -> dict[str, Any]:
     if not path.exists():
         return {"exists": False, "path": str(path)}
 
@@ -250,6 +255,8 @@ def llm_usage_summary(path: Path, *, operator_hint: str | None = None) -> dict[s
 
     for raw_row in rows:
         row = redact(dict(raw_row))
+        if row_filter is not None and not row_filter(row):
+            continue
         operator = str(row.get("operator") or operator_hint or "unknown")
         row["operator"] = operator
         step = str(row.get("step_type") or "unknown")
@@ -294,6 +301,28 @@ def llm_usage_summary(path: Path, *, operator_hint: str | None = None) -> dict[s
         for key, value in sorted(result["by_provider_model"].items())
     }
     return result
+
+
+def arm_usage_filter(arm: str) -> Any:
+    if arm == "zero_shot":
+        return lambda row: str(row.get("job_key") or "") == "generate"
+
+    match = re.fullmatch(r"optimize_(\d+)", arm)
+    if match:
+        max_iteration = int(match.group(1))
+
+        def _filter(row: dict[str, Any]) -> bool:
+            if str(row.get("job_key") or "") != "optimize":
+                return False
+            iteration = row.get("iteration")
+            try:
+                return int(iteration) <= max_iteration
+            except Exception:
+                return True
+
+        return _filter
+
+    return lambda row: True
 
 
 def normalize_op_name(op_name: str) -> str:
@@ -389,6 +418,145 @@ def successful_zero_shot_kernel_map(project_dir: Path) -> dict[str, str]:
         if kernel.exists() and (op_dir / "success.cuda").exists():
             selected[op_dir.name] = str(kernel.resolve())
     return selected
+
+
+def optimize_arm_limit(arm: str) -> int | None:
+    match = re.fullmatch(r"optimize_(\d+)", arm)
+    return int(match.group(1)) if match else None
+
+
+def _tree_kernel_path(project_dir: Path, op_name: str, raw_code: str | None) -> Path | None:
+    if not raw_code:
+        return None
+    candidate = Path(str(raw_code))
+    if candidate.is_absolute():
+        return candidate
+    tree_root = project_dir / "trees"
+    for base in (tree_root, project_dir):
+        resolved = base / candidate
+        if resolved.exists():
+            return resolved
+    return tree_root / candidate
+
+
+def tree_node_rows(project_dir: Path, op_name: str) -> list[dict[str, Any]]:
+    db_path = project_dir / "trees" / op_name / "nodes.db"
+    if not db_path.exists():
+        return []
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute("SELECT * FROM nodes ORDER BY id").fetchall()
+    finally:
+        conn.close()
+    return [redact(dict(row)) for row in rows]
+
+
+def selected_tree_kernel_map(project_dir: Path, *, arm: str) -> tuple[dict[str, str], dict[str, Any]]:
+    max_node_id = optimize_arm_limit(arm)
+    tree_root = project_dir / "trees"
+    selected: dict[str, str] = {}
+    details: dict[str, Any] = {}
+    if not tree_root.exists():
+        return selected, details
+
+    for tree_dir in sorted(child for child in tree_root.iterdir() if child.is_dir()):
+        op_name = tree_dir.name
+        rows = tree_node_rows(project_dir, op_name)
+        eligible = []
+        for row in rows:
+            value = row.get("value")
+            code = row.get("code")
+            node_id = row.get("id")
+            try:
+                node_id_int = int(node_id)
+            except Exception:
+                continue
+            if max_node_id is not None and node_id_int > max_node_id:
+                continue
+            if value is None or code is None:
+                continue
+            try:
+                value_float = float(value)
+            except Exception:
+                continue
+            kernel_path = _tree_kernel_path(project_dir, op_name, str(code))
+            if kernel_path is None or not kernel_path.exists():
+                continue
+            eligible.append((value_float, node_id_int, row, kernel_path))
+
+        if not eligible:
+            details[op_name] = {
+                "selected": None,
+                "reason": "no valid tree kernel found for arm",
+                "node_count": len(rows),
+                "max_node_id": max_node_id,
+            }
+            continue
+
+        value_float, node_id_int, row, kernel_path = min(eligible, key=lambda item: (item[0], item[1]))
+        selected[op_name] = str(kernel_path.resolve())
+        latest_valid = max(eligible, key=lambda item: item[1])
+        details[op_name] = {
+            "selected": {
+                "node_id": node_id_int,
+                "value_ms": value_float,
+                "code": row.get("code"),
+                "kernel_path": str(kernel_path.resolve()),
+                "kernel_file": file_ref(kernel_path, root=repo_root()),
+                "selection_reason": "best valid tree kernel at arm checkpoint",
+            },
+            "latest_valid": {
+                "node_id": latest_valid[1],
+                "value_ms": latest_valid[0],
+                "code": latest_valid[2].get("code"),
+                "kernel_path": str(latest_valid[3].resolve()),
+            },
+            "valid_node_count": len(eligible),
+            "node_count": len(rows),
+            "max_node_id": max_node_id,
+        }
+    return selected, details
+
+
+def optimize_queue_summary(project_dir: Path) -> dict[str, Any]:
+    queue = read_json(project_dir / "queue.json")
+    tasks = queue.get("active_tasks", {}) if isinstance(queue, dict) else {}
+    by_op: dict[str, list[dict[str, Any]]] = {}
+    if isinstance(tasks, dict):
+        for key, task in tasks.items():
+            if not isinstance(task, dict) or task.get("tag") != "[OPT]":
+                continue
+            op_name = str(task.get("op_name") or "unknown")
+            by_op.setdefault(op_name, []).append({"task_key": key, **task})
+    return {
+        "tasks_by_op": {
+            op: sorted(items, key=lambda item: str(item.get("task_key") or ""))
+            for op, items in sorted(by_op.items())
+        },
+        "failed_tasks": [
+            {"task_key": item.get("task_key"), **item}
+            for items in by_op.values()
+            for item in items
+            if str(item.get("status") or "") == "Failed"
+        ],
+    }
+
+
+def optimization_tree_summary(project_dir: Path, *, arm: str) -> dict[str, Any]:
+    _, selection_details = selected_tree_kernel_map(project_dir, arm=arm)
+    tree_root = project_dir / "trees"
+    ops = sorted(child.name for child in tree_root.iterdir() if child.is_dir()) if tree_root.exists() else []
+    return {
+        "arm": arm,
+        "max_node_id": optimize_arm_limit(arm),
+        "selection_by_op": selection_details,
+        "queue_summary": optimize_queue_summary(project_dir),
+        "tree_nodes_by_op": {
+            op: tree_node_rows(project_dir, op)
+            for op in ops
+        },
+    }
 
 
 def profiled_ops(project_dir: Path) -> list[str]:
@@ -491,14 +659,19 @@ def build_common(
     }
 
 
-def assert_generation_finished(project_dir: Path) -> None:
+def assert_jobs_finished(project_dir: Path) -> None:
     state = read_json(project_dir / "state.json")
     if not isinstance(state, dict):
         return
     generate = state.get("generate")
     if isinstance(generate, dict) and generate.get("active"):
         raise RuntimeError(
-            "Generation is still active; refusing to collect zero-shot exports before it finishes."
+            "Generation is still active; refusing to collect exports before it finishes."
+        )
+    optimize = state.get("optimize")
+    if isinstance(optimize, dict) and optimize.get("active"):
+        raise RuntimeError(
+            "Optimization is still active; refusing to collect exports before it finishes."
         )
 
 
@@ -508,10 +681,10 @@ def collect(args: argparse.Namespace) -> Path:
     if not project_dir.exists():
         raise FileNotFoundError(f"Project not found: {project_dir}")
     if not args.allow_running:
-        assert_generation_finished(project_dir)
+        assert_jobs_finished(project_dir)
 
     model_slug = args.model_slug or args.project
-    arm = "zero_shot"
+    arm = args.arm or "zero_shot"
     run_id = args.run_id or f"{model_slug}__{arm}__{compact_timestamp()}"
     model_file = root / args.output_file if args.output_file else root / "paper_benchmarks" / "data_collection" / "models" / f"{model_slug}.jsonl"
     artifact_dir = root / args.artifact_dir if args.artifact_dir else root / "paper_benchmarks" / "data_collection" / "artifacts" / model_slug / run_id
@@ -526,13 +699,21 @@ def collect(args: argparse.Namespace) -> Path:
         project_dir / "benchmarks" / "torch_baseline_cache.json",
         project_dir / "logs" / "profile.log",
         project_dir / "logs" / "generate.log",
+        project_dir / "logs" / "optimize.log",
+        project_dir / "logs" / "queue_debug.log",
     ]
 
     profiled = profiled_ops(project_dir)
     attempted_ops = attempted_generation_ops(project_dir)
-    generated_map = successful_zero_shot_kernel_map(project_dir)
-    missing_full_forge_ops = [op for op in profiled if op not in generated_map]
-    failed_attempted_ops = [op for op in attempted_ops if op not in generated_map]
+    zero_shot_generated_map = successful_zero_shot_kernel_map(project_dir)
+    if arm == "zero_shot":
+        selected_kernel_map = zero_shot_generated_map
+        optimization_summary = None
+    else:
+        selected_kernel_map, _selection_details = selected_tree_kernel_map(project_dir, arm=arm)
+        optimization_summary = optimization_tree_summary(project_dir, arm=arm)
+    missing_full_forge_ops = [op for op in profiled if op not in selected_kernel_map]
+    failed_attempted_ops = [op for op in attempted_ops if op not in zero_shot_generated_map]
     not_attempted_profiled_ops = [op for op in profiled if op not in attempted_ops]
     config_payload = read_json(project_dir / "config.json")
     generation_config = (
@@ -541,13 +722,17 @@ def collect(args: argparse.Namespace) -> Path:
         else {}
     )
     project_llm_usage_summary = llm_usage_summary(project_dir / "llm_usage.db")
+    arm_llm_usage_summary = llm_usage_summary(
+        project_dir / "llm_usage.db",
+        row_filter=arm_usage_filter(arm),
+    )
 
     full_export = export_variant(
         project_dir=project_dir,
         root=root,
         output_path=artifact_dir / f"{model_slug}__{arm}__full_forge.cast",
         variant="full_forge",
-        selected_kernels=generated_map,
+        selected_kernels=selected_kernel_map,
         allow_native_package=True,
     )
     mixed_export = export_variant(
@@ -617,7 +802,10 @@ def collect(args: argparse.Namespace) -> Path:
             **build_common(record_type="generation_attempt", source_paths=[project_dir / "logs" / "generate.log"], **common_kwargs),
             "payload": {
                 "generate_log": read_text(project_dir / "logs" / "generate.log"),
+                "optimize_log": read_text(project_dir / "logs" / "optimize.log"),
+                "queue_debug_log": read_text(project_dir / "logs" / "queue_debug.log"),
                 "generated_artifacts": generated_op_artifacts(project_dir, root=root),
+                "optimization_summary": optimization_summary,
             },
         }
     )
@@ -627,7 +815,9 @@ def collect(args: argparse.Namespace) -> Path:
             "payload": {
                 "project_llm_usage_db": sqlite_dump(project_dir / "llm_usage.db"),
                 "project_llm_usage_summary": project_llm_usage_summary,
+                "arm_llm_usage_summary": arm_llm_usage_summary,
                 "usage_by_op": project_llm_usage_summary.get("by_op", {}),
+                "arm_usage_by_op": arm_llm_usage_summary.get("by_op", {}),
                 "per_op_usage_dbs": {
                     op: sqlite_dump(project_dir / "kernels" / "generated" / "individual_op_kernels" / op / "llm_usage.db")
                     for op in sorted(generated_op_artifacts(project_dir, root=root))
@@ -639,6 +829,17 @@ def collect(args: argparse.Namespace) -> Path:
                     )
                     for op in sorted(generated_op_artifacts(project_dir, root=root))
                 },
+                "per_op_tree_usage_dbs": {
+                    op: sqlite_dump(project_dir / "trees" / op / "llm_usage.db")
+                    for op in sorted(child.name for child in (project_dir / "trees").iterdir() if child.is_dir())
+                } if (project_dir / "trees").exists() else {},
+                "per_op_tree_usage_summaries": {
+                    op: llm_usage_summary(
+                        project_dir / "trees" / op / "llm_usage.db",
+                        operator_hint=op,
+                    )
+                    for op in sorted(child.name for child in (project_dir / "trees").iterdir() if child.is_dir())
+                } if (project_dir / "trees").exists() else {},
                 "generation_config": generation_config,
                 "reasoning_effort": generation_config.get("reasoning_effort"),
             },
@@ -659,7 +860,9 @@ def collect(args: argparse.Namespace) -> Path:
                     "forge_ops": [op for op, item in dispatch.items() if item["dispatch"] == "forge"],
                     "torch_fallback_ops": [op for op, item in dispatch.items() if item["dispatch"] == "torch"],
                     "missing_full_forge_ops": missing_full_forge_ops if export_kind == "full_forge" else [],
-                    "zero_shot_generated_kernel_map": generated_map,
+                    "zero_shot_generated_kernel_map": zero_shot_generated_map,
+                    "selected_kernel_map_for_arm": selected_kernel_map,
+                    "optimization_summary": optimization_summary,
                 },
             }
         )
@@ -669,14 +872,17 @@ def collect(args: argparse.Namespace) -> Path:
             "payload": {
                 "arm_complete": not missing_full_forge_ops,
                 "arm_collection_complete": True,
-                "all_profiled_ops_have_zero_shot_kernel": not missing_full_forge_ops,
-                "zero_shot_generated_kernel_count": len(generated_map),
+                "all_profiled_ops_have_selected_kernel": not missing_full_forge_ops,
+                "zero_shot_generated_kernel_count": len(zero_shot_generated_map),
                 "zero_shot_failed_attempted_ops": failed_attempted_ops,
                 "zero_shot_not_attempted_profiled_ops": not_attempted_profiled_ops,
-                "optimization_started": False,
+                "optimization_started": arm != "zero_shot",
+                "optimization_summary": optimization_summary,
                 "profiled_ops": profiled,
                 "attempted_zero_shot_ops": attempted_ops,
-                "zero_shot_generated_ops": sorted(generated_map),
+                "zero_shot_generated_ops": sorted(zero_shot_generated_map),
+                "selected_kernel_ops_for_arm": sorted(selected_kernel_map),
+                "selected_kernel_map_for_arm": selected_kernel_map,
                 "missing_full_forge_ops": missing_full_forge_ops,
                 "full_forge_cast": full_export["cast_file"],
                 "mixed_forge_cast": mixed_export["cast_file"],
@@ -703,10 +909,14 @@ def collect(args: argparse.Namespace) -> Path:
                     "mixed_forge_cast": mixed_export["cast_file"],
                     "exports_differ": exports_differ,
                     "llm_usage_summary": project_llm_usage_summary,
+                    "arm_llm_usage_summary": arm_llm_usage_summary,
                     "usage_by_op": project_llm_usage_summary.get("by_op", {}),
+                    "arm_usage_by_op": arm_llm_usage_summary.get("by_op", {}),
                     "full_forge_dispatch_by_profiled_op": full_dispatch,
                     "mixed_forge_dispatch_by_profiled_op": mixed_dispatch,
                     "missing_full_forge_ops": missing_full_forge_ops,
+                    "selected_kernel_map_for_arm": selected_kernel_map,
+                    "optimization_summary": optimization_summary,
                 }
             ),
             indent=2,
@@ -722,6 +932,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect zero-shot Forge export data for one model.")
     parser.add_argument("--project", required=True, help="Kernel Forge project directory name.")
     parser.add_argument("--model-slug", default="", help="Canonical model slug for data_collection/models.")
+    parser.add_argument("--arm", default="zero_shot", help="Collection arm, for example zero_shot, optimize_5, optimize_10, optimize_20, optimize_50.")
     parser.add_argument("--run-id", default="", help="Stable run id. Defaults to timestamped zero-shot id.")
     parser.add_argument("--output-file", default="", help="Repo-relative or absolute JSONL output file.")
     parser.add_argument("--artifact-dir", default="", help="Repo-relative or absolute artifact directory.")
