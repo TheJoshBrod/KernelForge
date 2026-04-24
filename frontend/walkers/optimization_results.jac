@@ -1470,6 +1470,33 @@ walker:pub DownloadCast {
         loader_stub = b"# Cast vendored runtime loader\n# pip install cast for the full runtime\n";
         file_map["loader.py"] = loader_stub;
 
+        policy_metadata = {};
+        try {
+            from src.optimizer.cast_policy import collect_cast_policy_metadata;
+            policy_metadata = collect_cast_policy_metadata(
+                project_dir,
+                selected_kernel_map={op_name: kernel_map[op_name] for op_name in kernel_map},
+                skipped_ops=skipped_ops
+            );
+        } except Exception as e {
+            policy_metadata = {
+                "policy_metadata_error": str(e),
+                "torch_fallback_ops": [],
+                "fallback_reasons": {},
+                "failed_ops": {},
+                "full_forged_publishable": len(kernel_map) > 0,
+                "mixed_forged_publishable": len(kernel_map) > 0,
+                "mixed_equals_full": True,
+                "cast_policy": "full_forged"
+            };
+        }
+
+        has_torch_fallback = (
+            policy_metadata
+            and "torch_fallback_ops" in policy_metadata
+            and len(policy_metadata["torch_fallback_ops"]) > 0
+        );
+
         manifest_obj = {
             "project_name": self.projectName,
             "project_id": (
@@ -1503,6 +1530,41 @@ walker:pub DownloadCast {
                 if selection_plan and "selection_policy" in selection_plan
                 else str(self.selectionPolicy)
             ),
+            "cast_policy": (
+                policy_metadata["cast_policy"]
+                if policy_metadata and "cast_policy" in policy_metadata
+                else ("mixed_forged" if has_torch_fallback else "full_forged")
+            ),
+            "full_forged_publishable": (
+                policy_metadata["full_forged_publishable"]
+                if policy_metadata and "full_forged_publishable" in policy_metadata
+                else not has_torch_fallback
+            ),
+            "mixed_forged_publishable": (
+                policy_metadata["mixed_forged_publishable"]
+                if policy_metadata and "mixed_forged_publishable" in policy_metadata
+                else True
+            ),
+            "mixed_equals_full": (
+                policy_metadata["mixed_equals_full"]
+                if policy_metadata and "mixed_equals_full" in policy_metadata
+                else not has_torch_fallback
+            ),
+            "torch_fallback_ops": (
+                policy_metadata["torch_fallback_ops"]
+                if policy_metadata and "torch_fallback_ops" in policy_metadata
+                else []
+            ),
+            "fallback_reasons": (
+                policy_metadata["fallback_reasons"]
+                if policy_metadata and "fallback_reasons" in policy_metadata
+                else {}
+            ),
+            "failed_ops": (
+                policy_metadata["failed_ops"]
+                if policy_metadata and "failed_ops" in policy_metadata
+                else {}
+            ),
             "selection_policy_details": (
                 manifest_selection_meta["selection_policy_details"]
                 if manifest_selection_meta and "selection_policy_details" in manifest_selection_meta
@@ -1534,9 +1596,13 @@ walker:pub DownloadCast {
                 else selected_manifest_ops
             ),
             "export_paper_eligible": (
-                selection_plan["export_paper_eligible"]
-                if selection_plan and "export_paper_eligible" in selection_plan
-                else False
+                False
+                if has_torch_fallback
+                else (
+                    selection_plan["export_paper_eligible"]
+                    if selection_plan and "export_paper_eligible" in selection_plan
+                    else False
+                )
             ),
             "rejected_candidate_summary": (
                 selection_plan["rejected_candidate_summary"]
@@ -1559,6 +1625,9 @@ walker:pub DownloadCast {
                 "timestamp": exported_at,
             }
         );
+        if policy_metadata {
+            selection_manifest_obj["cast_policy_metadata"] = policy_metadata;
+        }
         file_map["selection_manifest.json"] = dumps(selection_manifest_obj, indent=2).encode("utf-8");
 
         # ── Checksums ─────────────────────────────────────────────────
