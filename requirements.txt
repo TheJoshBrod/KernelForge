@@ -16,6 +16,7 @@ anthropic
 
 # ML / vision
 transformers
+optimum-quanto
 pillow
 
 # Build / utils

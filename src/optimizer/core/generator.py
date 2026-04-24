@@ -15,7 +15,7 @@ from src.config import ensure_llm_config
 from src.optimizer.core.types import GPUSpecs
 from src.optimizer.config.settings import settings
 from src.optimizer.core.backend import Backend
-from src.llm.usage_db import log_llm_call
+from src.llm.usage_db import log_llm_call, project_usage_dir_from_op_dir
 import src.optimizer.core.mcts as mcts
 
 
@@ -161,9 +161,10 @@ def create_and_validate(backend: Backend, llm: GenModel, msg: str, model: str, p
     )
     response = llm.chat(msg, model)
     op_proj_dir = paths.get("proj_dir") if isinstance(paths, dict) else None
-    if op_proj_dir is not None and getattr(llm, "last_usage", None):
+    project_usage_dir = project_usage_dir_from_op_dir(op_proj_dir)
+    if project_usage_dir is not None and getattr(llm, "last_usage", None):
         log_llm_call(
-            op_proj_dir.parent,
+            project_usage_dir,
             llm.last_usage,
             step_type="optimize",
             job_key=os.environ.get("KFORGE_JOB_KEY"),

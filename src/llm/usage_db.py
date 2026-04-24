@@ -47,6 +47,23 @@ def _db_path(proj_dir: Path | str) -> Path:
     return Path(proj_dir) / "llm_usage.db"
 
 
+def project_usage_dir_from_op_dir(op_proj_dir: Path | str | None) -> Path | None:
+    """Return the project root that owns usage telemetry for an operator dir.
+
+    Optimization operator directories live under `<project>/trees/<operator>`.
+    The UI reads usage from `<project>/llm_usage.db`, not `<project>/trees`.
+    Older layouts may pass `<project>/<operator>` directly, so fall back to
+    the immediate parent when the `trees` directory is not present.
+    """
+    if op_proj_dir is None:
+        return None
+    op_path = Path(op_proj_dir)
+    parent = op_path.parent
+    if parent.name == "trees":
+        return parent.parent
+    return parent
+
+
 def _connect(proj_dir: Path | str) -> sqlite3.Connection:
     path = _db_path(proj_dir)
     path.parent.mkdir(parents=True, exist_ok=True)

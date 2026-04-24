@@ -17,6 +17,7 @@ from src.llm.usage_db import (
     get_project_totals,
     get_operator_totals,
     get_recent_calls,
+    project_usage_dir_from_op_dir,
 )
 from src.llm.litellm_callback import _extract_usage, register_worker_usage_callback
 
@@ -36,6 +37,36 @@ def test_compute_cost_litellm_prefix():
     assert abs(in_cost - 0.30) < 1e-9   # 2M * 0.15 / 1M
     assert abs(out_cost - 0.60) < 1e-9  # 1M * 0.60 / 1M
     assert abs(total - 0.90) < 1e-9
+
+
+def test_compute_cost_anthropic_opus_47():
+    in_cost, out_cost, total = compute_cost("claude-opus-4-7", 1_000_000, 1_000_000)
+    assert abs(in_cost - 5.0) < 1e-9
+    assert abs(out_cost - 25.0) < 1e-9
+    assert abs(total - 30.0) < 1e-9
+
+
+def test_compute_cost_anthropic_provider_prefix_and_suffix():
+    in_cost, out_cost, total = compute_cost(
+        "anthropic/claude-sonnet-4-6-20260424",
+        2_000_000,
+        1_000_000,
+    )
+    assert abs(in_cost - 6.0) < 1e-9
+    assert abs(out_cost - 15.0) < 1e-9
+    assert abs(total - 21.0) < 1e-9
+
+
+def test_compute_cost_anthropic_legacy_api_id_forms():
+    in_cost, out_cost, total = compute_cost("claude-3-haiku-latest", 1_000_000, 1_000_000)
+    assert abs(in_cost - 0.25) < 1e-9
+    assert abs(out_cost - 1.25) < 1e-9
+    assert abs(total - 1.50) < 1e-9
+
+    in_cost, out_cost, total = compute_cost("claude-3-7-sonnet-20250219", 1_000_000, 1_000_000)
+    assert abs(in_cost - 3.0) < 1e-9
+    assert abs(out_cost - 15.0) < 1e-9
+    assert abs(total - 18.0) < 1e-9
 
 
 def test_compute_cost_unknown_model_zero():
@@ -131,6 +162,20 @@ def test_unknown_model_logs_tokens_zero_cost(tmp_path: Path):
     assert totals["input_tokens"] == 10
     assert totals["output_tokens"] == 20
     assert totals["total_cost_usd"] == 0.0
+
+
+def test_project_usage_dir_from_optimization_operator_dir(tmp_path: Path):
+    project = tmp_path / "project"
+    op_dir = project / "trees" / "torch_nn_functional_softmax"
+
+    assert project_usage_dir_from_op_dir(op_dir) == project
+
+
+def test_project_usage_dir_from_legacy_operator_dir(tmp_path: Path):
+    project = tmp_path / "project"
+    op_dir = project / "torch_nn_functional_softmax"
+
+    assert project_usage_dir_from_op_dir(op_dir) == project
 
 
 # ---------- litellm callback extraction ----------

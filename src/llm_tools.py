@@ -3,6 +3,7 @@ src/llm_tools.py
 Generalized LLM tooling for handling model agnostic conversations and tooling.
 """
 import json
+import os
 from typing import Any
 from typing import Dict
 from typing import List
@@ -137,11 +138,19 @@ class GenModel:
             try:
                 u = getattr(message, "usage", None)
                 if u is not None:
-                    self._record_usage("anthropic", model, {
+                    usage = {
                         "input_tokens": getattr(u, "input_tokens", 0) or 0,
                         "output_tokens": getattr(u, "output_tokens", 0) or 0,
                         "reasoning_tokens": 0,
-                    })
+                    }
+                    self.last_usage = {
+                        "provider": "anthropic",
+                        "model": model,
+                        "input_tokens": int(usage["input_tokens"] or 0),
+                        "output_tokens": int(usage["output_tokens"] or 0),
+                        "reasoning_tokens": int(usage["reasoning_tokens"] or 0),
+                    }
+                    self._record_usage("anthropic", model, usage)
             except Exception:
                 pass
 
@@ -215,15 +224,38 @@ class GenModel:
         """
 
         try:
-            self._openai_client = OpenAI()
+            try:
+                timeout = float(os.environ.get("OPENAI_TIMEOUT", "600") or "600")
+            except ValueError:
+                timeout = 600.0
+            try:
+                max_retries = int(os.environ.get("OPENAI_MAX_RETRIES", "5") or "5")
+            except ValueError:
+                max_retries = 5
+            self._openai_client = OpenAI(timeout=timeout, max_retries=max_retries)
             messages = self.__to_openai_messages()
+            reasoning_effort = (
+                os.environ.get("OPENAI_REASONING_EFFORT")
+                or os.environ.get("KFORGE_OPENAI_REASONING_EFFORT")
+                or "medium"
+            ).strip()
+            try:
+                max_completion_tokens = int(
+                    os.environ.get("OPENAI_MAX_COMPLETION_TOKENS", "8192")
+                    or "8192"
+                )
+            except ValueError:
+                max_completion_tokens = 8192
+            create_kwargs = {
+                "model": model,
+                "messages": messages,
+                "max_completion_tokens": max(max_completion_tokens, 1),
+            }
+            if reasoning_effort:
+                create_kwargs["reasoning_effort"] = reasoning_effort
 
             # Make the API call
-            response = self._openai_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_completion_tokens=4096
-            )
+            response = self._openai_client.chat.completions.create(**create_kwargs)
 
             usage = getattr(response, "usage", None)
             if usage is not None:

@@ -36,6 +36,24 @@ _PRICE_TABLE: dict[str, dict[str, float]] = {
     "o3":      {"input_per_mtok": 2.00, "output_per_mtok": 8.00},
     "o1-mini": {"input_per_mtok": 1.10, "output_per_mtok": 4.40},
     "o1":      {"input_per_mtok": 15.00, "output_per_mtok": 60.00},
+
+    # Anthropic Claude API standard pricing
+    "claude-opus-4-7": {"input_per_mtok": 5.00, "output_per_mtok": 25.00},
+    "claude-opus-4-6": {"input_per_mtok": 5.00, "output_per_mtok": 25.00},
+    "claude-opus-4-5": {"input_per_mtok": 5.00, "output_per_mtok": 25.00},
+    "claude-opus-4-1": {"input_per_mtok": 15.00, "output_per_mtok": 75.00},
+    "claude-opus-4":   {"input_per_mtok": 15.00, "output_per_mtok": 75.00},
+    "claude-3-opus":   {"input_per_mtok": 15.00, "output_per_mtok": 75.00},
+    "claude-sonnet-4-6": {"input_per_mtok": 3.00, "output_per_mtok": 15.00},
+    "claude-sonnet-4-5": {"input_per_mtok": 3.00, "output_per_mtok": 15.00},
+    "claude-sonnet-4":   {"input_per_mtok": 3.00, "output_per_mtok": 15.00},
+    "claude-sonnet-3-7": {"input_per_mtok": 3.00, "output_per_mtok": 15.00},
+    "claude-3-7-sonnet": {"input_per_mtok": 3.00, "output_per_mtok": 15.00},
+    "claude-haiku-4-5": {"input_per_mtok": 1.00, "output_per_mtok": 5.00},
+    "claude-haiku-3-5": {"input_per_mtok": 0.80, "output_per_mtok": 4.00},
+    "claude-3-5-haiku": {"input_per_mtok": 0.80, "output_per_mtok": 4.00},
+    "claude-haiku-3":   {"input_per_mtok": 0.25, "output_per_mtok": 1.25},
+    "claude-3-haiku":   {"input_per_mtok": 0.25, "output_per_mtok": 1.25},
 }
 
 
