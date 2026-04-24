@@ -164,6 +164,138 @@ def sqlite_dump(path: Path, *, max_rows_per_table: int = 10000) -> dict[str, Any
     return result
 
 
+def _empty_usage_bucket() -> dict[str, Any]:
+    return {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "total_tokens": 0,
+        "input_cost_usd": 0.0,
+        "output_cost_usd": 0.0,
+        "total_cost_usd": 0.0,
+    }
+
+
+def _add_usage(bucket: dict[str, Any], row: dict[str, Any]) -> None:
+    input_tokens = int(row.get("input_tokens") or 0)
+    output_tokens = int(row.get("output_tokens") or 0)
+    reasoning_tokens = int(row.get("reasoning_tokens") or 0)
+    bucket["calls"] += 1
+    bucket["input_tokens"] += input_tokens
+    bucket["output_tokens"] += output_tokens
+    bucket["reasoning_tokens"] += reasoning_tokens
+    bucket["total_tokens"] += input_tokens + output_tokens + reasoning_tokens
+    bucket["input_cost_usd"] += float(row.get("input_cost_usd") or 0.0)
+    bucket["output_cost_usd"] += float(row.get("output_cost_usd") or 0.0)
+    bucket["total_cost_usd"] += float(row.get("total_cost_usd") or 0.0)
+
+
+def _round_usage(bucket: dict[str, Any]) -> dict[str, Any]:
+    out = dict(bucket)
+    for key in ["input_cost_usd", "output_cost_usd", "total_cost_usd"]:
+        out[key] = round(float(out.get(key) or 0.0), 12)
+    return out
+
+
+def llm_usage_summary(path: Path, *, operator_hint: str | None = None) -> dict[str, Any]:
+    if not path.exists():
+        return {"exists": False, "path": str(path)}
+
+    result: dict[str, Any] = {
+        "exists": True,
+        "path": str(path),
+        "sha256": sha256_path(path),
+        "size_bytes": path.stat().st_size,
+        "totals": _empty_usage_bucket(),
+        "by_op": {},
+        "by_op_and_step": {},
+        "by_provider_model": {},
+        "per_call_rows": [],
+    }
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    try:
+        columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(llm_calls)").fetchall()
+            if row["name"]
+        }
+        if not columns:
+            return {**result, "error": "missing llm_calls table"}
+        desired_columns = [
+            "id",
+            "ts",
+            "job_key",
+            "operator",
+            "step_type",
+            "iteration",
+            "attempt",
+            "provider",
+            "model",
+            "input_tokens",
+            "output_tokens",
+            "reasoning_tokens",
+            "input_cost_usd",
+            "output_cost_usd",
+            "total_cost_usd",
+        ]
+        select_columns = [column for column in desired_columns if column in columns]
+        order_column = "id" if "id" in columns else "ts"
+        rows = conn.execute(
+            f"SELECT {', '.join(select_columns)} FROM llm_calls ORDER BY {order_column}"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    for raw_row in rows:
+        row = redact(dict(raw_row))
+        operator = str(row.get("operator") or operator_hint or "unknown")
+        row["operator"] = operator
+        step = str(row.get("step_type") or "unknown")
+        provider = str(row.get("provider") or "unknown")
+        model = str(row.get("model") or "unknown")
+        provider_model = f"{provider}/{model}"
+        row["total_tokens"] = (
+            int(row.get("input_tokens") or 0)
+            + int(row.get("output_tokens") or 0)
+            + int(row.get("reasoning_tokens") or 0)
+        )
+        result["per_call_rows"].append(row)
+        _add_usage(result["totals"], row)
+
+        by_op = result["by_op"].setdefault(operator, _empty_usage_bucket())
+        _add_usage(by_op, row)
+
+        by_step_root = result["by_op_and_step"].setdefault(operator, {})
+        by_step = by_step_root.setdefault(step, _empty_usage_bucket())
+        _add_usage(by_step, row)
+
+        by_provider_model = result["by_provider_model"].setdefault(
+            provider_model,
+            _empty_usage_bucket(),
+        )
+        _add_usage(by_provider_model, row)
+
+    result["totals"] = _round_usage(result["totals"])
+    result["by_op"] = {
+        key: _round_usage(value)
+        for key, value in sorted(result["by_op"].items())
+    }
+    result["by_op_and_step"] = {
+        op: {
+            step: _round_usage(bucket)
+            for step, bucket in sorted(steps.items())
+        }
+        for op, steps in sorted(result["by_op_and_step"].items())
+    }
+    result["by_provider_model"] = {
+        key: _round_usage(value)
+        for key, value in sorted(result["by_provider_model"].items())
+    }
+    return result
+
+
 def normalize_op_name(op_name: str) -> str:
     return (
         op_name.replace("torch.nn.functional.", "torch_nn_functional_")
@@ -408,6 +540,7 @@ def collect(args: argparse.Namespace) -> Path:
         if isinstance(config_payload, dict) and isinstance(config_payload.get("generation"), dict)
         else {}
     )
+    project_llm_usage_summary = llm_usage_summary(project_dir / "llm_usage.db")
 
     full_export = export_variant(
         project_dir=project_dir,
@@ -493,8 +626,17 @@ def collect(args: argparse.Namespace) -> Path:
             **build_common(record_type="llm_usage", source_paths=[project_dir / "llm_usage.db"], **common_kwargs),
             "payload": {
                 "project_llm_usage_db": sqlite_dump(project_dir / "llm_usage.db"),
+                "project_llm_usage_summary": project_llm_usage_summary,
+                "usage_by_op": project_llm_usage_summary.get("by_op", {}),
                 "per_op_usage_dbs": {
                     op: sqlite_dump(project_dir / "kernels" / "generated" / "individual_op_kernels" / op / "llm_usage.db")
+                    for op in sorted(generated_op_artifacts(project_dir, root=root))
+                },
+                "per_op_usage_summaries": {
+                    op: llm_usage_summary(
+                        project_dir / "kernels" / "generated" / "individual_op_kernels" / op / "llm_usage.db",
+                        operator_hint=op,
+                    )
                     for op in sorted(generated_op_artifacts(project_dir, root=root))
                 },
                 "generation_config": generation_config,
@@ -560,6 +702,8 @@ def collect(args: argparse.Namespace) -> Path:
                     "full_forge_cast": full_export["cast_file"],
                     "mixed_forge_cast": mixed_export["cast_file"],
                     "exports_differ": exports_differ,
+                    "llm_usage_summary": project_llm_usage_summary,
+                    "usage_by_op": project_llm_usage_summary.get("by_op", {}),
                     "full_forge_dispatch_by_profiled_op": full_dispatch,
                     "mixed_forge_dispatch_by_profiled_op": mixed_dispatch,
                     "missing_full_forge_ops": missing_full_forge_ops,

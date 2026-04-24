@@ -135,6 +135,290 @@
       }
     }
   },
+  "llm_usage_summary": {
+    "by_op": {
+      "torch_nn_functional_embedding": {
+        "calls": 3,
+        "input_cost_usd": 0.12393,
+        "input_tokens": 24786,
+        "output_cost_usd": 0.123875,
+        "output_tokens": 4955,
+        "reasoning_tokens": 0,
+        "total_cost_usd": 0.247805,
+        "total_tokens": 29741
+      },
+      "torch_nn_functional_gelu": {
+        "calls": 3,
+        "input_cost_usd": 0.115175,
+        "input_tokens": 23035,
+        "output_cost_usd": 0.131675,
+        "output_tokens": 5267,
+        "reasoning_tokens": 0,
+        "total_cost_usd": 0.24685,
+        "total_tokens": 28302
+      },
+      "torch_nn_functional_linear": {
+        "calls": 1,
+        "input_cost_usd": 0.02358,
+        "input_tokens": 4716,
+        "output_cost_usd": 0.041625,
+        "output_tokens": 1665,
+        "reasoning_tokens": 0,
+        "total_cost_usd": 0.065205,
+        "total_tokens": 6381
+      },
+      "torch_nn_functional_softmax": {
+        "calls": 2,
+        "input_cost_usd": 0.06936,
+        "input_tokens": 13872,
+        "output_cost_usd": 0.15545,
+        "output_tokens": 6218,
+        "reasoning_tokens": 0,
+        "total_cost_usd": 0.22481,
+        "total_tokens": 20090
+      }
+    },
+    "by_op_and_step": {
+      "torch_nn_functional_embedding": {
+        "generate": {
+          "calls": 3,
+          "input_cost_usd": 0.12393,
+          "input_tokens": 24786,
+          "output_cost_usd": 0.123875,
+          "output_tokens": 4955,
+          "reasoning_tokens": 0,
+          "total_cost_usd": 0.247805,
+          "total_tokens": 29741
+        }
+      },
+      "torch_nn_functional_gelu": {
+        "generate": {
+          "calls": 3,
+          "input_cost_usd": 0.115175,
+          "input_tokens": 23035,
+          "output_cost_usd": 0.131675,
+          "output_tokens": 5267,
+          "reasoning_tokens": 0,
+          "total_cost_usd": 0.24685,
+          "total_tokens": 28302
+        }
+      },
+      "torch_nn_functional_linear": {
+        "generate": {
+          "calls": 1,
+          "input_cost_usd": 0.02358,
+          "input_tokens": 4716,
+          "output_cost_usd": 0.041625,
+          "output_tokens": 1665,
+          "reasoning_tokens": 0,
+          "total_cost_usd": 0.065205,
+          "total_tokens": 6381
+        }
+      },
+      "torch_nn_functional_softmax": {
+        "generate": {
+          "calls": 2,
+          "input_cost_usd": 0.06936,
+          "input_tokens": 13872,
+          "output_cost_usd": 0.15545,
+          "output_tokens": 6218,
+          "reasoning_tokens": 0,
+          "total_cost_usd": 0.22481,
+          "total_tokens": 20090
+        }
+      }
+    },
+    "by_provider_model": {
+      "anthropic/claude-opus-4-7": {
+        "calls": 9,
+        "input_cost_usd": 0.332045,
+        "input_tokens": 66409,
+        "output_cost_usd": 0.452625,
+        "output_tokens": 18105,
+        "reasoning_tokens": 0,
+        "total_cost_usd": 0.78467,
+        "total_tokens": 84514
+      }
+    },
+    "exists": true,
+    "path": "/home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/gemma4-e2b-gb10/llm_usage.db",
+    "per_call_rows": [
+      {
+        "attempt": 0,
+        "id": 1,
+        "input_cost_usd": 0.02566,
+        "input_tokens": 5132,
+        "iteration": null,
+        "job_key": "generate",
+        "model": "claude-opus-4-7",
+        "operator": "torch_nn_functional_embedding",
+        "output_cost_usd": 0.040575,
+        "output_tokens": 1623,
+        "provider": "anthropic",
+        "reasoning_tokens": 0,
+        "step_type": "generate",
+        "total_cost_usd": 0.066235,
+        "total_tokens": 6755,
+        "ts": 1777004252.920143
+      },
+      {
+        "attempt": 1,
+        "id": 2,
+        "input_cost_usd": 0.041755,
+        "input_tokens": 8351,
+        "iteration": null,
+        "job_key": "generate",
+        "model": "claude-opus-4-7",
+        "operator": "torch_nn_functional_embedding",
+        "output_cost_usd": 0.04165,
+        "output_tokens": 1666,
+        "provider": "anthropic",
+        "reasoning_tokens": 0,
+        "step_type": "generate",
+        "total_cost_usd": 0.083405,
+        "total_tokens": 10017,
+        "ts": 1777004282.1504278
+      },
+      {
+        "attempt": 2,
+        "id": 3,
+        "input_cost_usd": 0.056515,
+        "input_tokens": 11303,
+        "iteration": null,
+        "job_key": "generate",
+        "model": "claude-opus-4-7",
+        "operator": "torch_nn_functional_embedding",
+        "output_cost_usd": 0.04165,
+        "output_tokens": 1666,
+        "provider": "anthropic",
+        "reasoning_tokens": 0,
+        "step_type": "generate",
+        "total_cost_usd": 0.098165,
+        "total_tokens": 12969,
+        "ts": 1777004352.9086173
+      },
+      {
+        "attempt": 0,
+        "id": 4,
+        "input_cost_usd": 0.021425,
+        "input_tokens": 4285,
+        "iteration": null,
+        "job_key": "generate",
+        "model": "claude-opus-4-7",
+        "operator": "torch_nn_functional_gelu",
+        "output_cost_usd": 0.035875,
+        "output_tokens": 1435,
+        "provider": "anthropic",
+        "reasoning_tokens": 0,
+        "step_type": "generate",
+        "total_cost_usd": 0.0573,
+        "total_tokens": 5720,
+        "ts": 1777004423.7044477
+      },
+      {
+        "attempt": 1,
+        "id": 5,
+        "input_cost_usd": 0.03662,
+        "input_tokens": 7324,
+        "iteration": null,
+        "job_key": "generate",
+        "model": "claude-opus-4-7",
+        "operator": "torch_nn_functional_gelu",
+        "output_cost_usd": 0.03625,
+        "output_tokens": 1450,
+        "provider": "anthropic",
+        "reasoning_tokens": 0,
+        "step_type": "generate",
+        "total_cost_usd": 0.07286999999999999,
+        "total_tokens": 8774,
+        "ts": 1777004443.2403338
+      },
+      {
+        "attempt": 2,
+        "id": 6,
+        "input_cost_usd": 0.05713,
+        "input_tokens": 11426,
+        "iteration": null,
+        "job_key": "generate",
+        "model": "claude-opus-4-7",
+        "operator": "torch_nn_functional_gelu",
+        "output_cost_usd": 0.05955,
+        "output_tokens": 2382,
+        "provider": "anthropic",
+        "reasoning_tokens": 0,
+        "step_type": "generate",
+        "total_cost_usd": 0.11668,
+        "total_tokens": 13808,
+        "ts": 1777004474.0732803
+      },
+      {
+        "attempt": 0,
+        "id": 7,
+        "input_cost_usd": 0.02358,
+        "input_tokens": 4716,
+        "iteration": null,
+        "job_key": "generate",
+        "model": "claude-opus-4-7",
+        "operator": "torch_nn_functional_linear",
+        "output_cost_usd": 0.041625,
+        "output_tokens": 1665,
+        "provider": "anthropic",
+        "reasoning_tokens": 0,
+        "step_type": "generate",
+        "total_cost_usd": 0.065205,
+        "total_tokens": 6381,
+        "ts": 1777004547.078238
+      },
+      {
+        "attempt": 0,
+        "id": 8,
+        "input_cost_usd": 0.022875,
+        "input_tokens": 4575,
+        "iteration": null,
+        "job_key": "generate",
+        "model": "claude-opus-4-7",
+        "operator": "torch_nn_functional_softmax",
+        "output_cost_usd": 0.078375,
+        "output_tokens": 3135,
+        "provider": "anthropic",
+        "reasoning_tokens": 0,
+        "step_type": "generate",
+        "total_cost_usd": 0.10125,
+        "total_tokens": 7710,
+        "ts": 1777004676.611797
+      },
+      {
+        "attempt": 1,
+        "id": 9,
+        "input_cost_usd": 0.046485,
+        "input_tokens": 9297,
+        "iteration": null,
+        "job_key": "generate",
+        "model": "claude-opus-4-7",
+        "operator": "torch_nn_functional_softmax",
+        "output_cost_usd": 0.077075,
+        "output_tokens": 3083,
+        "provider": "anthropic",
+        "reasoning_tokens": 0,
+        "step_type": "generate",
+        "total_cost_usd": 0.12356,
+        "total_tokens": 12380,
+        "ts": 1777004708.4485655
+      }
+    ],
+    "sha256": "9e931320cbf3372c69f4fe95219dde67399413c4a3395316786a8d152aa89ec2",
+    "size_bytes": 20480,
+    "totals": {
+      "calls": 9,
+      "input_cost_usd": 0.332045,
+      "input_tokens": 66409,
+      "output_cost_usd": 0.452625,
+      "output_tokens": 18105,
+      "reasoning_tokens": 0,
+      "total_cost_usd": 0.78467,
+      "total_tokens": 84514
+    }
+  },
   "missing_full_forge_ops": [],
   "mixed_forge_cast": {
     "exists": true,
@@ -168,6 +452,448 @@
   },
   "model_file": "/home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/data_collection/models/gemma4-e2b-gb10.jsonl",
   "ok": true,
-  "records_appended": 8,
-  "run_id": "gemma4-e2b-gb10__zero_shot__20260424T043053Z"
+  "per_op_usage_summaries": {
+    "torch_nn_functional_embedding": {
+      "by_op": {
+        "torch_nn_functional_embedding": {
+          "calls": 3,
+          "input_cost_usd": 0.0,
+          "input_tokens": 24786,
+          "output_cost_usd": 0.0,
+          "output_tokens": 4955,
+          "reasoning_tokens": 0,
+          "total_cost_usd": 0.0,
+          "total_tokens": 29741
+        }
+      },
+      "by_op_and_step": {
+        "torch_nn_functional_embedding": {
+          "correction": {
+            "calls": 2,
+            "input_cost_usd": 0.0,
+            "input_tokens": 19654,
+            "output_cost_usd": 0.0,
+            "output_tokens": 3332,
+            "reasoning_tokens": 0,
+            "total_cost_usd": 0.0,
+            "total_tokens": 22986
+          },
+          "generation": {
+            "calls": 1,
+            "input_cost_usd": 0.0,
+            "input_tokens": 5132,
+            "output_cost_usd": 0.0,
+            "output_tokens": 1623,
+            "reasoning_tokens": 0,
+            "total_cost_usd": 0.0,
+            "total_tokens": 6755
+          }
+        }
+      },
+      "by_provider_model": {
+        "anthropic/claude-opus-4-7": {
+          "calls": 3,
+          "input_cost_usd": 0.0,
+          "input_tokens": 24786,
+          "output_cost_usd": 0.0,
+          "output_tokens": 4955,
+          "reasoning_tokens": 0,
+          "total_cost_usd": 0.0,
+          "total_tokens": 29741
+        }
+      },
+      "exists": true,
+      "path": "/home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_embedding/llm_usage.db",
+      "per_call_rows": [
+        {
+          "attempt": 1,
+          "input_cost_usd": 0.0,
+          "input_tokens": 5132,
+          "iteration": 0,
+          "model": "claude-opus-4-7",
+          "operator": "torch_nn_functional_embedding",
+          "output_cost_usd": 0.0,
+          "output_tokens": 1623,
+          "provider": "anthropic",
+          "reasoning_tokens": 0,
+          "step_type": "generation",
+          "total_cost_usd": 0.0,
+          "total_tokens": 6755,
+          "ts": 1777004252.8956373
+        },
+        {
+          "attempt": 2,
+          "input_cost_usd": 0.0,
+          "input_tokens": 8351,
+          "iteration": 0,
+          "model": "claude-opus-4-7",
+          "operator": "torch_nn_functional_embedding",
+          "output_cost_usd": 0.0,
+          "output_tokens": 1666,
+          "provider": "anthropic",
+          "reasoning_tokens": 0,
+          "step_type": "correction",
+          "total_cost_usd": 0.0,
+          "total_tokens": 10017,
+          "ts": 1777004282.1415665
+        },
+        {
+          "attempt": 3,
+          "input_cost_usd": 0.0,
+          "input_tokens": 11303,
+          "iteration": 0,
+          "model": "claude-opus-4-7",
+          "operator": "torch_nn_functional_embedding",
+          "output_cost_usd": 0.0,
+          "output_tokens": 1666,
+          "provider": "anthropic",
+          "reasoning_tokens": 0,
+          "step_type": "correction",
+          "total_cost_usd": 0.0,
+          "total_tokens": 12969,
+          "ts": 1777004352.9025407
+        }
+      ],
+      "sha256": "f561c2dbda53311a8810b2e4c58f38f0dfdf42d3d24f893e45a0c00afea55f3f",
+      "size_bytes": 8192,
+      "totals": {
+        "calls": 3,
+        "input_cost_usd": 0.0,
+        "input_tokens": 24786,
+        "output_cost_usd": 0.0,
+        "output_tokens": 4955,
+        "reasoning_tokens": 0,
+        "total_cost_usd": 0.0,
+        "total_tokens": 29741
+      }
+    },
+    "torch_nn_functional_gelu": {
+      "by_op": {
+        "torch_nn_functional_gelu": {
+          "calls": 3,
+          "input_cost_usd": 0.0,
+          "input_tokens": 23035,
+          "output_cost_usd": 0.0,
+          "output_tokens": 5267,
+          "reasoning_tokens": 0,
+          "total_cost_usd": 0.0,
+          "total_tokens": 28302
+        }
+      },
+      "by_op_and_step": {
+        "torch_nn_functional_gelu": {
+          "correction": {
+            "calls": 2,
+            "input_cost_usd": 0.0,
+            "input_tokens": 18750,
+            "output_cost_usd": 0.0,
+            "output_tokens": 3832,
+            "reasoning_tokens": 0,
+            "total_cost_usd": 0.0,
+            "total_tokens": 22582
+          },
+          "generation": {
+            "calls": 1,
+            "input_cost_usd": 0.0,
+            "input_tokens": 4285,
+            "output_cost_usd": 0.0,
+            "output_tokens": 1435,
+            "reasoning_tokens": 0,
+            "total_cost_usd": 0.0,
+            "total_tokens": 5720
+          }
+        }
+      },
+      "by_provider_model": {
+        "anthropic/claude-opus-4-7": {
+          "calls": 3,
+          "input_cost_usd": 0.0,
+          "input_tokens": 23035,
+          "output_cost_usd": 0.0,
+          "output_tokens": 5267,
+          "reasoning_tokens": 0,
+          "total_cost_usd": 0.0,
+          "total_tokens": 28302
+        }
+      },
+      "exists": true,
+      "path": "/home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_gelu/llm_usage.db",
+      "per_call_rows": [
+        {
+          "attempt": 1,
+          "input_cost_usd": 0.0,
+          "input_tokens": 4285,
+          "iteration": 0,
+          "model": "claude-opus-4-7",
+          "operator": "torch_nn_functional_gelu",
+          "output_cost_usd": 0.0,
+          "output_tokens": 1435,
+          "provider": "anthropic",
+          "reasoning_tokens": 0,
+          "step_type": "generation",
+          "total_cost_usd": 0.0,
+          "total_tokens": 5720,
+          "ts": 1777004423.6937463
+        },
+        {
+          "attempt": 2,
+          "input_cost_usd": 0.0,
+          "input_tokens": 7324,
+          "iteration": 0,
+          "model": "claude-opus-4-7",
+          "operator": "torch_nn_functional_gelu",
+          "output_cost_usd": 0.0,
+          "output_tokens": 1450,
+          "provider": "anthropic",
+          "reasoning_tokens": 0,
+          "step_type": "correction",
+          "total_cost_usd": 0.0,
+          "total_tokens": 8774,
+          "ts": 1777004443.228087
+        },
+        {
+          "attempt": 3,
+          "input_cost_usd": 0.0,
+          "input_tokens": 11426,
+          "iteration": 0,
+          "model": "claude-opus-4-7",
+          "operator": "torch_nn_functional_gelu",
+          "output_cost_usd": 0.0,
+          "output_tokens": 2382,
+          "provider": "anthropic",
+          "reasoning_tokens": 0,
+          "step_type": "correction",
+          "total_cost_usd": 0.0,
+          "total_tokens": 13808,
+          "ts": 1777004474.066478
+        }
+      ],
+      "sha256": "3fe8bb09560c791e92fee19e72e0cd2508b385fc176262d5b523ead497f8c78a",
+      "size_bytes": 8192,
+      "totals": {
+        "calls": 3,
+        "input_cost_usd": 0.0,
+        "input_tokens": 23035,
+        "output_cost_usd": 0.0,
+        "output_tokens": 5267,
+        "reasoning_tokens": 0,
+        "total_cost_usd": 0.0,
+        "total_tokens": 28302
+      }
+    },
+    "torch_nn_functional_linear": {
+      "by_op": {
+        "torch_nn_functional_linear": {
+          "calls": 1,
+          "input_cost_usd": 0.0,
+          "input_tokens": 4716,
+          "output_cost_usd": 0.0,
+          "output_tokens": 1665,
+          "reasoning_tokens": 0,
+          "total_cost_usd": 0.0,
+          "total_tokens": 6381
+        }
+      },
+      "by_op_and_step": {
+        "torch_nn_functional_linear": {
+          "generation": {
+            "calls": 1,
+            "input_cost_usd": 0.0,
+            "input_tokens": 4716,
+            "output_cost_usd": 0.0,
+            "output_tokens": 1665,
+            "reasoning_tokens": 0,
+            "total_cost_usd": 0.0,
+            "total_tokens": 6381
+          }
+        }
+      },
+      "by_provider_model": {
+        "anthropic/claude-opus-4-7": {
+          "calls": 1,
+          "input_cost_usd": 0.0,
+          "input_tokens": 4716,
+          "output_cost_usd": 0.0,
+          "output_tokens": 1665,
+          "reasoning_tokens": 0,
+          "total_cost_usd": 0.0,
+          "total_tokens": 6381
+        }
+      },
+      "exists": true,
+      "path": "/home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_linear/llm_usage.db",
+      "per_call_rows": [
+        {
+          "attempt": 1,
+          "input_cost_usd": 0.0,
+          "input_tokens": 4716,
+          "iteration": 0,
+          "model": "claude-opus-4-7",
+          "operator": "torch_nn_functional_linear",
+          "output_cost_usd": 0.0,
+          "output_tokens": 1665,
+          "provider": "anthropic",
+          "reasoning_tokens": 0,
+          "step_type": "generation",
+          "total_cost_usd": 0.0,
+          "total_tokens": 6381,
+          "ts": 1777004547.0711455
+        }
+      ],
+      "sha256": "3068031d3110ce3e7d0b02b5be653b0327ac159f6ef58b680f73e9f6ed980770",
+      "size_bytes": 8192,
+      "totals": {
+        "calls": 1,
+        "input_cost_usd": 0.0,
+        "input_tokens": 4716,
+        "output_cost_usd": 0.0,
+        "output_tokens": 1665,
+        "reasoning_tokens": 0,
+        "total_cost_usd": 0.0,
+        "total_tokens": 6381
+      }
+    },
+    "torch_nn_functional_softmax": {
+      "by_op": {
+        "torch_nn_functional_softmax": {
+          "calls": 2,
+          "input_cost_usd": 0.0,
+          "input_tokens": 13872,
+          "output_cost_usd": 0.0,
+          "output_tokens": 6218,
+          "reasoning_tokens": 0,
+          "total_cost_usd": 0.0,
+          "total_tokens": 20090
+        }
+      },
+      "by_op_and_step": {
+        "torch_nn_functional_softmax": {
+          "correction": {
+            "calls": 1,
+            "input_cost_usd": 0.0,
+            "input_tokens": 9297,
+            "output_cost_usd": 0.0,
+            "output_tokens": 3083,
+            "reasoning_tokens": 0,
+            "total_cost_usd": 0.0,
+            "total_tokens": 12380
+          },
+          "generation": {
+            "calls": 1,
+            "input_cost_usd": 0.0,
+            "input_tokens": 4575,
+            "output_cost_usd": 0.0,
+            "output_tokens": 3135,
+            "reasoning_tokens": 0,
+            "total_cost_usd": 0.0,
+            "total_tokens": 7710
+          }
+        }
+      },
+      "by_provider_model": {
+        "anthropic/claude-opus-4-7": {
+          "calls": 2,
+          "input_cost_usd": 0.0,
+          "input_tokens": 13872,
+          "output_cost_usd": 0.0,
+          "output_tokens": 6218,
+          "reasoning_tokens": 0,
+          "total_cost_usd": 0.0,
+          "total_tokens": 20090
+        }
+      },
+      "exists": true,
+      "path": "/home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_softmax/llm_usage.db",
+      "per_call_rows": [
+        {
+          "attempt": 1,
+          "input_cost_usd": 0.0,
+          "input_tokens": 4575,
+          "iteration": 0,
+          "model": "claude-opus-4-7",
+          "operator": "torch_nn_functional_softmax",
+          "output_cost_usd": 0.0,
+          "output_tokens": 3135,
+          "provider": "anthropic",
+          "reasoning_tokens": 0,
+          "step_type": "generation",
+          "total_cost_usd": 0.0,
+          "total_tokens": 7710,
+          "ts": 1777004676.6052868
+        },
+        {
+          "attempt": 2,
+          "input_cost_usd": 0.0,
+          "input_tokens": 9297,
+          "iteration": 0,
+          "model": "claude-opus-4-7",
+          "operator": "torch_nn_functional_softmax",
+          "output_cost_usd": 0.0,
+          "output_tokens": 3083,
+          "provider": "anthropic",
+          "reasoning_tokens": 0,
+          "step_type": "correction",
+          "total_cost_usd": 0.0,
+          "total_tokens": 12380,
+          "ts": 1777004708.439311
+        }
+      ],
+      "sha256": "f3f145256c79dd81db699dae0d70a2fbf757716da0b4ce52b79855200c8c361c",
+      "size_bytes": 8192,
+      "totals": {
+        "calls": 2,
+        "input_cost_usd": 0.0,
+        "input_tokens": 13872,
+        "output_cost_usd": 0.0,
+        "output_tokens": 6218,
+        "reasoning_tokens": 0,
+        "total_cost_usd": 0.0,
+        "total_tokens": 20090
+      }
+    }
+  },
+  "records_appended": 9,
+  "run_id": "gemma4-e2b-gb10__zero_shot__20260424T043053Z",
+  "usage_by_op": {
+    "torch_nn_functional_embedding": {
+      "calls": 3,
+      "input_cost_usd": 0.12393,
+      "input_tokens": 24786,
+      "output_cost_usd": 0.123875,
+      "output_tokens": 4955,
+      "reasoning_tokens": 0,
+      "total_cost_usd": 0.247805,
+      "total_tokens": 29741
+    },
+    "torch_nn_functional_gelu": {
+      "calls": 3,
+      "input_cost_usd": 0.115175,
+      "input_tokens": 23035,
+      "output_cost_usd": 0.131675,
+      "output_tokens": 5267,
+      "reasoning_tokens": 0,
+      "total_cost_usd": 0.24685,
+      "total_tokens": 28302
+    },
+    "torch_nn_functional_linear": {
+      "calls": 1,
+      "input_cost_usd": 0.02358,
+      "input_tokens": 4716,
+      "output_cost_usd": 0.041625,
+      "output_tokens": 1665,
+      "reasoning_tokens": 0,
+      "total_cost_usd": 0.065205,
+      "total_tokens": 6381
+    },
+    "torch_nn_functional_softmax": {
+      "calls": 2,
+      "input_cost_usd": 0.06936,
+      "input_tokens": 13872,
+      "output_cost_usd": 0.15545,
+      "output_tokens": 6218,
+      "reasoning_tokens": 0,
+      "total_cost_usd": 0.22481,
+      "total_tokens": 20090
+    }
+  }
 }
