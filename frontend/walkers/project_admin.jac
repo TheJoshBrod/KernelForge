@@ -477,8 +477,8 @@ walker:pub CreateProject {
                     "skip_ops": [],
                     "only_ops": [],
                     "max_ops": 0,
-                    "use_baseline_kernels": True,
-                    "use_baseline_as_template": True,
+                    "use_baseline_kernels": False,
+                    "use_baseline_as_template": False,
                     "max_attempts": 8,
                     "extra_validation_cases": 1,
                     "target_device": self.selectedBackend if self.selectedBackend else target_device

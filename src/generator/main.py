@@ -829,8 +829,8 @@ def main():
     if args.skip_ops:
         skip_ops = skip_ops.union(_op_set(str(args.skip_ops).split(",")))
     max_ops = gen_cfg.get("max_ops")
-    use_baseline = bool(gen_cfg.get("use_baseline_kernels", True))
-    baseline_as_template = bool(gen_cfg.get("use_baseline_as_template", True))
+    use_baseline = bool(gen_cfg.get("use_baseline_kernels", False))
+    baseline_as_template = bool(gen_cfg.get("use_baseline_as_template", False))
     env_use_baseline = _bool_env("KFORGE_USE_BASELINE_KERNELS")
     if env_use_baseline is not None:
         use_baseline = env_use_baseline
