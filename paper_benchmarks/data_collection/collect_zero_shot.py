@@ -240,6 +240,13 @@ def generated_op_artifacts(project_dir: Path, *, root: Path) -> dict[str, Any]:
     return artifacts
 
 
+def attempted_generation_ops(project_dir: Path) -> list[str]:
+    gen_root = project_dir / "kernels" / "generated" / "individual_op_kernels"
+    if not gen_root.exists():
+        return []
+    return sorted(child.name for child in gen_root.iterdir() if child.is_dir())
+
+
 def successful_zero_shot_kernel_map(project_dir: Path) -> dict[str, str]:
     gen_root = project_dir / "kernels" / "generated" / "individual_op_kernels"
     if not gen_root.exists():
@@ -390,8 +397,11 @@ def collect(args: argparse.Namespace) -> Path:
     ]
 
     profiled = profiled_ops(project_dir)
+    attempted_ops = attempted_generation_ops(project_dir)
     generated_map = successful_zero_shot_kernel_map(project_dir)
     missing_full_forge_ops = [op for op in profiled if op not in generated_map]
+    failed_attempted_ops = [op for op in attempted_ops if op not in generated_map]
+    not_attempted_profiled_ops = [op for op in profiled if op not in attempted_ops]
     config_payload = read_json(project_dir / "config.json")
     generation_config = (
         config_payload.get("generation", {})
@@ -515,9 +525,15 @@ def collect(args: argparse.Namespace) -> Path:
         {
             **build_common(record_type="arm_summary", source_paths=source_paths, **common_kwargs),
             "payload": {
-                "arm_complete": True,
+                "arm_complete": not missing_full_forge_ops,
+                "arm_collection_complete": True,
+                "all_profiled_ops_have_zero_shot_kernel": not missing_full_forge_ops,
+                "zero_shot_generated_kernel_count": len(generated_map),
+                "zero_shot_failed_attempted_ops": failed_attempted_ops,
+                "zero_shot_not_attempted_profiled_ops": not_attempted_profiled_ops,
                 "optimization_started": False,
                 "profiled_ops": profiled,
+                "attempted_zero_shot_ops": attempted_ops,
                 "zero_shot_generated_ops": sorted(generated_map),
                 "missing_full_forge_ops": missing_full_forge_ops,
                 "full_forge_cast": full_export["cast_file"],
