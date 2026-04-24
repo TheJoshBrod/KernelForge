@@ -36,8 +36,31 @@ def test_quantized_tensor_subclasses_are_marked_in_prompt(monkeypatch) -> None:
 
     assert weight_spec["quantized_tensor"] is True
     assert "TinyGemmWeightQBitsTensor" in weight_spec["quantized_tensor_types"][0]
+    assert weight_spec["quantization_metadata"][0]["metadata_available"] is False
 
     prompt = prompts.generate_full_llm_prompt(calls, "torch.nn.functional.linear")
 
     assert "Quantized Tensor Warning" in prompt
+    assert "Quantization metadata" in prompt
     assert "A dense BF16 matmul kernel is incorrect" in prompt
+
+
+def test_prompt_records_total_call_count_when_sampled(monkeypatch) -> None:
+    monkeypatch.setenv("KFORGE_TARGET_DEVICE", "cuda")
+    calls = [
+        {
+            "function_name": "torch.nn.functional.gelu",
+            "args": [torch.empty((2, 8), dtype=torch.bfloat16)],
+            "kwargs": {},
+            "output": torch.empty((2, 8), dtype=torch.bfloat16),
+        }
+    ]
+
+    prompt = prompts.generate_full_llm_prompt(
+        calls,
+        "torch.nn.functional.gelu",
+        total_call_count=5000,
+    )
+
+    assert "Based on 5000 tracked call(s)" in prompt
+    assert "1 sampled replay entries out of 5000" in prompt

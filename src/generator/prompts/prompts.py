@@ -128,6 +128,76 @@ def _is_quantized_tensor_type(obj_type: type) -> bool:
     return any(marker in name for marker in markers)
 
 
+_QUANT_ATTR_NAMES = (
+    "qtype",
+    "_qtype",
+    "bits",
+    "group_size",
+    "groupsize",
+    "axis",
+    "scale",
+    "scales",
+    "_scale",
+    "_scales",
+    "zero_point",
+    "zero_points",
+    "zeropoint",
+    "zeropoints",
+    "_zero_point",
+    "_zero_points",
+    "packed",
+    "_packed",
+    "packed_weight",
+    "qweight",
+    "_qweight",
+    "_data",
+)
+
+
+def _summarize_metadata_value(value):
+    if torch.is_tensor(value):
+        return {
+            "type": _type_name(type(value)),
+            "dtype": str(value.dtype),
+            "shape": list(value.shape),
+            "stride": list(value.stride()),
+            "device": str(value.device),
+            "numel": int(value.numel()),
+        }
+    if isinstance(value, torch.dtype):
+        return str(value)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, (list, tuple)):
+        if len(value) <= 8 and all(
+            isinstance(item, (str, int, float, bool)) or item is None
+            for item in value
+        ):
+            return list(value)
+        return {"type": type(value).__name__, "length": len(value)}
+    return {"type": _type_name(type(value)), "repr": repr(value)[:160]}
+
+
+def _quantization_metadata(value: torch.Tensor) -> dict:
+    metadata = {"tensor_type": _type_name(type(value))}
+    attrs = {}
+    for attr in _QUANT_ATTR_NAMES:
+        try:
+            attr_value = getattr(value, attr)
+        except Exception:
+            continue
+        if callable(attr_value):
+            continue
+        attrs[attr] = _summarize_metadata_value(attr_value)
+    metadata["attributes"] = attrs
+    metadata["metadata_available"] = bool(attrs)
+    if not attrs:
+        metadata["note"] = (
+            "No packed layout/scale metadata was visible on the tensor object."
+        )
+    return metadata
+
+
 def _tensor_stats(value: torch.Tensor) -> dict:
     target = _target_device()
     device = target or str(value.device)
@@ -145,6 +215,7 @@ def _tensor_stats(value: torch.Tensor) -> dict:
         stats["tensor_type"] = _type_name(value_type)
         if _is_quantized_tensor_type(value_type):
             stats["quantized_tensor"] = True
+            stats["quantization_metadata"] = _quantization_metadata(value)
     return stats
 
 
@@ -183,7 +254,7 @@ def _infer_param_order(call_list):
     return [], {}
 
 
-def generate_function_spec_from_calls(call_list, function_name):
+def generate_function_spec_from_calls(call_list, function_name, total_call_count=None):
     """
     Extract function specification from ALL tracked PyTorch calls.
     Aggregates types and detects dynamic shapes across all iterations.
@@ -219,6 +290,7 @@ def generate_function_spec_from_calls(call_list, function_name):
                     "numel": set(),
                     "tensor_types": set(),
                     "quantized_tensor_types": set(),
+                    "quantization_metadata": [],
                     "list_lens": set(),
                     "scalar_values": [],
                 }
@@ -242,6 +314,9 @@ def generate_function_spec_from_calls(call_list, function_name):
                 if _is_quantized_tensor_type(value_type):
                     param_stats[name]["quantized_tensor_types"].add(
                         _type_name(value_type)
+                    )
+                    param_stats[name]["quantization_metadata"].append(
+                        _quantization_metadata(value)
                     )
 
             # Record Length (for Lists/Tuples)
@@ -271,6 +346,7 @@ def generate_function_spec_from_calls(call_list, function_name):
         numel = stats["numel"]
         tensor_types = stats["tensor_types"]
         quantized_tensor_types = stats["quantized_tensor_types"]
+        quantization_metadata = stats["quantization_metadata"]
 
         spec = {
             "name": name,
@@ -325,6 +401,11 @@ def generate_function_spec_from_calls(call_list, function_name):
             if quantized_tensor_types:
                 spec["quantized_tensor"] = True
                 spec["quantized_tensor_types"] = sorted(quantized_tensor_types)
+                metadata_seen = []
+                for item in quantization_metadata:
+                    if item not in metadata_seen:
+                        metadata_seen.append(item)
+                spec["quantization_metadata"] = metadata_seen[:3]
                 spec["description"] += (
                     "Quantized or packed tensor subclass observed; logical dtype may "
                     "not describe storage layout. "
@@ -364,15 +445,23 @@ def generate_function_spec_from_calls(call_list, function_name):
 
         param_specs.append(spec)
 
-    return {
+    total_calls = total_call_count if total_call_count is not None else len(call_list)
+    spec = {
         "function_name": function_name,
-        "num_calls": len(call_list),
+        "num_calls": total_calls,
+        "sampled_calls": len(call_list),
         "parameters": param_specs,
         "signature": {
             "params": param_order,
             "defaults": defaults,
         },
     }
+    if total_call_count is not None and total_call_count != len(call_list):
+        spec["sampling_note"] = (
+            f"Prompt summarized {len(call_list)} sampled replay entries out of "
+            f"{total_call_count} total profiled entries."
+        )
+    return spec
 
 
 def format_operator_prompt(function_spec, profiler_context=None, template: str | None = None):
@@ -391,6 +480,8 @@ def format_operator_prompt(function_spec, profiler_context=None, template: str |
 ### Function Signature
 
 Based on {function_spec['num_calls']} tracked call(s), implement this operator.
+
+{function_spec.get('sampling_note', '')}
 
 Signature parameters (exact order): {function_spec['signature']['params']}
 Defaults: {function_spec['signature']['defaults']}
@@ -416,6 +507,11 @@ Defaults: {function_spec['signature']['defaults']}
                     "\n   - Quantized/packed tensor: true"
                     f"\n   - Quantized tensor type(s): {param.get('quantized_tensor_types', [])}"
                 )
+                if param.get("quantization_metadata"):
+                    prompt += (
+                        "\n   - Quantization metadata: "
+                        f"{param.get('quantization_metadata')}"
+                    )
                 quantized_params.append(param["name"])
             prompt += f"\n   - Device(s): {param.get('device', 'unknown')}"
             prompt += f"\n   - Contiguous: {param.get('contiguous', [])}"
@@ -596,7 +692,13 @@ def parse_profiler_output(profiler_text):
     }
 
 
-def generate_full_llm_prompt(calls_list, function_name, profiler_output=None, template: str | None = None):
+def generate_full_llm_prompt(
+    calls_list,
+    function_name,
+    profiler_output=None,
+    template: str | None = None,
+    total_call_count=None,
+):
     """
     Complete pipeline: Generate the full prompt to send to an LLM.
 
@@ -617,7 +719,9 @@ def generate_full_llm_prompt(calls_list, function_name, profiler_output=None, te
     """
 
     # Extract function specification
-    spec = generate_function_spec_from_calls(calls_list, function_name)
+    spec = generate_function_spec_from_calls(
+        calls_list, function_name, total_call_count=total_call_count
+    )
     if spec is None:
         return f"Error: Could not generate spec for {function_name}"
 

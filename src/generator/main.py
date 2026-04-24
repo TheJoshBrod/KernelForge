@@ -162,6 +162,106 @@ def _bool_env(name: str) -> bool | None:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _int_env(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, str(default))))
+    except Exception:
+        return default
+
+
+def _sample_entry_files_for_prompt(entry_files: list[str], max_entries: int | None = None) -> list[str]:
+    if not entry_files:
+        return []
+    limit = max_entries or _int_env("KFORGE_PROMPT_MAX_ENTRIES", 32)
+    if len(entry_files) <= limit:
+        return list(entry_files)
+    if limit == 1:
+        return [entry_files[0]]
+    indices = []
+    for i in range(limit):
+        idx = round(i * (len(entry_files) - 1) / (limit - 1))
+        if idx not in indices:
+            indices.append(idx)
+    return [entry_files[idx] for idx in indices]
+
+
+def _type_name(value) -> str:
+    value_type = type(value)
+    module = getattr(value_type, "__module__", "")
+    qualname = getattr(value_type, "__qualname__", getattr(value_type, "__name__", str(value_type)))
+    return f"{module}.{qualname}" if module and module != "builtins" else qualname
+
+
+def _is_quantized_tensor_value(value) -> bool:
+    if not torch.is_tensor(value):
+        return False
+    name = _type_name(value).lower()
+    markers = ("quanto", "quant", "qbit", "qbits", "tinygemm", "packed", "int4", "int8")
+    return any(marker in name for marker in markers)
+
+
+def _call_param_value(call: dict, param_name: str):
+    args = list(call.get("args") or [])
+    kwargs = dict(call.get("kwargs") or {})
+    sig = call.get("signature") or {}
+    params = sig.get("params") if isinstance(sig, dict) else []
+    if param_name in kwargs:
+        return kwargs[param_name]
+    if isinstance(params, list) and param_name in params:
+        idx = params.index(param_name)
+        if idx < len(args):
+            return args[idx]
+    return None
+
+
+def _quantized_linear_fallback(call_list: list[dict], function_name: str) -> dict | None:
+    fn = str(function_name).replace("_", ".")
+    if not fn.endswith("linear"):
+        return None
+    for call in call_list:
+        weight = _call_param_value(call, "weight")
+        if _is_quantized_tensor_value(weight):
+            return {
+                "function": function_name,
+                "op": _normalize_op_name(function_name),
+                "status": "requires_torch_fallback",
+                "reason": "quantized_linear_packed_weight",
+                "message": (
+                    "Detected a quantized/packed tensor subclass for linear.weight. "
+                    "Kernel Forge does not yet have a verified packed INT4/Quanto "
+                    "linear codegen path, so a dense BF16-style generated kernel would "
+                    "be incorrect. Use PyTorch/Quanto fallback for mixed-forged CASTs."
+                ),
+                "detected_parameter": "weight",
+                "detected_tensor_type": _type_name(weight),
+                "cast_policy": {
+                    "full_forged_publishable": False,
+                    "mixed_forged_publishable": True,
+                    "torch_fallback_ops": [_normalize_op_name(function_name)],
+                    "fallback_reasons": {
+                        _normalize_op_name(function_name): "quantized_linear_packed_weight"
+                    },
+                },
+            }
+    return None
+
+
+def _write_fallback_required(op_dir: Path, payload: dict) -> None:
+    attempts_dir = op_dir / "attempts"
+    attempts_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        **payload,
+    }
+    for rel in ("fallback_required.json", "attempts/fallback.json"):
+        try:
+            out = op_dir / rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+
 def _codex_model() -> str | None:
     return os.environ.get("KFORGE_CODEX_MODEL") or os.environ.get("OPENAI_MODEL")
 
@@ -607,6 +707,7 @@ def process_function(
     *,
     use_baseline: bool = True,
     baseline_as_template: bool = True,
+    allow_quantized_linear_generation: bool = False,
     project_dir: Path | None = None,
     ssh_config=None,
 ):
@@ -629,6 +730,7 @@ def process_function(
     if not function_name:
         print(f"Skipping {directory_name}: no function_name stored")
         return False
+    op_key = _normalize_op_name(function_name)
 
     context = {
         "torch": torch,
@@ -647,16 +749,11 @@ def process_function(
     except Exception:
         pass
 
-    # Profile operation
-    try:
-        op_details = monitor.profile_single_op(context, exec_str)
-    except Exception as e:
-        print(e)
-        return False
-
-    # Load all calls for prompt generation
+    # Load a bounded, shape-spread sample for prompt generation. Validation and
+    # benchmarking still use the full entry_files list.
+    prompt_entry_files = _sample_entry_files_for_prompt(entry_files)
     call_list = []
-    for entry_file in entry_files:
+    for entry_file in prompt_entry_files:
         try:
             entry = torch.load(
                 entry_file, map_location='cpu', weights_only=False)
@@ -669,16 +766,65 @@ def process_function(
         print(f"Failed to load any entries for {function_name}")
         return False
 
+    fallback_required = (
+        None
+        if allow_quantized_linear_generation
+        else _quantized_linear_fallback(call_list, function_name)
+    )
+    if fallback_required:
+        fallback_required["prompt_sampled_entries"] = len(call_list)
+        fallback_required["total_replay_entries"] = len(entry_files)
+        _write_fallback_required(op_dir, fallback_required)
+        _write_failure_report(
+            op_dir,
+            "fallback_policy",
+            fallback_required["message"],
+            fallback_required,
+        )
+        try:
+            summary_path = op_dir / "attempts" / "summary.json"
+            summary_path.write_text(
+                json.dumps(
+                    {
+                        "phase": "GENERATION",
+                        "function": function_name,
+                        "attempts_to_correct": 0,
+                        "success": False,
+                        "requires_torch_fallback": True,
+                        "reason": fallback_required["reason"],
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+        call_list.clear()
+        return False
+
+    # Profile operation only after fallback checks, so unsupported packed INT4
+    # linear does not spend time in LLM/profiler paths that cannot produce a
+    # correct full-forged kernel yet.
+    try:
+        op_details = monitor.profile_single_op(context, exec_str)
+    except Exception as e:
+        print(e)
+        call_list.clear()
+        return False
+
     template = None
     if baseline_as_template:
         template = templates.template_for_prompt(function_name)
     prompt = prompts.generate_full_llm_prompt(
-        call_list, function_name, op_details, template=template
+        call_list,
+        function_name,
+        op_details,
+        template=template,
+        total_call_count=len(entry_files),
     )
 
     call_list.clear()
 
-    op_key = _normalize_op_name(function_name)
     task_key = "gen_" + op_key
     proj_base_dir = project_dir if project_dir else None
 
@@ -831,12 +977,18 @@ def main():
     max_ops = gen_cfg.get("max_ops")
     use_baseline = bool(gen_cfg.get("use_baseline_kernels", False))
     baseline_as_template = bool(gen_cfg.get("use_baseline_as_template", False))
+    allow_quantized_linear_generation = bool(
+        gen_cfg.get("allow_quantized_linear_generation", False)
+    )
     env_use_baseline = _bool_env("KFORGE_USE_BASELINE_KERNELS")
     if env_use_baseline is not None:
         use_baseline = env_use_baseline
     env_baseline_template = _bool_env("KFORGE_USE_BASELINE_TEMPLATE")
     if env_baseline_template is not None:
         baseline_as_template = env_baseline_template
+    env_quantized_linear = _bool_env("KFORGE_ALLOW_QUANTIZED_LINEAR_GENERATION")
+    if env_quantized_linear is not None:
+        allow_quantized_linear_generation = env_quantized_linear
     if target_device in {"cpu", "mps"}:
         use_baseline = False
         baseline_as_template = False
@@ -981,6 +1133,7 @@ def main():
             op_dir,
             use_baseline=use_baseline,
             baseline_as_template=baseline_as_template,
+            allow_quantized_linear_generation=allow_quantized_linear_generation,
             project_dir=project_dir,
             ssh_config=ssh_config,
         )

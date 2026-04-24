@@ -38,6 +38,24 @@ def _canonical_median_time_ms(stats: dict) -> float:
         raise ValueError("Profiler stats missing median_time_ms or mean_time_ms")
     return float(ms)
 
+
+def _prompt_sample_entry_files(entry_files: list[Path]) -> list[Path]:
+    try:
+        limit = max(1, int(os.environ.get("KFORGE_PROMPT_MAX_ENTRIES", "32")))
+    except Exception:
+        limit = 32
+    if len(entry_files) <= limit:
+        return list(entry_files)
+    if limit == 1:
+        return [entry_files[0]]
+    indices: list[int] = []
+    for i in range(limit):
+        idx = round(i * (len(entry_files) - 1) / (limit - 1))
+        if idx not in indices:
+            indices.append(idx)
+    return [entry_files[idx] for idx in indices]
+
+
 def _default_queue_state() -> dict:
     return {
         "active_tasks": {},
@@ -326,9 +344,11 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
     entry_files = sorted(paths["io_dir"].glob("entry_*.pt"))
     
     if entry_files:
-        # Load all entry files to get function calls (same as generator main.py)
+        # Load a bounded, shape-spread prompt sample. Validation/profiling still
+        # operate on the full replay corpus through paths["io_dir"].
         call_list = []
-        for entry_file in entry_files:
+        prompt_entry_files = _prompt_sample_entry_files(entry_files)
+        for entry_file in prompt_entry_files:
             try:
                 entry = torch.load(entry_file, map_location='cpu', weights_only=False)
                 call_list.append(entry)
@@ -339,7 +359,11 @@ def create_new_root(backend: Backend, gpu_specs: GPUSpecs, paths: dict[str, Path
         if call_list:
             # Get function name from first entry
             function_name = call_list[0].get("function_name", op_name)
-            operator_spec = gen_prompts.generate_function_spec_from_calls(call_list, function_name)
+            operator_spec = gen_prompts.generate_function_spec_from_calls(
+                call_list,
+                function_name,
+                total_call_count=len(entry_files),
+            )
         else:
             operator_spec = {"function_name": op_name, "parameters": [], "num_calls": 0}
     else:
