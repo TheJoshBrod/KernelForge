@@ -190,7 +190,7 @@ def validate_kernel(generated_py_code: str, paths: dict[str, Path]) -> tuple[boo
 
         for entry_file in entry_files:
             try:
-                entry = torch.load(entry_file)
+                entry = torch.load(entry_file, weights_only=False)
                 args = entry.get("args", [])
                 kwargs = entry.get("kwargs", {})
                 signature_info = entry.get("signature", {"params": [], "defaults": {}})

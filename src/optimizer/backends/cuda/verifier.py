@@ -214,7 +214,7 @@ def _validate_worker_loop(q_in, q_out):
                 entries = []
                 canonical_signature = None
                 for f in entry_files:
-                    e = torch.load(f)
+                    e = torch.load(f, weights_only=False)
                     entries.append(e)
                     if canonical_signature is None:
                         sig = e.get("signature", {})

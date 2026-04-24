@@ -1,0 +1,256 @@
+{
+  "artifact_type": "benchmark_result",
+  "benchmark_harness_version": "0.1.0",
+  "benchmark_mode": "e2e_model",
+  "cast_package_hash": "a24f2fe081d50882744ae5464a4acf210fb7dfd26ed873752933c09d7f46a018",
+  "cast_package_path": "/home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/test_qwen - NVIDIA GB10/exports/test_qwen - NVIDIA GB10.cast",
+  "command_line": [
+    "/home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/paper_bench/cli.py",
+    "run-llm",
+    "--model-config",
+    "paper_benchmarks/configs/models/qwen35a3b.yaml",
+    "--suite-config",
+    "paper_benchmarks/configs/suites/qwen_llm_smoke.yaml",
+    "--variants",
+    "eager",
+    "--project-ref",
+    "project/test_qwen%20-%20NVIDIA%20GB10/",
+    "--out",
+    "paper_benchmarks/runs/qwen35a3b_smoke_eager"
+  ],
+  "command_line_text": "/home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/paper_bench/cli.py run-llm --model-config paper_benchmarks/configs/models/qwen35a3b.yaml --suite-config paper_benchmarks/configs/suites/qwen_llm_smoke.yaml --variants eager --project-ref project/test_qwen%20-%20NVIDIA%20GB10/ --out paper_benchmarks/runs/qwen35a3b_smoke_eager",
+  "comparison_group": "short_bs1",
+  "compile_settings": {
+    "backend": "inductor",
+    "dynamic": false,
+    "fullgraph": false,
+    "mode": null
+  },
+  "compile_time_ms": null,
+  "config_hashes": {
+    "model_config": "f6ba292293f46d2be2aa9c22ee638a961b3ec311308c1e9d7a27977d4e4012dc",
+    "prompt_file": "bf02a32ec3e11fe8a5eec24da64b75d1794a621112e36f51a16dae24b3092b93",
+    "suite": "2a50ab0278c120184a0a8057f316b93b0728ff88d63f656e4166e75eac5ebdc8"
+  },
+  "configured_batch_size": 1,
+  "correctness_message": "Reference eager run.",
+  "correctness_status": "reference",
+  "cuda_version": "13.0",
+  "cudnn_version": "91501",
+  "details": {
+    "comparison_group": "short_bs1",
+    "generation_settings": {
+      "batch_size": 1,
+      "do_sample": false,
+      "eos_token_id": 248046,
+      "generation_mode": "greedy",
+      "max_new_tokens": 16,
+      "pad_token_id": 248044
+    },
+    "prompt_bucket_id": "short",
+    "prompt_source_format": "jsonl",
+    "prompt_suite_hash": "bf02a32ec3e11fe8a5eec24da64b75d1794a621112e36f51a16dae24b3092b93",
+    "selected_prompt_ids": [
+      "mt_bench_q081_t1",
+      "mt_bench_q081_t2"
+    ],
+    "selected_prompt_ids_hash": "cba76aa3fb1443c7a2173f01fde170da530cd2115ed51a3190d685c717537511",
+    "selection_policy": {
+      "batch_size": 1,
+      "method": "frozen_input_order",
+      "post_hoc": false,
+      "prompt_bucket_id": "short",
+      "timed_run_count": 2
+    }
+  },
+  "determinism_controls": {
+    "cuda_matmul_allow_tf32": false,
+    "cudnn_allow_tf32": true,
+    "cudnn_benchmark": false,
+    "cudnn_deterministic": false,
+    "deterministic_algorithms_enabled": false,
+    "deterministic_debug_mode": "0"
+  },
+  "driver_info": {
+    "current_device": 0,
+    "device_capability": "(12, 1)",
+    "driver_version": "580.126.09",
+    "nvcc_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Wed_Aug_20_01:57:39_PM_PDT_2025\nCuda compilation tools, release 13.0, V13.0.88\nBuild cuda_13.0.r13.0/compiler.36424714_0",
+    "nvidia_smi_output": "Tue Apr 21 21:12:37 2026       \n+-----------------------------------------------------------------------------------------+\n| NVIDIA-SMI 580.126.09             Driver Version: 580.126.09     CUDA Version: 13.0     |\n+-----------------------------------------+------------------------+----------------------+\n| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n|                                         |                        |               MIG M. |\n|=========================================+========================+======================|\n|   0  NVIDIA GB10                    On  |   0000000F:01:00.0  On |                  N/A |\n| N/A   41C    P8              5W /  N/A  | Not Supported          |      1%      Default |\n|                                         |                        |                  N/A |\n+-----------------------------------------+------------------------+----------------------+\n\n+-----------------------------------------------------------------------------------------+\n| Processes:                                                                              |\n|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n|        ID   ID                                                               Usage      |\n|=========================================================================================|\n|    0   N/A  N/A            4395      G   /usr/lib/xorg/Xorg                      176MiB |\n|    0   N/A  N/A            5486      G   /usr/bin/gnome-shell                    175MiB |\n|    0   N/A  N/A            6459      G   /usr/bin/gnome-system-monitor            38MiB |\n|    0   N/A  N/A          647206      G   /usr/bin/gnome-control-center            40MiB |\n+-----------------------------------------------------------------------------------------+",
+    "nvidia_smi_query": [
+      "0, NVIDIA GB10, GPU-c7e01041-fcd0-1b22-24f9-b35e59ddc5d5, 580.126.09, [N/A], [N/A], 12.1"
+    ]
+  },
+  "exported_kernel_hashes": {},
+  "fallback_count": null,
+  "git_available": true,
+  "git_branch": "paper-benchmark-qwen-cast-export",
+  "git_commit": "991ec49fe344c7d6224a0603bc2a4ab5f182d093",
+  "git_dirty": true,
+  "git_dirty_summary": [
+    ".../project/dashboard/OperatorResultsTable.cl.jac  |  16 ++-",
+    " .../app/project/dashboard/WorkQueuePanel.cl.jac    |  17 ++-",
+    " .../artifacts/qwen35a3b/EXPORT_REPORT.md           |   6 +-",
+    " .../artifacts/qwen35a3b/export_report.json         | 118 +++------------------",
+    " 4 files changed, 43 insertions(+), 114 deletions(-)"
+  ],
+  "git_untracked_summary": [],
+  "gpu_count": 1,
+  "gpu_names": [
+    "NVIDIA GB10"
+  ],
+  "gpu_properties": [
+    {
+      "index": 0,
+      "is_integrated": true,
+      "major": 12,
+      "max_threads_per_block": 1024,
+      "max_threads_per_multi_processor": 1536,
+      "minor": 1,
+      "multi_processor_count": 48,
+      "name": "NVIDIA GB10",
+      "shared_memory_per_block_bytes": 49152,
+      "total_memory_bytes": 128495714304,
+      "warp_size": 32
+    }
+  ],
+  "hostname": "spark-aaa1",
+  "kernel_hit_count": null,
+  "kf_artifact_hash": null,
+  "kf_artifact_kind": null,
+  "kf_artifact_path": null,
+  "kf_settings": {
+    "allow_jit": true,
+    "cast_package_path": "/home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/test_qwen - NVIDIA GB10/exports/test_qwen - NVIDIA GB10.cast",
+    "fail_on_fallback": true,
+    "record_runtime_stats": true,
+    "require_precompiled": false
+  },
+  "latency_samples_ms": [
+    387151.8709177617
+  ],
+  "latency_summary": {
+    "count": 1,
+    "max_ms": 387151.8709177617,
+    "mean_ms": 387151.8709177617,
+    "median_ms": 387151.8709177617,
+    "min_ms": 387151.8709177617,
+    "p05_ms": 387151.8709177617,
+    "p95_ms": 387151.8709177617,
+    "stddev_ms": 0.0
+  },
+  "model_config_hash": "5e4d7f74fec2f360eb9cfbfcd6ec0c4c76e684d3a11caaed259d9fd9bfbc7944",
+  "model_config_path": "/home/gb10/model-cache/Qwen3.5-35B-A3B/config.json",
+  "model_id": "qwen35a3b",
+  "model_path": "/home/gb10/model-cache/Qwen3.5-35B-A3B",
+  "model_path_hash": "07ad785acd997eaa2b2946d07136a30ed6203c0d7670aab6fa26e487b1dc91ff",
+  "notes": [
+    "Uses the same frozen Qwen prompt pack as the paper suite, but with short timing loops for preflight and smoke validation only.",
+    "This suite is not a paper-result configuration."
+  ],
+  "os_name": "Linux",
+  "os_release": "6.17.0-1008-nvidia",
+  "os_version": "#8-Ubuntu SMP PREEMPT_DYNAMIC Wed Jan 21 17:56:56 UTC 2026",
+  "package_versions": {
+    "numpy": "2.4.3",
+    "torch": "2.10.0+cu130",
+    "transformers": "5.3.0",
+    "triton": "3.6.0"
+  },
+  "paper_eligibility_issues": [],
+  "paper_eligible": true,
+  "prompt_bucket_id": "short",
+  "prompt_hash": null,
+  "prompt_id": null,
+  "python_version": "3.12.3",
+  "pytorch_version": "2.10.0+cu130",
+  "relevant_env": {},
+  "reused": false,
+  "reused_from_artifact": null,
+  "reused_from_artifact_hash": null,
+  "run_id": "qwen35a3b_smoke_eager",
+  "sample_records": [
+    {
+      "batch_output_hash": "16f0af3f72df63f851b97b565509c64c63872930d034fd387b0ac5e30e18dfd2",
+      "batch_size": 1,
+      "decode_generated_token_count": 15,
+      "decode_ms": 130721.40378481708,
+      "decode_step_samples_ms": [
+        57801.19730299339,
+        12340.332646970637,
+        5579.284230014309,
+        4564.446756965481,
+        4552.344547002576,
+        4541.6499599814415,
+        4544.680360937491,
+        4531.832419917919,
+        4526.285071973689,
+        4518.2239840505645,
+        4514.629043987952,
+        4510.613685008138,
+        4637.500145006925,
+        4756.944400956854,
+        4801.43922904972
+      ],
+      "decode_tokens_per_second": 0.11474784974533915,
+      "generated_lengths": [
+        16
+      ],
+      "generated_token_count": 16,
+      "generated_tokens": [
+        [
+          271,
+          247153,
+          120333,
+          2512,
+          239581,
+          76069,
+          27961,
+          138245,
+          134301,
+          16395,
+          42067,
+          214157,
+          137184,
+          234921,
+          6559,
+          147418
+        ]
+      ],
+      "input_batch_hash": "1655ea46ffe3f7fd9f16a712a49cf49cea545efe28459adbf5855e19a35d3ad9",
+      "latency_ms": 387151.8709177617,
+      "latency_per_generated_token_ms": 24196.991932360106,
+      "output_token_hashes": [
+        "e571f4d8c789a7342459322615c018efb81e25e3260cf1c8b12e8e854f9d92b6"
+      ],
+      "prefill_ms": 256430.4671329446,
+      "prefill_tokens_per_second": 0.08579323762099708,
+      "prompt_ids": [
+        "mt_bench_q081_t1"
+      ],
+      "prompt_lengths": [
+        22
+      ],
+      "prompt_token_count": 22,
+      "sample_index": 0,
+      "stage": "total_generate",
+      "tokenization_ms": 0.0,
+      "total_generate_ms": 387151.8709177617,
+      "total_generated_tokens_per_second": 0.04132745106480113
+    }
+  ],
+  "schema_version": "1.0",
+  "stage": "warmup",
+  "steady_state_time_ms": 387151.8709177617,
+  "suite_hash": "e0a73a2b988eef454ef7af7cabf019a41b22261600a87e41f0ab2cf0b054f41e",
+  "suite_id": "qwen_llm_smoke",
+  "suite_path": "paper_benchmarks/configs/suites/qwen_llm_smoke.yaml",
+  "synthetic_workload": false,
+  "timed_run_count": 1,
+  "timestamp_utc": "2026-04-21T21:13:11Z",
+  "token_count": null,
+  "variant": "eager",
+  "warmup_count": 1,
+  "workload_hash": "bf02a32ec3e11fe8a5eec24da64b75d1794a621112e36f51a16dae24b3092b93",
+  "workload_path": "/home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/workloads/qwen35a3b/qwen_paper_prompts_v1.jsonl"
+}

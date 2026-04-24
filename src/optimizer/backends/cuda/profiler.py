@@ -182,6 +182,39 @@ def normalize_args_kwargs(args: list, kwargs: dict, params: list, defaults: dict
     return normalized, remaining_kwargs
 
 
+def _canonical_signature(entries: list[dict]) -> dict:
+    for entry in entries:
+        sig = entry.get("signature", {}) if isinstance(entry, dict) else {}
+        if sig and sig.get("params"):
+            return sig
+
+    if not entries:
+        return {"params": [], "defaults": {}}
+
+    first_args = entries[0].get("args", []) or []
+    params = [f"arg{i}" for i in range(len(first_args))]
+    seen = set(params)
+    for entry in entries:
+        kwargs = entry.get("kwargs", {}) or {}
+        if not isinstance(kwargs, dict):
+            continue
+        for key in kwargs:
+            if key in seen:
+                continue
+            params.append(key)
+            seen.add(key)
+    return {"params": params, "defaults": {}}
+
+
+def _call_launch(module, args: list, kwargs: dict):
+    try:
+        return module.launch(*args, **kwargs)
+    except TypeError:
+        if kwargs:
+            return module.launch(*args, *list(kwargs.values()))
+        return module.launch(*args)
+
+
 def get_input_files(io_dir: Path) -> list:
     """Retrieves list of all input file paths for a given profiled pytorch op"""
     pt_files = sorted(glob.glob(os.path.join(io_dir, "entry_*.pt")))
@@ -213,9 +246,19 @@ def load_batch(pt_files: list) -> list[tuple[list[any], dict[str, any]]]:
     """Loads a batch of .pt files into GPU memory"""
     inputs = []
     device = _target_device()
+    entries = []
     for pt_file in pt_files:
         try:
-            entry = torch.load(pt_file, map_location='cpu')
+            entries.append(torch.load(pt_file, map_location='cpu', weights_only=False))
+        except Exception as e:
+            print(f"Warning: Failed to load {pt_file}: {e}")
+
+    signature = _canonical_signature(entries)
+    params = signature.get("params", [])
+    defaults = signature.get("defaults", {})
+
+    for entry in entries:
+        try:
 
             # Move to target device
             args = [
@@ -231,19 +274,14 @@ def load_batch(pt_files: list) -> list[tuple[list[any], dict[str, any]]]:
             }
 
             # Normalize using signature
-            if 'signature' in entry:
-                sig = entry['signature']
-                params = sig.get('params', [])
-                defaults = sig.get('defaults', {})
-
-                if params:
-                    args, kwargs = normalize_args_kwargs(
-                        args, kwargs, params, defaults)
+            if params:
+                args, kwargs = normalize_args_kwargs(
+                    args, kwargs, params, defaults)
 
             inputs.append((args, kwargs))
 
         except Exception as e:
-            print(f"Warning: Failed to load {pt_file}: {e}")
+            print(f"Warning: Failed to normalize profiler input: {e}")
             continue
 
     return inputs
@@ -276,10 +314,7 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
         # Warmup (only for this batch, discarded)
         for _ in range(25):
             for args, kwargs in inputs:
-                try:
-                    module.launch(*args, **kwargs)
-                except TypeError:
-                    module.launch(*args)
+                _call_launch(module, args, kwargs)
         _sync_device(target_device)
 
         # Measure
@@ -289,10 +324,7 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
             for args, kwargs in inputs:
                 start.record()
                 for _ in range(100):
-                    try:
-                        module.launch(*args, **kwargs)
-                    except TypeError:
-                        module.launch(*args)
+                    _call_launch(module, args, kwargs)
                 end.record()
                 torch.cuda.synchronize()
                 elapsed_ms = start.elapsed_time(end) / 100
@@ -301,20 +333,14 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
             for args, kwargs in inputs:
                 start_time = time.perf_counter()
                 for _ in range(100):
-                    try:
-                        module.launch(*args, **kwargs)
-                    except TypeError:
-                        module.launch(*args)
+                    _call_launch(module, args, kwargs)
                 _sync_device(target_device)
                 elapsed_ms = (time.perf_counter() - start_time) * 1000.0 / 100
                 timings.append(elapsed_ms)
 
         # Profile run (for detailed metrics)
         for args, kwargs in inputs:
-            try:
-                module.launch(*args, **kwargs)
-            except TypeError:
-                module.launch(*args)
+            _call_launch(module, args, kwargs)
             _sync_device(target_device)
 
         # Cleanup VRAM

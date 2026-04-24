@@ -144,7 +144,7 @@ def handle_verify(data):
 
             for entry_file in entry_files:
                 try:
-                    entry = torch.load(entry_file, map_location='cpu')
+                    entry = torch.load(entry_file, map_location='cpu', weights_only=False)
                     args = entry.get("args", [])
                     kwargs = entry.get("kwargs", {})
                     signature_info = entry.get("signature", {"params": [], "defaults": {}})
@@ -218,7 +218,7 @@ def handle_profile(data):
                 # Load batch
                 for f in batch_files:
                     try:
-                         entry = torch.load(f, map_location='cpu')
+                         entry = torch.load(f, map_location='cpu', weights_only=False)
                          args = entry.get('args', [])
                          kwargs = entry.get('kwargs', {})
                          sig = entry.get('signature', {})

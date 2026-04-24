@@ -1,0 +1,1 @@
+/home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/paper_bench/cli.py run-llm --model-config paper_benchmarks/configs/models/qwen35a3b.yaml --suite-config paper_benchmarks/configs/suites/qwen_llm_smoke.yaml --variants eager --project-ref project/test_qwen%20-%20NVIDIA%20GB10/ --out paper_benchmarks/runs/qwen35a3b_smoke_eager

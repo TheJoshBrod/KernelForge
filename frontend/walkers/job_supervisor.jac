@@ -1791,6 +1791,10 @@ def:pub _start_job(project_name: str, job_key: str, cmd: list, log_name: str) ->
         f.write(f"[job] Command: {cmd}\n");
     }
     child_env = os.environ.copy();
+    venv_bin = path.dirname(sys.executable);
+    if venv_bin and venv_bin not in str(child_env["PATH"] if "PATH" in child_env else "").split(os.pathsep) {
+        child_env["PATH"] = venv_bin + os.pathsep + str(child_env["PATH"] if "PATH" in child_env else "");
+    }
     child_env["KFORGE_STATE_PATH"] = path.join(_project_dir(project_name), "state.json");
     child_env["KFORGE_JOB_KEY"] = job_key;
     child_env["PYTHONUNBUFFERED"] = "1";
@@ -2239,10 +2243,12 @@ def _compute_project_metrics(project_name: str) -> dict {
             speed_comparison.append(speed_row);
         }
 
-        if total_time_ms > 0.0 {
-            operator_usage.append(
-                {"name": op_name, "count": count, "total_time_ms": total_time_ms}
-            );
+        if total_time_ms > 0.0 or count > 0 {
+            usage_row = {"name": op_name, "count": count, "total_time_ms": total_time_ms};
+            if pytorch_ms is not None {
+                usage_row["profile_ms"] = pytorch_ms;
+            }
+            operator_usage.append(usage_row);
         }
     }
 

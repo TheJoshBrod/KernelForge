@@ -136,6 +136,25 @@ def _op_set(names) -> set[str]:
     return out
 
 
+def _normalize_profile_call_args(call: dict) -> tuple[list, dict]:
+    args = list(call.get("args") or [])
+    kwargs = dict(call.get("kwargs") or {})
+    sig = call.get("signature") or {}
+    params = sig.get("params") if isinstance(sig, dict) else []
+    defaults = sig.get("defaults") if isinstance(sig, dict) else {}
+    if not params or not kwargs:
+        return args, kwargs
+
+    remaining = dict(kwargs)
+    normalized = list(args)
+    for name in params[len(normalized):]:
+        if name in remaining:
+            normalized.append(remaining.pop(name))
+        elif isinstance(defaults, dict) and name in defaults:
+            normalized.append(defaults[name])
+    return normalized, remaining
+
+
 def _bool_env(name: str) -> bool | None:
     value = os.environ.get(name)
     if value is None:
@@ -603,8 +622,7 @@ def process_function(
     # Load first call to set up context for profiling
     first_call = torch.load(
         entry_files[0], map_location='cpu', weights_only=False)
-    first_args = first_call.get("args", [])
-    first_kwargs = first_call.get("kwargs", {})
+    first_args, first_kwargs = _normalize_profile_call_args(first_call)
 
     # Extract function name out of directory name
     function_name = first_call.get("function_name")

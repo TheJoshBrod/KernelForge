@@ -202,7 +202,7 @@ def load_batch(pt_files: list) -> list[tuple[str, list, dict]]:
     inputs = []
     for pt_file in pt_files:
         try:
-            entry = torch.load(pt_file, map_location='cpu')
+            entry = torch.load(pt_file, map_location='cpu', weights_only=False)
 
             args = [
                 arg.cuda() if isinstance(arg, torch.Tensor) else arg

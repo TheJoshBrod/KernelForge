@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import platform
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,24 @@ from .state import read_json_file, write_json_file
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _ensure_process_bin_on_path() -> None:
+    path_parts = os.environ.get("PATH", "").split(os.pathsep)
+    candidates = [Path(sys.executable).parent, Path(sys.executable).resolve().parent]
+    try:
+        import ninja
+
+        ninja_bin = getattr(ninja, "BIN_DIR", None)
+        if ninja_bin:
+            candidates.append(Path(str(ninja_bin)))
+    except Exception:
+        pass
+    for bin_dir in candidates:
+        bin_text = str(bin_dir) if bin_dir else ""
+        if bin_text and bin_text not in path_parts:
+            os.environ["PATH"] = bin_text + os.pathsep + os.environ.get("PATH", "")
+            path_parts.insert(0, bin_text)
 
 
 def _resolve_device() -> str:
@@ -132,6 +151,25 @@ def _ops_from_csv(raw: str) -> list[str]:
     return out
 
 
+def _normalize_profile_call_args(payload: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
+    args = list(payload.get("args") or [])
+    kwargs = dict(payload.get("kwargs") or {})
+    sig = payload.get("signature") or {}
+    params = sig.get("params") if isinstance(sig, dict) else []
+    defaults = sig.get("defaults") if isinstance(sig, dict) else {}
+    if not params or not kwargs:
+        return args, kwargs
+
+    remaining = dict(kwargs)
+    normalized = list(args)
+    for name in params[len(normalized):]:
+        if name in remaining:
+            normalized.append(remaining.pop(name))
+        elif isinstance(defaults, dict) and name in defaults:
+            normalized.append(defaults[name])
+    return normalized, remaining
+
+
 def _load_entries(io_dir: Path, max_entries: int) -> list[tuple[str, Any, dict[str, Any]]]:
     entries: list[tuple[str, Any, dict[str, Any]]] = []
     files = sorted(io_dir.glob("entry_*.pt"))[:max_entries]
@@ -144,8 +182,7 @@ def _load_entries(io_dir: Path, max_entries: int) -> list[tuple[str, Any, dict[s
             continue
         if not isinstance(payload, dict):
             continue
-        args = payload.get("args", [])
-        kwargs = payload.get("kwargs", {})
+        args, kwargs = _normalize_profile_call_args(payload)
         if kwargs is None:
             kwargs = {}
         entries.append((pt.name, args, kwargs))
@@ -278,6 +315,24 @@ def _coerce_cached_measurement(value: Any) -> dict[str, Any] | None:
         "warmup_runs": int(value.get("warmup_runs", DEFAULT_WARMUP_RUNS)),
         "timed_runs": int(value.get("timed_runs", DEFAULT_TIMED_RUNS)),
     }
+
+
+def _looks_like_failed_zero_measurement(measurement: dict[str, Any], entry_count: int) -> bool:
+    if entry_count <= 0:
+        return False
+    try:
+        ms = float(measurement.get("median_time_ms") or measurement.get("mean_time_ms") or 0.0)
+    except Exception:
+        ms = 0.0
+    if ms > 0.0:
+        return False
+    if measurement.get("entry_latencies_ms") or measurement.get("entry_results"):
+        return False
+    try:
+        measured_entries = int(measurement.get("entry_count") or 0)
+    except Exception:
+        measured_entries = 0
+    return measured_entries > 0
 
 
 def _sha256_file(path: Path) -> str | None:
@@ -512,6 +567,7 @@ def main() -> int:
     parser.add_argument("--max-entries", type=int, default=50)
     parser.add_argument("--ops", default="")
     args = parser.parse_args()
+    _ensure_process_bin_on_path()
 
     project_dir = project_dir_for_name(args.project)
     bench_dir = project_dir / "benchmarks"
@@ -657,6 +713,12 @@ def main() -> int:
             )
             pytorch_measurement = cache.get(cache_key)
             baseline_source = "cache" if pytorch_measurement is not None else ""
+            if (
+                pytorch_measurement is not None
+                and _looks_like_failed_zero_measurement(pytorch_measurement, len(entries))
+            ):
+                pytorch_measurement = None
+                baseline_source = ""
             if pytorch_measurement is None:
                 pytorch_measurement = {
                     "median_time_ms": 0.0,
@@ -677,7 +739,10 @@ def main() -> int:
                         baseline_source = "error"
                 else:
                     baseline_source = "unavailable"
-                cache[cache_key] = pytorch_measurement
+                if baseline_source == "error":
+                    cache.pop(cache_key, None)
+                else:
+                    cache[cache_key] = pytorch_measurement
 
             pytorch_ms = float(pytorch_measurement.get("median_time_ms") or pytorch_measurement.get("mean_time_ms") or 0.0)
             benchmarked_entry_files = pytorch_measurement.get("entry_files") or [
