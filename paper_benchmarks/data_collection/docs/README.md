@@ -274,10 +274,22 @@ to the single model JSONL file.
 
 ## Zero-Shot Collection Helper
 
-After zero-shot generation is finished, use:
+After zero-shot generation is finished, first verify the Forge project is idle:
 
 ```bash
-python -m paper_benchmarks.data_collection.collect_zero_shot \
+pgrep -af 'src.optimizer.workflow|src.generator.main|src.optimizer.pipeline'
+jq '.generate, .profile' kernels/projects/<project_name>/state.json
+jq '.active_tasks, .job_queue, .pending_operators' kernels/projects/<project_name>/queue.json
+```
+
+The project is ready to collect only when generation is completed, no optimize
+job is active or queued, and the generated op directories contain the expected
+`success.cuda` markers. Then collect with the repo virtualenv Python, not the
+system Python:
+
+```bash
+/home/gb10/Projects/Kernal-Forge/.venv/bin/python \
+  paper_benchmarks/data_collection/collect_zero_shot.py \
   --project <project_name> \
   --model-slug <model_slug>
 ```
@@ -305,6 +317,69 @@ The helper appends these record types to the model JSONL file:
 Every cast record includes `dispatch_by_profiled_op` so it is explicit which
 profiled ops used a Forge kernel and which used Torch fallback.
 
+### State and Artifact Capture
+
+For each zero-shot collection, preserve the current Forge state in the model
+JSONL record and the run manifest. The collector must capture or reference:
+
+- `kernels/projects/<project>/config.json`
+- `kernels/projects/<project>/state.json`
+- `kernels/projects/<project>/queue.json`
+- `kernels/projects/<project>/io/summary.json`
+- `kernels/projects/<project>/benchmarks/op_benchmarks.json`
+- `kernels/projects/<project>/benchmarks/torch_baseline_cache.json`
+- `kernels/projects/<project>/logs/generate.log`
+- project-level `llm_usage.db`
+- per-op `kernels/generated/individual_op_kernels/<op>/llm_usage.db`
+- per-op generated kernel sources, attempts, `success.cuda`, and tree metadata
+
+LLM usage must be recorded both as raw DB rows and as explicit summaries:
+
+- per call
+- per op
+- per op and step type
+- per provider/model
+- whole arm totals
+
+The per-op summary must include call count, input tokens, output tokens,
+reasoning tokens, total tokens, input cost, output cost, and total cost.
+
+### CAST Storage Rules
+
+Store `.cast` exports under the data-collection artifact directory, not only
+inside the Forge project:
+
+```text
+paper_benchmarks/data_collection/artifacts/<model_slug>/<run_id>/
+├── <model_slug>__zero_shot__full_forge.cast
+├── <model_slug>__zero_shot__mixed_forge.cast
+└── collection_manifest.json
+```
+
+The `full_forge` CAST force-selects every successful zero-shot generated kernel.
+The `mixed_forge` CAST uses the normal fastest-valid policy and may dispatch
+some or all ops to Torch fallback. Record both, even when they are identical.
+
+Because `*.cast` is globally ignored by the repo, intentional paper CAST files
+must be force-added when committing:
+
+```bash
+git add -f paper_benchmarks/data_collection/artifacts/<model_slug>/<run_id>/*.cast
+```
+
+Each CAST must have path, repo-relative path, SHA256, byte size, export
+metadata, and selected-kernel dispatch table recorded in both the model JSONL
+and the `collection_manifest.json`.
+
+Current Gemma zero-shot example:
+
+```text
+paper_benchmarks/data_collection/artifacts/gemma4-e2b-gb10/gemma4-e2b-gb10__zero_shot__20260424T043053Z/
+├── gemma4-e2b-gb10__zero_shot__full_forge.cast
+├── gemma4-e2b-gb10__zero_shot__mixed_forge.cast
+└── collection_manifest.json
+```
+
 ## Collection Checks
 
 Before an arm is considered complete, verify:
@@ -315,8 +390,16 @@ Before an arm is considered complete, verify:
 - each op in the cast records the selected kernel id
 - every LLM usage row has input, output, and reasoning tokens
 - token totals reconcile per op, per arm, and per cast export
+- explicit `usage_by_op` exists in the model JSONL and manifest
 - external benchmark records point to the exact cast hash used
 - correctness status is present for every reported speedup
+- `full_forge` and `mixed_forge` dispatch tables are both recorded, including
+  Forge-vs-Torch fallback decisions for every profiled op
+- no optimization job was started unless the next arm was explicitly approved
 
 If any check fails, append an explicit failure record for that arm instead of
 silently omitting it.
+
+Do not move to `optimize_5`, `optimize_10`, `optimize_20`, or `optimize_50`
+until the zero-shot JSONL records, CAST files, manifest, per-op usage totals,
+and dispatch tables have been verified.
