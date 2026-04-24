@@ -1,0 +1,173 @@
+{
+  "artifact_dir": "/home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/data_collection/artifacts/gemma4-e2b-gb10/gemma4-e2b-gb10__zero_shot__20260424T043053Z",
+  "exports_differ": true,
+  "full_forge_cast": {
+    "exists": true,
+    "mtime": "2026-04-24T04:30:53.396715Z",
+    "path": "/home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/data_collection/artifacts/gemma4-e2b-gb10/gemma4-e2b-gb10__zero_shot__20260424T043053Z/gemma4-e2b-gb10__zero_shot__full_forge.cast",
+    "repo_relpath": "paper_benchmarks/data_collection/artifacts/gemma4-e2b-gb10/gemma4-e2b-gb10__zero_shot__20260424T043053Z/gemma4-e2b-gb10__zero_shot__full_forge.cast",
+    "sha256": "74c351dcbecd31833fe009e5ef5253a3a3340c078e98fdace272c49a4eb488c2",
+    "size_bytes": 71436
+  },
+  "full_forge_dispatch_by_profiled_op": {
+    "torch_nn_functional_embedding": {
+      "dispatch": "forge",
+      "kernel": {
+        "candidate_id": "torch_nn_functional_embedding:manual_override",
+        "evidence_tier": "manual_override",
+        "kernel_source_repo_relpath": "kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_embedding/kernel.cu",
+        "selected_kernel_file": "kernel.cu",
+        "selected_kernel_id": "kernel.cu",
+        "selected_kernel_node_id": null,
+        "selected_kernel_source_kind": "generated_root",
+        "selected_source_hash": "eb7d8d2a8e9e7ae3b6f61c772e783f3d452541e9a7cdbbdfc43ec2eddbde257b"
+      },
+      "metadata": {
+        "benchmark_artifact_path": null,
+        "benchmark_reference": {
+          "artifact_path": null,
+          "row_ref": null
+        },
+        "benchmark_row_ref": null,
+        "candidate_id": "torch_nn_functional_embedding:manual_override",
+        "evidence_tier": "manual_override",
+        "kernel_source_path": "/home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_embedding/kernel.cu",
+        "kernel_source_repo_relpath": "kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_embedding/kernel.cu",
+        "selected_kernel_file": "kernel.cu",
+        "selected_kernel_id": "kernel.cu",
+        "selected_kernel_node_id": null,
+        "selected_kernel_source_kind": "generated_root",
+        "selected_source_hash": "eb7d8d2a8e9e7ae3b6f61c772e783f3d452541e9a7cdbbdfc43ec2eddbde257b",
+        "selection_reason": "manual override from export UI"
+      }
+    },
+    "torch_nn_functional_gelu": {
+      "dispatch": "forge",
+      "kernel": {
+        "candidate_id": "torch_nn_functional_gelu:manual_override",
+        "evidence_tier": "manual_override",
+        "kernel_source_repo_relpath": "kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_gelu/kernel.cu",
+        "selected_kernel_file": "kernel.cu",
+        "selected_kernel_id": "kernel.cu",
+        "selected_kernel_node_id": null,
+        "selected_kernel_source_kind": "generated_root",
+        "selected_source_hash": "2dd63e994d0fdaddfea6549d1fd5100ef9a61f0fc24f36681d3a9089d0619837"
+      },
+      "metadata": {
+        "benchmark_artifact_path": null,
+        "benchmark_reference": {
+          "artifact_path": null,
+          "row_ref": null
+        },
+        "benchmark_row_ref": null,
+        "candidate_id": "torch_nn_functional_gelu:manual_override",
+        "evidence_tier": "manual_override",
+        "kernel_source_path": "/home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_gelu/kernel.cu",
+        "kernel_source_repo_relpath": "kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_gelu/kernel.cu",
+        "selected_kernel_file": "kernel.cu",
+        "selected_kernel_id": "kernel.cu",
+        "selected_kernel_node_id": null,
+        "selected_kernel_source_kind": "generated_root",
+        "selected_source_hash": "2dd63e994d0fdaddfea6549d1fd5100ef9a61f0fc24f36681d3a9089d0619837",
+        "selection_reason": "manual override from export UI"
+      }
+    },
+    "torch_nn_functional_linear": {
+      "dispatch": "forge",
+      "kernel": {
+        "candidate_id": "torch_nn_functional_linear:manual_override",
+        "evidence_tier": "manual_override",
+        "kernel_source_repo_relpath": "kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_linear/kernel.cu",
+        "selected_kernel_file": "kernel.cu",
+        "selected_kernel_id": "kernel.cu",
+        "selected_kernel_node_id": null,
+        "selected_kernel_source_kind": "generated_root",
+        "selected_source_hash": "9bec7f4197044e6718d457cc09e0bbc1235164eda6f0e23ef1abd2fc87d770de"
+      },
+      "metadata": {
+        "benchmark_artifact_path": null,
+        "benchmark_reference": {
+          "artifact_path": null,
+          "row_ref": null
+        },
+        "benchmark_row_ref": null,
+        "candidate_id": "torch_nn_functional_linear:manual_override",
+        "evidence_tier": "manual_override",
+        "kernel_source_path": "/home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_linear/kernel.cu",
+        "kernel_source_repo_relpath": "kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_linear/kernel.cu",
+        "selected_kernel_file": "kernel.cu",
+        "selected_kernel_id": "kernel.cu",
+        "selected_kernel_node_id": null,
+        "selected_kernel_source_kind": "generated_root",
+        "selected_source_hash": "9bec7f4197044e6718d457cc09e0bbc1235164eda6f0e23ef1abd2fc87d770de",
+        "selection_reason": "manual override from export UI"
+      }
+    },
+    "torch_nn_functional_softmax": {
+      "dispatch": "forge",
+      "kernel": {
+        "candidate_id": "torch_nn_functional_softmax:manual_override",
+        "evidence_tier": "manual_override",
+        "kernel_source_repo_relpath": "kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_softmax/kernel.cu",
+        "selected_kernel_file": "kernel.cu",
+        "selected_kernel_id": "kernel.cu",
+        "selected_kernel_node_id": null,
+        "selected_kernel_source_kind": "generated_root",
+        "selected_source_hash": "28c247b787197e94ada615b5992a2fcf5d49fdd181b2eec30e1a9eb63d6478e1"
+      },
+      "metadata": {
+        "benchmark_artifact_path": null,
+        "benchmark_reference": {
+          "artifact_path": null,
+          "row_ref": null
+        },
+        "benchmark_row_ref": null,
+        "candidate_id": "torch_nn_functional_softmax:manual_override",
+        "evidence_tier": "manual_override",
+        "kernel_source_path": "/home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_softmax/kernel.cu",
+        "kernel_source_repo_relpath": "kernels/projects/gemma4-e2b-gb10/kernels/generated/individual_op_kernels/torch_nn_functional_softmax/kernel.cu",
+        "selected_kernel_file": "kernel.cu",
+        "selected_kernel_id": "kernel.cu",
+        "selected_kernel_node_id": null,
+        "selected_kernel_source_kind": "generated_root",
+        "selected_source_hash": "28c247b787197e94ada615b5992a2fcf5d49fdd181b2eec30e1a9eb63d6478e1",
+        "selection_reason": "manual override from export UI"
+      }
+    }
+  },
+  "missing_full_forge_ops": [],
+  "mixed_forge_cast": {
+    "exists": true,
+    "mtime": "2026-04-24T04:30:53.452426Z",
+    "path": "/home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/data_collection/artifacts/gemma4-e2b-gb10/gemma4-e2b-gb10__zero_shot__20260424T043053Z/gemma4-e2b-gb10__zero_shot__mixed_forge.cast",
+    "repo_relpath": "paper_benchmarks/data_collection/artifacts/gemma4-e2b-gb10/gemma4-e2b-gb10__zero_shot__20260424T043053Z/gemma4-e2b-gb10__zero_shot__mixed_forge.cast",
+    "sha256": "a9245d71d863784b482510e7a0aeb913bc58282350e455fefe25e9895835f534",
+    "size_bytes": 35995
+  },
+  "mixed_forge_dispatch_by_profiled_op": {
+    "torch_nn_functional_embedding": {
+      "dispatch": "torch",
+      "kernel": null,
+      "metadata": null
+    },
+    "torch_nn_functional_gelu": {
+      "dispatch": "torch",
+      "kernel": null,
+      "metadata": null
+    },
+    "torch_nn_functional_linear": {
+      "dispatch": "torch",
+      "kernel": null,
+      "metadata": null
+    },
+    "torch_nn_functional_softmax": {
+      "dispatch": "torch",
+      "kernel": null,
+      "metadata": null
+    }
+  },
+  "model_file": "/home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/data_collection/models/gemma4-e2b-gb10.jsonl",
+  "ok": true,
+  "records_appended": 8,
+  "run_id": "gemma4-e2b-gb10__zero_shot__20260424T043053Z"
+}
