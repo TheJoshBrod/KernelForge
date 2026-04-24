@@ -133,6 +133,20 @@ def move_to_target(item):
     return move_to_cuda(item)
 
 
+def _sync_target_device():
+    target = loader.target_device()
+    if target == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize()
+    elif target == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+        torch.mps.synchronize()
+
+
+def _clear_target_cache():
+    target = loader.target_device()
+    if target == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 # --- Persistent Worker Globals ---
 _WORKER_PROCESS = None
 _WORKER_Q_IN = None
@@ -208,30 +222,40 @@ def _validate_worker_loop(q_in, q_out):
                 # _infer_param_order in prompts.py: prefer an explicit recorded
                 # signature; otherwise build from the first entry's positional args
                 # plus the union of all kwargs keys seen across every entry (in
-                # first-seen order).  Using a per-entry order would give different
+                # first-seen order). Using a per-entry order would give different
                 # arities to module.launch() for entries with different kwargs
                 # structures (e.g. some passing stride=2, others relying on defaults).
-                entries = []
+                #
+                # Load entries one at a time. Gemma linear/embedding entries can
+                # contain large weights, and retaining every payload at once can
+                # turn verifier memory use into a false CUDA OOM unrelated to the
+                # generated kernel.
                 canonical_signature = None
+                first_args_for_fallback = []
                 for f in entry_files:
-                    e = torch.load(f)
-                    entries.append(e)
+                    e = torch.load(f, map_location="cpu", weights_only=False)
+                    if not first_args_for_fallback:
+                        first_args_for_fallback = e.get("args", []) or []
                     if canonical_signature is None:
                         sig = e.get("signature", {})
                         if sig and sig.get("params"):
                             canonical_signature = sig
+                    del e
+                    if canonical_signature is not None:
+                        break
 
-                if canonical_signature is None and entries:
-                    first_args = entries[0].get("args", []) or []
-                    param_order = [f"arg{i}" for i in range(len(first_args))]
+                if canonical_signature is None:
+                    param_order = [f"arg{i}" for i in range(len(first_args_for_fallback))]
                     seen = set(param_order)
-                    for entry in entries:
+                    for f in entry_files:
+                        entry = torch.load(f, map_location="cpu", weights_only=False)
                         kw = entry.get("kwargs", {}) or {}
                         if isinstance(kw, dict):
                             for k in kw:
                                 if k not in seen:
                                     param_order.append(k)
                                     seen.add(k)
+                        del entry
                     canonical_signature = {"params": param_order, "defaults": {}}
 
                 all_valid = True
@@ -239,19 +263,22 @@ def _validate_worker_loop(q_in, q_out):
                 llm_analysis_count = 0
                 MAX_LLM_ANALYSIS = 1
 
-                for entry_file, entry in zip(entry_files, entries):
+                for entry_file in entry_files:
+                    entry = None
+                    cuda_args = None
+                    output_generated = None
+                    ground_truth = None
                     try:
+                        entry = torch.load(entry_file, map_location="cpu", weights_only=False)
                         args = entry.get("args", [])
                         kwargs = entry.get("kwargs", {})
 
                         normalized_args, remaining_kwargs = normalize_args_kwargs(args, kwargs, canonical_signature)
                         cuda_args = [move_to_target(item) for item in normalized_args]
 
-                        output_generated = module.launch(*cuda_args)
-                        if loader.target_device() == "cuda":
-                            torch.cuda.synchronize()
-                        elif loader.target_device() == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
-                            torch.mps.synchronize()
+                        with torch.no_grad():
+                            output_generated = module.launch(*cuda_args)
+                        _sync_target_device()
 
                         if loader.target_device() == "cuda" and torch.is_tensor(output_generated) and not output_generated.is_cuda:
                             output_generated = output_generated.cuda()
@@ -336,6 +363,10 @@ def _validate_worker_loop(q_in, q_out):
                         else:
                              log_msg = f"[Runtime Error {entry_file.name}]\n{str(e)}\n(LLM Analysis skipped)"
                         error_logs.append(log_msg)
+                    finally:
+                        del cuda_args, output_generated, ground_truth, entry
+                        _sync_target_device()
+                        _clear_target_cache()
 
                 if all_valid:
                     q_out.put(
@@ -413,7 +444,13 @@ def validate_kernel(generated_cu_code: str, paths: dict[str, Path]) -> tuple[boo
 
     # Derive usage-tracking context from paths (project root, operator, etc.)
     op_proj_dir = paths.get("proj_dir") if isinstance(paths, dict) else None
-    proj_root = op_proj_dir.parent if op_proj_dir is not None else None
+    proj_root = None
+    if op_proj_dir is not None:
+        try:
+            from src.llm.usage_db import project_usage_dir_from_op_dir
+            proj_root = project_usage_dir_from_op_dir(op_proj_dir)
+        except Exception:
+            proj_root = op_proj_dir.parent
     operator = op_proj_dir.name if op_proj_dir is not None else None
     iteration = paths.get("iteration") if isinstance(paths, dict) else None
     attempt = paths.get("attempt") if isinstance(paths, dict) else None

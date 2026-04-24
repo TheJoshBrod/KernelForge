@@ -8,7 +8,6 @@ import os
 import time
 from pathlib import Path
 
-import numpy as np
 try:
     import pycuda.driver as cuda
 except Exception:
@@ -36,6 +35,11 @@ from torch.utils.cpp_extension import load_inline
 from src.optimizer.config.settings import settings
 from src.optimizer.core.types import GPUSpecs
 from src.optimizer.profiling import get_device_specs as get_profiled_device_specs
+from src.optimizer.benchmarking.harness import (
+    DEFAULT_TIMED_RUNS,
+    DEFAULT_WARMUP_RUNS,
+    summarize_entry_results,
+)
 
 # ******************
 #  HELPER FUNCTIONS
@@ -182,9 +186,57 @@ def normalize_args_kwargs(args: list, kwargs: dict, params: list, defaults: dict
     return normalized, remaining_kwargs
 
 
-def get_input_files(io_dir: Path) -> list:
+def _canonical_signature(entries: list[dict]) -> dict:
+    for entry in entries:
+        sig = entry.get("signature", {}) if isinstance(entry, dict) else {}
+        if sig and sig.get("params"):
+            return sig
+
+    if not entries:
+        return {"params": [], "defaults": {}}
+
+    first_args = entries[0].get("args", []) or []
+    params = [f"arg{i}" for i in range(len(first_args))]
+    seen = set(params)
+    for entry in entries:
+        kwargs = entry.get("kwargs", {}) or {}
+        if not isinstance(kwargs, dict):
+            continue
+        for key in kwargs:
+            if key in seen:
+                continue
+            params.append(key)
+            seen.add(key)
+    return {"params": params, "defaults": {}}
+
+
+def _call_launch(module, args: list, kwargs: dict):
+    try:
+        return module.launch(*args, **kwargs)
+    except TypeError:
+        if kwargs:
+            return module.launch(*args, *list(kwargs.values()))
+        return module.launch(*args)
+
+
+def get_input_files(io_dir: Path, selected_files: list | None = None) -> list:
     """Retrieves list of all input file paths for a given profiled pytorch op"""
-    pt_files = sorted(glob.glob(os.path.join(io_dir, "entry_*.pt")))
+    if selected_files:
+        pt_files = []
+        seen = set()
+        for item in selected_files:
+            candidate = Path(item)
+            if not candidate.is_absolute():
+                candidate = Path(io_dir) / candidate
+            candidate = candidate.resolve()
+            if candidate.exists() and candidate.name.startswith("entry_") and candidate.suffix == ".pt":
+                text = str(candidate)
+                if text not in seen:
+                    pt_files.append(text)
+                    seen.add(text)
+        pt_files = sorted(pt_files)
+    else:
+        pt_files = sorted(glob.glob(os.path.join(io_dir, "entry_*.pt")))
 
     if not pt_files:
         raise ValueError(f"No entry_*.pt files found in {io_dir}")
@@ -209,41 +261,72 @@ def _sync_device(device: str) -> None:
         torch.mps.synchronize()
 
 
-def load_batch(pt_files: list) -> list[tuple[list[any], dict[str, any]]]:
+def _canonical_signature_from_files(pt_files: list) -> dict:
+    param_order: list[str] | None = None
+    seen: set[str] = set()
+
+    for pt_file in pt_files:
+        try:
+            entry = torch.load(pt_file, map_location='cpu', weights_only=False)
+        except Exception as e:
+            print(f"Warning: Failed to inspect {pt_file}: {e}")
+            continue
+        try:
+            sig = entry.get("signature", {}) if isinstance(entry, dict) else {}
+            if sig and sig.get("params"):
+                return sig
+
+            if param_order is None:
+                first_args = entry.get("args", []) or []
+                param_order = [f"arg{i}" for i in range(len(first_args))]
+                seen = set(param_order)
+            kwargs = entry.get("kwargs", {}) or {}
+            if isinstance(kwargs, dict):
+                for key in kwargs:
+                    if key not in seen:
+                        param_order.append(key)
+                        seen.add(key)
+        finally:
+            del entry
+
+    return {"params": param_order or [], "defaults": {}}
+
+
+def load_batch(pt_files: list, signature: dict | None = None) -> list[tuple[str, list[any], dict[str, any]]]:
     """Loads a batch of .pt files into GPU memory"""
     inputs = []
     device = _target_device()
+    signature = signature or _canonical_signature_from_files(pt_files)
+    params = signature.get("params", [])
+    defaults = signature.get("defaults", {})
+
     for pt_file in pt_files:
         try:
-            entry = torch.load(pt_file, map_location='cpu')
+            entry = torch.load(pt_file, map_location='cpu', weights_only=False)
 
             # Move to target device
             args = [
                 (arg.to("mps") if device == "mps" else (arg.cuda() if device == "cuda" else arg.cpu()))
                 if isinstance(arg, torch.Tensor) else arg
-                for arg in entry['args']
+                for arg in (entry.get('args') or [])
             ]
 
             kwargs = {
                 k: (v.to("mps") if device == "mps" else (v.cuda() if device == "cuda" else v.cpu()))
                 if isinstance(v, torch.Tensor) else v
-                for k, v in entry['kwargs'].items()
+                for k, v in (entry.get('kwargs') or {}).items()
             }
 
             # Normalize using signature
-            if 'signature' in entry:
-                sig = entry['signature']
-                params = sig.get('params', [])
-                defaults = sig.get('defaults', {})
+            if params:
+                args, kwargs = normalize_args_kwargs(
+                    args, kwargs, params, defaults)
 
-                if params:
-                    args, kwargs = normalize_args_kwargs(
-                        args, kwargs, params, defaults)
-
-            inputs.append((args, kwargs))
+            inputs.append((Path(pt_file).name, args, kwargs))
+            del entry
 
         except Exception as e:
-            print(f"Warning: Failed to load {pt_file}: {e}")
+            print(f"Warning: Failed to normalize profiler input {pt_file}: {e}")
             continue
 
     return inputs
@@ -259,10 +342,26 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
     if target_device == "cuda" and torch.cuda.is_available():
         torch.cuda.set_device(device_index)
 
-    # Batching logic to prevent OOM
-    all_files = get_input_files(input_dir)
-    BATCH_SIZE = settings.batch_size
-    timings = []
+    # Batching logic to prevent OOM.  Generated-kernel benchmarking passes a
+    # narrowed entry_files list; use a conservative batch there because a single
+    # embedding table can be multiple GiB.
+    selected_files = paths.get("entry_files")
+    all_files = get_input_files(input_dir, selected_files)
+    batch_size_raw = os.environ.get("KFORGE_CUDA_PROFILE_BATCH_SIZE", "").strip()
+    try:
+        BATCH_SIZE = int(batch_size_raw) if batch_size_raw else int(settings.batch_size)
+    except Exception:
+        BATCH_SIZE = int(settings.batch_size)
+    if selected_files:
+        selected_batch_raw = os.environ.get("KFORGE_CUDA_PROFILE_SELECTED_BATCH_SIZE", "1").strip()
+        try:
+            selected_batch = int(selected_batch_raw)
+        except Exception:
+            selected_batch = 1
+        BATCH_SIZE = min(BATCH_SIZE, max(1, selected_batch))
+    BATCH_SIZE = max(1, BATCH_SIZE)
+    entry_results = []
+    timing_errors = []
 
     # We profile everything using one profiler context
     # UPDATE: Removed global profiler context as it accumulates too much RAM (OOM on batch 4)
@@ -271,51 +370,39 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
 
     for i in range(0, len(all_files), BATCH_SIZE):
         batch_files = all_files[i: i + BATCH_SIZE]
-        inputs = load_batch(batch_files)
+        signature = _canonical_signature_from_files(batch_files)
+        inputs = load_batch(batch_files, signature=signature)
 
         # Warmup (only for this batch, discarded)
-        for _ in range(25):
-            for args, kwargs in inputs:
-                try:
-                    module.launch(*args, **kwargs)
-                except TypeError:
-                    module.launch(*args)
-        _sync_device(target_device)
-
-        # Measure
-        if target_device == "cuda":
-            start = torch.cuda.Event(enable_timing=True)
-            end = torch.cuda.Event(enable_timing=True)
-            for args, kwargs in inputs:
-                start.record()
-                for _ in range(100):
-                    try:
-                        module.launch(*args, **kwargs)
-                    except TypeError:
-                        module.launch(*args)
-                end.record()
-                torch.cuda.synchronize()
-                elapsed_ms = start.elapsed_time(end) / 100
-                timings.append(elapsed_ms)
-        else:
-            for args, kwargs in inputs:
-                start_time = time.perf_counter()
-                for _ in range(100):
-                    try:
-                        module.launch(*args, **kwargs)
-                    except TypeError:
-                        module.launch(*args)
-                _sync_device(target_device)
-                elapsed_ms = (time.perf_counter() - start_time) * 1000.0 / 100
-                timings.append(elapsed_ms)
-
-        # Profile run (for detailed metrics)
-        for args, kwargs in inputs:
+        for entry_file, args, kwargs in inputs:
             try:
-                module.launch(*args, **kwargs)
-            except TypeError:
-                module.launch(*args)
-            _sync_device(target_device)
+                for _ in range(DEFAULT_WARMUP_RUNS):
+                    _call_launch(module, args, kwargs)
+                _sync_device(target_device)
+
+                # Measure
+                if target_device == "cuda":
+                    start = torch.cuda.Event(enable_timing=True)
+                    end = torch.cuda.Event(enable_timing=True)
+                    start.record()
+                    for _ in range(DEFAULT_TIMED_RUNS):
+                        _call_launch(module, args, kwargs)
+                    end.record()
+                    torch.cuda.synchronize()
+                    elapsed_ms = start.elapsed_time(end) / DEFAULT_TIMED_RUNS
+                else:
+                    start_time = time.perf_counter()
+                    for _ in range(DEFAULT_TIMED_RUNS):
+                        _call_launch(module, args, kwargs)
+                    _sync_device(target_device)
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000.0 / DEFAULT_TIMED_RUNS
+                entry_results.append({"entry_file": entry_file, "latency_ms": float(elapsed_ms)})
+
+                # Profile run (for detailed metrics)
+                _call_launch(module, args, kwargs)
+                _sync_device(target_device)
+            except Exception as e:
+                timing_errors.append({"entry_file": entry_file, "error": str(e)})
 
         # Cleanup VRAM
         del inputs
@@ -324,13 +411,13 @@ def profile_kernel(paths: dict[str, Path], *, baseline=False, device_index: int 
         elif target_device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
             torch.mps.empty_cache()
 
-    stats = {
-        'median_time_ms': float(np.median(timings)),
-        'mean_time_ms': float(np.mean(timings)),
-        'std_time_ms':  float(np.std(timings)),
-        'min_time_ms':  float(np.min(timings)),
-        'max_time_ms':  float(np.max(timings)),
-    }
+    stats = summarize_entry_results(
+        entry_results,
+        errors=timing_errors,
+        device=target_device,
+        warmup_runs=DEFAULT_WARMUP_RUNS,
+        timed_runs=DEFAULT_TIMED_RUNS,
+    )
 
     # Compare with baseline if provided
     if previous_stats:

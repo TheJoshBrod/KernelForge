@@ -132,7 +132,7 @@ def handle_verify(data):
 
             for entry_file in entry_files:
                 try:
-                    entry = torch.load(entry_file, map_location='cpu')
+                    entry = torch.load(entry_file, map_location='cpu', weights_only=False)
                     args = entry.get("args", [])
                     kwargs = entry.get("kwargs", {})
                     signature_info = entry.get("signature", {"params": [], "defaults": {}})
@@ -207,7 +207,7 @@ def handle_profile(data):
 
                 for f in batch_files:
                     try:
-                        entry = torch.load(f, map_location='cpu')
+                        entry = torch.load(f, map_location='cpu', weights_only=False)
                         args = entry.get('args', [])
                         kwargs = entry.get('kwargs', {})
                         sig = entry.get('signature', {})
@@ -292,13 +292,13 @@ def main():
 
                     # Try to enrich with pynvml/pycuda
                     try:
-                        from pynvml import *
+                        import pynvml
                         import pycuda.driver as drv
                         import pycuda.autoinit
 
-                        nvmlInit()
-                        handle = nvmlDeviceGetHandleByIndex(0)
-                        name = nvmlDeviceGetName(handle)
+                        pynvml.nvmlInit()
+                        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                        name = pynvml.nvmlDeviceGetName(handle)
                         if isinstance(name, bytes):
                             name = name.decode('utf-8')
 
@@ -307,13 +307,13 @@ def main():
 
                         result.update({
                             "gpu_name": name,
-                            "sm_clock_mhz": nvmlDeviceGetClockInfo(handle, NVML_CLOCK_SM),
-                            "mem_clock_mhz": nvmlDeviceGetClockInfo(handle, NVML_CLOCK_MEM),
+                            "sm_clock_mhz": pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_SM),
+                            "mem_clock_mhz": pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_MEM),
                             "num_sms": attrs[drv.device_attribute.MULTIPROCESSOR_COUNT],
                             "warp_size": attrs[drv.device_attribute.WARP_SIZE],
                             "max_threads_per_block": attrs[drv.device_attribute.MAX_THREADS_PER_BLOCK],
                         })
-                        nvmlShutdown()
+                        pynvml.nvmlShutdown()
                     except ImportError:
                         pass  # Just use basic torch.cuda info
                 else:
