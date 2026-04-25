@@ -20,6 +20,7 @@ from .harness import (
     DEFAULT_TIMED_RUNS,
     DEFAULT_WARMUP_RUNS,
     benchmark_entry_calls,
+    summarize_entry_results,
     sync_device as benchmark_sync_device,
 )
 from .paths import find_latest_optimized_dir, project_dir_for_name
@@ -116,6 +117,17 @@ def _entry_signature(entries: list[tuple[str, Any, dict[str, Any]]]) -> str:
     return json.dumps(payload, sort_keys=True)
 
 
+def _entry_signature_from_files(entry_files: list[Path]) -> str:
+    if not entry_files:
+        return "empty"
+    entries: list[tuple[str, Any, dict[str, Any]]] = []
+    for pt in entry_files[:3]:
+        loaded = _load_entry_file(pt)
+        if loaded is not None:
+            entries.append(loaded)
+    return _entry_signature(entries)
+
+
 def _runtime_fingerprint(device: str) -> str:
     payload = {
         "device": device,
@@ -172,21 +184,32 @@ def _normalize_profile_call_args(payload: dict[str, Any]) -> tuple[Any, dict[str
 
 def _load_entries(io_dir: Path, max_entries: int) -> list[tuple[str, Any, dict[str, Any]]]:
     entries: list[tuple[str, Any, dict[str, Any]]] = []
-    files = sorted(io_dir.glob("entry_*.pt"))[:max_entries]
-    for pt in files:
-        try:
-            payload = torch.load(pt, map_location="cpu", weights_only=False)
-        except TypeError:
-            payload = torch.load(pt, map_location="cpu")
-        except Exception:
-            continue
-        if not isinstance(payload, dict):
-            continue
-        args, kwargs = _normalize_profile_call_args(payload)
-        if kwargs is None:
-            kwargs = {}
-        entries.append((pt.name, args, kwargs))
+    for pt in _selected_entry_files(io_dir, max_entries):
+        loaded = _load_entry_file(pt)
+        if loaded is not None:
+            entries.append(loaded)
     return entries
+
+
+def _selected_entry_files(io_dir: Path | None, max_entries: int) -> list[Path]:
+    if io_dir is None:
+        return []
+    return sorted(io_dir.glob("entry_*.pt"))[:max_entries]
+
+
+def _load_entry_file(pt: Path) -> tuple[str, Any, dict[str, Any]] | None:
+    try:
+        payload = torch.load(pt, map_location="cpu", weights_only=False)
+    except TypeError:
+        payload = torch.load(pt, map_location="cpu")
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    args, kwargs = _normalize_profile_call_args(payload)
+    if kwargs is None:
+        kwargs = {}
+    return pt.name, args, kwargs
 
 
 def _get_pytorch_func(op_name: str):
@@ -235,13 +258,62 @@ def _measure_pytorch(
         d_kwargs = _move_to_device(kwargs, device)
 
         def invoke(bound_args=d_args, bound_kwargs=d_kwargs):
-            return _run_call(func, bound_args, bound_kwargs)
+            with torch.no_grad():
+                return _run_call(func, bound_args, bound_kwargs)
 
         entry_calls.append((entry_file, invoke))
 
     return benchmark_entry_calls(
         entry_calls,
         device=device,
+        warmup_runs=DEFAULT_WARMUP_RUNS,
+        timed_runs=DEFAULT_TIMED_RUNS,
+    )
+
+
+def _measure_pytorch_files(
+    func,
+    entry_files: list[Path],
+    device: str,
+) -> dict[str, Any]:
+    if not entry_files:
+        return benchmark_entry_calls([], device=device)
+
+    entry_results: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    target = (device or "cpu").strip().lower()
+
+    for pt in entry_files:
+        loaded = _load_entry_file(pt)
+        if loaded is None:
+            errors.append({"entry_file": pt.name, "error": "failed to load replay entry"})
+            continue
+        entry_file, args, kwargs = loaded
+        d_args = _move_to_device(args, device)
+        d_kwargs = _move_to_device(kwargs, device)
+
+        def invoke(bound_args=d_args, bound_kwargs=d_kwargs):
+            with torch.no_grad():
+                return _run_call(func, bound_args, bound_kwargs)
+
+        stats = benchmark_entry_calls(
+            [(entry_file, invoke)],
+            device=device,
+            warmup_runs=DEFAULT_WARMUP_RUNS,
+            timed_runs=DEFAULT_TIMED_RUNS,
+        )
+        entry_results.extend(stats.get("entry_results") or [])
+        errors.extend(stats.get("errors") or [])
+
+        del args, kwargs, d_args, d_kwargs, loaded
+        benchmark_sync_device(target)
+        if target == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    return summarize_entry_results(
+        entry_results,
+        errors=errors,
+        device=target,
         warmup_runs=DEFAULT_WARMUP_RUNS,
         timed_runs=DEFAULT_TIMED_RUNS,
     )
@@ -703,10 +775,10 @@ def main() -> int:
                 f"Benchmarking {op_name} ({idx + 1}/{total_ops})",
             )
             op_dir = op_dirs.get(op_name)
-            entries = _load_entries(op_dir, args.max_entries) if op_dir else []
+            entry_files = _selected_entry_files(op_dir, args.max_entries) if op_dir else []
             func = _get_pytorch_func(op_name)
 
-            entry_sig = _entry_signature(entries) if entries else "summary_only"
+            entry_sig = _entry_signature_from_files(entry_files) if entry_files else "summary_only"
             cache_key = (
                 f"{runtime_fingerprint}:{op_name}:{entry_sig}:"
                 f"warmup={DEFAULT_WARMUP_RUNS},runs={DEFAULT_TIMED_RUNS}"
@@ -715,24 +787,24 @@ def main() -> int:
             baseline_source = "cache" if pytorch_measurement is not None else ""
             if (
                 pytorch_measurement is not None
-                and _looks_like_failed_zero_measurement(pytorch_measurement, len(entries))
+                and _looks_like_failed_zero_measurement(pytorch_measurement, len(entry_files))
             ):
                 pytorch_measurement = None
                 baseline_source = ""
             if pytorch_measurement is None:
                 pytorch_measurement = {
                     "median_time_ms": 0.0,
-                    "entry_files": [entry_file for entry_file, _, _ in entries],
+                    "entry_files": [pt.name for pt in entry_files],
                     "entry_latencies_ms": [],
                     "entry_results": [],
-                    "entry_count": len(entries),
+                    "entry_count": len(entry_files),
                     "errors": [],
                     "warmup_runs": DEFAULT_WARMUP_RUNS,
                     "timed_runs": DEFAULT_TIMED_RUNS,
                 }
-                if func and entries:
+                if func and entry_files:
                     try:
-                        pytorch_measurement = _measure_pytorch(func, entries, device)
+                        pytorch_measurement = _measure_pytorch_files(func, entry_files, device)
                         baseline_source = "measured"
                     except Exception as e:
                         errors.append(f"{op_name}: pytorch benchmark failed: {e}")
@@ -746,18 +818,18 @@ def main() -> int:
 
             pytorch_ms = float(pytorch_measurement.get("median_time_ms") or pytorch_measurement.get("mean_time_ms") or 0.0)
             benchmarked_entry_files = pytorch_measurement.get("entry_files") or [
-                entry_file for entry_file, _, _ in entries
+                pt.name for pt in entry_files
             ]
             benchmarked_entry_count = int(
                 pytorch_measurement.get("entry_count") or len(benchmarked_entry_files)
             )
             pytorch_entry_latencies = pytorch_measurement.get("entry_latencies_ms") or []
 
-            count = op_counts.get(op_name, len(entries))
+            count = op_counts.get(op_name, len(entry_files))
             try:
                 count = int(count)
             except Exception:
-                count = len(entries)
+                count = len(entry_files)
 
             kernel_ms = None
             kernel_status = "missing"

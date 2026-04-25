@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from src.llm.pricing import compute_cost
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS llm_calls (
@@ -66,6 +68,15 @@ class LLMUsageLogger:
         total_cost_usd: float = 0.0,
     ) -> None:
         try:
+            if (
+                not input_cost_usd
+                and not output_cost_usd
+                and not total_cost_usd
+                and model
+            ):
+                input_cost_usd, output_cost_usd, total_cost_usd = compute_cost(
+                    model, input_tokens, output_tokens
+                )
             with sqlite3.connect(str(self.db_path), timeout=10.0) as conn:
                 conn.execute(
                     "INSERT INTO llm_calls (ts, step_type, iteration, attempt, "
