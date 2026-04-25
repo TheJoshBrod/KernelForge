@@ -19,6 +19,7 @@ import torch
 import torch.nn.functional as F
 
 from kernelforge.run_cast import compile_kernel, verify_checksums
+from src.optimizer.quantized import describe_tinygemm_qbits_tensor, prepare_tinygemm_linear_launch_args
 
 from .artifacts import RunLayout, write_json_artifact
 from .baselines import CompileSettings, compile_model, compile_settings_from_dict, sync_device
@@ -133,7 +134,7 @@ def _hash_json_payload(payload: Any) -> str:
 
 
 def _tensor_metadata(tensor: torch.Tensor, *, path: str) -> dict[str, Any]:
-    return {
+    metadata = {
         "path": path,
         "shape": list(tensor.shape),
         "dtype": str(tensor.dtype),
@@ -143,6 +144,10 @@ def _tensor_metadata(tensor: torch.Tensor, *, path: str) -> dict[str, Any]:
         "is_contiguous": bool(tensor.is_contiguous()),
         "requires_grad": bool(tensor.requires_grad),
     }
+    quantized_storage = describe_tinygemm_qbits_tensor(tensor)
+    if quantized_storage:
+        metadata["quantized_storage"] = quantized_storage
+    return metadata
 
 
 def _collect_tensor_metadata(value: Any, *, path: str = "root") -> list[dict[str, Any]]:
@@ -531,16 +536,29 @@ def _resolve_launch_args(args: Any, kwargs: dict[str, Any], orig_params: list[st
     return ordered[:limit]
 
 
-def _make_ext_launch_callable(ext: Any, *, kernel_path: str | None, reference_callable: Callable[..., Any]):
+def _make_ext_launch_callable(
+    ext: Any,
+    *,
+    kernel_path: str | None,
+    reference_callable: Callable[..., Any],
+    function_name: str | None = None,
+):
     n_launch = _launch_arity(kernel_path, ext)
     orig_params = _resolve_original_params(reference_callable)
 
     def _invoke_kernel(*args, **kwargs):
         ordered = _resolve_launch_args(args, kwargs, orig_params, n_launch)
-        call_args = [
-            value.contiguous() if torch.is_tensor(value) and not value.is_contiguous() else value
-            for value in ordered
-        ]
+        call_args = prepare_tinygemm_linear_launch_args(
+            function_name,
+            ordered,
+            {},
+            {"params": orig_params or []},
+        )
+        if call_args is None:
+            call_args = [
+                value.contiguous() if torch.is_tensor(value) and not value.is_contiguous() else value
+                for value in ordered
+            ]
         return ext.launch(*call_args)
 
     return _invoke_kernel
@@ -658,7 +676,12 @@ def _default_kf_loader(
             ext = compile_kernel(str(kernel_path), str(selected_op["name"]), str(build_dir))
             jit_compile_time_ms = (time.perf_counter() - jit_started) * 1000.0
 
-        runner = _make_ext_launch_callable(ext, kernel_path=str(kernel_path), reference_callable=reference_callable)
+        runner = _make_ext_launch_callable(
+            ext,
+            kernel_path=str(kernel_path),
+            reference_callable=reference_callable,
+            function_name=str(selected_op["name"]),
+        )
         meta = {
             "load_time_ms": float(runtime_load_ms),
             "runtime_load_time_ms": float(runtime_load_ms),
@@ -731,7 +754,12 @@ def _default_kf_loader(
         load_mode = "jit"
         jit_compile_time_ms = (time.perf_counter() - load_started) * 1000.0
         precompiled_load_time_ms = 0.0
-    runner = _make_ext_launch_callable(ext, kernel_path=resolved_artifact if resolved_kind == "source" else None, reference_callable=reference_callable)
+    runner = _make_ext_launch_callable(
+        ext,
+        kernel_path=resolved_artifact if resolved_kind == "source" else None,
+        reference_callable=reference_callable,
+        function_name=op_name,
+    )
     alias_name = kf_operator_aliases(op_name)[-1]
     project_ref = str(kf_settings.get("project_ref") or "").strip() or None
     project_selected_kernel_metadata: dict[str, Any] = {}

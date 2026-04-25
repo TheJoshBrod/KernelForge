@@ -78,6 +78,8 @@ torch::Tensor launch({full_signature_example}) {{
 -----------------------------------------------
 **The `launch()` function signature MUST exactly match the original PyTorch function's parameter order.**
 
+Exception: if the operator prompt includes a section named **Kernel Forge Special ABI**, that section is the binding launch contract for the generated C++ wrapper. In that case, use the special ABI signature exactly and treat the public PyTorch signature as semantic context only.
+
 You will be provided with:
 - **Parameter names in order**: The exact sequence of parameters as they appear in the original function
 - **Default values**: Any parameters that have default values (these may be omitted during calls)

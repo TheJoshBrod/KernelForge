@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from src.optimizer.quantized import detect_kernel_source_abi
+
 from .cast_selection import (
     NoEligibleCastKernelsError,
     POLICY_AUTO_BEST_FASTEST_VALID,
@@ -323,6 +325,7 @@ def build_cast_manifest_metadata(export_plan: dict[str, Any]) -> dict[str, Any]:
             "benchmark_row_ref": entry.get("benchmark_row_ref"),
             "evidence_tier": entry.get("evidence_tier"),
             "selection_reason": entry.get("selection_reason"),
+            "kernel_abi": entry.get("kernel_abi"),
         }
 
     return {
@@ -344,6 +347,7 @@ def build_cast_manifest_metadata(export_plan: dict[str, Any]) -> dict[str, Any]:
                 "selected_source_hash": meta.get("selected_source_hash"),
                 "evidence_tier": meta.get("evidence_tier"),
                 "candidate_id": meta.get("candidate_id"),
+                "kernel_abi": meta.get("kernel_abi"),
             }
             for op_name, meta in selected_kernel_metadata.items()
         },
@@ -577,6 +581,10 @@ def export_cast_package(
         if not kernel_path.exists():
             raise CastExportPlanError(f"Selected kernel for {op_name} does not exist: {kernel_path}")
         kernel_bytes = kernel_path.read_bytes()
+        try:
+            kernel_abi = detect_kernel_source_abi(op_name, kernel_bytes.decode("utf-8", errors="ignore"))
+        except Exception:
+            kernel_abi = None
         cu_path = f"kernels/{op_name}/kernel.cu"
         wrapper_path = f"kernels/{op_name}/wrapper.py"
         file_map[cu_path] = kernel_bytes
@@ -594,23 +602,37 @@ def export_cast_package(
                 precompiled_paths.append(rel)
 
         selection_entry = plan.get("selected_ops", {}).get(op_name, {})
-        selected_manifest_ops[op_name] = selection_entry if isinstance(selection_entry, dict) else {}
+        selected_manifest_ops[op_name] = dict(selection_entry) if isinstance(selection_entry, dict) else {}
+        if kernel_abi:
+            selected_manifest_ops[op_name]["kernel_abi"] = kernel_abi
         op_kernel_identity = _selected_kernel_identity(kernel_path)
-        ops_manifest.append(
-            {
-                "name": op_name,
-                "kernel_dir": f"kernels/{op_name}/",
-                "cuda_source": cu_path,
-                "wrapper": wrapper_path,
-                "precompiled": op_precompiled,
-                "selected_kernel_id": op_kernel_identity.get("selected_kernel_id"),
-                "selected_kernel_node_id": op_kernel_identity.get("selected_kernel_node_id"),
-                "selection_evidence": selected_manifest_ops[op_name],
-            }
-        )
+        op_manifest = {
+            "name": op_name,
+            "kernel_dir": f"kernels/{op_name}/",
+            "cuda_source": cu_path,
+            "wrapper": wrapper_path,
+            "precompiled": op_precompiled,
+            "selected_kernel_id": op_kernel_identity.get("selected_kernel_id"),
+            "selected_kernel_node_id": op_kernel_identity.get("selected_kernel_node_id"),
+            "selection_evidence": selected_manifest_ops[op_name],
+        }
+        if kernel_abi:
+            op_manifest["kernel_abi"] = kernel_abi
+        ops_manifest.append(op_manifest)
 
     loader_stub = b"# Cast vendored runtime loader\n# pip install cast for the full runtime\n"
     file_map["loader.py"] = loader_stub
+
+    selected_kernel_metadata = dict(
+        manifest_selection_meta.get("selected_kernel_metadata", selected_manifest_ops)
+        if isinstance(manifest_selection_meta.get("selected_kernel_metadata", selected_manifest_ops), dict)
+        else selected_manifest_ops
+    )
+    for op_name, op_meta in selected_manifest_ops.items():
+        if op_meta.get("kernel_abi"):
+            selected_kernel_metadata.setdefault(op_name, {})
+            if isinstance(selected_kernel_metadata[op_name], dict):
+                selected_kernel_metadata[op_name]["kernel_abi"] = op_meta["kernel_abi"]
 
     manifest_obj = {
         "project_name": root.name,
@@ -630,7 +652,7 @@ def export_cast_package(
         "selected_ops": manifest_selection_meta.get("selected_ops", list(kernel_map)),
         "selected_op_count": manifest_selection_meta.get("selected_op_count", len(kernel_map)),
         "selected_kernel_map": manifest_selection_meta.get("selected_kernel_map", dict(kernel_map)),
-        "selected_kernel_metadata": manifest_selection_meta.get("selected_kernel_metadata", selected_manifest_ops),
+        "selected_kernel_metadata": selected_kernel_metadata,
         "selected_kernel_by_op": manifest_selection_meta.get("selected_kernel_by_op", {}),
         "export_paper_eligible": bool(plan.get("export_paper_eligible")),
         "rejected_candidate_summary": plan.get("rejected_candidate_summary", {}),

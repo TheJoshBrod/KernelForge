@@ -78,6 +78,10 @@ configure_remote_env()
 # Assuming loader.py is uploaded to the same directory
 import loader
 import torch
+try:
+    import quantized
+except Exception:
+    from src.optimizer import quantized
 
 # --- Helper Functions ---
 
@@ -149,8 +153,22 @@ def handle_verify(data):
                     kwargs = entry.get("kwargs", {})
                     signature_info = entry.get("signature", {"params": [], "defaults": {}})
 
-                    normalized_args, _ = normalize_args_kwargs(args, kwargs, signature_info)
-                    cuda_args = [move_to_cuda(item) for item in normalized_args]
+                    normalized_args, remaining_kwargs = normalize_args_kwargs(args, kwargs, signature_info)
+                    function_name = (
+                        entry.get("function_name")
+                        or entry.get("op_name")
+                        or entry.get("op")
+                        or data.get("op_name")
+                        or os.path.basename(io_dir)
+                    )
+                    special_args = quantized.prepare_tinygemm_linear_launch_args(
+                        function_name,
+                        normalized_args,
+                        remaining_kwargs,
+                        signature_info,
+                        move_to_device=move_to_cuda,
+                    )
+                    cuda_args = special_args if special_args is not None else [move_to_cuda(item) for item in normalized_args]
 
                     # Launch
                     output_generated = module.launch(*cuda_args)
@@ -222,8 +240,22 @@ def handle_profile(data):
                          args = entry.get('args', [])
                          kwargs = entry.get('kwargs', {})
                          sig = entry.get('signature', {})
-                         norm_args, _ = normalize_args_kwargs(args, kwargs, sig)
-                         cuda_args = [move_to_cuda(x) for x in norm_args]
+                         norm_args, remaining_kwargs = normalize_args_kwargs(args, kwargs, sig)
+                         function_name = (
+                             entry.get("function_name")
+                             or entry.get("op_name")
+                             or entry.get("op")
+                             or data.get("op_name")
+                             or os.path.basename(io_dir)
+                         )
+                         special_args = quantized.prepare_tinygemm_linear_launch_args(
+                             function_name,
+                             norm_args,
+                             remaining_kwargs,
+                             sig,
+                             move_to_device=move_to_cuda,
+                         )
+                         cuda_args = special_args if special_args is not None else [move_to_cuda(x) for x in norm_args]
                          inputs.append(cuda_args)
                     except:
                         continue

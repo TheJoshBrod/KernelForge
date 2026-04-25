@@ -18,6 +18,8 @@ from typing import Any, Callable
 
 import torch.nn as nn
 
+from src.optimizer.quantized import prepare_tinygemm_linear_launch_args
+
 
 def verify_checksums(zf: zipfile.ZipFile) -> None:
     header = json.loads(zf.read("HEADER.json"))
@@ -351,20 +353,32 @@ def _build_functional_patch(
             else:
                 ordered = list(args)
 
-            limit = n_launch if n_launch is not None else len(ordered)
-            call_args: list[Any] = []
-            tensor_args: list[torch.Tensor] = []
-            for value in ordered[:limit]:
-                if isinstance(value, torch.Tensor):
-                    tensor_args.append(value)
-                    if not value.is_contiguous():
-                        _increment_stat(runtime_stats, "contiguous_copy_count")
-                        _increment_stat(runtime_stats, "adaptation_count")
-                        _increment_stat(op_stats, "contiguous_copy_count")
-                        _increment_stat(op_stats, "adaptation_count")
-                    call_args.append(value.contiguous())
-                else:
-                    call_args.append(value)
+            special_args = prepare_tinygemm_linear_launch_args(
+                op_name,
+                ordered,
+                {},
+                {"params": orig_params or []},
+            )
+            if special_args is not None:
+                call_args = special_args
+                tensor_args = [value for value in call_args if isinstance(value, torch.Tensor)]
+                _increment_stat(runtime_stats, "adaptation_count")
+                _increment_stat(op_stats, "adaptation_count")
+            else:
+                limit = n_launch if n_launch is not None else len(ordered)
+                call_args: list[Any] = []
+                tensor_args: list[torch.Tensor] = []
+                for value in ordered[:limit]:
+                    if isinstance(value, torch.Tensor):
+                        tensor_args.append(value)
+                        if not value.is_contiguous():
+                            _increment_stat(runtime_stats, "contiguous_copy_count")
+                            _increment_stat(runtime_stats, "adaptation_count")
+                            _increment_stat(op_stats, "contiguous_copy_count")
+                            _increment_stat(op_stats, "adaptation_count")
+                        call_args.append(value.contiguous())
+                    else:
+                        call_args.append(value)
 
             if not tensor_args:
                 _record_fallback(runtime_stats, op_name, "no_tensor_args")

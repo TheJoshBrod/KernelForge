@@ -19,6 +19,11 @@ from byllm.lib import by, Model
 from torch.utils.cpp_extension import load_inline
 from src.optimizer.config.settings import settings
 from src.optimizer.backends.error_utils import format_verifier_output
+from src.optimizer.quantized import (
+    TINY_GEMM_LINEAR_ABI,
+    TINY_GEMM_LINEAR_SIGNATURE,
+    prepare_tinygemm_linear_launch_args,
+)
 import src.optimizer.backends.cuda.loader as loader
 
 llm = Model(model_name=settings.llm_model_name)
@@ -44,6 +49,11 @@ def summarize_issue_with_traceback(
 
         The CUDA kernel's launch() function MUST accept arguments in exactly this order:
         {', '.join(input_and_output.get('signature', {}).get('params', ['arg0', 'arg1', '...']))}
+
+        If input_and_output contains kernel_abi.launch_signature, that special Kernel Forge ABI
+        overrides the original PyTorch parameter order for launch(). In that case, do not
+        suggest reverting the Python call site or launch signature back to the public PyTorch
+        signature.
 
         Provide specific recommendations for:
         1. Correct argument ordering and types in the kernel launch() signature
@@ -133,6 +143,20 @@ def move_to_target(item):
     return move_to_cuda(item)
 
 
+def _sync_target_device():
+    target = loader.target_device()
+    if target == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize()
+    elif target == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+        torch.mps.synchronize()
+
+
+def _clear_target_cache():
+    target = loader.target_device()
+    if target == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 # --- Persistent Worker Globals ---
 _WORKER_PROCESS = None
 _WORKER_Q_IN = None
@@ -208,30 +232,40 @@ def _validate_worker_loop(q_in, q_out):
                 # _infer_param_order in prompts.py: prefer an explicit recorded
                 # signature; otherwise build from the first entry's positional args
                 # plus the union of all kwargs keys seen across every entry (in
-                # first-seen order).  Using a per-entry order would give different
+                # first-seen order). Using a per-entry order would give different
                 # arities to module.launch() for entries with different kwargs
                 # structures (e.g. some passing stride=2, others relying on defaults).
-                entries = []
+                #
+                # Load entries one at a time. Gemma linear/embedding entries can
+                # contain large weights, and retaining every payload at once can
+                # turn verifier memory use into a false CUDA OOM unrelated to the
+                # generated kernel.
                 canonical_signature = None
+                first_args_for_fallback = []
                 for f in entry_files:
-                    e = torch.load(f, weights_only=False)
-                    entries.append(e)
+                    e = torch.load(f, map_location="cpu", weights_only=False)
+                    if not first_args_for_fallback:
+                        first_args_for_fallback = e.get("args", []) or []
                     if canonical_signature is None:
                         sig = e.get("signature", {})
                         if sig and sig.get("params"):
                             canonical_signature = sig
+                    del e
+                    if canonical_signature is not None:
+                        break
 
-                if canonical_signature is None and entries:
-                    first_args = entries[0].get("args", []) or []
-                    param_order = [f"arg{i}" for i in range(len(first_args))]
+                if canonical_signature is None:
+                    param_order = [f"arg{i}" for i in range(len(first_args_for_fallback))]
                     seen = set(param_order)
-                    for entry in entries:
+                    for f in entry_files:
+                        entry = torch.load(f, map_location="cpu", weights_only=False)
                         kw = entry.get("kwargs", {}) or {}
                         if isinstance(kw, dict):
                             for k in kw:
                                 if k not in seen:
                                     param_order.append(k)
                                     seen.add(k)
+                        del entry
                     canonical_signature = {"params": param_order, "defaults": {}}
 
                 all_valid = True
@@ -239,19 +273,44 @@ def _validate_worker_loop(q_in, q_out):
                 llm_analysis_count = 0
                 MAX_LLM_ANALYSIS = 1
 
-                for entry_file, entry in zip(entry_files, entries):
+                for entry_file in entry_files:
+                    entry = None
+                    cuda_args = None
+                    output_generated = None
+                    ground_truth = None
                     try:
+                        entry = torch.load(entry_file, map_location="cpu", weights_only=False)
                         args = entry.get("args", [])
                         kwargs = entry.get("kwargs", {})
 
                         normalized_args, remaining_kwargs = normalize_args_kwargs(args, kwargs, canonical_signature)
-                        cuda_args = [move_to_target(item) for item in normalized_args]
+                        function_name = (
+                            entry.get("function_name")
+                            or entry.get("op_name")
+                            or entry.get("op")
+                            or operator
+                        )
+                        special_args = prepare_tinygemm_linear_launch_args(
+                            function_name,
+                            normalized_args,
+                            remaining_kwargs,
+                            canonical_signature,
+                            move_to_device=move_to_target,
+                        )
+                        cuda_args = (
+                            special_args
+                            if special_args is not None
+                            else [move_to_target(item) for item in normalized_args]
+                        )
+                        if special_args is not None:
+                            entry["kernel_abi"] = {
+                                "name": TINY_GEMM_LINEAR_ABI,
+                                "launch_signature": TINY_GEMM_LINEAR_SIGNATURE,
+                            }
 
-                        output_generated = module.launch(*cuda_args)
-                        if loader.target_device() == "cuda":
-                            torch.cuda.synchronize()
-                        elif loader.target_device() == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
-                            torch.mps.synchronize()
+                        with torch.no_grad():
+                            output_generated = module.launch(*cuda_args)
+                        _sync_target_device()
 
                         if loader.target_device() == "cuda" and torch.is_tensor(output_generated) and not output_generated.is_cuda:
                             output_generated = output_generated.cuda()
@@ -336,6 +395,10 @@ def _validate_worker_loop(q_in, q_out):
                         else:
                              log_msg = f"[Runtime Error {entry_file.name}]\n{str(e)}\n(LLM Analysis skipped)"
                         error_logs.append(log_msg)
+                    finally:
+                        del cuda_args, output_generated, ground_truth, entry
+                        _sync_target_device()
+                        _clear_target_cache()
 
                 if all_valid:
                     q_out.put(
@@ -469,8 +532,13 @@ def validate_remote_kernel(ssh_config: dict, generated_cu_code: str, paths: dict
     try:
         worker_path = Path(__file__).parent / "remote_worker.py"
         loader_path = Path(__file__).parent / "loader.py"
+        quantized_path = Path(__file__).parents[2] / "quantized.py"
         
-        worker = RemoteWorkerClient(ssh_config, worker_path, {str(loader_path): "loader.py"})
+        worker = RemoteWorkerClient(
+            ssh_config,
+            worker_path,
+            {str(loader_path): "loader.py", str(quantized_path): "quantized.py"},
+        )
         
         # Upload IO files to shared cache
         io_dir = paths["io_dir"]
@@ -483,7 +551,8 @@ def validate_remote_kernel(ssh_config: dict, generated_cu_code: str, paths: dict
         # Send verify task
         payload = {
             "code": generated_cu_code,
-            "io_dir": remote_io_dir
+            "io_dir": remote_io_dir,
+            "op_name": paths.get("op_name") or io_dir.name,
         }
         
         result = worker.send_task("verify", payload)
