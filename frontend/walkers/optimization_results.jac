@@ -10,6 +10,7 @@ import sys;
 import subprocess;
 import sqlite3;
 import hashlib;
+import importlib;
 
 import from .globals { repo_root }
 import from .catalog_db {
@@ -647,7 +648,11 @@ walker:pub GetCastExportPlan {
         }
 
         try {
-            from paper_benchmarks.paper_bench.cast_export import resolve_cast_export_plan;
+            if str(repo_root) not in sys.path {
+                sys.path.insert(0, str(repo_root));
+            }
+            cast_export = importlib.import_module("paper_benchmarks.paper_bench.cast_export");
+            resolve_cast_export_plan = cast_export.resolve_cast_export_plan;
 
             selection_report = resolve_cast_export_plan(
                 project_dir,
@@ -1117,8 +1122,12 @@ walker:pub DownloadCast {
 
         if str(self.selectionPolicy) == "auto_best_fastest_valid" {
             try {
-                from paper_benchmarks.paper_bench.cast_export import resolve_cast_export_plan;
-                from paper_benchmarks.paper_bench.cast_export import build_cast_manifest_metadata;
+                if str(repo_root) not in sys.path {
+                    sys.path.insert(0, str(repo_root));
+                }
+                cast_export = importlib.import_module("paper_benchmarks.paper_bench.cast_export");
+                resolve_cast_export_plan = cast_export.resolve_cast_export_plan;
+                build_cast_manifest_metadata = cast_export.build_cast_manifest_metadata;
 
                 selection_plan = resolve_cast_export_plan(
                     project_dir,
@@ -1221,7 +1230,11 @@ walker:pub DownloadCast {
 
         if str(self.selectionPolicy) == "auto_best_fastest_valid" {
             try {
-                from paper_benchmarks.paper_bench.cast_export import export_cast_package;
+                if str(repo_root) not in sys.path {
+                    sys.path.insert(0, str(repo_root));
+                }
+                cast_export = importlib.import_module("paper_benchmarks.paper_bench.cast_export");
+                export_cast_package = cast_export.export_cast_package;
 
                 export_result = export_cast_package(
                     project_dir,

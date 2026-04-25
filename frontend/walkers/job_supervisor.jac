@@ -1365,6 +1365,171 @@ def:pub _write_queue_state(project_name: str, queue_state: dict) -> None {
     }
 }
 
+def _job_terminal_status(job: dict) -> str {
+    if not job {
+        return "";
+    }
+    status_text = (
+        str(job["status"]).strip().lower()
+            if "status" in job and job["status"]
+            else ""
+    );
+    if (
+        status_text == "completed"
+        or status_text == "success"
+        or status_text == "error"
+        or status_text == "failed"
+        or status_text == "cancelled"
+    ) {
+        return status_text;
+    }
+    return "";
+}
+
+def _queue_task_job_key(task_key: str, task: dict) -> str {
+    tag = (
+        str(task["tag"]).strip()
+            if task and "tag" in task and task["tag"]
+            else ""
+    );
+    task_key_text = str(task_key);
+    if tag == "[GEN]" or task_key_text.startswith("gen_") {
+        return "generate";
+    }
+    if tag == "[OPT]" or task_key_text.startswith("seq_opt_") {
+        return "optimize";
+    }
+    return "";
+}
+
+def _queue_task_op_name(task_key: str, task: dict) -> str {
+    if task and "op_name" in task and task["op_name"] {
+        return str(task["op_name"]);
+    }
+    task_key_text = str(task_key);
+    if task_key_text.startswith("gen_") {
+        return task_key_text[4:];
+    }
+    if task_key_text.startswith("seq_opt_") {
+        return task_key_text[8:];
+    }
+    return task_key_text;
+}
+
+def _op_has_generate_success_marker(project_name: str, op_name: str) -> bool {
+    if not op_name {
+        return False;
+    }
+    op_dir = path.join(
+        _project_dir(project_name),
+        "kernels",
+        "generated",
+        "individual_op_kernels",
+        op_name
+    );
+    markers = [
+        path.join(op_dir, "success.cuda"),
+        path.join(op_dir, "success.triton"),
+        path.join(op_dir, "success.mps"),
+        path.join(op_dir, "success.cpu")
+    ];
+    for marker in markers {
+        if path.exists(marker) {
+            return True;
+        }
+    }
+    return False;
+}
+
+def:pub _reconcile_queue_with_state(
+    project_name: str, state: dict, queue_state: dict
+) -> dict {
+    if not queue_state {
+        return _default_queue_state();
+    }
+    changed = False;
+    active_tasks = (
+        queue_state["active_tasks"]
+            if "active_tasks" in queue_state and queue_state["active_tasks"]
+            else {}
+    );
+    reconciled = {};
+    has_live_queue_task = False;
+    for task_key in active_tasks {
+        task = active_tasks[task_key];
+        if not task {
+            continue;
+        }
+        current_step = (
+            str(task["current_step"])
+                if "current_step" in task and task["current_step"]
+                else ""
+        );
+        if current_step == "Done" or current_step == "Failed" {
+            reconciled[str(task_key)] = task;
+            continue;
+        }
+
+        job_key = _queue_task_job_key(str(task_key), task);
+        job = state[job_key] if state and job_key and job_key in state else {};
+        terminal_status = _job_terminal_status(job);
+        if terminal_status {
+            op_name = _queue_task_op_name(str(task_key), task);
+            task["op_name"] = op_name;
+            terminal_ok = terminal_status == "completed" or terminal_status == "success";
+            if (
+                (job_key == "generate" and _op_has_generate_success_marker(project_name, op_name))
+                or (job_key != "generate" and terminal_ok)
+            ) {
+                task["current_step"] = "Done";
+                task["status"] = "Done";
+                if not ("result" in task) or not task["result"] {
+                    task["result"] = "validated";
+                }
+            } else {
+                task["current_step"] = "Failed";
+                task["status"] = "Failed";
+                if not ("result" in task) or not task["result"] {
+                    task["result"] = (
+                        "missing success marker after generate job ended"
+                            if job_key == "generate"
+                            else (
+                                str(job["message"])
+                                    if job and "message" in job and job["message"]
+                                    else "job ended before this task reached a terminal state"
+                            )
+                    );
+                }
+            }
+            reconciled[str(task_key)] = task;
+            changed = True;
+            continue;
+        }
+
+        has_live_queue_task = True;
+        reconciled[str(task_key)] = task;
+    }
+
+    if not ("active_tasks" in queue_state) or queue_state["active_tasks"] != reconciled {
+        queue_state["active_tasks"] = reconciled;
+        changed = True;
+    }
+    if not has_live_queue_task {
+        if "current_operator" in queue_state and queue_state["current_operator"] {
+            queue_state["current_operator"] = "";
+            changed = True;
+        }
+        if "pending_operators" in queue_state and queue_state["pending_operators"] {
+            queue_state["pending_operators"] = [];
+            changed = True;
+        }
+    }
+    if changed {
+        _write_queue_state(project_name, queue_state);
+    }
+    return queue_state;
+}
+
 def _job_is_active(job: dict) -> bool {
     if not job {
         return False;
@@ -1385,9 +1550,6 @@ def _queue_has_running_work(queue_state: dict) -> bool {
         return False;
     }
     if _launching_job_active(queue_state) {
-        return True;
-    }
-    if "current_operator" in queue_state and queue_state["current_operator"] {
         return True;
     }
     active_tasks = queue_state["active_tasks"]
@@ -1433,6 +1595,7 @@ def:pub _get_active_project_job(
         }
     }
     queue_state = _read_queue_state(project_name);
+    queue_state = _reconcile_queue_with_state(project_name, state, queue_state);
     if _queue_has_running_work(queue_state) {
         return {"jobKey": "queue", "message": "project work already in progress."};
     }

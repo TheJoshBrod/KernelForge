@@ -29,6 +29,7 @@ import from .job_supervisor {
     _get_active_project_job,
     _queue_has_backlog,
     _queue_has_running_work,
+    _reconcile_queue_with_state,
     _start_job,
     _find_optimized_dir,
     _normalize_metric_op_name,
@@ -722,6 +723,7 @@ walker:pub GetProjectStatus {
         _start_next_queued_job(self.projectName);
         state = _read_state(self.projectName);
         queue_state = _read_queue_state(self.projectName);
+        queue_state = _reconcile_queue_with_state(self.projectName, state, queue_state);
         if (
             not _get_active_project_job(self.projectName, False)
             and _queue_has_backlog(queue_state)
@@ -730,6 +732,7 @@ walker:pub GetProjectStatus {
             _start_next_queued_job(self.projectName);
             state = _read_state(self.projectName);
             queue_state = _read_queue_state(self.projectName);
+            queue_state = _reconcile_queue_with_state(self.projectName, state, queue_state);
         }
         if "active_tasks" in queue_state {
             cleaned = {};

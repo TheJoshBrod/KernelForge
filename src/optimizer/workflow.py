@@ -417,7 +417,10 @@ def run_generate(args: argparse.Namespace) -> int:
             }}})
             # Pass KFORGE state env through so attempt-level progress messages
             # from generator/main.py reach the dashboard.
-            rc, stderr = _run(gen_cmd, root, env)
+            try:
+                rc, stderr = _run(gen_cmd, root, env)
+            except Exception as exc:
+                rc, stderr = 1, str(exc)
             if rc != 0:
                 detail = f": {stderr[:_RESULT_TRUNCATE]}" if stderr else ""
                 op_failure = f"generation command failed (exit {rc}){detail}"

@@ -1006,8 +1006,14 @@ def main():
             except Exception:
                 pass
         elif not success:
-            # Track for cleanup at the start of the next op (M5).
-            failed_task_keys.append("gen_" + op_key)
+            if project_dir:
+                update_queue_state(project_dir, {"active_tasks": {"gen_" + op_key: {
+                    "tag": "[GEN]",
+                    "op_name": op_key,
+                    "current_step": "Failed",
+                    "status": "Failed",
+                    "result": "kernel failed validation/compile",
+                }}})
         if check_cancelled():
             print("Generation cancelled.")
             return
