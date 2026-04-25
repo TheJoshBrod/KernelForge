@@ -169,6 +169,7 @@ def handle_verify(data):
                         move_to_device=move_to_cuda,
                     )
                     cuda_args = special_args if special_args is not None else [move_to_cuda(item) for item in normalized_args]
+                    kernel_abi_name = quantized.TINY_GEMM_LINEAR_ABI if special_args is not None else None
 
                     # Launch
                     output_generated = module.launch(*cuda_args)
@@ -181,12 +182,16 @@ def handle_verify(data):
                     if torch.is_tensor(ground_truth):
                         ground_truth = ground_truth.to(output_generated.device)
 
-                    is_correct = torch.allclose(output_generated, ground_truth, atol=1e-2, rtol=1e-1)
+                    atol, rtol = quantized.validation_tolerances_for_kernel_abi(kernel_abi_name)
+                    is_correct = torch.allclose(output_generated, ground_truth, atol=atol, rtol=rtol)
                     
                     if not is_correct:
                         all_valid = False
                         diff = torch.abs(output_generated - ground_truth)
-                        error_logs.append(f"[{os.path.basename(entry_file)}] Max diff: {diff.max().item():.6f}")
+                        error_logs.append(
+                            f"[{os.path.basename(entry_file)}] Max diff: {diff.max().item():.6f} "
+                            f"(atol={atol:g}, rtol={rtol:g})"
+                        )
 
                 except Exception as e:
                     all_valid = False

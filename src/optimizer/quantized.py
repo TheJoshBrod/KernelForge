@@ -7,9 +7,16 @@ from typing import Any, Callable
 import torch
 
 
-TINY_GEMM_LINEAR_ABI = "quanto_tinygemm_int4_linear_v1"
+TINY_GEMM_LINEAR_ABI_V1 = "quanto_tinygemm_int4_linear_v1"
+TINY_GEMM_LINEAR_ABI = "quanto_tinygemm_int4_linear_v2"
+TINY_GEMM_LINEAR_PACKED_LAYOUT = "torch._weight_int4pack_mm"
+TINY_GEMM_LINEAR_DEQUANT_FORMULA = "scale * (q - 8) + shift"
+TINY_GEMM_LINEAR_ATOL = 7.5e-2
+TINY_GEMM_LINEAR_RTOL = 1e-1
+DEFAULT_FLOAT_ATOL = 1e-2
+DEFAULT_FLOAT_RTOL = 1e-1
 TINY_GEMM_LINEAR_SIGNATURE = (
-    "torch::Tensor launch(torch::Tensor input, torch::Tensor packed_weight, "
+    "torch::Tensor launch(torch::Tensor input, torch::Tensor packed_weight_raw, "
     "torch::Tensor scale_shift, c10::optional<torch::Tensor> bias, "
     "int64_t out_features, int64_t in_features, int64_t group_size, int64_t axis)"
 )
@@ -50,6 +57,15 @@ def _tensor_meta(tensor: torch.Tensor) -> dict[str, Any]:
     }
 
 
+def _tinygemm_raw_packed_tensor(packed: Any) -> torch.Tensor | None:
+    """Return the device-specific tensor consumed by torch._weight_int4pack_mm."""
+
+    if not torch.is_tensor(packed):
+        return None
+    raw = getattr(packed, "_data", packed)
+    return raw if torch.is_tensor(raw) else None
+
+
 def is_linear_function(function_name: str | None) -> bool:
     if not function_name:
         return False
@@ -69,19 +85,23 @@ def is_tinygemm_qbits_tensor(value: Any) -> bool:
     if not all(hasattr(value, attr) for attr in ("_data", "_scale_shift", "_group_size", "_axis")):
         return False
     packed = getattr(value, "_data", None)
+    packed_raw = _tinygemm_raw_packed_tensor(packed)
     scale_shift = getattr(value, "_scale_shift", None)
-    return torch.is_tensor(packed) and torch.is_tensor(scale_shift)
+    return torch.is_tensor(packed) and torch.is_tensor(packed_raw) and torch.is_tensor(scale_shift)
 
 
 def describe_tinygemm_qbits_tensor(value: Any) -> dict[str, Any] | None:
     if not is_tinygemm_qbits_tensor(value):
         return None
 
-    packed = getattr(value, "_data")
+    packed_wrapper = getattr(value, "_data")
+    packed_raw = _tinygemm_raw_packed_tensor(packed_wrapper)
     scale_shift = getattr(value, "_scale_shift")
     logical_shape = list(value.shape)
     out_features = _safe_int(logical_shape[0]) if len(logical_shape) >= 1 else 0
     in_features = _safe_int(logical_shape[1]) if len(logical_shape) >= 2 else 0
+    if packed_raw is None:
+        return None
 
     return {
         "kernel_abi": TINY_GEMM_LINEAR_ABI,
@@ -90,8 +110,16 @@ def describe_tinygemm_qbits_tensor(value: Any) -> dict[str, Any] | None:
         "logical_shape": logical_shape,
         "logical_stride": list(value.stride()),
         "logical_numel": int(value.numel()),
-        "packed": _tensor_meta(packed),
+        "packed_layout": TINY_GEMM_LINEAR_PACKED_LAYOUT,
+        "packed_layout_note": (
+            "raw packed storage is device-specific TinyGemm layout; move the "
+            "TinyGemmPackedTensor wrapper before extracting raw storage"
+        ),
+        "packed": _tensor_meta(packed_raw),
+        "packed_raw": _tensor_meta(packed_raw),
+        "packed_wrapper": _tensor_meta(packed_wrapper),
         "scale_shift": _tensor_meta(scale_shift),
+        "logical_unpack_dequant": TINY_GEMM_LINEAR_DEQUANT_FORMULA,
         "group_size": _safe_int(getattr(value, "_group_size", 0)),
         "axis": _safe_int(getattr(value, "_axis", 0)),
         "out_features": out_features,
@@ -143,6 +171,12 @@ def tinygemm_linear_abi(
     }
 
 
+def validation_tolerances_for_kernel_abi(kernel_abi: str | None) -> tuple[float, float]:
+    if kernel_abi == TINY_GEMM_LINEAR_ABI:
+        return TINY_GEMM_LINEAR_ATOL, TINY_GEMM_LINEAR_RTOL
+    return DEFAULT_FLOAT_ATOL, DEFAULT_FLOAT_RTOL
+
+
 def prepare_tinygemm_linear_launch_args(
     function_name: str | None,
     args: list[Any] | tuple[Any, ...],
@@ -155,7 +189,7 @@ def prepare_tinygemm_linear_launch_args(
 
     Returns None unless the call is a TinyGemm INT4 linear.  The returned list is
     the internal Kernel Forge launch ABI:
-    input, packed_weight, scale_shift, bias, out_features, in_features,
+    input, packed_weight_raw, scale_shift, bias, out_features, in_features,
     group_size, axis.
     """
 
@@ -172,11 +206,15 @@ def prepare_tinygemm_linear_launch_args(
         return None
 
     move = move_to_device or (lambda item: item)
-    packed = getattr(weight, "_data")
+    packed_wrapper = getattr(weight, "_data")
+    moved_packed_wrapper = move(packed_wrapper)
+    packed_raw = _tinygemm_raw_packed_tensor(moved_packed_wrapper)
+    if packed_raw is None:
+        return None
     scale_shift = getattr(weight, "_scale_shift")
     return [
         move(input_tensor),
-        move(packed),
+        packed_raw,
         move(scale_shift),
         move(bias) if torch.is_tensor(bias) else bias,
         int(desc["out_features"]),
@@ -191,6 +229,8 @@ def detect_kernel_source_abi(function_name: str | None, cuda_source: str) -> str
 
     if not is_linear_function(function_name):
         return None
-    if "packed_weight" in cuda_source and "scale_shift" in cuda_source and "group_size" in cuda_source:
+    if "packed_weight_raw" in cuda_source and "scale_shift" in cuda_source and "group_size" in cuda_source:
         return TINY_GEMM_LINEAR_ABI
+    if "packed_weight" in cuda_source and "scale_shift" in cuda_source and "group_size" in cuda_source:
+        return TINY_GEMM_LINEAR_ABI_V1
     return None

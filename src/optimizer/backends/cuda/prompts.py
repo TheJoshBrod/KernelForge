@@ -444,7 +444,9 @@ def generate_new_root_prompt(
         if param.get("quantized_storage"):
             storage = param["quantized_storage"][0]
             params_section += f"\n   - Quantized storage ABI: {storage.get('kernel_abi')}"
-            params_section += f"\n   - Packed `_data`: dtype {storage.get('packed', {}).get('dtype')}, shape {storage.get('packed', {}).get('shape')}, stride {storage.get('packed', {}).get('stride')}"
+            params_section += f"\n   - Packed wrapper `_data`: dtype {storage.get('packed_wrapper', {}).get('dtype')}, shape {storage.get('packed_wrapper', {}).get('shape')}, stride {storage.get('packed_wrapper', {}).get('stride')}"
+            params_section += f"\n   - Raw TinyGemm storage `_data._data`: dtype {storage.get('packed_raw', {}).get('dtype')}, shape {storage.get('packed_raw', {}).get('shape')}, stride {storage.get('packed_raw', {}).get('stride')}"
+            params_section += f"\n   - Packed layout: {storage.get('packed_layout')}"
             params_section += f"\n   - Scale/shift `_scale_shift`: dtype {storage.get('scale_shift', {}).get('dtype')}, shape {storage.get('scale_shift', {}).get('shape')}, stride {storage.get('scale_shift', {}).get('stride')}"
 
     special_abi_section = ""
@@ -458,7 +460,9 @@ This operator uses TinyGemm/Quanto INT4 packed linear weights. Generated CUDA MU
 {kernel_abi.get('launch_signature', quantized.TINY_GEMM_LINEAR_SIGNATURE)}
 ```
 
-Do not generate a dense `linear(input, weight, bias)` wrapper. The verifier/profiler pass `weight._data` as `packed_weight` and `weight._scale_shift` as `scale_shift`.
+Do not generate a dense `linear(input, weight, bias)` wrapper. The verifier/profiler move the Quanto `weight._data` wrapper first, then pass raw TinyGemm storage as `packed_weight_raw` and `weight._scale_shift` as `scale_shift`.
+
+`packed_weight_raw` is PyTorch TinyGemm-private storage for `torch._weight_int4pack_mm`; it is not row-major low/high nibbles. Use `at::_ops::_weight_int4pack_mm::call(input.reshape({{-1, in_features}}), packed_weight_raw, group_size, scale_shift)` (include `<ATen/ops/_weight_int4pack_mm.h>`) or an equivalent TinyGemm-aware path, then reshape and add `bias` if present.
 """
     
     # Format existing roots section (the key for diversity)

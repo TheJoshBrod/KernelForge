@@ -407,9 +407,9 @@ Generated CUDA MUST implement this internal Kernel Forge launch signature instea
 {kernel_abi.get('launch_signature', quantized.TINY_GEMM_LINEAR_SIGNATURE)}
 ```
 
-The verifier, profiler, and CAST runtime adapt the public call to this ABI by passing:
+The verifier, profiler, and CAST runtime adapt the public call to this ABI by moving the Quanto `weight._data` wrapper first, then passing:
 - `input`: original activation tensor
-- `packed_weight`: `weight._data` packed INT4 storage, dtype {weight_abi.get('packed', {}).get('dtype', 'unknown')}, shape {weight_abi.get('packed', {}).get('shape', 'unknown')}, stride {weight_abi.get('packed', {}).get('stride', 'unknown')}
+- `packed_weight_raw`: target-device raw TinyGemm storage from `weight._data._data`, dtype {weight_abi.get('packed_raw', {}).get('dtype', 'unknown')}, shape {weight_abi.get('packed_raw', {}).get('shape', 'unknown')}, stride {weight_abi.get('packed_raw', {}).get('stride', 'unknown')}
 - `scale_shift`: `weight._scale_shift`, dtype {weight_abi.get('scale_shift', {}).get('dtype', 'unknown')}, shape {weight_abi.get('scale_shift', {}).get('shape', 'unknown')}, stride {weight_abi.get('scale_shift', {}).get('stride', 'unknown')}
 - `bias`: original optional bias tensor
 - `out_features`: {weight_abi.get('out_features', 'unknown')}
@@ -417,7 +417,11 @@ The verifier, profiler, and CAST runtime adapt the public call to this ABI by pa
 - `group_size`: {weight_abi.get('group_size', 'unknown')}
 - `axis`: {weight_abi.get('axis', 'unknown')}
 
-Do not read the logical weight as dense BF16 and do not use `weight.data_ptr<...>()`; there is no `weight` argument in this ABI. Decode INT4 values from `packed_weight` and apply `scale_shift` using the metadata above.
+Packed layout: {weight_abi.get('packed_layout', quantized.TINY_GEMM_LINEAR_PACKED_LAYOUT)}. The raw tensor is PyTorch TinyGemm-private storage, not row-major low/high nibbles. Do not manually decode `packed_weight_raw` with `& 0x0f` or `>> 4`.
+
+Use `at::_ops::_weight_int4pack_mm::call(input.reshape({{-1, in_features}}), packed_weight_raw, group_size, scale_shift)` (include `<ATen/ops/_weight_int4pack_mm.h>`) or an equivalent TinyGemm-aware path, then reshape to the original input leading dimensions plus `out_features` and add `bias` if present.
+
+Do not read the logical weight as dense BF16 and do not use `weight.data_ptr<...>()`; there is no `weight` argument in this ABI. If you reason about logical unpacked values, the dequantization convention is `{weight_abi.get('logical_unpack_dequant', quantized.TINY_GEMM_LINEAR_DEQUANT_FORMULA)}`.
 """
 
     # List all parameters
@@ -436,7 +440,9 @@ Do not read the logical weight as dense BF16 and do not use `weight.data_ptr<...
                 prompt += f"\n   - Quantized storage ABI: {storage.get('kernel_abi')}"
                 prompt += f"\n   - Tensor subclass: {storage.get('tensor_subclass')}"
                 prompt += f"\n   - Logical dtype/shape/stride: {storage.get('logical_dtype')}, {storage.get('logical_shape')}, {storage.get('logical_stride')}"
-                prompt += f"\n   - Packed field `_data`: dtype {storage.get('packed', {}).get('dtype')}, shape {storage.get('packed', {}).get('shape')}, stride {storage.get('packed', {}).get('stride')}"
+                prompt += f"\n   - Packed wrapper `_data`: dtype {storage.get('packed_wrapper', {}).get('dtype')}, shape {storage.get('packed_wrapper', {}).get('shape')}, stride {storage.get('packed_wrapper', {}).get('stride')}"
+                prompt += f"\n   - Raw TinyGemm storage `_data._data`: dtype {storage.get('packed_raw', {}).get('dtype')}, shape {storage.get('packed_raw', {}).get('shape')}, stride {storage.get('packed_raw', {}).get('stride')}"
+                prompt += f"\n   - Packed layout: {storage.get('packed_layout')}"
                 prompt += f"\n   - Scale/shift field `_scale_shift`: dtype {storage.get('scale_shift', {}).get('dtype')}, shape {storage.get('scale_shift', {}).get('shape')}, stride {storage.get('scale_shift', {}).get('stride')}"
                 prompt += f"\n   - Group size/axis: {storage.get('group_size')}, {storage.get('axis')}"
         elif 'value' in param and param['value'] is not None:
@@ -538,7 +544,8 @@ Now generate the complete kernel.py file following the system prompt guidelines.
         if kernel_abi and kernel_abi.get("name") == quantized.TINY_GEMM_LINEAR_ABI:
             signature_rule = f"""   - Must use the Kernel Forge Special ABI exactly:
      `{kernel_abi.get('launch_signature', quantized.TINY_GEMM_LINEAR_SIGNATURE)}`
-   - This special ABI intentionally replaces the public PyTorch `linear(input, weight, bias)` launch signature for this quantized call."""
+   - This special ABI intentionally replaces the public PyTorch `linear(input, weight, bias)` launch signature for this quantized call.
+   - For `packed_weight_raw`, use `at::_ops::_weight_int4pack_mm::call` or an equivalent TinyGemm-aware path; do not hand-decode raw packed bytes as row-major nibbles."""
         else:
             signature_rule = """   - Must accept ALL parameters listed above in the exact order
    - Optional parameters (None) should be handled with conditional logic"""
@@ -707,7 +714,8 @@ Repair instructions:
     ):
         signature_rule = f"""- Keep the Kernel Forge Special ABI launch signature EXACTLY:
   `{quantized.TINY_GEMM_LINEAR_SIGNATURE}`
-- Do NOT change back to `linear(input, weight, bias)`; verifier/profiler pass packed INT4 storage."""
+- Do NOT change back to `linear(input, weight, bias)`; verifier/profiler pass raw TinyGemm storage as `packed_weight_raw`.
+- Do NOT manually decode `packed_weight_raw` as row-major nibbles. Use `at::_ops::_weight_int4pack_mm::call` or an equivalent TinyGemm-aware path."""
     else:
         signature_rule = "- Keep the launch() signature EXACTLY the same."
 

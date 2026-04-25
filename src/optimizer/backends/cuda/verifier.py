@@ -23,6 +23,7 @@ from src.optimizer.quantized import (
     TINY_GEMM_LINEAR_ABI,
     TINY_GEMM_LINEAR_SIGNATURE,
     prepare_tinygemm_linear_launch_args,
+    validation_tolerances_for_kernel_abi,
 )
 import src.optimizer.backends.cuda.loader as loader
 
@@ -302,6 +303,7 @@ def _validate_worker_loop(q_in, q_out):
                             if special_args is not None
                             else [move_to_target(item) for item in normalized_args]
                         )
+                        kernel_abi_name = TINY_GEMM_LINEAR_ABI if special_args is not None else None
                         if special_args is not None:
                             entry["kernel_abi"] = {
                                 "name": TINY_GEMM_LINEAR_ABI,
@@ -324,8 +326,9 @@ def _validate_worker_loop(q_in, q_out):
                             if not ground_truth.is_floating_point():
                                 is_correct = torch.equal(output_generated, ground_truth)
                             else:
+                                atol, rtol = validation_tolerances_for_kernel_abi(kernel_abi_name)
                                 is_correct = torch.allclose(
-                                    output_generated, ground_truth, atol=1e-2, rtol=1e-1
+                                    output_generated, ground_truth, atol=atol, rtol=rtol
                                 )
                         elif torch.is_tensor(output_generated) and output_generated.numel() == 1 and not torch.is_tensor(ground_truth):
                             is_correct = output_generated.detach().cpu().item() == ground_truth
@@ -346,6 +349,8 @@ def _validate_worker_loop(q_in, q_out):
                                 diag = [f"[Output Mismatch {entry_file.name}]"]
                                 diag.append(f"Output: dtype={output_generated.dtype}, shape={list(output_generated.shape)}")
                                 diag.append(f"Expected: dtype={ground_truth.dtype}, shape={list(ground_truth.shape)}")
+                                atol, rtol = validation_tolerances_for_kernel_abi(kernel_abi_name)
+                                diag.append(f"Tolerance: atol={atol:g}, rtol={rtol:g}")
 
                                 if inf_count > 0:
                                     diag.append(f"WARNING: {int(inf_count)} Inf values in output - possible numeric overflow")
