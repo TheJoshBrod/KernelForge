@@ -32,6 +32,13 @@ MODEL_SLUG = "qwen35a3b"
 LLM_PROVIDER = "anthropic"
 LLM_MODEL = "claude-opus-4-7"
 TARGET_DEVICE = "cuda"
+BUDGET_TARGETS = {
+    "zeroshot": 0,
+    "opt05": 5,
+    "opt10": 10,
+    "opt20": 20,
+    "opt50": 50,
+}
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -944,6 +951,18 @@ def pytorch_ms_by_op(project: str) -> dict[str, float]:
     return out
 
 
+def budget_target(budget: str) -> int:
+    try:
+        return BUDGET_TARGETS[budget]
+    except KeyError as exc:
+        raise ValueError(f"unsupported budget {budget!r}") from exc
+
+
+def budget_arm(budget: str) -> str:
+    target = budget_target(budget)
+    return "zero_shot" if target == 0 else f"optimize_{target}"
+
+
 def budget_selection(project: str, budget: str) -> tuple[dict[str, str], dict[str, Any]]:
     if budget == "zeroshot":
         selected = successful_zero_shot_kernel_map(project_dir(project))
@@ -958,7 +977,7 @@ def budget_selection(project: str, budget: str) -> tuple[dict[str, str], dict[st
             for op, kernel in selected.items()
         }
         return selected, details
-    selected, details = selected_tree_kernel_map(project_dir(project), arm="optimize_5")
+    selected, details = selected_tree_kernel_map(project_dir(project), arm=budget_arm(budget))
     return selected, details
 
 
@@ -1188,7 +1207,8 @@ def export_budget(project: str, quantization: str, budget: str) -> dict[str, Any
     llm_usage_path = export_root / f"{prefix}__llm_usage.jsonl"
 
     project_usage = llm_usage_summary(project_dir(project) / "llm_usage.db")
-    arm = "zero_shot" if budget == "zeroshot" else "optimize_5"
+    target = budget_target(budget)
+    arm = budget_arm(budget)
     arm_usage = llm_usage_summary(project_dir(project) / "llm_usage.db", row_filter=arm_usage_filter(arm))
     write_llm_usage_jsonl(project, llm_usage_path, arm)
 
@@ -1200,7 +1220,7 @@ def export_budget(project: str, quantization: str, budget: str) -> dict[str, Any
         "model_slug": MODEL_SLUG,
         "quantization": quantization,
         "budget": budget,
-        "optimization_budget": 0 if budget == "zeroshot" else 5,
+        "optimization_budget": target,
         "validation_zip": str(VALIDATION_ZIP),
         "validation_dataset_sha256": safe_sha256_path(VALIDATION_ZIP),
         "profiled_ops": profiled,
@@ -1242,7 +1262,7 @@ def export_budget(project: str, quantization: str, budget: str) -> dict[str, Any
         "model_slug": MODEL_SLUG,
         "quantization": quantization,
         "budget": budget,
-        "optimization_budget": 0 if budget == "zeroshot" else 5,
+        "optimization_budget": target,
         "validation_dataset_sha256": safe_sha256_path(VALIDATION_ZIP),
         "generation_record_path": str(generation_record_path),
         "operator_correctness_path": str(operator_correctness_path),
@@ -1278,7 +1298,7 @@ def export_budget(project: str, quantization: str, budget: str) -> dict[str, Any
         "model_slug": MODEL_SLUG,
         "quantization": quantization,
         "budget": budget,
-        "optimization_budget": 0 if budget == "zeroshot" else 5,
+        "optimization_budget": target,
         "validation_dataset_sha256": safe_sha256_path(VALIDATION_ZIP),
         "generation_record_path": str(generation_record_path),
         "generation_record_sha256": safe_sha256_path(generation_record_path),
@@ -1338,22 +1358,46 @@ def run_quantization(quantization: str, args: argparse.Namespace) -> None:
     run_profile(project, force=args.force_profile)
     print(f"[runner] {project}: profiled_ops={op_dirs(project)}")
     run_generate(project)
-    export_budget(project, quantization, "zeroshot")
-    run_optimize_to(project, 5, workers=args.workers)
-    export_budget(project, quantization, "opt05")
+    for budget in args.budgets:
+        target = budget_target(budget)
+        if target > 0:
+            run_optimize_to(project, target, workers=args.workers)
+        export_budget(project, quantization, budget)
+
+
+def normalize_budgets(raw_budgets: list[str] | None) -> list[str]:
+    budgets = raw_budgets or ["zeroshot", "opt05"]
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for budget in budgets:
+        budget_target(budget)
+        if budget in seen:
+            continue
+        seen.add(budget)
+        normalized.append(budget)
+    return sorted(normalized, key=budget_target)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Create and collect Qwen3.5 A3B BF16/INT4 Forge arms through opt05.")
+    parser = argparse.ArgumentParser(description="Create and collect Qwen3.5 A3B BF16/INT4 Forge arms by budget.")
     parser.add_argument(
         "--quantization",
         action="append",
         choices=["bf16", "int4"],
         help="Quantization to run. Repeatable. Defaults to bf16 and int4.",
     )
+    parser.add_argument(
+        "--budget",
+        action="append",
+        choices=sorted(BUDGET_TARGETS, key=budget_target),
+        dest="budgets",
+        help="Budget to run/export. Repeatable. Defaults to zeroshot and opt05.",
+    )
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--force-profile", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.budgets = normalize_budgets(args.budgets)
+    return args
 
 
 def main() -> int:
@@ -1365,7 +1409,7 @@ def main() -> int:
         raise FileNotFoundError(LOCAL_MODEL_DIR)
     for quantization in quantizations:
         run_quantization(quantization, args)
-    print("[runner] Qwen BF16/INT4 collection complete through opt05.")
+    print(f"[runner] Qwen BF16/INT4 collection complete for budgets: {', '.join(args.budgets)}.")
     return 0
 
 
