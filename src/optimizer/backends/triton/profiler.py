@@ -27,6 +27,7 @@ from src.optimizer.benchmarking.harness import (
     benchmark_entry_calls,
     summarize_entry_results,
 )
+from src.optimizer.profile_replay import normalize_args_kwargs as normalize_replay_args_kwargs
 
 
 # ******************
@@ -156,23 +157,22 @@ def load_triton_module(kernel_path: Path):
     return module
 
 
-def normalize_args_kwargs(args: list, kwargs: dict, params: list, defaults: dict) -> tuple[list, dict]:
-    if not params:
-        return args, kwargs
-
-    normalized = list(args)
-    remaining_kwargs = dict(kwargs)
-
-    for i in range(len(normalized), len(params)):
-        param_name = params[i]
-        if param_name in remaining_kwargs:
-            normalized.append(remaining_kwargs.pop(param_name))
-        elif param_name in defaults:
-            normalized.append(defaults[param_name])
-        else:
-            break
-
-    return normalized, remaining_kwargs
+def normalize_args_kwargs(
+    args: list,
+    kwargs: dict,
+    params: list,
+    defaults: dict,
+    *,
+    function_name: str | None = None,
+    kinds: dict | None = None,
+) -> tuple[list, dict]:
+    return normalize_replay_args_kwargs(
+        args,
+        kwargs,
+        {"params": params, "defaults": defaults, "kinds": kinds or {}},
+        function_name=function_name,
+        preserve_keyword_only=False,
+    )
 
 
 def get_input_files(io_dir: Path, selected_files: list[Path] | list[str] | None = None) -> list:
@@ -219,10 +219,17 @@ def load_batch(pt_files: list) -> list[tuple[str, list, dict]]:
                 sig = entry['signature']
                 params = sig.get('params', [])
                 defaults = sig.get('defaults', {})
+                function_name = entry.get("function_name") or entry.get("op_name") or entry.get("op")
 
                 if params:
                     args, kwargs = normalize_args_kwargs(
-                        args, kwargs, params, defaults)
+                        args,
+                        kwargs,
+                        params,
+                        defaults,
+                        function_name=function_name,
+                        kinds=sig.get("kinds", {}),
+                    )
 
             inputs.append((Path(pt_file).name, args, kwargs))
 

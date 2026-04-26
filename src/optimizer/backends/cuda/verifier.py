@@ -25,6 +25,7 @@ from src.optimizer.quantized import (
     prepare_tinygemm_linear_launch_args,
     validation_tolerances_for_kernel_abi,
 )
+from src.optimizer.profile_replay import normalize_args_kwargs as normalize_replay_args_kwargs
 import src.optimizer.backends.cuda.loader as loader
 
 llm = Model(model_name=settings.llm_model_name)
@@ -86,30 +87,20 @@ def handle_output(traceback_error: str, cu_code: str, log_file_path: Path, input
     )
 
 
-def normalize_args_kwargs(args: list, kwargs: dict, signature_info: dict) -> tuple[list, dict]:
-    """
-    Normalize args and kwargs into a complete positional argument list.
-    """
-    params = signature_info.get("params", [])
-    defaults = signature_info.get("defaults", {})
-
-    if not params:
-        return args, kwargs
-
-    normalized = list(args)
-    remaining_kwargs = dict(kwargs)
-
-    for i in range(len(normalized), len(params)):
-        param_name = params[i]
-        if param_name in remaining_kwargs:
-            normalized.append(remaining_kwargs.pop(param_name))
-        elif param_name in defaults:
-            normalized.append(defaults[param_name])
-        else:
-            print(f"Warning: No value for parameter '{param_name}' at position {i}")
-            break
-
-    return normalized, remaining_kwargs
+def normalize_args_kwargs(
+    args: list,
+    kwargs: dict,
+    signature_info: dict,
+    *,
+    function_name: str | None = None,
+) -> tuple[list, dict]:
+    return normalize_replay_args_kwargs(
+        args,
+        kwargs,
+        signature_info,
+        function_name=function_name,
+        preserve_keyword_only=False,
+    )
 
 
 def move_to_cuda(item):
@@ -283,13 +274,17 @@ def _validate_worker_loop(q_in, q_out):
                         entry = torch.load(entry_file, map_location="cpu", weights_only=False)
                         args = entry.get("args", [])
                         kwargs = entry.get("kwargs", {})
-
-                        normalized_args, remaining_kwargs = normalize_args_kwargs(args, kwargs, canonical_signature)
                         function_name = (
                             entry.get("function_name")
                             or entry.get("op_name")
                             or entry.get("op")
                             or operator
+                        )
+                        normalized_args, remaining_kwargs = normalize_args_kwargs(
+                            args,
+                            kwargs,
+                            canonical_signature,
+                            function_name=function_name,
                         )
                         special_args = prepare_tinygemm_linear_launch_args(
                             function_name,

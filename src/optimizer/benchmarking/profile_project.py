@@ -263,9 +263,14 @@ def wrap_function(module, func_name: str) -> None:
     _func_sig = _COMPILED_SIGS.get(op_key)
     _sig_params: list[str] = []
     _sig_defaults: dict[str, Any] = {}
+    _sig_kinds: dict[str, str] = {}
 
     if _func_sig:
         _sig_params = list(_func_sig.parameters.keys())
+        _sig_kinds = {
+            k: v.kind.name
+            for k, v in _func_sig.parameters.items()
+        }
         _sig_defaults = {
             k: v.default
             for k, v in _func_sig.parameters.items()
@@ -278,6 +283,7 @@ def wrap_function(module, func_name: str) -> None:
                 if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
                     continue
                 _sig_params.append(name)
+                _sig_kinds[name] = param.kind.name
                 if param.default is not inspect.Parameter.empty:
                     _sig_defaults[name] = param.default
         except (ValueError, TypeError):
@@ -312,7 +318,7 @@ def wrap_function(module, func_name: str) -> None:
                     "args": [],
                     "kwargs": resolved_kwargs,
                     "output": ser_output,
-                    "signature": {"params": _sig_params, "defaults": _sig_defaults},
+                    "signature": {"params": _sig_params, "defaults": _sig_defaults, "kinds": _sig_kinds},
                 })
                 return output
             except TypeError:

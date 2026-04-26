@@ -31,6 +31,7 @@ import src.generator.templates as templates
 from src.optimizer.backends.cuda import CUDABackend
 from src.optimizer.backends.triton import TritonBackend
 from src.optimizer.pipeline import update_queue_state
+from src.optimizer.profile_replay import normalize_profile_call_args
 from src.progress import update_job_progress, wait_if_paused, check_cancelled
 from src.llm.usage_db import log_llm_call
 try:
@@ -134,25 +135,6 @@ def _op_set(names) -> set[str]:
             continue
         out.add(_normalize_op_name(str(name)))
     return out
-
-
-def _normalize_profile_call_args(call: dict) -> tuple[list, dict]:
-    args = list(call.get("args") or [])
-    kwargs = dict(call.get("kwargs") or {})
-    sig = call.get("signature") or {}
-    params = sig.get("params") if isinstance(sig, dict) else []
-    defaults = sig.get("defaults") if isinstance(sig, dict) else {}
-    if not params or not kwargs:
-        return args, kwargs
-
-    remaining = dict(kwargs)
-    normalized = list(args)
-    for name in params[len(normalized):]:
-        if name in remaining:
-            normalized.append(remaining.pop(name))
-        elif isinstance(defaults, dict) and name in defaults:
-            normalized.append(defaults[name])
-    return normalized, remaining
 
 
 def _bool_env(name: str) -> bool | None:
@@ -622,7 +604,7 @@ def process_function(
     # Load first call to set up context for profiling
     first_call = torch.load(
         entry_files[0], map_location='cpu', weights_only=False)
-    first_args, first_kwargs = _normalize_profile_call_args(first_call)
+    first_args, first_kwargs = normalize_profile_call_args(first_call)
 
     # Extract function name out of directory name
     function_name = first_call.get("function_name")

@@ -14,6 +14,7 @@ import torch
 import torch.nn.functional as F
 
 from src.progress import update_job_progress
+from src.optimizer.profile_replay import normalize_profile_call_args
 from src.optimizer.tree_store import update_root_value
 
 from .harness import (
@@ -163,25 +164,6 @@ def _ops_from_csv(raw: str) -> list[str]:
     return out
 
 
-def _normalize_profile_call_args(payload: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
-    args = list(payload.get("args") or [])
-    kwargs = dict(payload.get("kwargs") or {})
-    sig = payload.get("signature") or {}
-    params = sig.get("params") if isinstance(sig, dict) else []
-    defaults = sig.get("defaults") if isinstance(sig, dict) else {}
-    if not params or not kwargs:
-        return args, kwargs
-
-    remaining = dict(kwargs)
-    normalized = list(args)
-    for name in params[len(normalized):]:
-        if name in remaining:
-            normalized.append(remaining.pop(name))
-        elif isinstance(defaults, dict) and name in defaults:
-            normalized.append(defaults[name])
-    return normalized, remaining
-
-
 def _load_entries(io_dir: Path, max_entries: int) -> list[tuple[str, Any, dict[str, Any]]]:
     entries: list[tuple[str, Any, dict[str, Any]]] = []
     for pt in _selected_entry_files(io_dir, max_entries):
@@ -206,7 +188,7 @@ def _load_entry_file(pt: Path) -> tuple[str, Any, dict[str, Any]] | None:
         return None
     if not isinstance(payload, dict):
         return None
-    args, kwargs = _normalize_profile_call_args(payload)
+    args, kwargs = normalize_profile_call_args(payload)
     if kwargs is None:
         kwargs = {}
     return pt.name, args, kwargs

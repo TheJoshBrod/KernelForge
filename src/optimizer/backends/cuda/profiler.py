@@ -40,6 +40,7 @@ from src.optimizer.benchmarking.harness import (
     DEFAULT_WARMUP_RUNS,
     summarize_entry_results,
 )
+from src.optimizer.profile_replay import normalize_args_kwargs as normalize_replay_args_kwargs
 from src.optimizer.quantized import prepare_tinygemm_linear_launch_args
 
 # ******************
@@ -167,24 +168,22 @@ def get_module(kernel_path: Path, baseline: bool):
     return module
 
 
-def normalize_args_kwargs(args: list, kwargs: dict, params: list, defaults: dict) -> tuple[list, dict]:
-    if not params:
-        return args, kwargs
-
-    normalized = list(args)
-    remaining_kwargs = dict(kwargs)
-
-    for i in range(len(normalized), len(params)):
-        param_name = params[i]
-
-        if param_name in remaining_kwargs:
-            normalized.append(remaining_kwargs.pop(param_name))
-        elif param_name in defaults:
-            normalized.append(defaults[param_name])
-        else:
-            break
-
-    return normalized, remaining_kwargs
+def normalize_args_kwargs(
+    args: list,
+    kwargs: dict,
+    params: list,
+    defaults: dict,
+    *,
+    function_name: str | None = None,
+    kinds: dict | None = None,
+) -> tuple[list, dict]:
+    return normalize_replay_args_kwargs(
+        args,
+        kwargs,
+        {"params": params, "defaults": defaults, "kinds": kinds or {}},
+        function_name=function_name,
+        preserve_keyword_only=False,
+    )
 
 
 def _canonical_signature(entries: list[dict]) -> dict:
@@ -321,13 +320,18 @@ def load_batch(pt_files: list, signature: dict | None = None) -> list[tuple[str,
 
             args = list(entry.get('args') or [])
             kwargs = dict(entry.get('kwargs') or {})
+            function_name = entry.get("function_name") or entry.get("op_name") or entry.get("op")
 
             # Normalize using signature
             if params:
                 args, kwargs = normalize_args_kwargs(
-                    args, kwargs, params, defaults)
-
-            function_name = entry.get("function_name") or entry.get("op_name") or entry.get("op")
+                    args,
+                    kwargs,
+                    params,
+                    defaults,
+                    function_name=function_name,
+                    kinds=signature.get("kinds", {}),
+                )
             special_args = prepare_tinygemm_linear_launch_args(
                 function_name,
                 args,

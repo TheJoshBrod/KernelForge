@@ -142,8 +142,9 @@ def _infer_param_order(call_list):
         sig = call.get("signature", {}) if isinstance(call, dict) else {}
         params = sig.get("params", []) if isinstance(sig, dict) else []
         defaults = sig.get("defaults", {}) if isinstance(sig, dict) else {}
+        kinds = sig.get("kinds", {}) if isinstance(sig, dict) else {}
         if params:
-            return list(params), defaults
+            return list(params), defaults, kinds
     # Fallback: positional args then kwargs in observed order
     if call_list:
         first = call_list[0]
@@ -152,8 +153,8 @@ def _infer_param_order(call_list):
         param_order = [f"arg{i}" for i in range(len(args))]
         if isinstance(kwargs, dict):
             param_order.extend(list(kwargs.keys()))
-        return param_order, {}
-    return [], {}
+        return param_order, {}, {}
+    return [], {}, {}
 
 
 def _is_tensor_type(value_type) -> bool:
@@ -190,7 +191,7 @@ def generate_function_spec_from_calls(call_list, function_name):
     # We will store observed properties for every argument across all calls
     param_stats = {}
 
-    param_order, defaults = _infer_param_order(call_list)
+    param_order, defaults, kinds = _infer_param_order(call_list)
 
     for call_idx, call in enumerate(call_list):
         # Normalize args to dict keys (arg0, arg1...) to match kwargs
@@ -351,6 +352,7 @@ def generate_function_spec_from_calls(call_list, function_name):
         "signature": {
             "params": param_order,
             "defaults": defaults,
+            "kinds": kinds,
         },
     }
     for call in call_list:
@@ -385,6 +387,7 @@ Based on {function_spec['num_calls']} tracked call(s), implement this operator.
 
 Signature parameters (exact order): {function_spec['signature']['params']}
 Defaults: {function_spec['signature']['defaults']}
+Parameter kinds: {function_spec['signature'].get('kinds', {})}
 
 **Parameters:**
 """
