@@ -28,9 +28,9 @@ shape_or_length_buckets:
     max_tokens: 2048
 batch_sizes:
   - 1
-max_new_tokens: 128
-warmup_runs: 5
-timed_runs: 20
+max_new_tokens: 256
+warmup_runs: 20
+timed_runs: 10
 generation_mode: greedy
 cache_mode: kv_cache_on
 random_seed: 0
@@ -40,4 +40,6 @@ device: cuda
 notes:
   - Primary IISWC candidate external workload.
   - Frozen manifest samples 512 rows from the GSM8K test split with seed 20260427.
+  - Uses 256 generated tokens with 20 warmup runs and 10 timed runs for the
+    focused paper-candidate timing pass.
   - Promotion to paper evidence still requires model and CAST deployment gates.

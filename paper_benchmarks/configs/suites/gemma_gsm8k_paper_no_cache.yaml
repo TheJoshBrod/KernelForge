@@ -28,9 +28,9 @@ shape_or_length_buckets:
     max_tokens: 2048
 batch_sizes:
   - 1
-max_new_tokens: 16
-warmup_runs: 5
-timed_runs: 20
+max_new_tokens: 256
+warmup_runs: 20
+timed_runs: 10
 generation_mode: greedy
 cache_mode: kv_cache_off
 random_seed: 0
@@ -39,4 +39,6 @@ measure_prefill_decode_separately: true
 device: cuda
 notes:
   - Paper-candidate no-KV-cache GSM8K run.
+  - Uses 256 generated tokens with 20 warmup runs and 10 timed runs for the
+    focused paper-candidate timing pass.
   - Use only with explicit cache_mode=kv_cache_off labeling in figures/tables.
