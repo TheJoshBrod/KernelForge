@@ -1,0 +1,42 @@
+suite_id: gemma_qgqa_paper
+benchmark_mode: e2e_model
+description: Candidate Gemma causal LM paper-run suite over the frozen QGQA external prompt manifest.
+prompt_file: /home/gb10/Projects/Kernal-Forge/datacollection/extreme_benchmark/datasets/qgqa_heldout_manifest.jsonl
+workload_slug: qgqa_heldout
+dataset_access_terms: Hugging Face dataset atreydesai/qgqa-gpt-5.2-20260213-041705; dataset card is empty and license/access terms must be verified before paper-eligible promotion
+workload_type: prompt_records
+synthetic_workload: false
+variants:
+  - eager
+  - torch_compile
+  - kf_cast
+stages:
+  - load
+  - compile
+  - warmup
+  - prefill
+  - decode
+  - total_generate
+prompt_length_buckets:
+  - bucket_id: qgqa_all
+    min_tokens: 1
+    max_tokens: 2048
+shape_or_length_buckets:
+  - bucket_id: qgqa_all
+    min_tokens: 1
+    max_tokens: 2048
+batch_sizes:
+  - 1
+max_new_tokens: 128
+warmup_runs: 5
+timed_runs: 20
+generation_mode: greedy
+cache_mode: kv_cache_on
+random_seed: 0
+include_tokenization_in_timing: false
+measure_prefill_decode_separately: true
+device: cuda
+notes:
+  - Candidate full QGQA timing loop; promotion to paper evidence requires model, CAST, and dataset publication gates.
+  - Uses one broad QGQA bucket because the published QGQA prompts are task prompts rather than a length-sweep workload.
+  - kv_cache_off is intentionally not publishable until the runner supports use_cache=False consistently.

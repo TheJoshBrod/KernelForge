@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import threading
 import time
 import zipfile
@@ -46,6 +47,17 @@ def verify_checksums(zf: zipfile.ZipFile) -> None:
 
 def ensure_cuda_toolkit_env() -> str | None:
     """Point CUDA_HOME/CUDACXX/PATH and torch cpp_extension at a working nvcc."""
+
+    # The benchmark harness often invokes the venv's Python by absolute path
+    # without activating the venv. Torch's extension loader shells out to the
+    # `ninja` executable, so make the sibling venv bin directory visible when
+    # that is where the installed ninja script lives.
+    python_bin_dir = os.path.dirname(os.path.abspath(sys.executable))
+    ninja_candidate = os.path.join(python_bin_dir, "ninja")
+    if shutil.which("ninja") is None and os.path.exists(ninja_candidate):
+        path_entries = os.environ.get("PATH", "").split(os.pathsep) if os.environ.get("PATH") else []
+        if python_bin_dir not in path_entries:
+            os.environ["PATH"] = python_bin_dir if not path_entries else python_bin_dir + os.pathsep + os.environ["PATH"]
 
     candidates: list[str] = []
 
@@ -93,6 +105,26 @@ def ensure_cuda_toolkit_env() -> str | None:
         return resolved
 
     return None
+
+
+def _runtime_toolchain_status() -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "cuda_home_env": os.environ.get("CUDA_HOME"),
+        "cudacxx_env": os.environ.get("CUDACXX"),
+        "nvcc_path": shutil.which("nvcc"),
+        "ninja_path": shutil.which("ninja"),
+        "torch_cpp_extension_cuda_home": None,
+        "torch_cpp_extension_ninja_available": None,
+    }
+    try:
+        import torch.utils.cpp_extension as cpp_extension
+
+        status["torch_cpp_extension_cuda_home"] = str(cpp_extension.CUDA_HOME) if cpp_extension.CUDA_HOME else None
+        status["torch_cpp_extension_ninja_available"] = bool(cpp_extension.is_ninja_available())
+    except Exception as exc:
+        status["torch_cpp_extension_error"] = f"{type(exc).__name__}: {exc}"
+    status["jit_ready"] = bool(status.get("nvcc_path") and status.get("torch_cpp_extension_ninja_available"))
+    return status
 
 
 def compile_kernel(kernel_cu_path: str, op_name: str, build_dir: str, opt_level: str = "-O3"):
@@ -179,6 +211,9 @@ def _ensure_per_op_stats(runtime_stats: dict[str, Any] | None, op_name: str) -> 
             "adaptation_count": 0,
             "last_exception": None,
             "fallback_reasons": {},
+            "input_devices": {},
+            "input_dtypes": {},
+            "input_is_cuda": {"true": 0, "false": 0},
         },
     )
 
@@ -207,6 +242,28 @@ def _record_fallback(
         op_stats["last_exception"] = f"{type(exception).__name__}: {exception}"
     reasons = op_stats.setdefault("fallback_reasons", {})
     reasons[reason] = int(reasons.get(reason, 0)) + 1
+
+
+def _record_tensor_audit(
+    runtime_stats: dict[str, Any] | None,
+    op_name: str,
+    tensor_args: list[Any],
+) -> None:
+    if runtime_stats is None:
+        return
+    op_stats = _ensure_per_op_stats(runtime_stats, op_name)
+    if op_stats is None:
+        return
+    devices = op_stats.setdefault("input_devices", {})
+    dtypes = op_stats.setdefault("input_dtypes", {})
+    is_cuda = op_stats.setdefault("input_is_cuda", {"true": 0, "false": 0})
+    for tensor in tensor_args:
+        device = str(getattr(tensor, "device", "unknown"))
+        dtype = str(getattr(tensor, "dtype", "unknown"))
+        devices[device] = int(devices.get(device, 0)) + 1
+        dtypes[dtype] = int(dtypes.get(dtype, 0)) + 1
+        key = "true" if bool(getattr(tensor, "is_cuda", False)) else "false"
+        is_cuda[key] = int(is_cuda.get(key, 0)) + 1
 
 
 def get_runtime_stats(model: Any | None = None) -> dict[str, Any]:
@@ -330,6 +387,40 @@ def _kernel_policy_skip_reason(op_name: str, kernel_cu: str, kernel_policy: str)
     raise ValueError(f"Unknown kernel policy: {kernel_policy}")
 
 
+def _complete_functional_launch_args(
+    *,
+    op_name: str,
+    call_args: list[Any],
+    resolved_args: dict[str, Any],
+    kwargs: dict[str, Any],
+    n_launch: int | None,
+) -> list[Any]:
+    if op_name == "torch_nn_functional_softmax":
+        completed = list(call_args)
+        dim = resolved_args.get("dim", kwargs.get("dim"))
+        stacklevel = resolved_args.get("_stacklevel", kwargs.get("_stacklevel", 3))
+        dtype = resolved_args.get("dtype", kwargs.get("dtype"))
+        if len(completed) < 2:
+            completed.append(dim)
+        if len(completed) >= 2 and completed[1] is None:
+            return call_args
+        if len(completed) < 3:
+            completed.append(stacklevel)
+        if len(completed) >= 3 and completed[2] is None:
+            completed[2] = 3
+        if len(completed) < 4:
+            completed.append(dtype)
+        return completed[:n_launch] if n_launch is not None else completed
+    if n_launch is None or len(call_args) >= n_launch:
+        return call_args
+    if op_name == "torch_nn_functional_gelu":
+        approximate = resolved_args.get("approximate", kwargs.get("approximate", "none"))
+        if approximate is None:
+            approximate = "none"
+        return [*call_args, str(approximate)]
+    return call_args
+
+
 def _build_functional_patch(
     *,
     op_name: str,
@@ -379,10 +470,19 @@ def _build_functional_patch(
                         call_args.append(value.contiguous())
                     else:
                         call_args.append(value)
+                call_args = _complete_functional_launch_args(
+                    op_name=op_name,
+                    call_args=call_args,
+                    resolved_args=resolved if orig_params is not None else {},
+                    kwargs=kwargs,
+                    n_launch=n_launch,
+                )
 
             if not tensor_args:
                 _record_fallback(runtime_stats, op_name, "no_tensor_args")
                 return orig_fn(*args, **kwargs)
+
+            _record_tensor_audit(runtime_stats, op_name, tensor_args)
 
             if any(not tensor.is_cuda for tensor in tensor_args):
                 _record_fallback(runtime_stats, op_name, "non_cuda_tensor")
@@ -516,7 +616,7 @@ def _invoke_entrypoint(fn, *, weight_file: str | None, device: str | None, model
             if accepts_var_kw or key in signature.parameters:
                 kwargs[key] = value
 
-    if device is not None and (accepts_var_kw or "device" in signature.parameters):
+    if accepts_var_kw or "device" in signature.parameters:
         kwargs["device"] = device
 
     args: list[Any] = []
@@ -532,6 +632,48 @@ def _invoke_entrypoint(fn, *, weight_file: str | None, device: str | None, model
             args.append(weight_file)
 
     return fn(*args, **kwargs)
+
+
+def _first_parameter_device(model: Any) -> str | None:
+    try:
+        parameter = next(model.parameters())
+        return str(parameter.device)
+    except Exception:
+        return None
+
+
+def _has_hf_device_map(model: Any) -> bool:
+    for target in (model, getattr(model, "model", None)):
+        if target is not None and hasattr(target, "hf_device_map"):
+            return True
+    return False
+
+
+def _has_meta_parameters(model: Any) -> bool:
+    try:
+        return any(str(param.device) == "meta" for param in model.parameters())
+    except Exception:
+        return False
+
+
+def _should_skip_global_move(model: Any) -> str | None:
+    if os.environ.get("KFORGE_CAST_SKIP_GLOBAL_TO", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return "KFORGE_CAST_SKIP_GLOBAL_TO"
+    if _has_hf_device_map(model):
+        return "hf_device_map_present"
+    if _has_meta_parameters(model):
+        return "meta_parameters_present"
+    return None
+
+
+def _entrypoint_device(requested_device: str | None) -> str | None:
+    if requested_device:
+        return requested_device
+    for env_name in ("KFORGE_CAST_ENTRYPOINT_DEVICE", "KFORGE_TARGET_DEVICE"):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            return value
+    return None
 
 
 def load_cast(
@@ -594,12 +736,17 @@ def load_cast(
     runtime_stats = _fresh_runtime_stats()
     runtime_report: dict[str, Any] = {
         "cast_path": cast_path,
+        "requested_device": device,
+        "entrypoint_device": _entrypoint_device(device),
+        "global_move_device": None,
+        "global_move_skipped_reason": None,
         "cache_key": cache_key,
         "cache_dir": cache_dir,
         "kernel_policy": kernel_policy,
         "allow_jit": bool(allow_jit),
         "require_precompiled": bool(require_precompiled),
         "record_runtime_stats": bool(record_runtime_stats),
+        "toolchain_status": _runtime_toolchain_status(),
         "runtime_patch_enabled": False,
         "selected_ops": [],
         "loaded_kernels": [],
@@ -752,6 +899,8 @@ def load_cast(
         runtime_report["op_reports"].append(op_report)
         print(f"  Registered runtime patch torch.nn.functional.{fn_attr} → {op_name}")
 
+    runtime_report["toolchain_status"] = _runtime_toolchain_status()
+
     # 5. Load model implementation from model.py
     model_py = os.path.join(cache_dir, "model.py")
     module_name = f"cast_model_{cache_key[:12]}"
@@ -785,7 +934,7 @@ def load_cast(
         model = _invoke_entrypoint(
             load_weights_fn,
             weight_file=weight_file or "",
-            device=device or "cpu",
+            device=runtime_report["entrypoint_device"],
             model_args=model_args,
         )
         model_load_strategy = "load_weights"
@@ -814,7 +963,12 @@ def load_cast(
     runtime_model = CastModelRuntime(model, functional_patches)
     runtime_model.eval()
     if device:
-        runtime_model = runtime_model.to(device)
+        skip_global_move_reason = _should_skip_global_move(model)
+        if skip_global_move_reason:
+            runtime_report["global_move_skipped_reason"] = skip_global_move_reason
+        else:
+            runtime_model = runtime_model.to(device)
+            runtime_report["global_move_device"] = device
 
     runtime_report["runtime_patch_enabled"] = bool(functional_patches)
     runtime_report["load_modes"] = {
@@ -828,6 +982,8 @@ def load_cast(
         0.0,
     )
     runtime_report["model_load_strategy"] = model_load_strategy
+    runtime_report["first_parameter_device"] = _first_parameter_device(runtime_model)
+    runtime_report["hf_device_map"] = getattr(model, "hf_device_map", None)
     runtime_report["model_entrypoints"] = {
         "model_class": model_class_name,
         "build_model": bool(callable(build_model_fn)),

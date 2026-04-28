@@ -119,11 +119,20 @@ class ArtifactBase(StrictModel):
     model_path_hash: str | None = None
     model_config_path: str | None = None
     model_config_hash: str | None = None
+    quantization: str | None = None
+    quantization_config_hash: str | None = None
+    placement_profile: str | None = None
+    model_license: str | None = None
+    model_access_terms: str | None = None
     suite_id: str = Field(min_length=1)
     suite_path: str = Field(min_length=1)
     suite_hash: str = Field(min_length=1)
     workload_path: str = Field(min_length=1)
     workload_hash: str | None = None
+    workload_slug: str | None = None
+    dataset_license: str | None = None
+    dataset_access_terms: str | None = None
+    cache_mode: str | None = None
     config_hashes: dict[str, str] = Field(default_factory=dict)
     cast_package_path: str | None = None
     cast_package_hash: str | None = None
@@ -133,6 +142,12 @@ class ArtifactBase(StrictModel):
     exported_kernel_hashes: dict[str, str] = Field(default_factory=dict)
     compile_settings: dict[str, Any] = Field(default_factory=dict)
     kf_settings: dict[str, Any] = Field(default_factory=dict)
+    toolchain_status: dict[str, Any] = Field(default_factory=dict)
+    cache_reuse_status: str | None = None
+    paper_claim_status: str | None = None
+    claim_category: str | None = None
+    validation_errors: list[str] = Field(default_factory=list)
+    validation_warnings: list[str] = Field(default_factory=list)
     comparison_group: str | None = None
     configured_batch_size: int | None = Field(default=None, ge=1)
     prompt_bucket_id: str | None = None
@@ -198,6 +213,10 @@ class ArtifactBase(StrictModel):
             issues.append("model path hash missing")
         if self.synthetic_workload:
             issues.append("synthetic workload used")
+        if self.model_license is None and self.paper_claim_status == "paper_eligible":
+            issues.append("model license/access terms missing")
+        if self.dataset_license is None and self.paper_claim_status == "paper_eligible":
+            issues.append("dataset license/access terms missing")
         if not self.command_line:
             issues.append("command line missing")
         if not self.command_line_text:
@@ -206,6 +225,8 @@ class ArtifactBase(StrictModel):
             issues.append("torch package version missing")
         if self.artifact_type == "benchmark_result" and self.correctness_status == CorrectnessStatus.failed:
             issues.append("benchmark artifact failed correctness or execution")
+        for validation_error in self.validation_errors:
+            issues.append(f"run validation error: {validation_error}")
         if self.stage in PERFORMANCE_STAGES:
             if self.correctness_status not in {CorrectnessStatus.reference, CorrectnessStatus.passed}:
                 issues.append("correctness did not pass")
@@ -262,6 +283,24 @@ class EnvironmentArtifact(ArtifactBase):
     torch_device_capability: str | None = None
     nvcc_version: str | None = None
     nvidia_smi_output: str | None = None
+
+
+class DeviceAuditArtifact(ArtifactBase):
+    artifact_type: Literal["device_audit"] = "device_audit"
+    audit_stage: str = Field(min_length=1)
+    audit_status: str = Field(min_length=1)
+    audit_errors: list[str] = Field(default_factory=list)
+    audit_warnings: list[str] = Field(default_factory=list)
+    selected_ops: list[str] = Field(default_factory=list)
+    runtime_input_device: str | None = None
+    tokenizer_output_devices: dict[str, str] = Field(default_factory=dict)
+    placement_audit: dict[str, Any] = Field(default_factory=dict)
+    per_op_launch_coverage: dict[str, Any] = Field(default_factory=dict)
+    fallback_reasons_by_op: dict[str, dict[str, int]] = Field(default_factory=dict)
+    kernel_launches_attempted: int | None = Field(default=None, ge=0)
+    kernel_launches_succeeded: int | None = Field(default=None, ge=0)
+    kernel_launches_failed: int | None = Field(default=None, ge=0)
+    fallback_count: int | None = Field(default=None, ge=0)
 
 
 class BenchmarkArtifact(ArtifactBase):
@@ -375,6 +414,19 @@ class SummaryRow(StrictModel):
     export_paper_eligible: bool | None = None
     uses_non_deployment_evidence: bool | None = None
     coverage: dict[str, Any] = Field(default_factory=dict)
+    paper_claim_status: str | None = None
+    claim_category: str | None = None
+    validation_errors: list[str] = Field(default_factory=list)
+    validation_warnings: list[str] = Field(default_factory=list)
+    placement_profile: str | None = None
+    cache_mode: str | None = None
+    workload_slug: str | None = None
+    quantization_config_hash: str | None = None
+    model_license: str | None = None
+    dataset_license: str | None = None
+    toolchain_status: dict[str, Any] = Field(default_factory=dict)
+    cache_reuse_status: str | None = None
+    per_op_launch_coverage: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("variant", mode="before")
     @classmethod
@@ -441,7 +493,7 @@ class SummaryArtifact(ArtifactBase):
         return self
 
 
-ArtifactModel = RunManifestArtifact | EnvironmentArtifact | BenchmarkArtifact | SummaryArtifact
+ArtifactModel = RunManifestArtifact | EnvironmentArtifact | DeviceAuditArtifact | BenchmarkArtifact | SummaryArtifact
 
 
 def artifact_model_for_payload(payload: dict[str, Any]) -> type[ArtifactModel]:
@@ -449,6 +501,7 @@ def artifact_model_for_payload(payload: dict[str, Any]) -> type[ArtifactModel]:
     mapping: dict[str, type[ArtifactModel]] = {
         "run_manifest": RunManifestArtifact,
         "environment_snapshot": EnvironmentArtifact,
+        "device_audit": DeviceAuditArtifact,
         "benchmark_result": BenchmarkArtifact,
         "summary_report": SummaryArtifact,
     }
@@ -466,6 +519,7 @@ def artifact_schema_bundle() -> dict[str, Any]:
     return {
         "run_manifest": RunManifestArtifact.model_json_schema(),
         "environment_snapshot": EnvironmentArtifact.model_json_schema(),
+        "device_audit": DeviceAuditArtifact.model_json_schema(),
         "benchmark_result": BenchmarkArtifact.model_json_schema(),
         "summary_report": SummaryArtifact.model_json_schema(),
     }

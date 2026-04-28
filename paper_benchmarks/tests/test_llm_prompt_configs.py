@@ -243,6 +243,30 @@ def test_yaml_and_jsonl_prompt_loading_work(sample_paths, tmp_path: Path):
     assert jsonl_suite.manifest["prompt_file_hash"] == sha256_path(jsonl_prompt_path)
 
 
+def test_prompt_id_prompt_aliases_load_for_external_manifests(tmp_path: Path):
+    jsonl_prompt_path = tmp_path / "external_prompts.jsonl"
+    jsonl_prompt_path.write_text(
+        json.dumps({"prompt_id": "qgqa_000000", "prompt": "Question: one plus one?"}) + "\n",
+        encoding="utf-8",
+    )
+    yaml_prompt_path = tmp_path / "external_prompts.yaml"
+    yaml_prompt_path.write_text(
+        yaml.safe_dump(
+            {"prompts": [{"prompt_id": "synthetic_000000", "prompt": "short prompt"}]},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    jsonl_suite = load_prompt_records(jsonl_prompt_path)
+    yaml_suite = load_prompt_records(yaml_prompt_path)
+
+    assert jsonl_suite.records[0]["id"] == "qgqa_000000"
+    assert jsonl_suite.records[0]["text"] == "Question: one plus one?"
+    assert yaml_suite.records[0]["id"] == "synthetic_000000"
+    assert yaml_suite.records[0]["text"] == "short prompt"
+
+
 @pytest.mark.parametrize(
     ("suffix", "payload"),
     [

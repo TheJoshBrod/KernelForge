@@ -28,6 +28,7 @@ from .correctness import reference_correctness
 from .provenance import hash_visible_paths, sha256_bytes, sha256_file, sha256_path
 from .schema import BenchmarkArtifact, BenchmarkMode, CorrectnessStatus, EnvironmentArtifact, RunManifestArtifact, Stage, Variant
 from .stats import build_latency_summary
+from .validator import validated_artifact_update
 
 _LAUNCH_SIGNATURE_RE = re.compile(r"torch::Tensor\s+launch\s*\(([^)]*)\)")
 _F_PREFIX = "torch_nn_functional_"
@@ -875,6 +876,7 @@ def _write_stage_artifact(
         kernel_hit_count=kernel_hit_count,
         details=details,
     )
+    artifact = validated_artifact_update(artifact)
     return write_json_artifact(layout.metrics_dir / f"{variant.value}_{stage.value}.json", artifact)
 
 

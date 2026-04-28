@@ -1,14 +1,90 @@
 version: 1
 models:
-  - model_id: qwen35_demo
+  - model_id: qwen35a3b_bf16
     loader_kind: transformers_causal_lm
-    model_path: /abs/path/to/local/model
-    tokenizer_path: /abs/path/to/local/model
-    model_config_path: /abs/path/to/local/model/config.json
-    cast_package_path: /abs/path/to/exported/model.cast
+    model_path: /home/gb10/model-cache/Qwen3.5-35B-A3B
+    tokenizer_path: /home/gb10/model-cache/Qwen3.5-35B-A3B
+    model_config_path: /home/gb10/model-cache/Qwen3.5-35B-A3B/config.json
+    cast_package_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/qwen35a3b-bf16-gb10/exports/qwen35a3b__gb10__bf16__ultrachat200k_forge_v1__opt05__mixed_forged.cast
     trust_remote_code: false
-    torch_dtype: bfloat16
+    torch_dtype: bf16
+    quantization: bf16
+    placement_profile: managed_offload
+    device_map: auto
     device: cuda
+    local_files_only: true
+    attn_implementation: eager
+    model_access_terms: local mirror; upstream license/access terms must be verified before paper-eligible promotion
+    paper_eligible: false
     notes:
-      - Replace the placeholder paths before running real benchmarks.
+      - Default registry entry for Qwen bf16 external smoke.
+      - Pass a specific CAST path with --cast-package for each budget/policy run.
 
+  - model_id: qwen35a3b_int4
+    loader_kind: transformers_causal_lm
+    model_path: /home/gb10/model-cache/Qwen3.5-35B-A3B
+    tokenizer_path: /home/gb10/model-cache/Qwen3.5-35B-A3B
+    model_config_path: /home/gb10/model-cache/Qwen3.5-35B-A3B/config.json
+    cast_package_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/qwen35a3b-int4-gb10/exports/qwen35a3b__gb10__int4__ultrachat200k_forge_v1__opt05__mixed_forged.cast
+    trust_remote_code: false
+    torch_dtype: bf16
+    quantization: int4
+    quantization_config:
+      type: quanto
+      weights: int4
+    quantization_config_hash: ba37db571a0517e80fa481dc9043fd7112dad0b628dcd77f7c0881610204eda8
+    placement_profile: managed_offload
+    device_map: auto
+    device: cuda
+    local_files_only: true
+    attn_implementation: eager
+    model_access_terms: local mirror; upstream license/access terms must be verified before paper-eligible promotion
+    paper_eligible: false
+    notes:
+      - Default registry entry for Qwen int4 external smoke.
+      - INT4 baselines must use the same quantization_config as CAST.
+
+  - model_id: gemma4_e2b_bf16
+    loader_kind: transformers_causal_lm
+    model_path: /home/gb10/model-cache/Gemma4-E2B
+    tokenizer_path: /home/gb10/model-cache/Gemma4-E2B
+    model_config_path: /home/gb10/model-cache/Gemma4-E2B/config.json
+    cast_package_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/gemma4-e2b-bf16-gb10/exports/gemma4_e2b__gb10__bf16__ultrachat200k_forge_v1__opt05__mixed_forged.cast
+    trust_remote_code: false
+    torch_dtype: bf16
+    quantization: bf16
+    placement_profile: managed_offload
+    device_map: auto
+    device: cuda
+    local_files_only: true
+    attn_implementation: eager
+    model_access_terms: local mirror; upstream license/access terms must be verified before paper-eligible promotion
+    paper_eligible: false
+    notes:
+      - Default registry entry for Gemma bf16 external smoke.
+      - Pass a specific CAST path with --cast-package for each budget/policy run.
+      - torch.compile inductor is currently not a valid baseline for GSM8K because the 16-token exact-match smoke still mismatches eager.
+
+  - model_id: gemma4_e2b_int4
+    loader_kind: transformers_causal_lm
+    model_path: /home/gb10/model-cache/Gemma4-E2B
+    tokenizer_path: /home/gb10/model-cache/Gemma4-E2B
+    model_config_path: /home/gb10/model-cache/Gemma4-E2B/config.json
+    cast_package_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/gemma4-e2b-int4-gb10/exports/gemma4_e2b__gb10__int4__ultrachat200k_forge_v1__opt05__mixed_forged.cast
+    trust_remote_code: false
+    torch_dtype: bf16
+    quantization: int4
+    quantization_config:
+      type: quanto
+      weights: int4
+    quantization_config_hash: ba37db571a0517e80fa481dc9043fd7112dad0b628dcd77f7c0881610204eda8
+    placement_profile: managed_offload
+    device_map: auto
+    device: cuda
+    local_files_only: true
+    attn_implementation: eager
+    model_access_terms: local mirror; upstream license/access terms must be verified before paper-eligible promotion
+    paper_eligible: false
+    notes:
+      - Default registry entry for exploratory Gemma int4 smoke.
+      - Full-forged Gemma int4 remains exploratory until the linear blocker is fixed.

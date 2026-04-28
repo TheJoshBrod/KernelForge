@@ -200,6 +200,10 @@ def test_report_refuses_model_speedup_claim_without_torch_compile(sample_paths, 
 
     assert not any("Kernel Forge improves model throughput on this workload." in claim for claim in summary.paper_eligible_claims)
     assert any("missing torch_compile baseline" in claim for claim in summary.forbidden_claims)
+    kf_rows = [row for row in summary.rows if row.variant == Variant.kf_cast]
+    assert kf_rows[0].claim_eligible is False
+    assert kf_rows[0].paper_claim_status == "exploratory"
+    assert kf_rows[0].claim_category == "deployment_measurement"
 
 
 def test_report_refuses_claim_when_correctness_fails(sample_paths, tmp_path: Path):

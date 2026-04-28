@@ -1,0 +1,35 @@
+model_id: qwen35a3b_bf16
+category: MoE decoder LLM
+loader_kind: transformers_causal_lm
+model_path: /home/gb10/model-cache/Qwen3.5-35B-A3B
+tokenizer_path: /home/gb10/model-cache/Qwen3.5-35B-A3B
+model_config_path: /home/gb10/model-cache/Qwen3.5-35B-A3B/config.json
+cast_package_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/qwen35a3b-bf16-gb10/exports/qwen35a3b__gb10__bf16__ultrachat200k_forge_v1__opt05__mixed_forged.cast
+deployment_artifact_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/qwen35a3b-bf16-gb10/exports/qwen35a3b__gb10__bf16__ultrachat200k_forge_v1__opt05__mixed_forged.cast
+task_type: moe_decoder_llm
+torch_dtype: bf16
+quantization: bf16
+placement_profile: single_cuda
+device_map: single_cuda
+device: cuda
+trust_remote_code: false
+local_files_only: true
+attn_implementation: eager
+model_access_terms: local mirror; upstream license/access terms must be verified before paper-eligible promotion
+validation_suite_path: ../suites/llm_placement_probe.yaml
+workload_hash: bf02a32ec3e11fe8a5eec24da64b75d1794a621112e36f51a16dae24b3092b93
+batch_sizes:
+  - 1
+shape_or_length_buckets:
+  - bucket_id: short_probe
+    min_tokens: 1
+    max_tokens: 128
+correctness_comparator: exact_token_match_against_eager
+baselines_required:
+  - kf_cast
+paper_eligible: false
+benchmark_expectation: placement_probe
+expected_model_config_hash: 5e4d7f74fec2f360eb9cfbfcd6ec0c4c76e684d3a11caaed259d9fd9bfbc7944
+notes:
+  - Single-CUDA probe config for Qwen bf16 CAST placement validation.
+  - Not part of the publication matrix; use only to decide whether the Qwen smoke matrix can run without offload-selected-op fallbacks.

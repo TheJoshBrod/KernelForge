@@ -22,11 +22,17 @@ class ModelRegistryEntry(StrictModel):
     deployment_artifact_path: str | None = None
     trust_remote_code: bool = False
     torch_dtype: str | None = None
+    quantization: str | None = None
+    quantization_config: dict[str, Any] = Field(default_factory=dict)
+    quantization_config_hash: str | None = None
     device_map: str | dict[str, Any] | None = None
     device: str | None = None
+    placement_profile: str | None = None
     max_memory: dict[str, str] | None = None
     local_files_only: bool = True
     attn_implementation: str | None = None
+    model_license: str | None = None
+    model_access_terms: str | None = None
     expected_model_config_hash: str | None = None
     task_type: str | None = None
     category: str | None = None
@@ -36,6 +42,7 @@ class ModelRegistryEntry(StrictModel):
     shape_or_length_buckets: list[dict[str, Any]] = Field(default_factory=list)
     correctness_comparator: str | None = None
     baselines_required: list[Variant] = Field(default_factory=list)
+    compile_settings: dict[str, Any] = Field(default_factory=dict)
     expected_memory_footprint_notes: list[str] = Field(default_factory=list)
     paper_eligible: bool = False
     benchmark_expectation: str | None = None
@@ -139,6 +146,9 @@ class SuiteConfig(StrictModel):
     description: str | None = None
     workload_type: str = Field(default="prompt_records", min_length=1)
     workload_path: str = Field(min_length=1)
+    workload_slug: str | None = None
+    dataset_license: str | None = None
+    dataset_access_terms: str | None = None
     synthetic_workload: bool = False
     variants: list[Variant] = Field(min_length=1)
     stages: list[Stage] = Field(min_length=1)
@@ -150,6 +160,8 @@ class SuiteConfig(StrictModel):
     prompt_length_buckets: list[PromptLengthBucket] = Field(default_factory=list)
     shape_or_length_buckets: list[dict[str, Any]] = Field(default_factory=list)
     generation_mode: str = Field(default="greedy", min_length=1)
+    cache_mode: str = Field(default="kv_cache_on", min_length=1)
+    random_seed: int | None = None
     include_tokenization_in_timing: bool = False
     measure_prefill_decode_separately: bool = True
     callable_name: str | None = None
@@ -217,6 +229,13 @@ class SuiteConfig(StrictModel):
             return "greedy"
         return str(value).strip().lower()
 
+    @field_validator("cache_mode", mode="before")
+    @classmethod
+    def _parse_cache_mode(cls, value):
+        if value is None:
+            return "kv_cache_on"
+        return str(value).strip().lower()
+
     @field_validator("notes", mode="before")
     @classmethod
     def _parse_notes(cls, value):
@@ -248,6 +267,8 @@ class SuiteConfig(StrictModel):
             raise ValueError("operator suites require callable_name")
         if self.benchmark_mode != BenchmarkMode.operator and self.generation_mode != "greedy":
             raise ValueError("Paper LLM harness only supports generation_mode=greedy")
+        if self.benchmark_mode != BenchmarkMode.operator and self.cache_mode not in {"kv_cache_on", "kv_cache_off"}:
+            raise ValueError("Paper LLM harness supports cache_mode=kv_cache_on or kv_cache_off")
         if not self.batch_sizes:
             self.batch_sizes = [int(self.batch_size)]
         else:

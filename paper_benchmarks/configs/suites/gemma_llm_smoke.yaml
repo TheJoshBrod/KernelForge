@@ -1,6 +1,6 @@
-suite_id: qwen_llm_paper
+suite_id: gemma_llm_smoke
 benchmark_mode: e2e_model
-description: Frozen paper-run causal LM suite for Qwen-style benchmarking.
+description: Lightweight smoke-run causal LM suite for Gemma-style benchmarking on the shared external prompt pack.
 prompt_file: /home/gb10/Projects/Kernal-Forge/CGinS/paper_benchmarks/workloads/qwen35a3b/qwen_paper_prompts_v1.jsonl
 workload_slug: qwen_paper_prompts_v1
 dataset_access_terms: public prompt pack manifest; dataset licenses/provenance must be verified before paper-eligible promotion
@@ -39,9 +39,9 @@ shape_or_length_buckets:
     max_tokens: 1024
 batch_sizes:
   - 1
-max_new_tokens: 128
-warmup_runs: 5
-timed_runs: 20
+max_new_tokens: 16
+warmup_runs: 1
+timed_runs: 2
 generation_mode: greedy
 cache_mode: kv_cache_on
 random_seed: 0
@@ -49,7 +49,6 @@ include_tokenization_in_timing: false
 measure_prefill_decode_separately: true
 device: cuda
 notes:
-  - The prompt file is the frozen v1 Qwen paper suite built from documented public prompt sources with deterministic source-order selection.
-  - The sibling manifest records prompt hash, provenance, bucket counts, tokenizer, and raw-artifact storage policy.
-  - Batch size 1 is the only paper-default setting for this frozen suite; larger batches require a larger frozen prompt pack with no benchmark-time sampling.
+  - Uses the same frozen external prompt pack as the Qwen smoke suite, but with short timing loops for preflight only.
+  - This suite is not a paper-result configuration.
   - kv_cache_off is intentionally not publishable until the runner supports use_cache=False consistently.

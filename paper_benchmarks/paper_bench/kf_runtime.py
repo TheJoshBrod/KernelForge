@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import copy
+import os
 import json
 import time
 import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -30,6 +32,9 @@ class KfRuntimeSettings:
     allow_jit: bool = True
     fail_on_fallback: bool = True
     record_runtime_stats: bool = True
+    placement_profile: str | None = None
+    device_map: str | dict[str, Any] | None = None
+    max_memory: dict[str, str] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -38,6 +43,9 @@ class KfRuntimeSettings:
             "allow_jit": self.allow_jit,
             "fail_on_fallback": self.fail_on_fallback,
             "record_runtime_stats": self.record_runtime_stats,
+            "placement_profile": self.placement_profile,
+            "device_map": self.device_map,
+            "max_memory": self.max_memory,
         }
 
 
@@ -50,7 +58,89 @@ def runtime_settings_from_dict(payload: dict[str, Any] | None) -> KfRuntimeSetti
         allow_jit=bool(payload.get("allow_jit", True)),
         fail_on_fallback=bool(payload.get("fail_on_fallback", True)),
         record_runtime_stats=bool(payload.get("record_runtime_stats", True)),
+        placement_profile=str(payload["placement_profile"]) if payload.get("placement_profile") else None,
+        device_map=payload.get("device_map"),
+        max_memory=payload.get("max_memory") if isinstance(payload.get("max_memory"), dict) else None,
     )
+
+
+def _cast_loader_device(requested_device: str | None, runtime_settings: KfRuntimeSettings) -> str | None:
+    placement_profile = (runtime_settings.placement_profile or "").strip().lower()
+    if placement_profile == "managed_offload":
+        return None
+    if placement_profile == "single_cuda":
+        return requested_device or "cuda"
+    return requested_device
+
+
+def _env_string(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True)
+    return str(value)
+
+
+@contextmanager
+def _cast_loader_environment(runtime_settings: KfRuntimeSettings):
+    placement_profile = (runtime_settings.placement_profile or "").strip().lower()
+    device_map = runtime_settings.device_map
+    if device_map is None and placement_profile == "single_cuda":
+        device_map = "single_cuda"
+
+    overrides: dict[str, str] = {}
+    if device_map is not None:
+        overrides["KFORGE_DEVICE_MAP"] = _env_string(device_map)
+    if runtime_settings.max_memory:
+        overrides["KFORGE_QWEN35_MAX_MEMORY"] = json.dumps(runtime_settings.max_memory, sort_keys=True)
+    if placement_profile == "single_cuda":
+        overrides["KFORGE_TARGET_DEVICE"] = "cuda"
+
+    previous = {key: os.environ.get(key) for key in overrides}
+    try:
+        for key, value in overrides.items():
+            os.environ[key] = value
+        yield overrides
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _count_module_devices(model: Any, iterator_name: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    try:
+        iterator = getattr(model, iterator_name)()
+    except Exception:
+        return counts
+    for item in iterator:
+        tensor = item[1] if isinstance(item, tuple) and len(item) == 2 else item
+        device = str(getattr(tensor, "device", "unknown"))
+        counts[device] = int(counts.get(device, 0)) + 1
+    return dict(sorted(counts.items()))
+
+
+def collect_model_placement_audit(model: Any, runtime_report: dict[str, Any] | None = None) -> dict[str, Any]:
+    runtime_report = runtime_report or {}
+    inner = getattr(model, "model", None)
+    hf_device_map = getattr(model, "hf_device_map", None)
+    if hf_device_map is None and inner is not None:
+        hf_device_map = getattr(inner, "hf_device_map", None)
+    try:
+        first_parameter_device = str(next(model.parameters()).device)
+    except Exception:
+        first_parameter_device = None
+    return {
+        "requested_device": runtime_report.get("requested_device"),
+        "entrypoint_device": runtime_report.get("entrypoint_device"),
+        "global_move_device": runtime_report.get("global_move_device"),
+        "global_move_skipped_reason": runtime_report.get("global_move_skipped_reason"),
+        "model_load_strategy": runtime_report.get("model_load_strategy"),
+        "first_parameter_device": first_parameter_device or runtime_report.get("first_parameter_device"),
+        "parameter_device_counts": _count_module_devices(model, "named_parameters"),
+        "buffer_device_counts": _count_module_devices(model, "named_buffers"),
+        "hf_device_map": hf_device_map,
+    }
 
 
 def inspect_cast_package(cast_path: str | Path) -> dict[str, Any]:
@@ -352,13 +442,15 @@ def load_cast_model(
         from kernelforge.run_cast import load_cast as loader
 
     started = time.perf_counter()
-    model = loader(
-        str(cast_file),
-        device=device,
-        require_precompiled=runtime_settings.require_precompiled,
-        allow_jit=runtime_settings.allow_jit,
-        record_runtime_stats=runtime_settings.record_runtime_stats,
-    )
+    loader_device = _cast_loader_device(device, runtime_settings)
+    with _cast_loader_environment(runtime_settings) as loader_env_overrides:
+        model = loader(
+            str(cast_file),
+            device=loader_device,
+            require_precompiled=runtime_settings.require_precompiled,
+            allow_jit=runtime_settings.allow_jit,
+            record_runtime_stats=runtime_settings.record_runtime_stats,
+        )
     total_load_ms = (time.perf_counter() - started) * 1000.0
 
     runtime_report = getattr(model, "_kf_runtime_report", None)
@@ -377,6 +469,7 @@ def load_cast_model(
     jit_compile_time_ms = float(runtime_report.get("jit_compile_time_ms", 0.0) or 0.0)
     runtime_load_time_ms = float(runtime_report.get("runtime_load_time_ms", total_load_ms))
     precompiled_load_time_ms = float(runtime_report.get("precompiled_load_time_ms", 0.0) or 0.0)
+    placement_audit = collect_model_placement_audit(model, runtime_report)
 
     selected_ops = runtime_report.get("selected_ops")
     loaded_kernels = runtime_report.get("loaded_kernels")
@@ -404,6 +497,8 @@ def load_cast_model(
         "precompiled_binary_hashes": precompiled_binary_hashes,
         "selected_source_hashes": inspection.get("selected_source_hashes", {}),
         "runtime_report": runtime_report,
+        "placement_audit": placement_audit,
+        "toolchain_status": runtime_report.get("toolchain_status", {}),
         "runtime_stats": runtime_stats,
         "runtime_stats_api": runtime_stats_api,
         "runtime_stats_after_reset": runtime_stats_api.get("stats_after_reset", {}),
@@ -416,6 +511,10 @@ def load_cast_model(
         "selected_ops": list(selected_ops),
         "loaded_kernels": list(loaded_kernels),
         "runtime_stats_enabled": bool(runtime_settings.record_runtime_stats),
+        "placement_profile": runtime_settings.placement_profile,
+        "loader_env_overrides": dict(loader_env_overrides),
+        "requested_device": device,
+        "loader_device": loader_device,
         "runtime_patch_enabled": bool(runtime_report.get("runtime_patch_enabled", bool(getattr(model, "_cast_functional_patches", {})))),
         "patched_call_count": int(runtime_stats.get("patched_calls", 0) or 0),
         "kernel_hit_count": int(runtime_stats.get("kernel_launches_succeeded", 0) or 0),
@@ -448,7 +547,13 @@ def build_kf_runtime_details(
         "precompiled_load_time_ms": runtime_meta.get("precompiled_load_time_ms"),
         "precompiled_vs_jit_path": runtime_meta.get("precompiled_vs_jit_path", {}),
         "runtime_stats_enabled": runtime_meta.get("runtime_stats_enabled"),
+        "placement_profile": runtime_meta.get("placement_profile"),
+        "loader_env_overrides": runtime_meta.get("loader_env_overrides", {}),
+        "requested_device": runtime_meta.get("requested_device"),
+        "loader_device": runtime_meta.get("loader_device"),
         "runtime_stats_api": runtime_meta.get("runtime_stats_api", {}),
+        "placement_audit": runtime_meta.get("placement_audit", {}),
+        "toolchain_status": runtime_meta.get("toolchain_status", {}),
         "runtime_patch_enabled": runtime_meta.get("runtime_patch_enabled"),
         "patched_call_count": int(stats.get("patched_calls", runtime_meta.get("patched_call_count", 0)) or 0),
         "kernel_launches_attempted": int(stats.get("kernel_launches_attempted", runtime_meta.get("kernel_launches_attempted", 0)) or 0),

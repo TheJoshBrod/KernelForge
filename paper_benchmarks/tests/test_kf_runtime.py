@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import zipfile
 from pathlib import Path
 
@@ -20,6 +21,125 @@ from paper_benchmarks.paper_bench.report import summarize_run
 from paper_benchmarks.paper_bench.schema import Variant
 
 from .test_llm_baselines import ToyLM, ToyTokenizer, _make_compile_fn, _make_context
+
+
+def test_gelu_launch_arg_completion_uses_pytorch_default():
+    from kernelforge.run_cast import _complete_functional_launch_args
+
+    completed = _complete_functional_launch_args(
+        op_name="torch_nn_functional_gelu",
+        call_args=["tensor"],
+        resolved_args={},
+        kwargs={},
+        n_launch=2,
+    )
+
+    assert completed == ["tensor", "none"]
+
+
+def test_cuda_toolkit_env_exposes_python_env_ninja(monkeypatch, tmp_path):
+    from kernelforge import run_cast
+
+    venv_bin = tmp_path / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    python = venv_bin / "python"
+    ninja = venv_bin / "ninja"
+    python.write_text("#!/bin/sh\n", encoding="utf-8")
+    ninja.write_text("#!/bin/sh\n", encoding="utf-8")
+    python.chmod(0o755)
+    ninja.chmod(0o755)
+
+    cuda_root = tmp_path / "cuda"
+    cuda_bin = cuda_root / "bin"
+    cuda_bin.mkdir(parents=True)
+    nvcc = cuda_bin / "nvcc"
+    nvcc.write_text("#!/bin/sh\n", encoding="utf-8")
+    nvcc.chmod(0o755)
+
+    clean_path = tmp_path / "clean-path"
+    clean_path.mkdir()
+    monkeypatch.setattr(run_cast.sys, "executable", str(python))
+    monkeypatch.setenv("PATH", str(clean_path))
+    monkeypatch.setenv("CUDA_HOME", str(cuda_root))
+
+    assert run_cast.ensure_cuda_toolkit_env() == str(cuda_root)
+
+    path_entries = os.environ["PATH"].split(os.pathsep)
+    assert str(venv_bin) in path_entries
+    assert str(cuda_bin) in path_entries
+
+
+def test_provenance_toolchain_status_exposes_python_env_ninja(monkeypatch, tmp_path):
+    from paper_benchmarks.paper_bench import provenance
+
+    venv_bin = tmp_path / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    real_python = tmp_path / "python-real"
+    python = venv_bin / "python"
+    ninja = venv_bin / "ninja"
+    real_python.write_text("#!/bin/sh\n", encoding="utf-8")
+    python.symlink_to(real_python)
+    ninja.write_text("#!/bin/sh\necho 1.13.0\n", encoding="utf-8")
+    real_python.chmod(0o755)
+    ninja.chmod(0o755)
+
+    cuda_bin = tmp_path / "cuda" / "bin"
+    cuda_bin.mkdir(parents=True)
+    nvcc = cuda_bin / "nvcc"
+    nvcc.write_text("#!/bin/sh\necho nvcc test\n", encoding="utf-8")
+    nvcc.chmod(0o755)
+
+    monkeypatch.setattr(provenance.sys, "executable", str(python))
+    monkeypatch.setenv("PATH", str(cuda_bin))
+
+    status = provenance.collect_toolchain_status()
+
+    assert status["nvcc_path"] == str(nvcc)
+    assert status["ninja_path"] == str(ninja)
+    assert status["path_contains_python_env_bin"] is True
+    assert status["jit_ready"] is True
+
+
+def test_gelu_launch_arg_completion_preserves_explicit_approximation():
+    from kernelforge.run_cast import _complete_functional_launch_args
+
+    completed = _complete_functional_launch_args(
+        op_name="torch_nn_functional_gelu",
+        call_args=["tensor"],
+        resolved_args={"approximate": "tanh"},
+        kwargs={},
+        n_launch=2,
+    )
+
+    assert completed == ["tensor", "tanh"]
+
+
+def test_softmax_launch_arg_completion_uses_pytorch_stacklevel_default():
+    from kernelforge.run_cast import _complete_functional_launch_args
+
+    completed = _complete_functional_launch_args(
+        op_name="torch_nn_functional_softmax",
+        call_args=["tensor", -1, None, torch.float32],
+        resolved_args={"dim": -1, "dtype": torch.float32},
+        kwargs={},
+        n_launch=4,
+    )
+
+    assert completed == ["tensor", -1, 3, torch.float32]
+
+
+def test_softmax_launch_arg_completion_preserves_explicit_stacklevel():
+    from kernelforge.run_cast import _complete_functional_launch_args
+
+    completed = _complete_functional_launch_args(
+        op_name="torch_nn_functional_softmax",
+        call_args=["tensor", -1],
+        resolved_args={"dim": -1, "_stacklevel": 5, "dtype": torch.float32},
+        kwargs={},
+        n_launch=4,
+    )
+
+    assert completed == ["tensor", -1, 5, torch.float32]
 
 
 def _make_cast_zip(path: Path) -> Path:
@@ -310,6 +430,58 @@ def test_load_cast_model_records_runtime_metadata(tmp_path: Path):
     assert model is not None
 
 
+def test_load_cast_model_applies_and_restores_loader_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    cast_path = _make_cast_zip(tmp_path / "toy.cast")
+    monkeypatch.setenv("KFORGE_DEVICE_MAP", "previous")
+    monkeypatch.delenv("KFORGE_QWEN35_MAX_MEMORY", raising=False)
+    monkeypatch.delenv("KFORGE_TARGET_DEVICE", raising=False)
+    seen: dict[str, str | None] = {}
+
+    class FakeLoadedModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.zeros(1))
+            self._kf_runtime_stats = _empty_runtime_stats()
+            self._kf_runtime_report = {
+                "runtime_patch_enabled": True,
+                "selected_ops": ["torch_nn_functional_linear"],
+                "loaded_kernels": [{"op_name": "torch_nn_functional_linear", "load_mode": "jit"}],
+                "load_modes": {"torch_nn_functional_linear": "jit"},
+                "jit_compile_time_ms": 0.0,
+                "precompiled_load_time_ms": 0.0,
+                "runtime_load_time_ms": 1.0,
+                "setup_time_ms": 1.0,
+            }
+
+    def _loader(*args, **kwargs):
+        seen["device"] = kwargs.get("device")
+        seen["device_map"] = os.environ.get("KFORGE_DEVICE_MAP")
+        seen["max_memory"] = os.environ.get("KFORGE_QWEN35_MAX_MEMORY")
+        seen["target_device"] = os.environ.get("KFORGE_TARGET_DEVICE")
+        return FakeLoadedModel()
+
+    _, meta = load_cast_model(
+        cast_path,
+        device="cuda",
+        settings=KfRuntimeSettings(
+            placement_profile="single_cuda",
+            device_map="single_cuda",
+            max_memory={"0": "120GiB", "cpu": "8GiB"},
+        ),
+        loader=_loader,
+        stats_getter=lambda model: model._kf_runtime_stats,
+    )
+
+    assert seen["device"] == "cuda"
+    assert seen["device_map"] == "single_cuda"
+    assert seen["max_memory"] == '{"0": "120GiB", "cpu": "8GiB"}'
+    assert seen["target_device"] == "cuda"
+    assert os.environ.get("KFORGE_DEVICE_MAP") == "previous"
+    assert "KFORGE_QWEN35_MAX_MEMORY" not in os.environ
+    assert "KFORGE_TARGET_DEVICE" not in os.environ
+    assert meta["loader_env_overrides"]["KFORGE_DEVICE_MAP"] == "single_cuda"
+
+
 def test_inspect_cast_package_records_manifest_and_source_hashes(tmp_path: Path):
     cast_path = _make_cast_zip(tmp_path / "toy.cast")
 
@@ -542,6 +714,12 @@ def test_fake_runtime_records_kernel_hit_and_load_compile_split(sample_paths, tm
     assert total_artifact.details["exception_fallback_count"] == 0
     assert total_artifact.details["contiguous_copy_count"] == 0
     assert total_artifact.details["adaptation_count"] == 0
+    audit_path = Path(total_artifact.details["device_audit_artifact_path"])
+    audit_artifact = load_json_artifact(audit_path)
+    assert audit_artifact.artifact_type == "device_audit"
+    assert audit_artifact.audit_status == "passed"
+    assert audit_artifact.runtime_input_device == "cpu"
+    assert audit_artifact.kernel_launches_succeeded == 6
 
 
 def test_fake_kernel_exception_marks_paper_ineligible(sample_paths, tmp_path: Path):

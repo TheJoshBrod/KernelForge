@@ -1,0 +1,49 @@
+model_id: qwen35a3b_int4
+category: MoE decoder LLM
+loader_kind: transformers_causal_lm
+model_path: /home/gb10/model-cache/Qwen3.5-35B-A3B
+tokenizer_path: /home/gb10/model-cache/Qwen3.5-35B-A3B
+model_config_path: /home/gb10/model-cache/Qwen3.5-35B-A3B/config.json
+cast_package_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/qwen35a3b-int4-gb10/exports/qwen35a3b__gb10__int4__ultrachat200k_forge_v1__opt05__mixed_forged.cast
+deployment_artifact_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/qwen35a3b-int4-gb10/exports/qwen35a3b__gb10__int4__ultrachat200k_forge_v1__opt05__mixed_forged.cast
+task_type: moe_decoder_llm
+torch_dtype: bf16
+quantization: int4
+quantization_config:
+  type: quanto
+  weights: int4
+quantization_config_hash: ba37db571a0517e80fa481dc9043fd7112dad0b628dcd77f7c0881610204eda8
+placement_profile: managed_offload
+device_map: auto
+device: cuda
+trust_remote_code: false
+local_files_only: true
+attn_implementation: eager
+model_access_terms: local mirror; upstream license/access terms must be verified before paper-eligible promotion
+validation_suite_path: ../suites/qwen_llm_paper.yaml
+workload_hash: bf02a32ec3e11fe8a5eec24da64b75d1794a621112e36f51a16dae24b3092b93
+batch_sizes:
+  - 1
+shape_or_length_buckets:
+  - bucket_id: short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: medium
+    min_tokens: 129
+    max_tokens: 512
+  - bucket_id: long
+    min_tokens: 513
+    max_tokens: 1024
+correctness_comparator: exact_token_match_against_matching_int4_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+paper_eligible: false
+benchmark_expectation: smoke_candidate
+expected_model_config_hash: 5e4d7f74fec2f360eb9cfbfcd6ec0c4c76e684d3a11caaed259d9fd9bfbc7944
+notes:
+  - Split int4 config for the external CAST matrix.
+  - Int4 baselines must use this quantization_config so they match the CAST quantization path.
+  - Default CAST points to opt05 mixed for smoke; full matrix runs should pass the exact budget/policy CAST via --cast-package.
+

@@ -5,6 +5,7 @@ import importlib.metadata
 import os
 import platform
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -28,6 +29,10 @@ RELEVANT_ENV_VARS = [
     "HF_HOME",
     "HUGGINGFACE_HUB_CACHE",
     "KFORGE_TARGET_DEVICE",
+    "KFORGE_DEVICE_MAP",
+    "KFORGE_PLACEMENT_PROFILE",
+    "KFORGE_CAST_ENTRYPOINT_DEVICE",
+    "KFORGE_CAST_SKIP_GLOBAL_TO",
     "NVIDIA_VISIBLE_DEVICES",
     "OMP_NUM_THREADS",
     "PYTORCH_CUDA_ALLOC_CONF",
@@ -216,6 +221,48 @@ def collect_driver_info() -> dict[str, Any]:
     return info
 
 
+def _ensure_python_env_ninja_on_path() -> str | None:
+    python_bin_dir = Path(sys.executable).absolute().parent
+    ninja_candidate = python_bin_dir / "ninja"
+    if shutil.which("ninja") is None and ninja_candidate.exists():
+        path_entries = os.environ.get("PATH", "").split(os.pathsep) if os.environ.get("PATH") else []
+        if str(python_bin_dir) not in path_entries:
+            os.environ["PATH"] = str(python_bin_dir) if not path_entries else str(python_bin_dir) + os.pathsep + os.environ["PATH"]
+    resolved = shutil.which("ninja")
+    return resolved
+
+
+def collect_toolchain_status() -> dict[str, Any]:
+    nvcc_path = shutil.which("nvcc")
+    ninja_path = _ensure_python_env_ninja_on_path()
+    python_env_bin = str(Path(sys.executable).absolute().parent)
+    status: dict[str, Any] = {
+        "cuda_home": os.environ.get("CUDA_HOME"),
+        "cudacxx": os.environ.get("CUDACXX"),
+        "nvcc_path": nvcc_path,
+        "nvcc_version": _run_text([nvcc_path, "--version"]) if nvcc_path else None,
+        "ninja_path": ninja_path,
+        "ninja_version": _run_text([ninja_path, "--version"]) if ninja_path else None,
+        "path_contains_virtualenv_bin": False,
+        "path_contains_python_env_bin": python_env_bin in os.environ.get("PATH", "").split(os.pathsep),
+        "torch_cpp_extension_cuda_home": None,
+        "torch_cpp_extension_ninja_available": None,
+    }
+    venv = os.environ.get("VIRTUAL_ENV")
+    if venv:
+        venv_bin = str(Path(venv) / "bin")
+        status["path_contains_virtualenv_bin"] = venv_bin in os.environ.get("PATH", "").split(os.pathsep)
+    try:
+        import torch.utils.cpp_extension as cpp_extension
+
+        status["torch_cpp_extension_cuda_home"] = str(cpp_extension.CUDA_HOME) if cpp_extension.CUDA_HOME else None
+        status["torch_cpp_extension_ninja_available"] = bool(cpp_extension.is_ninja_available())
+    except Exception as exc:
+        status["torch_cpp_extension_error"] = f"{type(exc).__name__}: {exc}"
+    status["jit_ready"] = bool(status.get("nvcc_path") and status.get("torch_cpp_extension_ninja_available"))
+    return status
+
+
 def _torch_device_properties_to_dict(index: int) -> dict[str, Any]:
     props = torch.cuda.get_device_properties(index)
     return {
@@ -336,6 +383,15 @@ def collect_common_fields(
     cast_package_path: str | None = None,
     registry_path: str | None = None,
     exported_kernel_paths: Iterable[str | Path] | None = None,
+    quantization: str | None = None,
+    quantization_config_hash: str | None = None,
+    placement_profile: str | None = None,
+    model_license: str | None = None,
+    model_access_terms: str | None = None,
+    workload_slug: str | None = None,
+    dataset_license: str | None = None,
+    dataset_access_terms: str | None = None,
+    cache_mode: str | None = None,
 ) -> dict[str, Any]:
     git_info = collect_git_info(repo_root)
     gpu_names, gpu_count, gpu_properties, gpu_details = collect_gpu_info()
@@ -359,6 +415,7 @@ def collect_common_fields(
     }
     package_versions = collect_package_versions()
     determinism_controls = collect_determinism_controls()
+    toolchain_status = collect_toolchain_status()
     try:
         cudnn_version = str(torch.backends.cudnn.version()) if torch.backends.cudnn.version() else None
     except Exception:
@@ -406,15 +463,26 @@ def collect_common_fields(
         "model_path_hash": model_path_hash,
         "model_config_path": str(model_config_path) if model_config_path else None,
         "model_config_hash": model_config_hash,
+        "quantization": quantization,
+        "quantization_config_hash": quantization_config_hash,
+        "placement_profile": placement_profile,
+        "model_license": model_license,
+        "model_access_terms": model_access_terms,
         "suite_id": suite_id,
         "suite_path": str(suite_path),
         "suite_hash": suite_hash or "",
         "workload_path": str(workload_path),
         "workload_hash": workload_hash,
+        "workload_slug": workload_slug,
+        "dataset_license": dataset_license,
+        "dataset_access_terms": dataset_access_terms,
+        "cache_mode": cache_mode,
         "config_hashes": config_hashes,
         "cast_package_path": str(cast_package_path) if cast_package_path else None,
         "cast_package_hash": cast_package_hash,
         "exported_kernel_hashes": hash_visible_paths(exported_kernel_paths),
+        "toolchain_status": toolchain_status,
+        "cache_reuse_status": "not_requested",
         "paper_eligible": not paper_eligibility_issues,
         "paper_eligibility_issues": paper_eligibility_issues,
         "synthetic_workload": synthetic_workload,

@@ -8,11 +8,14 @@ cast_package_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/test_
 deployment_artifact_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/test_qwen - NVIDIA GB10/exports/test_qwen - NVIDIA GB10.cast
 task_type: moe_decoder_llm
 torch_dtype: bf16
+quantization: bf16
+placement_profile: managed_offload
 device_map: auto
 device: cuda
 trust_remote_code: false
 local_files_only: true
 attn_implementation: eager
+model_access_terms: local mirror; upstream license/access terms must be verified before paper-eligible promotion
 validation_suite_path: ../suites/qwen_llm_paper.yaml
 workload_hash: bf02a32ec3e11fe8a5eec24da64b75d1794a621112e36f51a16dae24b3092b93
 batch_sizes:

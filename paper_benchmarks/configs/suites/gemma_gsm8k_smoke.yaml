@@ -1,0 +1,42 @@
+suite_id: gemma_gsm8k_smoke
+benchmark_mode: e2e_model
+description: Lightweight Gemma causal LM smoke suite over the frozen GSM8K external prompt manifest.
+prompt_file: /home/gb10/Projects/Kernal-Forge/datacollection/extreme_benchmark/datasets/gsm8k_test_manifest.jsonl
+workload_slug: gsm8k_test
+dataset_license: MIT
+dataset_access_terms: openai/gsm8k Hugging Face dataset; License field and Licensing Information declare MIT; verified 2026-04-27; citation Cobbe et al. 2021
+workload_type: prompt_records
+synthetic_workload: false
+variants:
+  - eager
+  - torch_compile
+  - kf_cast
+stages:
+  - load
+  - compile
+  - warmup
+  - prefill
+  - decode
+  - total_generate
+prompt_length_buckets:
+  - bucket_id: gsm8k_all
+    min_tokens: 1
+    max_tokens: 2048
+shape_or_length_buckets:
+  - bucket_id: gsm8k_all
+    min_tokens: 1
+    max_tokens: 2048
+batch_sizes:
+  - 1
+max_new_tokens: 16
+warmup_runs: 1
+timed_runs: 2
+generation_mode: greedy
+cache_mode: kv_cache_on
+random_seed: 0
+include_tokenization_in_timing: false
+measure_prefill_decode_separately: true
+device: cuda
+notes:
+  - Smoke-only GSM8K run for feasibility, placement, and correctness checks.
+  - This suite is not a paper-result configuration.

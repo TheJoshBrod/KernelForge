@@ -12,7 +12,7 @@ from tokenizers.pre_tokenizers import Whitespace
 from transformers import PreTrainedTokenizerFast
 
 from paper_benchmarks.paper_bench.artifacts import create_run_layout, load_json_artifact
-from paper_benchmarks.paper_bench.cli import _cmd_preflight
+from paper_benchmarks.paper_bench.cli import _cmd_preflight, _resolve_compile_settings
 from paper_benchmarks.paper_bench.llm_runner import run_llm_benchmark
 from paper_benchmarks.paper_bench.provenance import build_environment_artifact_fields, collect_common_fields
 from paper_benchmarks.paper_bench.schema import EnvironmentArtifact, RunManifestArtifact, Stage, Variant
@@ -544,4 +544,38 @@ def test_preflight_surfaces_compile_settings(sample_paths, tmp_path: Path, capsy
         "mode": "reduce-overhead",
         "fullgraph": True,
         "dynamic": True,
+    }
+
+
+def test_compile_settings_use_model_defaults_with_cli_overrides():
+    args = SimpleNamespace(
+        compile_backend=None,
+        compile_mode=None,
+        compile_fullgraph=None,
+        compile_dynamic=None,
+    )
+    model_spec = SimpleNamespace(
+        compile_settings={
+            "backend": "inductor",
+            "mode": "max-autotune",
+            "fullgraph": True,
+            "dynamic": True,
+        }
+    )
+
+    assert _resolve_compile_settings(args, model_spec) == {
+        "backend": "inductor",
+        "mode": "max-autotune",
+        "fullgraph": True,
+        "dynamic": True,
+    }
+
+    args.compile_backend = "aot_eager"
+    args.compile_dynamic = False
+
+    assert _resolve_compile_settings(args, model_spec) == {
+        "backend": "aot_eager",
+        "mode": "max-autotune",
+        "fullgraph": True,
+        "dynamic": False,
     }

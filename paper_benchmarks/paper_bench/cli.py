@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from .artifacts import create_run_layout, create_run_layout_for_dir, default_runs_root, load_json_artifact, make_run_id, write_commands_txt
 from .cast_export import copy_cast_artifact, export_cast_package, inspect_cast_package
@@ -18,6 +20,7 @@ from .op_runner import (
     run_operator_benchmark,
 )
 from .provenance import build_environment_artifact_fields, collect_common_fields, safe_sha256_path, utc_now_iso
+from .publication import build_llm_plan_payload, write_plan_payload
 from .registry import (
     SyntheticWorkloadError,
     enforce_workload_policy,
@@ -38,6 +41,12 @@ def _default_model_suite_registry_path() -> Path:
     return Path(__file__).resolve().parents[1] / "configs" / "model_suite_10" / "registry.yaml"
 
 
+def _hash_json_payload(payload) -> str | None:
+    if not payload:
+        return None
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Paper benchmark harness")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -56,16 +65,23 @@ def _parse_args() -> argparse.Namespace:
         run_parser.add_argument("--store-prompts", action="store_true")
         run_parser.add_argument("--reuse-cache", action="store_true")
         run_parser.add_argument("--fail-if-not-paper-eligible", action="store_true")
-        run_parser.add_argument("--compile-backend", default="inductor")
+        run_parser.add_argument("--compile-backend")
         run_parser.add_argument("--compile-mode")
-        run_parser.add_argument("--compile-fullgraph", action="store_true")
-        run_parser.add_argument("--compile-dynamic", action="store_true")
+        run_parser.add_argument("--compile-fullgraph", action=argparse.BooleanOptionalAction, default=None)
+        run_parser.add_argument("--compile-dynamic", action=argparse.BooleanOptionalAction, default=None)
         run_parser.add_argument("--cast-package")
         run_parser.add_argument("--project-ref")
         run_parser.add_argument("--kf-require-precompiled", action=argparse.BooleanOptionalAction, default=False)
         run_parser.add_argument("--kf-allow-jit", action=argparse.BooleanOptionalAction, default=True)
         run_parser.add_argument("--kf-fail-on-fallback", action=argparse.BooleanOptionalAction, default=True)
         run_parser.add_argument("--kf-record-runtime-stats", action=argparse.BooleanOptionalAction, default=True)
+        run_parser.add_argument("--certify-paper-ready", action="store_true")
+
+    plan_llm = sub.add_parser("plan-llm")
+    add_llm_shared(plan_llm)
+    plan_llm.add_argument("--write-plan")
+    plan_llm.add_argument("--fail-if-not-paper-ready", action="store_true")
+    plan_llm.add_argument("--skip-cast-inspection", action="store_true")
 
     preflight = sub.add_parser("preflight")
     add_llm_shared(preflight)
@@ -92,10 +108,10 @@ def _parse_args() -> argparse.Namespace:
     run_ops.add_argument("--timed-runs", type=int, default=3)
     run_ops.add_argument("--device", default="cuda")
     run_ops.add_argument("--project-ref")
-    run_ops.add_argument("--compile-backend", default="inductor")
+    run_ops.add_argument("--compile-backend")
     run_ops.add_argument("--compile-mode")
-    run_ops.add_argument("--compile-fullgraph", action="store_true")
-    run_ops.add_argument("--compile-dynamic", action="store_true")
+    run_ops.add_argument("--compile-fullgraph", action=argparse.BooleanOptionalAction, default=None)
+    run_ops.add_argument("--compile-dynamic", action=argparse.BooleanOptionalAction, default=None)
     run_ops.add_argument("--kf-require-precompiled", action=argparse.BooleanOptionalAction, default=False)
     run_ops.add_argument("--kf-allow-jit", action=argparse.BooleanOptionalAction, default=True)
     run_ops.add_argument("--kf-fail-on-fallback", action=argparse.BooleanOptionalAction, default=True)
@@ -107,6 +123,10 @@ def _parse_args() -> argparse.Namespace:
 
     summarize = sub.add_parser("summarize")
     summarize.add_argument("--run-dir", required=True)
+
+    validate_run = sub.add_parser("validate-run")
+    validate_run.add_argument("--run-dir", required=True)
+    validate_run.add_argument("--fail-if-not-paper-eligible", action="store_true")
 
     inspect_project = sub.add_parser("inspect-project")
     inspect_project.add_argument("--project-ref", required=True)
@@ -171,6 +191,23 @@ def _resolve_project_details(project_ref: str | None) -> dict | None:
     return describe_project(find_project(project_ref))
 
 
+def _cache_search_root(args: argparse.Namespace, layout) -> Path:
+    runs_root = Path(args.runs_root).expanduser()
+    if getattr(args, "out", None) and runs_root.resolve() == default_runs_root().resolve():
+        return layout.run_dir.parent
+    return runs_root
+
+
+def _resolve_compile_settings(args: argparse.Namespace, model_spec=None) -> dict[str, Any]:
+    defaults = dict(getattr(model_spec, "compile_settings", None) or {})
+    return {
+        "backend": args.compile_backend if args.compile_backend is not None else str(defaults.get("backend") or "inductor"),
+        "mode": args.compile_mode if args.compile_mode is not None else defaults.get("mode"),
+        "fullgraph": bool(args.compile_fullgraph) if args.compile_fullgraph is not None else bool(defaults.get("fullgraph", False)),
+        "dynamic": bool(args.compile_dynamic) if args.compile_dynamic is not None else bool(defaults.get("dynamic", False)),
+    }
+
+
 def _prepare_llm_run_context(
     args: argparse.Namespace,
     *,
@@ -204,19 +241,27 @@ def _prepare_llm_run_context(
         synthetic_workload=synthetic_workload,
         cast_package_path=cast_package_path,
         registry_path=None if args.model_config else args.registry,
+        quantization=getattr(model_spec, "quantization", None),
+        quantization_config_hash=getattr(model_spec, "quantization_config_hash", None)
+        or _hash_json_payload(getattr(model_spec, "quantization_config", None)),
+        placement_profile=getattr(model_spec, "placement_profile", None),
+        model_license=getattr(model_spec, "model_license", None),
+        model_access_terms=getattr(model_spec, "model_access_terms", None),
+        workload_slug=getattr(suite, "workload_slug", None),
+        dataset_license=getattr(suite, "dataset_license", None),
+        dataset_access_terms=getattr(suite, "dataset_access_terms", None),
+        cache_mode=getattr(suite, "cache_mode", None),
     )
-    common["compile_settings"] = {
-        "backend": args.compile_backend,
-        "mode": args.compile_mode,
-        "fullgraph": bool(args.compile_fullgraph),
-        "dynamic": bool(args.compile_dynamic),
-    }
+    common["compile_settings"] = _resolve_compile_settings(args, model_spec)
     common["kf_settings"] = {
         "cast_package_path": cast_package_path,
         "require_precompiled": bool(args.kf_require_precompiled),
         "allow_jit": bool(args.kf_allow_jit),
         "fail_on_fallback": bool(args.kf_fail_on_fallback),
         "record_runtime_stats": bool(args.kf_record_runtime_stats),
+        "placement_profile": getattr(model_spec, "placement_profile", None),
+        "device_map": getattr(model_spec, "device_map", None),
+        "max_memory": getattr(model_spec, "max_memory", None),
     }
     project_details = _resolve_project_details(getattr(args, "project_ref", None))
     if project_details:
@@ -284,6 +329,25 @@ def _prepare_llm_run_context(
         **build_environment_artifact_fields(),
     )
     return layout, manifest, env_artifact, model_spec, suite, requested_variants
+
+
+def _build_llm_plan_from_args(args: argparse.Namespace) -> dict:
+    _, manifest, env_artifact, model_spec, suite, requested_variants = _prepare_llm_run_context(
+        args,
+        materialize_run_dir=False,
+        default_variants_to_suite=True,
+    )
+    cast_inspection = None
+    if Variant.kf_cast in requested_variants and manifest.cast_package_path and not getattr(args, "skip_cast_inspection", False):
+        cast_inspection = inspect_cast_package(manifest.cast_package_path)
+    return build_llm_plan_payload(
+        manifest=manifest,
+        env_artifact=env_artifact,
+        model_spec=model_spec,
+        suite=suite,
+        requested_variants=requested_variants,
+        cast_inspection=cast_inspection,
+    )
 
 
 def _requested_op_variants(args: argparse.Namespace) -> list[Variant]:
@@ -358,14 +422,10 @@ def _prepare_ops_run_context(args: argparse.Namespace):
         synthetic_workload=synthetic_workload,
         cast_package_path=args.kernel_source_or_cast if args.kernel_source_or_cast and str(args.kernel_source_or_cast).endswith(".cast") else None,
         exported_kernel_paths=[args.kernel_source_or_cast] if args.kernel_source_or_cast and not str(args.kernel_source_or_cast).endswith(".cast") else None,
+        cache_mode="operator",
     )
     common["run_id"] = layout.run_id
-    common["compile_settings"] = {
-        "backend": args.compile_backend,
-        "mode": args.compile_mode,
-        "fullgraph": bool(args.compile_fullgraph),
-        "dynamic": bool(args.compile_dynamic),
-    }
+    common["compile_settings"] = _resolve_compile_settings(args)
     common["kf_settings"] = {
         "cast_package_path": args.kernel_source_or_cast if args.kernel_source_or_cast and str(args.kernel_source_or_cast).endswith(".cast") else None,
         "kernel_source_or_cast": args.kernel_source_or_cast,
@@ -467,19 +527,25 @@ def _build_run_artifacts(
         synthetic_workload=suite.synthetic_workload,
         cast_package_path=cast_package_path,
         registry_path=args.registry,
+        quantization=getattr(model_spec, "quantization", None),
+        quantization_config_hash=getattr(model_spec, "quantization_config_hash", None)
+        or _hash_json_payload(getattr(model_spec, "quantization_config", None)),
+        placement_profile=getattr(model_spec, "placement_profile", None),
+        model_license=getattr(model_spec, "model_license", None),
+        model_access_terms=getattr(model_spec, "model_access_terms", None),
+        workload_slug=getattr(suite, "workload_slug", None),
+        dataset_license=getattr(suite, "dataset_license", None),
+        dataset_access_terms=getattr(suite, "dataset_access_terms", None),
+        cache_mode=getattr(suite, "cache_mode", None),
     )
-    common["compile_settings"] = {
-        "backend": args.compile_backend,
-        "mode": args.compile_mode,
-        "fullgraph": bool(args.compile_fullgraph),
-        "dynamic": bool(args.compile_dynamic),
-    }
+    common["compile_settings"] = _resolve_compile_settings(args, model_spec)
     common["kf_settings"] = {
         "cast_package_path": cast_package_path,
         "require_precompiled": bool(args.kf_require_precompiled),
         "allow_jit": bool(args.kf_allow_jit),
         "fail_on_fallback": bool(args.kf_fail_on_fallback),
         "record_runtime_stats": bool(args.kf_record_runtime_stats),
+        "placement_profile": getattr(model_spec, "placement_profile", None),
     }
 
     run_id = make_run_id(common["timestamp_utc"], model_spec.model_id, suite.suite_id)
@@ -580,13 +646,33 @@ def _cmd_preflight(args: argparse.Namespace) -> int:
                 "runtime_stats_enabled": runtime_meta.get("runtime_stats_enabled"),
                 "runtime_patch_enabled": runtime_meta.get("runtime_patch_enabled"),
                 "runtime_stats_api": runtime_meta.get("runtime_stats_api", {}),
+                "placement_profile": runtime_meta.get("placement_profile"),
+                "requested_device": runtime_meta.get("requested_device"),
+                "loader_device": runtime_meta.get("loader_device"),
+                "placement_audit": runtime_meta.get("placement_audit", {}),
+                "toolchain_status": runtime_meta.get("toolchain_status", {}),
             },
         }
     print(json.dumps(payload, indent=2))
     return 0
 
 
+def _cmd_plan_llm(args: argparse.Namespace) -> int:
+    payload = _build_llm_plan_from_args(args)
+    if args.write_plan:
+        payload["plan_path"] = str(write_plan_payload(args.write_plan, payload))
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    if args.fail_if_not_paper_ready and not payload["certification"]["paper_ready"]:
+        return 2
+    return 0
+
+
 def _cmd_run_llm(args: argparse.Namespace) -> int:
+    if args.certify_paper_ready:
+        plan_payload = _build_llm_plan_from_args(args)
+        if not plan_payload["certification"]["paper_ready"]:
+            print(json.dumps(plan_payload, indent=2, sort_keys=True))
+            return 2
     layout, manifest, env_artifact, model_spec, suite, requested_variants = _prepare_llm_run_context(args, materialize_run_dir=True)
     assert layout is not None
     common_fields = manifest.model_dump(
@@ -604,7 +690,7 @@ def _cmd_run_llm(args: argparse.Namespace) -> int:
             variant=requested_variant,
             store_prompts=bool(args.store_prompts),
             reuse_cache=bool(args.reuse_cache),
-            cache_search_root=args.runs_root,
+            cache_search_root=_cache_search_root(args, layout),
         )
     summary = summarize_run(layout.run_dir)
     payload = {
@@ -644,7 +730,7 @@ def _cmd_run_ops(args: argparse.Namespace) -> int:
             suite=suite,
             variant=requested_variant,
             reuse_cache=bool(args.reuse_cache),
-            cache_search_root=args.runs_root,
+            cache_search_root=_cache_search_root(args, layout),
         )
     summary = summarize_run(layout.run_dir)
     payload = {
@@ -676,6 +762,10 @@ def _cmd_validate_artifact(args: argparse.Namespace) -> int:
         "schema_version": artifact.schema_version,
         "paper_eligible": artifact.paper_eligible,
         "paper_eligibility_issues": reasons,
+        "paper_claim_status": getattr(artifact, "paper_claim_status", None),
+        "claim_category": getattr(artifact, "claim_category", None),
+        "validation_errors": getattr(artifact, "validation_errors", []),
+        "validation_warnings": getattr(artifact, "validation_warnings", []),
     }
     if args.print_schema:
         payload["schema"] = artifact_schema_bundle()[artifact.artifact_type]
@@ -688,6 +778,36 @@ def _cmd_validate_artifact(args: argparse.Namespace) -> int:
 def _cmd_summarize(args: argparse.Namespace) -> int:
     summary = summarize_run(args.run_dir)
     print(json.dumps({"ok": True, "run_dir": args.run_dir, "rows": len(summary.rows)}, indent=2))
+    return 0
+
+
+def _cmd_validate_run(args: argparse.Namespace) -> int:
+    summary = summarize_run(args.run_dir)
+    row_errors = [
+        {
+            "artifact_path": row.artifact_path,
+            "variant": row.variant.value,
+            "stage": row.stage.value,
+            "comparison_group": row.comparison_group,
+            "errors": row.validation_errors,
+            "warnings": row.validation_warnings,
+            "paper_claim_status": row.paper_claim_status,
+            "claim_category": row.claim_category,
+        }
+        for row in summary.rows
+        if row.validation_errors or row.validation_warnings
+    ]
+    payload = {
+        "ok": not args.fail_if_not_paper_eligible or summary.paper_eligible,
+        "run_dir": args.run_dir,
+        "paper_eligible": summary.paper_eligible,
+        "paper_eligibility_issues": summary.paper_eligibility_issues,
+        "row_count": len(summary.rows),
+        "validation_issue_rows": row_errors,
+    }
+    print(json.dumps(payload, indent=2))
+    if args.fail_if_not_paper_eligible and not summary.paper_eligible:
+        return 2
     return 0
 
 
@@ -861,6 +981,8 @@ def _cmd_validate_model_registry(args: argparse.Namespace) -> int:
 def main() -> int:
     args = _parse_args()
     try:
+        if args.command == "plan-llm":
+            return _cmd_plan_llm(args)
         if args.command == "preflight":
             return _cmd_preflight(args)
         if args.command == "run-llm":
@@ -871,6 +993,8 @@ def main() -> int:
             return _cmd_validate_artifact(args)
         if args.command == "summarize":
             return _cmd_summarize(args)
+        if args.command == "validate-run":
+            return _cmd_validate_run(args)
         if args.command == "inspect-project":
             return _cmd_inspect_project(args)
         if args.command == "export-cast":

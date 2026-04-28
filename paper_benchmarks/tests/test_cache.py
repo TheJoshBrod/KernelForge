@@ -67,6 +67,51 @@ def test_matching_cache_is_reused_for_llm(sample_paths, tmp_path: Path):
     assert reused.reused_from_artifact.endswith("eager_total_generate.json")
 
 
+def test_llm_baseline_cache_ignores_cast_only_metadata(sample_paths, tmp_path: Path):
+    source = _make_context(tmp_path / "shared", sample_paths, Variant.eager)
+    source[1]["cast_package_path"] = str(tmp_path / "source.cast")
+    source[1]["cast_package_hash"] = "source-cast-hash"
+    source[1]["exported_kernel_hashes"] = {"kernels/linear.cu": "source-kernel-hash"}
+    source[1]["kf_settings"] = {"cast_package_path": str(tmp_path / "source.cast"), "allow_jit": True}
+    run_llm_benchmark(
+        layout=source[0],
+        common_fields=source[1],
+        env_artifact=source[2],
+        manifest_artifact=source[3],
+        model_spec=source[4],
+        suite=source[5],
+        variant=Variant.eager,
+        model_loader=_toy_model_loader,
+        reuse_cache=False,
+        cache_search_root=tmp_path,
+    )
+
+    target = _clone_llm_context(source, tmp_path / "reused_with_other_cast")
+    target[1]["cast_package_path"] = str(tmp_path / "target.cast")
+    target[1]["cast_package_hash"] = "target-cast-hash"
+    target[1]["exported_kernel_hashes"] = {"kernels/linear.cu": "target-kernel-hash"}
+    target[1]["kf_settings"] = {"cast_package_path": str(tmp_path / "target.cast"), "allow_jit": False}
+    run_llm_benchmark(
+        layout=target[0],
+        common_fields=target[1],
+        env_artifact=target[2],
+        manifest_artifact=target[3],
+        model_spec=target[4],
+        suite=target[5],
+        variant=Variant.eager,
+        model_loader=_toy_model_loader,
+        reuse_cache=True,
+        cache_search_root=tmp_path,
+    )
+
+    reused = load_json_artifact(target[0].metrics_dir / "eager_total_generate.json")
+    assert reused.reused is True
+    assert reused.cast_package_path is None
+    assert reused.cast_package_hash is None
+    assert reused.exported_kernel_hashes == {}
+    assert reused.kf_settings == {}
+
+
 def test_default_no_reuse(sample_paths, tmp_path: Path):
     source = _make_context(tmp_path / "shared", sample_paths, Variant.eager)
     run_llm_benchmark(

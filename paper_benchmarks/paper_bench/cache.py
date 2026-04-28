@@ -77,7 +77,85 @@ def _kf_runtime_settings(payload: BenchmarkArtifact | dict[str, Any]) -> dict[st
         "allow_jit": bool(kf_settings.get("allow_jit", True)),
         "fail_on_fallback": bool(kf_settings.get("fail_on_fallback", True)),
         "record_runtime_stats": bool(kf_settings.get("record_runtime_stats", True)),
+        "placement_profile": str(kf_settings.get("placement_profile")) if kf_settings.get("placement_profile") else None,
+        "device_map": kf_settings.get("device_map"),
+        "max_memory": kf_settings.get("max_memory") if isinstance(kf_settings.get("max_memory"), dict) else None,
     }
+
+
+def _toolchain_signature(payload: BenchmarkArtifact | dict[str, Any]) -> dict[str, Any]:
+    toolchain_status = payload.get("toolchain_status", {}) if isinstance(payload, dict) else payload.toolchain_status
+    if not isinstance(toolchain_status, dict):
+        toolchain_status = {}
+    return {
+        "jit_ready": toolchain_status.get("jit_ready"),
+        "nvcc_path": toolchain_status.get("nvcc_path"),
+        "ninja_path": toolchain_status.get("ninja_path"),
+    }
+
+
+def _is_kf_variant(value: Variant | str | None) -> bool:
+    if isinstance(value, Variant):
+        return value == Variant.kf_cast
+    return str(value or "") == Variant.kf_cast.value
+
+
+def _cache_variant(payload: BenchmarkArtifact | dict[str, Any], fallback: Variant | str | None = None) -> Variant | str | None:
+    if isinstance(payload, dict):
+        return payload.get("variant", fallback)
+    return payload.variant if payload.variant is not None else fallback
+
+
+def _kf_cache_fields(payload: BenchmarkArtifact | dict[str, Any], details: dict[str, Any]) -> dict[str, Any]:
+    variant = _cache_variant(payload)
+    if not _is_kf_variant(variant):
+        return {
+            "cast_package_hash": None,
+            "kernel_source_hashes": {},
+            "selected_source_hashes": {},
+            "kf_runtime_settings": {},
+            "project_ref": None,
+            "kf_artifact_hash": None,
+            "kf_artifact_kind": None,
+            "toolchain_status": {},
+        }
+    if isinstance(payload, dict):
+        cast_package_hash = payload.get("cast_package_hash")
+        kf_kernel_hashes = payload.get("exported_kernel_hashes", {}) or details.get("kernel_source_hashes") or {}
+        kf_artifact_hash = payload.get("kf_artifact_hash")
+        kf_artifact_kind = payload.get("kf_artifact_kind")
+    else:
+        cast_package_hash = payload.cast_package_hash
+        kf_kernel_hashes = payload.exported_kernel_hashes or details.get("kernel_source_hashes") or {}
+        kf_artifact_hash = payload.kf_artifact_hash
+        kf_artifact_kind = payload.kf_artifact_kind
+    return {
+        "cast_package_hash": cast_package_hash,
+        "kernel_source_hashes": kf_kernel_hashes,
+        "selected_source_hashes": _selected_source_hashes(payload, details),
+        "kf_runtime_settings": _kf_runtime_settings(payload),
+        "project_ref": _project_ref(payload, details),
+        "kf_artifact_hash": kf_artifact_hash,
+        "kf_artifact_kind": kf_artifact_kind,
+        "toolchain_status": _toolchain_signature(payload),
+    }
+
+
+def _normalize_reused_artifact_for_variant(artifact: BenchmarkArtifact) -> BenchmarkArtifact:
+    if artifact.variant == Variant.kf_cast:
+        return artifact
+    return artifact.model_copy(
+        update={
+            "cast_package_path": None,
+            "cast_package_hash": None,
+            "kf_artifact_path": None,
+            "kf_artifact_hash": None,
+            "kf_artifact_kind": None,
+            "exported_kernel_hashes": {},
+            "kf_settings": {},
+            "toolchain_status": {},
+        }
+    )
 
 
 def stage_sample_matrix(stage: Stage, sample_records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -115,8 +193,7 @@ def stage_sample_matrix(stage: Stage, sample_records: Iterable[dict[str, Any]]) 
 
 def artifact_cache_signature(artifact: BenchmarkArtifact) -> dict[str, Any]:
     details = artifact.details or {}
-    kf_kernel_hashes = artifact.exported_kernel_hashes or details.get("kernel_source_hashes") or {}
-    selected_source_hashes = _selected_source_hashes(artifact, details)
+    kf_fields = _kf_cache_fields(artifact, details)
     selection_policy = details.get("selection_policy")
     if selection_policy is None:
         selection_policy = {
@@ -136,20 +213,25 @@ def artifact_cache_signature(artifact: BenchmarkArtifact) -> dict[str, Any]:
             "model_id": artifact.model_id,
             "model_config_hash": artifact.model_config_hash,
             "model_path_hash": artifact.model_path_hash or artifact.config_hashes.get("model_snapshot_id"),
+            "quantization": artifact.quantization,
+            "quantization_config_hash": artifact.quantization_config_hash,
+            "placement_profile": artifact.placement_profile,
             "suite_hash": artifact.suite_hash,
             "workload_hash": artifact.workload_hash,
+            "workload_slug": artifact.workload_slug,
+            "cache_mode": artifact.cache_mode,
             "entry_set_hash": details.get("entry_set_hash") or artifact.config_hashes.get("entry_set"),
-            "cast_package_hash": artifact.cast_package_hash,
-            "kernel_source_hashes": kf_kernel_hashes,
-            "selected_source_hashes": selected_source_hashes,
+            "cast_package_hash": kf_fields["cast_package_hash"],
+            "kernel_source_hashes": kf_fields["kernel_source_hashes"],
+            "selected_source_hashes": kf_fields["selected_source_hashes"],
             "variant": artifact.variant.value,
             "stage": artifact.stage.value,
             "device_name": _device_name(artifact),
             "cuda_version": artifact.cuda_version,
             "pytorch_version": artifact.pytorch_version,
             "compile_settings": artifact.compile_settings,
-            "kf_runtime_settings": _kf_runtime_settings(artifact),
-            "project_ref": _project_ref(artifact, details),
+            "kf_runtime_settings": kf_fields["kf_runtime_settings"],
+            "project_ref": kf_fields["project_ref"],
             "generation_settings": details.get("generation_settings"),
             "warmup_count": artifact.warmup_count,
             "timed_run_count": artifact.timed_run_count,
@@ -159,8 +241,9 @@ def artifact_cache_signature(artifact: BenchmarkArtifact) -> dict[str, Any]:
             "selection_policy": selection_policy,
             "sample_matrix": _artifact_sample_matrix(artifact),
             "benchmark_mode": artifact.benchmark_mode.value if artifact.benchmark_mode is not None else None,
-            "kf_artifact_hash": artifact.kf_artifact_hash,
-            "kf_artifact_kind": artifact.kf_artifact_kind,
+            "kf_artifact_hash": kf_fields["kf_artifact_hash"],
+            "kf_artifact_kind": kf_fields["kf_artifact_kind"],
+            "toolchain_status": kf_fields["toolchain_status"],
         }
     )
 
@@ -179,7 +262,8 @@ def make_cache_request(
     timed_run_count: int | None = None,
 ) -> dict[str, Any]:
     detail_payload = details or {}
-    selected_source_hashes = _selected_source_hashes(common_fields, detail_payload)
+    request_payload = {**common_fields, "variant": variant.value}
+    kf_fields = _kf_cache_fields(request_payload, detail_payload)
     selection_policy = detail_payload.get("selection_policy")
     if selection_policy is None:
         selection_policy = {
@@ -199,20 +283,25 @@ def make_cache_request(
             "model_id": common_fields.get("model_id"),
             "model_config_hash": common_fields.get("model_config_hash"),
             "model_path_hash": common_fields.get("model_path_hash") or common_fields.get("config_hashes", {}).get("model_snapshot_id"),
+            "quantization": common_fields.get("quantization"),
+            "quantization_config_hash": common_fields.get("quantization_config_hash"),
+            "placement_profile": common_fields.get("placement_profile"),
             "suite_hash": common_fields.get("suite_hash"),
             "workload_hash": common_fields.get("workload_hash"),
+            "workload_slug": common_fields.get("workload_slug"),
+            "cache_mode": common_fields.get("cache_mode"),
             "entry_set_hash": detail_payload.get("entry_set_hash") or common_fields.get("config_hashes", {}).get("entry_set"),
-            "cast_package_hash": common_fields.get("cast_package_hash"),
-            "kernel_source_hashes": common_fields.get("exported_kernel_hashes") or detail_payload.get("kernel_source_hashes") or {},
-            "selected_source_hashes": selected_source_hashes,
+            "cast_package_hash": kf_fields["cast_package_hash"],
+            "kernel_source_hashes": kf_fields["kernel_source_hashes"],
+            "selected_source_hashes": kf_fields["selected_source_hashes"],
             "variant": variant.value,
             "stage": stage.value,
             "device_name": _device_name(common_fields),
             "cuda_version": common_fields.get("cuda_version"),
             "pytorch_version": common_fields.get("pytorch_version"),
             "compile_settings": common_fields.get("compile_settings") or {},
-            "kf_runtime_settings": _kf_runtime_settings(common_fields),
-            "project_ref": _project_ref(common_fields, detail_payload),
+            "kf_runtime_settings": kf_fields["kf_runtime_settings"],
+            "project_ref": kf_fields["project_ref"],
             "generation_settings": detail_payload.get("generation_settings"),
             "warmup_count": common_fields.get("warmup_count") if warmup_count is None else int(warmup_count),
             "timed_run_count": common_fields.get("timed_run_count") if timed_run_count is None else int(timed_run_count),
@@ -222,8 +311,9 @@ def make_cache_request(
             "selection_policy": selection_policy,
             "sample_matrix": sample_matrix,
             "benchmark_mode": common_fields.get("benchmark_mode"),
-            "kf_artifact_hash": common_fields.get("kf_artifact_hash"),
-            "kf_artifact_kind": common_fields.get("kf_artifact_kind"),
+            "kf_artifact_hash": kf_fields["kf_artifact_hash"],
+            "kf_artifact_kind": kf_fields["kf_artifact_kind"],
+            "toolchain_status": kf_fields["toolchain_status"],
         }
     )
 
@@ -315,6 +405,7 @@ def copy_reused_artifact(
     run_id: str,
     timestamp_utc: str,
 ) -> Path:
+    artifact = _normalize_reused_artifact_for_variant(artifact)
     reused_artifact = artifact.model_copy(
         update={
             "run_id": run_id,
@@ -322,6 +413,7 @@ def copy_reused_artifact(
             "reused": True,
             "reused_from_artifact": str(Path(source_path).resolve()),
             "reused_from_artifact_hash": safe_sha256_path(source_path),
+            "cache_reuse_status": "signature_matched",
         }
     )
     return write_json_artifact(target_path, reused_artifact)

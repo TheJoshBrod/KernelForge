@@ -1,0 +1,50 @@
+model_id: gemma4_e2b_int4
+category: Dense decoder LLM
+loader_kind: transformers_causal_lm
+model_path: /home/gb10/model-cache/Gemma4-E2B
+tokenizer_path: /home/gb10/model-cache/Gemma4-E2B
+model_config_path: /home/gb10/model-cache/Gemma4-E2B/config.json
+cast_package_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/gemma4-e2b-int4-gb10/exports/gemma4_e2b__gb10__int4__ultrachat200k_forge_v1__opt05__mixed_forged.cast
+deployment_artifact_path: /home/gb10/Projects/Kernal-Forge/CGinS/kernels/projects/gemma4-e2b-int4-gb10/exports/gemma4_e2b__gb10__int4__ultrachat200k_forge_v1__opt05__mixed_forged.cast
+task_type: dense_decoder_llm
+torch_dtype: bf16
+quantization: int4
+quantization_config:
+  type: quanto
+  weights: int4
+quantization_config_hash: ba37db571a0517e80fa481dc9043fd7112dad0b628dcd77f7c0881610204eda8
+placement_profile: managed_offload
+device_map: auto
+device: cuda
+trust_remote_code: false
+local_files_only: true
+attn_implementation: eager
+model_license: Apache-2.0
+model_access_terms: Gemma 4 E2B README declares Apache-2.0 with Gemma 4 license link https://ai.google.dev/gemma/docs/gemma_4_license; verified 2026-04-27
+validation_suite_path: ../suites/gemma_gsm8k_paper.yaml
+workload_hash: 09a5495324afd01ec74d2897e029436c118ac9f7914d1cd6a8bd17697b2b32e3
+batch_sizes:
+  - 1
+shape_or_length_buckets:
+  - bucket_id: short
+    min_tokens: 1
+    max_tokens: 128
+  - bucket_id: medium
+    min_tokens: 129
+    max_tokens: 512
+  - bucket_id: long
+    min_tokens: 513
+    max_tokens: 1024
+correctness_comparator: exact_token_match_against_matching_int4_eager
+baselines_required:
+  - eager
+  - torch_compile
+  - kf_cast
+paper_eligible: false
+benchmark_expectation: external_gsm8k_primary_candidate
+expected_model_config_hash: e5faef0dd1a8f2437f6010721146b85433eaa90e679ef011e803c7ffefae73b8
+notes:
+  - Primary external paper candidate is GSM8K test; ARC-Challenge validation is the secondary robustness suite.
+  - Gemma int4 is exploratory until the quantized torch.compile and exact-token CAST correctness blockers are fixed.
+  - Int4 baselines must use this quantization_config so they match the CAST quantization path.
+  - Model license provenance is taken from the local model README in /home/gb10/model-cache/Gemma4-E2B.

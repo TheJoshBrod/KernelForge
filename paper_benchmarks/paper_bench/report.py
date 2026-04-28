@@ -18,6 +18,7 @@ from .schema import (
     Variant,
 )
 from .stats import safe_speedup
+from .validator import validate_benchmark_artifact
 
 SECTION_OPERATOR = "operator_benchmark"
 SECTION_MODEL = "end_to_end_model_benchmark"
@@ -33,10 +34,16 @@ REQUIRED_QWEN_PROJECT_REF = "project/test_qwen%20-%20NVIDIA%20GB10/"
 REQUIRED_CAST_SELECTION_POLICY = "auto_best_fastest_valid"
 
 
-def _claim_eligible(artifact: BenchmarkArtifact) -> bool:
+def _claim_eligible(artifact: BenchmarkArtifact, validation: dict[str, Any] | None = None) -> bool:
+    claim_status = None
+    if validation is not None:
+        claim_status = validation.get("paper_claim_status")
+    if claim_status is None:
+        claim_status = artifact.paper_claim_status
     return (
         artifact.stage in PERFORMANCE_STAGES
         and artifact.paper_eligible
+        and claim_status == "paper_eligible"
         and artifact.correctness_status in {
             CorrectnessStatus.reference,
             CorrectnessStatus.passed,
@@ -355,6 +362,11 @@ def _build_row(
 ) -> SummaryRow:
     baseline = eager_baselines.get((artifact.stage, artifact.comparison_group))
     compile_baseline = compile_baselines.get((artifact.stage, artifact.comparison_group))
+    validation = validate_benchmark_artifact(
+        artifact,
+        eager_baseline=baseline,
+        torch_compile_baseline=compile_baseline,
+    )
     speedup_vs_eager = safe_speedup(
         baseline.steady_state_time_ms if baseline is not None else None,
         artifact.steady_state_time_ms,
@@ -363,6 +375,8 @@ def _build_row(
         compile_baseline.steady_state_time_ms if compile_baseline is not None else None,
         artifact.steady_state_time_ms,
     )
+    claim_status = str(validation.get("paper_claim_status") or artifact.paper_claim_status or "")
+    claim_category = str(validation.get("claim_category") or artifact.claim_category or "")
     total_tps, prefill_tps, decode_tps = _artifact_tps(artifact)
     return SummaryRow(
         variant=artifact.variant,
@@ -398,7 +412,7 @@ def _build_row(
         speedup_vs_eager=speedup_vs_eager,
         speedup_vs_torch_compile=speedup_vs_compile,
         paper_eligible=artifact.paper_eligible,
-        claim_eligible=_claim_eligible(artifact),
+        claim_eligible=_claim_eligible(artifact, validation),
         fallback_count=artifact.fallback_count,
         kernel_hit_count=artifact.kernel_hit_count,
         exception_fallback_count=_artifact_detail_int(artifact, "exception_fallback_count"),
@@ -420,6 +434,19 @@ def _build_row(
         export_paper_eligible=_artifact_export_paper_eligible(artifact),
         uses_non_deployment_evidence=_artifact_uses_non_deployment_evidence(artifact),
         coverage=_artifact_coverage(artifact),
+        paper_claim_status=claim_status,
+        claim_category=claim_category,
+        validation_errors=list(validation.get("validation_errors") or artifact.validation_errors or []),
+        validation_warnings=list(validation.get("validation_warnings") or artifact.validation_warnings or []),
+        placement_profile=artifact.placement_profile,
+        cache_mode=artifact.cache_mode,
+        workload_slug=artifact.workload_slug,
+        quantization_config_hash=artifact.quantization_config_hash,
+        model_license=artifact.model_license or artifact.model_access_terms,
+        dataset_license=artifact.dataset_license or artifact.dataset_access_terms,
+        toolchain_status=artifact.toolchain_status or (artifact.details or {}).get("toolchain_status", {}),
+        cache_reuse_status=artifact.cache_reuse_status,
+        per_op_launch_coverage=dict(validation.get("per_op_launch_coverage") or {}),
     )
 
 
@@ -536,6 +563,13 @@ def _collect_claims_and_failures(
         project_ref = _artifact_project_ref(kf)
         required_project_ref = _required_project_ref(kf)
         required_project_ok = required_project_ref is None or project_ref == required_project_ref
+        kf_validation = validate_benchmark_artifact(
+            kf,
+            eager_baseline=eager,
+            torch_compile_baseline=compiled,
+        )
+        validation_errors = list(kf_validation.get("validation_errors") or [])
+        validation_warnings = list(kf_validation.get("validation_warnings") or [])
 
         if kf.correctness_status == CorrectnessStatus.failed:
             paper_claims.append(f"Unsafe speedup; not a valid model-speedup result.{group_suffix}")
@@ -579,6 +613,8 @@ def _collect_claims_and_failures(
                 required_project_ok,
                 all_paper_eligible,
                 comparable,
+                not validation_errors,
+                not validation_warnings,
             ]
         )
 
@@ -613,6 +649,10 @@ def _collect_claims_and_failures(
                 )
             if not all_paper_eligible:
                 reasons.append("one or more artifacts are not paper eligible")
+            if validation_errors:
+                reasons.append("run validator errors: " + "; ".join(validation_errors))
+            if validation_warnings:
+                reasons.append("run validator warnings: " + "; ".join(validation_warnings))
             forbidden_claims.append(
                 f'Model-speedup claim unsupported{group_suffix}: ' + "; ".join(dict.fromkeys(reasons))
             )
@@ -645,6 +685,11 @@ def _collect_claims_and_failures(
         if artifact.variant == Variant.kf_cast and artifact.stage in PERFORMANCE_STAGES and artifact.fallback_count and artifact.fallback_count > 0:
             failures.append(
                 f"Kernel Forge used {artifact.fallback_count} fallbacks during {artifact.stage.value}."
+            )
+        validation = validate_benchmark_artifact(artifact)
+        for validation_error in validation.get("validation_errors", []):
+            failures.append(
+                f"{artifact.variant.value} {artifact.stage.value} failed run validation: {validation_error}"
             )
 
     return (
@@ -758,8 +803,8 @@ def _markdown_table(
     if not rows:
         return ["No rows."]
     lines = [
-        "| Variant | Stage | Group | P05 ms | Median ms | Mean ms | P95 ms | Total TPS | Prefill TPS | Decode TPS | Speedup vs eager | Speedup vs torch.compile | Correctness | Prompt count | Prompt suite hash | Token equality | Fallbacks | Kernel hits | Artifact |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|---|---:|---:|---|",
+        "| Variant | Stage | Group | P05 ms | Median ms | Mean ms | P95 ms | Total TPS | Prefill TPS | Decode TPS | Speedup vs eager | Speedup vs torch.compile | Correctness | Claim status | Claim category | Prompt count | Prompt suite hash | Token equality | Fallbacks | Kernel hits | Artifact |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---:|---|---|---:|---:|---|",
     ]
     for row in rows:
         lines.append(
@@ -779,6 +824,8 @@ def _markdown_table(
                     f"{row.speedup_vs_eager:.4f}" if row.speedup_vs_eager is not None else "n/a",
                     f"{row.speedup_vs_torch_compile:.4f}" if row.speedup_vs_torch_compile is not None else "n/a",
                     row.correctness_status.value,
+                    row.paper_claim_status or "-",
+                    row.claim_category or "-",
                     str(row.prompt_count) if row.prompt_count is not None else "-",
                     row.prompt_suite_hash or "-",
                     row.generated_token_equality_status or "-",

@@ -22,8 +22,9 @@ from .kf_runtime import (
     reset_cast_runtime_stats,
     runtime_settings_from_dict,
 )
-from .schema import BenchmarkArtifact, CorrectnessStatus, EnvironmentArtifact, RunManifestArtifact, Stage, Variant
+from .schema import BenchmarkArtifact, CorrectnessStatus, DeviceAuditArtifact, EnvironmentArtifact, RunManifestArtifact, Stage, Variant
 from .stats import build_latency_summary
+from .validator import validated_artifact_update
 
 
 @dataclass(frozen=True)
@@ -115,7 +116,7 @@ def load_prompt_records(prompt_path: str | Path) -> PromptSuiteData:
                 if not isinstance(payload, dict):
                     raise ValueError(f"Prompt record {idx} is not a JSON object")
                 text = payload.get("text", payload.get("prompt"))
-                prompt_id = payload.get("id")
+                prompt_id = payload.get("id", payload.get("prompt_id"))
                 if not isinstance(prompt_id, str) or not prompt_id:
                     raise ValueError(f"Prompt record {idx} missing non-empty 'id'")
                 if not isinstance(text, str) or not text:
@@ -141,7 +142,7 @@ def load_prompt_records(prompt_path: str | Path) -> PromptSuiteData:
             if not isinstance(item, dict):
                 raise ValueError(f"Prompt record {idx} is not a mapping")
             text = item.get("text", item.get("prompt"))
-            prompt_id = item.get("id")
+            prompt_id = item.get("id", item.get("prompt_id"))
             if not isinstance(prompt_id, str) or not prompt_id:
                 raise ValueError(f"Prompt record {idx} missing non-empty 'id'")
             if not isinstance(text, str) or not text:
@@ -198,6 +199,11 @@ def _measure_prefill_decode_separately(suite) -> bool:
 
 def _include_tokenization_in_timing(suite) -> bool:
     return bool(getattr(suite, "include_tokenization_in_timing", False))
+
+
+def _suite_uses_kv_cache(suite) -> bool:
+    cache_mode = str(getattr(suite, "cache_mode", "kv_cache_on") or "kv_cache_on").strip().lower()
+    return cache_mode != "kv_cache_off"
 
 
 def _resolve_suite_device(suite, model_spec) -> str:
@@ -351,6 +357,14 @@ def _tokenize_prompt_batch(
     return batch, float(elapsed_ms if measure_timing else 0.0)
 
 
+def _tokenizer_output_devices(tokenized: dict[str, Any]) -> dict[str, str]:
+    return {
+        str(key): str(value.device)
+        for key, value in tokenized.items()
+        if torch.is_tensor(value)
+    }
+
+
 def _summarize_tokenized_batch(tokenized: dict[str, torch.Tensor]) -> tuple[int, list[int], int, str]:
     input_ids = tokenized["input_ids"]
     attention_mask = tokenized["attention_mask"]
@@ -375,8 +389,86 @@ def _execute_greedy_generation(
     measure_timings: bool,
     tokenization_ms: float = 0.0,
     include_tokenization_in_timing: bool = False,
+    use_kv_cache: bool = True,
 ) -> GenerationRunResult:
     batch_size, prompt_lengths, prompt_token_count, input_batch_hash = _summarize_tokenized_batch(tokenized)
+
+    if not use_kv_cache:
+        current_input_ids = tokenized["input_ids"]
+        current_attention_mask = tokenized["attention_mask"]
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=current_input_ids.device)
+        generated_tensors: list[torch.Tensor] = []
+        generated_lengths = torch.zeros(batch_size, dtype=torch.int64, device=current_input_ids.device)
+        prefill_ms = 0.0
+        decode_step_samples_ms: list[float] = []
+
+        for step_index in range(generation_config.max_new_tokens):
+            def run_full_context_step():
+                return model(
+                    input_ids=current_input_ids,
+                    attention_mask=current_attention_mask,
+                    use_cache=False,
+                )
+
+            if measure_timings:
+                step_call = timed_call(device, run_full_context_step, inference_mode=True)
+                outputs = step_call.value
+                if step_index == 0:
+                    prefill_ms = float(step_call.elapsed_ms)
+                else:
+                    decode_step_samples_ms.append(float(step_call.elapsed_ms))
+            else:
+                with torch.inference_mode():
+                    outputs = run_full_context_step()
+
+            active_mask = ~finished
+            if active_mask.any():
+                generated_lengths[active_mask] += 1
+
+            raw_next_token = outputs.logits[:, -1, :].argmax(dim=-1, keepdim=True)
+            if generation_config.eos_token_id is not None:
+                finished = finished | raw_next_token.squeeze(-1).eq(generation_config.eos_token_id)
+            next_token = raw_next_token.clone()
+            if finished.any():
+                next_token[finished] = generation_config.pad_token_id
+            generated_tensors.append(next_token)
+            current_input_ids = torch.cat([current_input_ids, next_token], dim=1)
+            current_attention_mask = torch.cat(
+                [current_attention_mask, torch.ones_like(next_token, dtype=current_attention_mask.dtype)],
+                dim=1,
+            )
+
+        generated_tensor = torch.cat(generated_tensors, dim=1)
+        generated_tokens = [
+            [int(token) for token in row]
+            for row in generated_tensor.detach().cpu().tolist()
+        ]
+        output_token_hashes = [_hash_json_payload(row) for row in generated_tokens]
+        batch_output_hash = _hash_json_payload(generated_tokens)
+        generated_length_list = [int(length) for length in generated_lengths.detach().cpu().tolist()]
+        generated_token_count = int(sum(generated_length_list))
+        decode_generated_token_count = int(max(generated_token_count - batch_size, 0))
+        decode_ms = float(sum(decode_step_samples_ms))
+        total_ms = float(prefill_ms + decode_ms + (tokenization_ms if include_tokenization_in_timing else 0.0))
+
+        return GenerationRunResult(
+            prompt_ids=[],
+            batch_size=batch_size,
+            prompt_lengths=prompt_lengths,
+            prompt_token_count=prompt_token_count,
+            generated_lengths=generated_length_list,
+            generated_token_count=generated_token_count,
+            decode_generated_token_count=decode_generated_token_count,
+            prefill_ms=prefill_ms,
+            decode_ms=decode_ms,
+            total_ms=total_ms,
+            decode_step_samples_ms=decode_step_samples_ms,
+            input_batch_hash=input_batch_hash,
+            output_token_hashes=output_token_hashes,
+            batch_output_hash=batch_output_hash,
+            generated_tokens=generated_tokens,
+            tokenization_ms=float(tokenization_ms),
+        )
 
     def run_prefill():
         return model(**tokenized, use_cache=True)
@@ -655,6 +747,7 @@ def _write_stage_artifact(
         configured_batch_size=configured_batch_size,
         prompt_bucket_id=prompt_bucket_id,
     )
+    artifact = validated_artifact_update(artifact)
     suffix = f"__{file_suffix}" if file_suffix else ""
     return write_json_artifact(layout.metrics_dir / f"{variant.value}_{stage.value}{suffix}.json", artifact)
 
@@ -668,6 +761,175 @@ def _metric_artifact_path(
 ) -> Path:
     suffix = f"__{file_suffix}" if file_suffix else ""
     return layout.metrics_dir / f"{variant.value}_{stage.value}{suffix}.json"
+
+
+def _common_fields_for_variant(common: dict[str, Any], variant: Variant) -> dict[str, Any]:
+    if variant == Variant.kf_cast:
+        return common
+    normalized = dict(common)
+    normalized["cast_package_path"] = None
+    normalized["cast_package_hash"] = None
+    normalized["kf_artifact_path"] = None
+    normalized["kf_artifact_hash"] = None
+    normalized["kf_artifact_kind"] = None
+    normalized["exported_kernel_hashes"] = {}
+    normalized["kf_settings"] = {}
+    normalized["toolchain_status"] = {}
+    return normalized
+
+
+def _device_audit_artifact_path(
+    layout: RunLayout,
+    variant: Variant,
+    stage: Stage,
+    *,
+    file_suffix: str | None = None,
+) -> Path:
+    suffix = f"__{file_suffix}" if file_suffix else ""
+    audit_dir = layout.run_dir / "device_audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    return audit_dir / f"{variant.value}_{stage.value}{suffix}.json"
+
+
+def _device_audit_per_op(runtime_stats: dict[str, Any] | None) -> dict[str, Any]:
+    stats = runtime_stats or {}
+    per_op = stats.get("per_op")
+    if not isinstance(per_op, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for op_name, raw_op_stats in per_op.items():
+        if not isinstance(raw_op_stats, dict):
+            continue
+        input_devices = raw_op_stats.get("input_devices") if isinstance(raw_op_stats.get("input_devices"), dict) else {}
+        input_dtypes = raw_op_stats.get("input_dtypes") if isinstance(raw_op_stats.get("input_dtypes"), dict) else {}
+        input_is_cuda = raw_op_stats.get("input_is_cuda") if isinstance(raw_op_stats.get("input_is_cuda"), dict) else {}
+        fallback_reasons = raw_op_stats.get("fallback_reasons") if isinstance(raw_op_stats.get("fallback_reasons"), dict) else {}
+        out[str(op_name)] = {
+            "patched_calls": int(raw_op_stats.get("patched_calls", 0) or 0),
+            "kernel_launches_attempted": int(raw_op_stats.get("kernel_launches_attempted", 0) or 0),
+            "kernel_launches_succeeded": int(raw_op_stats.get("kernel_launches_succeeded", 0) or 0),
+            "kernel_launches_failed": int(raw_op_stats.get("kernel_launches_failed", 0) or 0),
+            "fallbacks_to_original": int(raw_op_stats.get("fallbacks_to_original", 0) or 0),
+            "fallback_reasons": {str(key): int(value) for key, value in fallback_reasons.items()},
+            "input_devices": {str(key): int(value) for key, value in input_devices.items()},
+            "input_dtypes": {str(key): int(value) for key, value in input_dtypes.items()},
+            "input_is_cuda": {str(key): int(value) for key, value in input_is_cuda.items()},
+            "last_exception": raw_op_stats.get("last_exception"),
+        }
+    return out
+
+
+def _device_audit_issues(
+    *,
+    selected_ops: Sequence[str],
+    per_op_launch_coverage: dict[str, Any],
+    require_runtime_coverage: bool,
+) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    for op_name in selected_ops:
+        stats = per_op_launch_coverage.get(op_name)
+        if not isinstance(stats, dict):
+            if require_runtime_coverage:
+                errors.append(f"selected op {op_name} has no runtime coverage")
+            else:
+                warnings.append(f"selected op {op_name} has no runtime coverage yet")
+            continue
+        input_devices = stats.get("input_devices") if isinstance(stats.get("input_devices"), dict) else {}
+        input_is_cuda = stats.get("input_is_cuda") if isinstance(stats.get("input_is_cuda"), dict) else {}
+        bad_devices = [
+            str(device)
+            for device in input_devices
+            if str(device).startswith("cpu") or str(device).startswith("meta")
+        ]
+        if bad_devices:
+            errors.append(f"selected op {op_name} saw non-CUDA devices: {', '.join(sorted(bad_devices))}")
+        if int(input_is_cuda.get("false", 0) or 0) > 0:
+            errors.append(f"selected op {op_name} saw non-CUDA tensor inputs")
+        if require_runtime_coverage:
+            if int(stats.get("patched_calls", 0) or 0) <= 0:
+                errors.append(f"selected op {op_name} was not patched during audited stage")
+            if int(stats.get("kernel_launches_succeeded", 0) or 0) <= 0:
+                errors.append(f"selected op {op_name} had zero successful kernel launches during audited stage")
+            if int(stats.get("fallbacks_to_original", 0) or 0) > 0:
+                errors.append(f"selected op {op_name} fell back to original implementation")
+    return list(dict.fromkeys(errors)), list(dict.fromkeys(warnings))
+
+
+def _write_device_audit_artifact(
+    layout: RunLayout,
+    common: dict[str, Any],
+    *,
+    variant: Variant,
+    stage: Stage,
+    runtime_meta: dict[str, Any],
+    runtime_stats: dict[str, Any] | None,
+    runtime_input_device: str,
+    tokenizer_output_devices: dict[str, str],
+    require_runtime_coverage: bool,
+    file_suffix: str | None = None,
+) -> Path:
+    selected_ops = [str(item) for item in (runtime_meta.get("selected_ops") or [])]
+    per_op_launch_coverage = _device_audit_per_op(runtime_stats)
+    audit_errors, audit_warnings = _device_audit_issues(
+        selected_ops=selected_ops,
+        per_op_launch_coverage=per_op_launch_coverage,
+        require_runtime_coverage=require_runtime_coverage,
+    )
+    stats = runtime_stats or {}
+    artifact_common = dict(common)
+    for key in (
+        "artifact_type",
+        "variant",
+        "stage",
+        "warmup_count",
+        "timed_run_count",
+        "audit_stage",
+        "audit_status",
+        "audit_errors",
+        "audit_warnings",
+        "selected_ops",
+        "runtime_input_device",
+        "tokenizer_output_devices",
+        "placement_audit",
+        "per_op_launch_coverage",
+        "fallback_reasons_by_op",
+        "kernel_launches_attempted",
+        "kernel_launches_succeeded",
+        "kernel_launches_failed",
+        "fallback_count",
+    ):
+        artifact_common.pop(key, None)
+    audit = DeviceAuditArtifact(
+        **artifact_common,
+        artifact_type="device_audit",
+        variant=variant,
+        stage=stage,
+        warmup_count=int(common.get("warmup_count", 0) or 0),
+        timed_run_count=int(common.get("timed_run_count", 0) or 0),
+        audit_stage=stage.value,
+        audit_status="failed" if audit_errors else "passed" if require_runtime_coverage else "pending_runtime",
+        audit_errors=audit_errors,
+        audit_warnings=audit_warnings,
+        selected_ops=selected_ops,
+        runtime_input_device=str(runtime_input_device),
+        tokenizer_output_devices=dict(tokenizer_output_devices),
+        placement_audit=dict(runtime_meta.get("placement_audit") or {}),
+        per_op_launch_coverage=per_op_launch_coverage,
+        fallback_reasons_by_op={
+            op_name: dict(stats.get("fallback_reasons") or {})
+            for op_name, stats in per_op_launch_coverage.items()
+            if isinstance(stats, dict)
+        },
+        kernel_launches_attempted=int(stats.get("kernel_launches_attempted", runtime_meta.get("kernel_launches_attempted", 0)) or 0),
+        kernel_launches_succeeded=int(stats.get("kernel_launches_succeeded", runtime_meta.get("kernel_hit_count", 0)) or 0),
+        kernel_launches_failed=int(stats.get("kernel_launches_failed", runtime_meta.get("kernel_launches_failed", 0)) or 0),
+        fallback_count=int(stats.get("fallbacks_to_original", runtime_meta.get("fallback_count", 0)) or 0),
+    )
+    return write_json_artifact(
+        _device_audit_artifact_path(layout, variant, stage, file_suffix=file_suffix),
+        audit,
+    )
 
 
 def _partial_prompt_sample_matrix(
@@ -825,6 +1087,7 @@ def run_llm_benchmark(
         "compile_settings": compile_settings.as_dict(),
         "kf_settings": kf_settings.as_dict(),
     }
+    common = _common_fields_for_variant(common, variant)
     if prompt_suite.synthetic_workload and not common.get("synthetic_workload", False):
         issues = list(common.get("paper_eligibility_issues", []) or [])
         issues.append("synthetic workload used")
@@ -921,6 +1184,8 @@ def run_llm_benchmark(
         },
         "prompt_source_format": prompt_suite.source_format,
         "prompt_length_buckets": [slice_data.prompt_bucket_id for slice_data in workload_slices],
+        "placement_profile": common.get("placement_profile"),
+        "runtime_input_device": runtime_input_device,
     }
     if runtime_meta is not None:
         load_details.update(build_kf_runtime_details(runtime_meta))
@@ -932,6 +1197,13 @@ def run_llm_benchmark(
         suite,
         batch_size=int(first_slice.batch_size),
     )
+    audit_probe_tokenized, _ = _tokenize_prompt_batch(
+        tokenizer,
+        timed_batches[0],
+        runtime_input_device,
+        measure_timing=False,
+    )
+    tokenizer_output_devices = _tokenizer_output_devices(audit_probe_tokenized)
     load_stage_records = [
         _load_stage_sample_record(
             float(load_ms),
@@ -1003,6 +1275,8 @@ def run_llm_benchmark(
             "selected_prompt_ids_hash": _hash_json_payload(workload_slice.selected_prompt_ids),
             "prompt_suite_hash": common.get("workload_hash"),
             "prompt_source_format": prompt_suite.source_format,
+            "placement_profile": common.get("placement_profile"),
+            "runtime_input_device": runtime_input_device,
             "selection_policy": {
                 "method": "frozen_input_order",
                 "post_hoc": False,
@@ -1124,6 +1398,20 @@ def run_llm_benchmark(
         ):
             return layout
 
+    if variant == Variant.kf_cast and runtime_meta is not None:
+        load_audit_path = _write_device_audit_artifact(
+            layout,
+            common,
+            variant=variant,
+            stage=Stage.load,
+            runtime_meta=runtime_meta,
+            runtime_stats=runtime_meta.get("runtime_stats") if isinstance(runtime_meta.get("runtime_stats"), dict) else None,
+            runtime_input_device=runtime_input_device,
+            tokenizer_output_devices=tokenizer_output_devices,
+            require_runtime_coverage=False,
+        )
+        load_details["device_audit_artifact_path"] = str(load_audit_path.resolve())
+
     _write_stage_artifact(
         layout,
         common,
@@ -1143,6 +1431,19 @@ def run_llm_benchmark(
     )
 
     if variant == Variant.kf_cast and compile_time_ms is not None and runtime_meta is not None:
+        compile_details = build_kf_runtime_details(runtime_meta)
+        compile_audit_path = _write_device_audit_artifact(
+            layout,
+            common,
+            variant=variant,
+            stage=Stage.compile,
+            runtime_meta=runtime_meta,
+            runtime_stats=runtime_meta.get("runtime_stats") if isinstance(runtime_meta.get("runtime_stats"), dict) else None,
+            runtime_input_device=runtime_input_device,
+            tokenizer_output_devices=tokenizer_output_devices,
+            require_runtime_coverage=False,
+        )
+        compile_details["device_audit_artifact_path"] = str(compile_audit_path.resolve())
         _write_stage_artifact(
             layout,
             common,
@@ -1165,10 +1466,11 @@ def run_llm_benchmark(
                     "execution_status": "ok",
                 }
             ],
-            details=build_kf_runtime_details(runtime_meta),
+            details=compile_details,
         )
 
     if variant == Variant.torch_compile:
+        use_kv_cache = _suite_uses_kv_cache(suite)
         compile_wrap_start = time.perf_counter()
         try:
             model, compile_wrap_ms = compile_model_fn(model, compile_settings)
@@ -1224,6 +1526,7 @@ def run_llm_benchmark(
                 measure_timings=True,
                 tokenization_ms=compile_probe_tokenization_ms,
                 include_tokenization_in_timing=_include_tokenization_in_timing(suite),
+                use_kv_cache=use_kv_cache,
             )
             compile_probe_result.prompt_ids = [record["id"] for record in compile_probe_batch]
             compile_first_run_ms = float(compile_probe_result.total_ms)
@@ -1239,6 +1542,7 @@ def run_llm_benchmark(
                     measure_timings=False,
                     tokenization_ms=compile_probe_tokenization_ms,
                     include_tokenization_in_timing=_include_tokenization_in_timing(suite),
+                    use_kv_cache=use_kv_cache,
                 )
                 if reference_probe_result.output_token_hashes != compile_probe_result.output_token_hashes:
                     compile_correctness_status = CorrectnessStatus.failed
@@ -1336,6 +1640,7 @@ def run_llm_benchmark(
         }
         file_suffix = workload_slice.comparison_group if use_group_suffix else None
         timed_batches = workload_slice.prompt_batches[: int(suite.timed_run_count)]
+        use_kv_cache = _suite_uses_kv_cache(suite)
 
         if variant == Variant.kf_cast and runtime_meta is not None and kf_settings.record_runtime_stats:
             reset_cast_runtime_stats(model)
@@ -1366,6 +1671,7 @@ def run_llm_benchmark(
                     measure_timings=True,
                     tokenization_ms=tokenization_ms,
                     include_tokenization_in_timing=_include_tokenization_in_timing(suite),
+                    use_kv_cache=use_kv_cache,
                 )
             except Exception as exc:
                 sync_device(runtime_input_device)
@@ -1424,6 +1730,19 @@ def run_llm_benchmark(
                 warmup_fallback_count = None
                 warmup_kernel_hit_count = None
             warmup_details = build_kf_runtime_details(runtime_meta, warmup_stats)
+            warmup_audit_path = _write_device_audit_artifact(
+                layout,
+                common,
+                variant=variant,
+                stage=Stage.warmup,
+                runtime_meta=runtime_meta,
+                runtime_stats=warmup_stats if isinstance(warmup_stats, dict) else None,
+                runtime_input_device=runtime_input_device,
+                tokenizer_output_devices=tokenizer_output_devices,
+                require_runtime_coverage=True,
+                file_suffix=file_suffix,
+            )
+            warmup_details["device_audit_artifact_path"] = str(warmup_audit_path.resolve())
             if kf_settings.record_runtime_stats:
                 reset_cast_runtime_stats(model)
 
@@ -1486,6 +1805,7 @@ def run_llm_benchmark(
                     measure_timings=True,
                     tokenization_ms=tokenization_ms,
                     include_tokenization_in_timing=_include_tokenization_in_timing(suite),
+                    use_kv_cache=use_kv_cache,
                 )
                 candidate_result.prompt_ids = prompt_ids
 
@@ -1498,6 +1818,7 @@ def run_llm_benchmark(
                         measure_timings=False,
                         tokenization_ms=tokenization_ms,
                         include_tokenization_in_timing=_include_tokenization_in_timing(suite),
+                        use_kv_cache=use_kv_cache,
                     )
                     if reference_result.output_token_hashes != candidate_result.output_token_hashes:
                         correctness_failures.append(
@@ -1621,6 +1942,19 @@ def run_llm_benchmark(
                 fallback_count = None
                 kernel_hit_count = None
             timed_runtime_details = build_kf_runtime_details(runtime_meta, timed_runtime_stats)
+            timed_audit_path = _write_device_audit_artifact(
+                layout,
+                common,
+                variant=variant,
+                stage=Stage.total_generate,
+                runtime_meta=runtime_meta,
+                runtime_stats=timed_runtime_stats if isinstance(timed_runtime_stats, dict) else None,
+                runtime_input_device=runtime_input_device,
+                tokenizer_output_devices=tokenizer_output_devices,
+                require_runtime_coverage=True,
+                file_suffix=file_suffix,
+            )
+            timed_runtime_details["device_audit_artifact_path"] = str(timed_audit_path.resolve())
         else:
             timed_runtime_details = None
 

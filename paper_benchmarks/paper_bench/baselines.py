@@ -102,14 +102,28 @@ def load_transformers_causal_lm(model_spec, device: str | None = None):
     }
     if getattr(model_spec, "attn_implementation", None):
         model_kwargs["attn_implementation"] = model_spec.attn_implementation
+    quantization_config = getattr(model_spec, "quantization_config", None)
+    if isinstance(quantization_config, dict) and quantization_config:
+        if str(quantization_config.get("type") or "").lower() == "quanto":
+            from transformers import QuantoConfig
+
+            config_payload = {key: value for key, value in quantization_config.items() if key != "type"}
+            model_kwargs["quantization_config"] = QuantoConfig(**config_payload)
+        else:
+            model_kwargs["quantization_config"] = dict(quantization_config)
+    used_device_map = False
     if getattr(model_spec, "device_map", None) is not None:
         model_kwargs["device_map"] = model_spec.device_map
+        used_device_map = True
+    elif getattr(model_spec, "placement_profile", None) == "single_cuda" and device and str(device).startswith("cuda"):
+        model_kwargs["device_map"] = {"": "cuda:0"}
+        used_device_map = True
     if getattr(model_spec, "max_memory", None):
         model_kwargs["max_memory"] = model_spec.max_memory
     start = time.perf_counter()
     model = AutoModelForCausalLM.from_pretrained(model_spec.model_path, **model_kwargs)
     model.eval()
-    if device and getattr(model_spec, "device_map", None) is None:
+    if device and not used_device_map:
         model.to(device)
     load_ms = (time.perf_counter() - start) * 1000.0
     return model, tokenizer, load_ms
